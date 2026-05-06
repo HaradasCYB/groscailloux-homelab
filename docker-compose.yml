@@ -385,6 +385,34 @@ services:
       - homelab
     command: --default-authentication-plugin=mysql_native_password
 
+  onboarder:
+    build: ./onboarder
+    container_name: onboarder
+    ports:
+      - "8765:8765"
+    volumes:
+      - /opt/homelab/scripts:/scripts:ro
+    environment:
+      - TZ=${TZ:-Europe/Paris}
+      - ONBOARD_SCRIPT=/scripts/homelab-onboard-user.sh
+      - JELLYFIN_URL=http://jellyfin:8096
+      - JELLYSEERR_URL=http://jellyseerr:5055
+      - JELLYFIN_PUBLIC_URL=${JELLYFIN_PUBLIC_URL:-https://jellyfin.example.com}
+      - JELLYSEERR_PUBLIC_URL=${JELLYSEERR_PUBLIC_URL:-https://jellyseerr.example.com}
+      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY}
+      - JELLYSEERR_API_KEY=${JELLYSEERR_API_KEY}
+      - JELLYFIN_LIB_FILMS=${JELLYFIN_LIB_FILMS}
+      - JELLYFIN_LIB_SERIES=${JELLYFIN_LIB_SERIES}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Homelab}
+    restart: unless-stopped
+    networks:
+      - homelab
+
 networks:
   homelab:
     driver: bridge
