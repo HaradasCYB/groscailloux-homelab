@@ -107,12 +107,20 @@ trap 'rm -f "$MAIL_FILE"' EXIT
 cat > "$MAIL_FILE" <<EOF
 From: $SMTP_FROM_NAME <$SMTP_FROM>
 To: $USERNAME <$EMAIL>
-Subject: Bienvenue sur Groscailloux
+Subject: Bienvenue sur Groscailloux — tes identifiants
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 Salut $USERNAME,
+
+Si tu trouves ce mail dans tes spams / courrier indesirable / promotions,
+merci de le marquer comme "Pas indesirable" et d'ajouter $SMTP_FROM
+a tes contacts — sinon les futurs mails pourraient ne pas arriver.
+
+Tu as peut-etre recu un premier mail "Reset password" automatique de
+Jellyseerr juste avant celui-ci : IGNORE-LE. Ce sont les identifiants
+ci-dessous qu'il faut utiliser.
 
 Voici tes acces :
 
