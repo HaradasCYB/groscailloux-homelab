@@ -28,8 +28,6 @@ SMTP_PASS="${SMTP_PASS:?missing SMTP_PASS}"
 SMTP_FROM="${SMTP_FROM:-$SMTP_USER}"
 SMTP_FROM_NAME="${SMTP_FROM_NAME:-Homelab}"
 
-JELLYFIN_USERTYPE=3
-
 usage() {
   echo "Usage: $0 <username> <email> [password]" >&2
   exit 2
@@ -105,7 +103,6 @@ curl -fsS -X POST -H "$JS_HDR" -H "Content-Type: application/json" \
 echo "==> Envoi du mail unifie"
 MAIL_FILE=$(mktemp)
 trap 'rm -f "$MAIL_FILE"' EXIT
-BOUNDARY="$(openssl rand -hex 16)"
 
 cat > "$MAIL_FILE" <<EOF
 From: $SMTP_FROM_NAME <$SMTP_FROM>

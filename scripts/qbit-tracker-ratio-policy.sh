@@ -63,7 +63,7 @@ while IFS=$'\t' read -r hash tracker name cur_ratio cur_time; do
     *yggleak*|*u2p*|*ygg.gratis*)
       target_ratio="$PUBLIC_RATIO"; target_time="$PUBLIC_TIME"; tier="ygg"
       ;;
-    *opentrackr*|*demonii*|*exodus.desync*|*open.stealth*|*tracker.torrent.eu*|*tracker.theoks*|*explodie.org*|*leet-tracker*|*tracker.dler*|*tracker.filemail*|*tracker.opentrackr*|*tracker.alaskantf*|*tracker-udp.gbitt*|*overflow.biz*|*open.dstud*|*tracker.srv00*|*tracker1.myporn*|*durukanbal*|*encrypt.net*|*corpscorp*|*6ahddutb*)
+    *opentrackr*|*demonii*|*exodus.desync*|*open.stealth*|*tracker.torrent.eu*|*tracker.theoks*|*explodie.org*|*leet-tracker*|*tracker.dler*|*tracker.filemail*|*tracker.alaskantf*|*tracker-udp.gbitt*|*overflow.biz*|*open.dstud*|*tracker.srv00*|*tracker1.myporn*|*durukanbal*|*encrypt.net*|*corpscorp*|*6ahddutb*)
       target_ratio="$PUBLIC_RATIO"; target_time="$PUBLIC_TIME"; tier="public"
       ;;
     *)
