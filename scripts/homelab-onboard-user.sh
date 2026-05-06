@@ -71,7 +71,8 @@ EXISTING_JS_EMAIL=$(curl -fsS -H "$JS_HDR" "$JELLYSEERR_URL/api/v1/user?take=100
 echo "    OK Jellyfin/Jellyseerr UP, username et email libres"
 
 echo "==> Creation Jellyfin"
-/opt/homelab/scripts/jellyfin-create-user.sh "$USERNAME" "$PASSWORD" >/dev/null \
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$SCRIPT_DIR/jellyfin-create-user.sh" "$USERNAME" "$PASSWORD" >/dev/null \
   || { echo "Erreur: jellyfin-create-user.sh a echoue" >&2; exit 1; }
 
 JELLYFIN_USER_ID=$(curl -fsS -H "$JF_HDR" "$JELLYFIN_URL/Users" \
