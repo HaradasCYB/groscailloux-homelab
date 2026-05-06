@@ -1,0 +1,26 @@
+name: Docker Compose Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .env from example
+        run: |
+          cp .env.example .env
+          # Replace CHANGE_ME with dummy values to allow compose config to validate syntax
+          sed -i 's/CHANGE_ME/dummyvalue/g' .env
+
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+
+      - name: Show resolved compose
+        if: always()
+        run: docker compose config 2>&1 | head -100

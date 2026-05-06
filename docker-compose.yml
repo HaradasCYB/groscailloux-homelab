@@ -1,0 +1,390 @@
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    user: 1000:1000
+    ports:
+      - "8096:8096"
+    volumes:
+      - /opt/homelab/jellyfin/config:/config
+      - /opt/homelab/jellyfin/cache:/cache
+      - /opt/homelab/media:/media:ro
+    tmpfs:
+      - /cache/transcodes:rw,size=2g,uid=1000,gid=1000,mode=1777
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - JELLYFIN_PublishedServerUrl=http://${HOST_IP}:8096
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  jellyseerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: jellyseerr
+    ports:
+      - "5055:5055"
+    volumes:
+      - /opt/homelab/jellyseerr/config:/app/config
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - LOG_LEVEL=debug
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    ports:
+      - "7878:7878"
+    volumes:
+      - /opt/homelab/radarr/config:/config
+      - /opt/homelab/media/movies:/movies
+      - /opt/homelab/downloads:/downloads
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - PUID=1000
+      - PGID=1000
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    ports:
+      - "8989:8989"
+    volumes:
+      - /opt/homelab/sonarr/config:/config
+      - /opt/homelab/media/tvshows:/tv
+      - /opt/homelab/downloads:/downloads
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - PUID=1000
+      - PGID=1000
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    ports:
+      - "9696:9696"
+    volumes:
+      - /opt/homelab/prowlarr/config:/config
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - PUID=1000
+      - PGID=1000
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-protonvpn}
+      - VPN_TYPE=${VPN_TYPE:-wireguard}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES:-10.2.0.2/32}
+      - SERVER_COUNTRIES=${SERVER_COUNTRIES:-France}
+      - VPN_PORT_FORWARDING=on
+      - VPN_PORT_FORWARDING_PROVIDER=${VPN_SERVICE_PROVIDER:-protonvpn}
+      - VPN_PORT_FORWARDING_UP_COMMAND=/gluetun/scripts/qbit-update-port.sh "{{PORTS}}"
+      - TZ=${TZ:-Europe/Paris}
+      - HEALTH_VPN_DURATION_INITIAL=60s
+    volumes:
+      - /opt/homelab/gluetun:/gluetun
+      - /opt/homelab/scripts:/gluetun/scripts:ro
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    volumes:
+      - /opt/homelab/qbittorrent/config:/config
+      - /opt/homelab/downloads:/downloads
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - PUID=1000
+      - PGID=1000
+      - WEBUI_PORT=8080
+    restart: unless-stopped
+
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: filebrowser
+    user: 1000:1000
+    volumes:
+      - /opt/homelab/filebrowser/database:/database
+      - /opt/homelab/filebrowser/config:/config
+      - /opt/homelab/downloads:/srv/downloads
+      - /opt/homelab/media:/srv/media
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-Europe/Paris}
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  homarr:
+    image: ghcr.io/homarr-labs/homarr:v1.59.3
+    container_name: homarr
+    ports:
+      - "7575:7575"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/homelab/homarr:/appdata
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  dashdot:
+    image: mauricenino/dashdot:latest
+    container_name: dashdot
+    privileged: true
+    ports:
+      - "3001:3001"
+    environment:
+      - DASHDOT_PORT=3001
+      - DASHDOT_ENABLE_CPU_TEMPS=true
+      - DASHDOT_ENABLE_STORAGE_SPLIT_VIEW=true
+      - DASHDOT_FS_DEVICE_FILTER=loop,fuse
+      - DASHDOT_PAGE_TITLE=Homelab
+      - TZ=${TZ:-Europe/Paris}
+    volumes:
+      - /:/mnt/host:ro,rslave
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  glances:
+    image: nicolargo/glances:latest
+    container_name: glances
+    pid: host
+    privileged: true
+    ports:
+      - "61208:61208"
+    environment:
+      - GLANCES_OPT=-w --disable-plugin sensors,raid,wifi,smart,connections,processlist,processcount,ports,ip,amps,folders,alert,diskio,docker,containers,programlist,help,load,memswap,now,percpu,psutilversion
+      - TZ=${TZ:-Europe/Paris}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/rootfs:ro
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  influxdb:
+    image: influxdb:2
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - /opt/homelab/influxdb/data:/var/lib/influxdb2
+      - /opt/homelab/influxdb/config:/etc/influxdb2
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_INIT_USERNAME:-admin}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_INIT_PASSWORD}
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_INIT_ORG:-homelab}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_INIT_BUCKET:-metrics}
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - /opt/homelab/grafana:/var/lib/grafana
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/homelab/portainer:/data
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  pyload:
+    image: lscr.io/linuxserver/pyload-ng:latest
+    container_name: pyload
+    ports:
+      - "8000:8000"
+    volumes:
+      - /opt/homelab/pyload/config:/config
+      - /opt/homelab/downloads:/downloads
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - PUID=1000
+      - PGID=1000
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    ports:
+      - "8191:8191"
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - LOG_LEVEL=info
+      - CAPTCHA_SOLVER=none
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    ports:
+      - "9117:9117"
+    volumes:
+      - /opt/homelab/jackett/config:/config
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - PUID=1000
+      - PGID=1000
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: npm
+    ports:
+      - "80:80"
+      - "81:81"
+      - "443:443"
+    volumes:
+      - /opt/homelab/npm/data:/data
+      - /opt/homelab/npm/letsencrypt:/etc/letsencrypt
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  duckdns:
+    image: lscr.io/linuxserver/duckdns:latest
+    container_name: duckdns
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ:-Europe/Paris}
+      - PUID=1000
+      - PGID=1000
+      - SUBDOMAINS=${DUCKDNS_SUBDOMAIN}
+      - TOKEN=${DUCKDNS_TOKEN}
+      - LOG_FILE=true
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  telegraf:
+    image: telegraf:latest
+    container_name: telegraf
+    group_add:
+      - 986
+    volumes:
+      - /opt/homelab/telegraf/etc/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/hostfs:ro
+    environment:
+      - HOST_MOUNT_PREFIX=/hostfs
+      - HOST_PROC=/hostfs/proc
+      - HOST_SYS=/hostfs/sys
+      - HOST_ETC=/hostfs/etc
+      - TZ=${TZ:-Europe/Paris}
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  guacamole:
+    image: guacamole/guacamole:latest
+    container_name: guacamole
+    environment:
+      GUACD_HOSTNAME: guacd
+      MYSQL_HOSTNAME: guacdb
+      MYSQL_DATABASE: ${GUACAMOLE_DB_NAME:-guacamole_db}
+      MYSQL_USER: ${GUACAMOLE_DB_USER:-guacamole_user}
+      MYSQL_PASSWORD: ${MYSQL_USER_PASSWORD}
+    ports:
+      - "8081:8080"
+    restart: unless-stopped
+    networks:
+      - homelab
+    depends_on:
+      - guacd
+      - guacdb
+
+  guacd:
+    image: guacamole/guacd:latest
+    container_name: guacd
+    restart: unless-stopped
+    networks:
+      - homelab
+
+  guacdb:
+    image: mysql:8.0
+    container_name: guacdb
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${GUACAMOLE_DB_NAME:-guacamole_db}
+      MYSQL_USER: ${GUACAMOLE_DB_USER:-guacamole_user}
+      MYSQL_PASSWORD: ${MYSQL_USER_PASSWORD}
+    volumes:
+      - /opt/homelab/guacamole/mysql:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - homelab
+    command: --default-authentication-plugin=mysql_native_password
+
+networks:
+  homelab:
+    driver: bridge

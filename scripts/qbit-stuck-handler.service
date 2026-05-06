@@ -1,0 +1,11 @@
+[Unit]
+Description=Detect and replace stuck qBittorrent downloads in Sonarr/Radarr
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+ExecStart=/opt/homelab/scripts/qbit-stuck-handler.sh
+StandardOutput=append:/opt/homelab/logs/qbit-stuck-handler-systemd.log
+StandardError=append:/opt/homelab/logs/qbit-stuck-handler-systemd.log

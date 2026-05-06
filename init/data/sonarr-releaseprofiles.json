@@ -1,0 +1,14 @@
+[
+  {
+    "name": "",
+    "enabled": true,
+    "required": [
+      "French"
+    ],
+    "ignored": [],
+    "indexerId": 0,
+    "tags": [
+      1
+    ]
+  }
+]

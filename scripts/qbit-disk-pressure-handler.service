@@ -1,0 +1,11 @@
+[Unit]
+Description=Pause/delete qBit torrents when disk usage approaches saturation
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+ExecStart=/opt/homelab/scripts/qbit-disk-pressure-handler.sh
+StandardOutput=append:/opt/homelab/logs/qbit-disk-pressure-handler-systemd.log
+StandardError=append:/opt/homelab/logs/qbit-disk-pressure-handler-systemd.log

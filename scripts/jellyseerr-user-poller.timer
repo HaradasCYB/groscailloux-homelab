@@ -1,0 +1,11 @@
+[Unit]
+Description=Run jellyseerr-user-poller every 60 seconds
+Requires=jellyseerr-user-poller.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+Unit=jellyseerr-user-poller.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Bypass Sonarr "TBA title and recently aired" import rejections
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+ExecStart=/opt/homelab/scripts/tba-import-bypass.sh
+StandardOutput=append:/opt/homelab/logs/tba-import-bypass-systemd.log
+StandardError=append:/opt/homelab/logs/tba-import-bypass-systemd.log

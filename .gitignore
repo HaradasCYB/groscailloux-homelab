@@ -1,0 +1,44 @@
+# Secrets — JAMAIS committer
+.env
+.env.local
+*.key
+*.pem
+.docker-compose.vpn-on.yml
+.docker-compose.vpn-off.yml
+
+# State / Data services (gardent leur DB, configs runtime)
+*/config/
+!templates/*/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Backups locaux
+*.bak
+*.bak-*
+.audit-backup-*/
+*.backup
+
+# Media + downloads — donnees utilisateur
+downloads/
+media/
+movies/
+tvshows/
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Editeur / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Scripts custom non distribuables (a fournir explicitement si besoin)
+scripts/*.local.sh
