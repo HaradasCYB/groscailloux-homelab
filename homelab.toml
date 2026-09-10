@@ -18,7 +18,9 @@ jellyfin = "http://localhost:8096"
 jellyseerr = "http://localhost:5055"
 
 [web]
-listen = "0.0.0.0:8765"
+# 8766 : l'UI tourne sur l'hôte (plus dans un conteneur). NPM doit proxifier
+# onboarder.<domaine> vers la passerelle du réseau docker (172.18.0.1) port 8766.
+listen = "0.0.0.0:8766"
 rate_limit_secs = 30
 
 [tasks]
