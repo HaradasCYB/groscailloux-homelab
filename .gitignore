@@ -6,6 +6,7 @@
 *.pem
 
 # --- État des services (bind mounts, restaurés depuis backups/)
+/diun/
 /filebrowser/
 /gluetun/
 /grafana/
@@ -23,6 +24,9 @@
 /sonarr/
 /telegraf/
 # fichiers de config versionnés malgré l'état
+!/diun/
+/diun/*
+!/diun/images.yml
 !/telegraf/
 /telegraf/*
 !/telegraf/etc/

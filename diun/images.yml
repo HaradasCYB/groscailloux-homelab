@@ -1,0 +1,89 @@
+# Images surveillées par diun (provider file). Pour les tags immuables, watch_repo
+# notifie l'apparition de nouveaux tags correspondant à include_tags.
+# Mise à jour = changer tag+digest dans docker-compose.yml, pull, up -d.
+
+# --- linuxserver.io : tags <version>-ls<N>
+- name: lscr.io/linuxserver/sonarr:4.0.17.2952-ls309
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+\.\d+-ls\d+$']
+- name: lscr.io/linuxserver/radarr:6.1.1.10360-ls300
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+\.\d+-ls\d+$']
+- name: lscr.io/linuxserver/prowlarr:2.3.5.5327-ls144
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+\.\d+-ls\d+$']
+- name: lscr.io/linuxserver/qbittorrent:5.1.4-r3-ls452
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+-r\d+-ls\d+$']
+- name: lscr.io/linuxserver/pyload-ng:0.5.0b3.dev99-ls232
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+.*-ls\d+$']
+- name: lscr.io/linuxserver/duckdns:36a2e3a3-ls78
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^[0-9a-f]{8}-ls\d+$']
+
+# --- semver nu
+- name: jellyfin/jellyfin:10.11.8
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+$']
+- name: grafana/grafana:13.0.1
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+$']
+- name: influxdb:2.8.0
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^2\.\d+\.\d+$']
+- name: telegraf:1.38.3
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+$']
+- name: jc21/nginx-proxy-manager:2.14.0
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+$']
+- name: portainer/portainer-ce:2.39.1
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+$']
+- name: guacamole/guacamole:1.6.0
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+$']
+- name: guacamole/guacd:1.6.0
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+$']
+- name: ghcr.io/crazy-max/diun:4.33.0
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^\d+\.\d+\.\d+$']
+
+# --- semver préfixé v
+- name: ghcr.io/seerr-team/seerr:v3.2.0
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^v\d+\.\d+\.\d+$']
+- name: ghcr.io/homarr-labs/homarr:v1.59.3
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^v\d+\.\d+\.\d+$']
+- name: filebrowser/filebrowser:v2.63.2
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^v\d+\.\d+\.\d+$']
+- name: nicolargo/glances:v4.5.4
+  watch_repo: true
+  max_tags: 3
+  include_tags: ['^v\d+\.\d+\.\d+$']
+
+# --- tags mobiles : notification quand le digest du tag change
+- name: qmcgaw/gluetun:latest
+- name: mysql:8.0

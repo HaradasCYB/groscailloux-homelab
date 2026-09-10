@@ -1,12 +1,29 @@
+# Images pinnées par tag@digest (relevé 2026-09-10). diun notifie les nouvelles versions ;
+# la mise à jour est volontaire : changer tag+digest, `docker compose pull <svc>`, `up -d <svc>`.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-base: &base
   restart: unless-stopped
+  logging: *logging
   networks:
     - homelab
 
+x-hc: &hc
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 60s
+
 services:
+  # ---------------------------------------------------------------- lecture
   jellyfin:
     <<: *base
-    image: jellyfin/jellyfin:latest
+    image: jellyfin/jellyfin:10.11.8@sha256:1694ff069f0c9dafb283c36765175606866769f5d72f2ed56b6a0f1be922fc37
     container_name: jellyfin
     user: 1000:1000
     ports:
@@ -20,10 +37,12 @@ services:
     environment:
       - TZ=${TZ}
       - JELLYFIN_PublishedServerUrl=http://${HOST_IP}:8096
+    mem_limit: 4g
+    cpus: 4
 
   jellyseerr:
     <<: *base
-    image: ghcr.io/seerr-team/seerr:latest
+    image: ghcr.io/seerr-team/seerr:v3.2.0@sha256:c4cbd5121236ac2f70a843a0b920b68a27976be57917555f1c45b08a1e6b2aad
     container_name: jellyseerr
     ports:
       - "5055:5055"
@@ -31,11 +50,16 @@ services:
       - /opt/homelab/jellyseerr/config:/app/config
     environment:
       - TZ=${TZ}
-      - LOG_LEVEL=debug
+      - LOG_LEVEL=info
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "wget", "-qO-", "http://localhost:5055/api/v1/status"]
+    mem_limit: 1g
 
+  # ---------------------------------------------------------------- acquisition
   radarr:
     <<: *base
-    image: lscr.io/linuxserver/radarr:latest
+    image: lscr.io/linuxserver/radarr:6.1.1.10360-ls300@sha256:b01097ad2d948c9f5eca39eb60bb529e2e55b0738c4bf7db09383bef0abab59d
     container_name: radarr
     ports:
       - "7878:7878"
@@ -47,10 +71,14 @@ services:
       - TZ=${TZ}
       - PUID=1000
       - PGID=1000
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "http://localhost:7878/ping"]
+    mem_limit: 1g
 
   sonarr:
     <<: *base
-    image: lscr.io/linuxserver/sonarr:latest
+    image: lscr.io/linuxserver/sonarr:4.0.17.2952-ls309@sha256:3580aec3802c915f0f819a88d5099abce61734b925732b8393d176b5dc561020
     container_name: sonarr
     ports:
       - "8989:8989"
@@ -62,10 +90,14 @@ services:
       - TZ=${TZ}
       - PUID=1000
       - PGID=1000
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "http://localhost:8989/ping"]
+    mem_limit: 1g
 
   prowlarr:
     <<: *base
-    image: lscr.io/linuxserver/prowlarr:latest
+    image: lscr.io/linuxserver/prowlarr:2.3.5.5327-ls144@sha256:b4204e18666179472225935b443a99cf6c66dcb7bbc2d35034427a3851f13135
     container_name: prowlarr
     ports:
       - "9696:9696"
@@ -75,10 +107,14 @@ services:
       - TZ=${TZ}
       - PUID=1000
       - PGID=1000
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "http://localhost:9696/ping"]
+    mem_limit: 512m
 
   gluetun:
     <<: *base
-    image: qmcgaw/gluetun:latest
+    image: qmcgaw/gluetun:latest@sha256:bc38477325577b747de8b5667daba6947064f11a96f1b27109c2a554f686598f
     container_name: gluetun
     cap_add:
       - NET_ADMIN
@@ -101,10 +137,11 @@ services:
       - HEALTH_VPN_DURATION_INITIAL=60s
     volumes:
       - /opt/homelab/gluetun:/gluetun
-      - /opt/homelab/scripts:/gluetun/scripts:ro
+      - /opt/homelab/hooks:/gluetun/scripts:ro
+    mem_limit: 256m
 
   qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:latest
+    image: lscr.io/linuxserver/qbittorrent:5.1.4-r3-ls452@sha256:3679a75dd2304b695525d83a4ff14c458708b5da4a7ce53044240932139590e1
     container_name: qbittorrent
     network_mode: "service:gluetun"
     depends_on:
@@ -118,11 +155,34 @@ services:
       - PUID=1000
       - PGID=1000
       - WEBUI_PORT=8080
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v2/app/version"]
     restart: unless-stopped
+    logging: *logging
+    mem_limit: 3g
+
+  pyload:
+    <<: *base
+    image: lscr.io/linuxserver/pyload-ng:0.5.0b3.dev99-ls232@sha256:e56fc95db70171facd6a61c0e55075a9b75cf99896b111eebc48f3df4b72b47d
+    container_name: pyload
+    ports:
+      - "8000:8000"
+    volumes:
+      - /opt/homelab/pyload/config:/config
+      - /opt/homelab/library/downloads:/downloads
+    environment:
+      - TZ=${TZ}
+      - PUID=1000
+      - PGID=1000
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8000/"]
+    mem_limit: 512m
 
   filebrowser:
     <<: *base
-    image: filebrowser/filebrowser:latest
+    image: filebrowser/filebrowser:v2.63.2@sha256:4dce87308b9f9cfbcf8d0a284fc9565d2b515530a6bae2d920b388161e093f26
     container_name: filebrowser
     user: 1000:1000
     volumes:
@@ -134,93 +194,12 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=${TZ}
+    mem_limit: 256m
 
-  homarr:
-    <<: *base
-    image: ghcr.io/homarr-labs/homarr:v1.59.3
-    container_name: homarr
-    ports:
-      - "7575:7575"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /opt/homelab/homarr:/appdata
-    environment:
-      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
-      - TZ=${TZ}
-
-  glances:
-    <<: *base
-    image: nicolargo/glances:latest
-    container_name: glances
-    pid: host
-    privileged: true
-    ports:
-      - "61208:61208"
-    environment:
-      - GLANCES_OPT=-w --disable-plugin sensors,raid,wifi,smart,connections,processlist,processcount,ports,ip,amps,folders,alert,diskio,docker,containers,programlist,help,load,memswap,now,percpu,psutilversion
-      - TZ=${TZ}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /:/rootfs:ro
-
-  influxdb:
-    <<: *base
-    image: influxdb:2
-    container_name: influxdb
-    ports:
-      - "8086:8086"
-    volumes:
-      - /opt/homelab/influxdb/data:/var/lib/influxdb2
-      - /opt/homelab/influxdb/config:/etc/influxdb2
-    environment:
-      - TZ=${TZ}
-      - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_INIT_USERNAME}
-      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_INIT_PASSWORD}
-      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_INIT_ORG}
-      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_INIT_BUCKET}
-
-  grafana:
-    <<: *base
-    image: grafana/grafana:latest
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    volumes:
-      - /opt/homelab/grafana:/var/lib/grafana
-    environment:
-      - TZ=${TZ}
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
-      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
-
-  portainer:
-    <<: *base
-    image: portainer/portainer-ce:latest
-    container_name: portainer
-    ports:
-      - "9000:9000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /opt/homelab/portainer:/data
-
-  pyload:
-    <<: *base
-    image: lscr.io/linuxserver/pyload-ng:latest
-    container_name: pyload
-    ports:
-      - "8000:8000"
-    volumes:
-      - /opt/homelab/pyload/config:/config
-      - /opt/homelab/library/downloads:/downloads
-    environment:
-      - TZ=${TZ}
-      - PUID=1000
-      - PGID=1000
-
+  # ---------------------------------------------------------------- edge / accès
   npm:
     <<: *base
-    image: jc21/nginx-proxy-manager:latest
+    image: jc21/nginx-proxy-manager:2.14.0@sha256:2aa69b382a384b676c0d4f1d6f2eac40ecd478fcf7af1cfb3f9f1d3cd0c81e12
     container_name: npm
     ports:
       - "80:80"
@@ -229,10 +208,14 @@ services:
     volumes:
       - /opt/homelab/npm/data:/data
       - /opt/homelab/npm/letsencrypt:/etc/letsencrypt
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:81/api/"]
+    mem_limit: 512m
 
   duckdns:
     <<: *base
-    image: lscr.io/linuxserver/duckdns:latest
+    image: lscr.io/linuxserver/duckdns:36a2e3a3-ls78@sha256:abbeb230a2d670c7b4182f3df92b98d5ce6874dd6459c8a640746940782bb68b
     container_name: duckdns
     environment:
       - TZ=${TZ}
@@ -241,26 +224,34 @@ services:
       - SUBDOMAINS=${DUCKDNS_SUBDOMAIN}
       - TOKEN=${DUCKDNS_TOKEN}
       - LOG_FILE=true
+    mem_limit: 128m
 
-  telegraf:
+  guacdb:
     <<: *base
-    image: telegraf:latest
-    container_name: telegraf
-    group_add:
-      - 986
-    volumes:
-      - /opt/homelab/telegraf/etc/telegraf.conf:/etc/telegraf/telegraf.conf:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /:/hostfs:ro
+    image: mysql:8.0@sha256:d0304ed9fdb64a3f6c7ad11a5fb4f13abfc10e6dfa3f288d652e7320c34df7f9
+    container_name: guacdb
     environment:
-      - HOST_MOUNT_PREFIX=/hostfs
-      - HOST_PROC=/hostfs/proc
-      - HOST_SYS=/hostfs/sys
-      - HOST_ETC=/hostfs/etc
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${GUACAMOLE_DB_NAME}
+      MYSQL_USER: ${GUACAMOLE_DB_USER}
+      MYSQL_PASSWORD: ${MYSQL_USER_PASSWORD}
+    volumes:
+      - /opt/homelab/guacamole/mysql:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+    mem_limit: 768m
+
+  guacd:
+    <<: *base
+    image: guacamole/guacd:1.6.0@sha256:2d266a525a72ad55d8ea7cd4ca8342a1b44075759b03660d8684821b3636a922
+    container_name: guacd
+    mem_limit: 512m
 
   guacamole:
     <<: *base
-    image: guacamole/guacamole:latest
+    image: guacamole/guacamole:1.6.0@sha256:023af83227f5ddb71a42d03cda19b48c742a904314da4c02eaabb8b305b3e690
     container_name: guacamole
     environment:
       GUACD_HOSTNAME: guacd
@@ -271,26 +262,14 @@ services:
     ports:
       - "8081:8080"
     depends_on:
-      - guacd
-      - guacdb
-
-  guacd:
-    <<: *base
-    image: guacamole/guacd:latest
-    container_name: guacd
-
-  guacdb:
-    <<: *base
-    image: mysql:8.0
-    container_name: guacdb
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${GUACAMOLE_DB_NAME}
-      MYSQL_USER: ${GUACAMOLE_DB_USER}
-      MYSQL_PASSWORD: ${MYSQL_USER_PASSWORD}
-    volumes:
-      - /opt/homelab/guacamole/mysql:/var/lib/mysql
-    command: --default-authentication-plugin=mysql_native_password
+      guacdb:
+        condition: service_healthy
+      guacd:
+        condition: service_started
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/guacamole/"]
+    mem_limit: 1g
 
   onboarder:
     <<: *base
@@ -309,6 +288,140 @@ services:
       - JELLYSEERR_URL=http://jellyseerr:5055
       - JELLYFIN_PUBLIC_URL=${JELLYFIN_PUBLIC_URL}
       - JELLYSEERR_PUBLIC_URL=${JELLYSEERR_PUBLIC_URL}
+    mem_limit: 256m
+
+  # ---------------------------------------------------------------- dashboards / admin
+  homarr:
+    <<: *base
+    image: ghcr.io/homarr-labs/homarr:v1.59.3@sha256:4ffa0d4b24e390fd0050a18103ecfcb009357f6b3a25409fd4dd8cb0b9f3443e
+    container_name: homarr
+    ports:
+      - "7575:7575"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/homelab/homarr:/appdata
+    environment:
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
+      - TZ=${TZ}
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "wget", "-qO-", "http://localhost:7575/api/health/live"]
+    mem_limit: 768m
+
+  portainer:
+    <<: *base
+    image: portainer/portainer-ce:2.39.1@sha256:1ae8e65d50ca5498cb2c33e617495a1e3ef245b0d2392b4a44c70ae09b822891
+    container_name: portainer
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/homelab/portainer:/data
+    mem_limit: 256m
+
+  # ---------------------------------------------------------------- observabilité
+  influxdb:
+    <<: *base
+    image: influxdb:2.8.0@sha256:71f2bce68b47a3e26c1ed38f7480a9372b008ba9b7c8a35cb2c913d3102d377f
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - /opt/homelab/influxdb/data:/var/lib/influxdb2
+      - /opt/homelab/influxdb/config:/etc/influxdb2
+    environment:
+      - TZ=${TZ}
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_INIT_USERNAME}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_INIT_PASSWORD}
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_INIT_ORG}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_INIT_BUCKET}
+      - INFLUXD_STORAGE_CACHE_MAX_MEMORY_SIZE=536870912
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8086/health"]
+    mem_limit: 1536m
+
+  telegraf:
+    <<: *base
+    image: telegraf:1.38.3@sha256:88eb354ac9926d70791b70558d69644b527b3c7e6f02c2af9165038a3e306a6d
+    container_name: telegraf
+    group_add:
+      - 986
+    volumes:
+      - /opt/homelab/telegraf/etc/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/hostfs:ro
+    environment:
+      - HOST_MOUNT_PREFIX=/hostfs
+      - HOST_PROC=/hostfs/proc
+      - HOST_SYS=/hostfs/sys
+      - HOST_ETC=/hostfs/etc
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    mem_limit: 256m
+
+  grafana:
+    <<: *base
+    image: grafana/grafana:13.0.1@sha256:0f86bada30d65ef9d0183b90c1e2682ac92d53d95da8bed322b984ea78a4a73a
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - /opt/homelab/grafana:/var/lib/grafana
+    environment:
+      - TZ=${TZ}
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3000/api/health"]
+    mem_limit: 512m
+
+  glances:
+    <<: *base
+    image: nicolargo/glances:v4.5.4@sha256:8e138cbfa3cf1eea59633e3a173c38b0c98267db9d506bf47c2a20678c9e9f37
+    container_name: glances
+    pid: host
+    privileged: true
+    ports:
+      - "61208:61208"
+    environment:
+      - GLANCES_OPT=-w --disable-plugin sensors,raid,wifi,smart,connections,processlist,processcount,ports,ip,amps,folders,alert,diskio,docker,containers,programlist,help,load,memswap,now,percpu,psutilversion
+      - TZ=${TZ}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/rootfs:ro
+    mem_limit: 256m
+
+  diun:
+    <<: *base
+    image: ghcr.io/crazy-max/diun:4.33.0@sha256:e324b793eb32dfb7f74d3a39421ebf090141caaadee69b8f78da63112408ee25
+    container_name: diun
+    command: serve
+    volumes:
+      - /opt/homelab/diun:/data
+    environment:
+      - TZ=${TZ}
+      - LOG_LEVEL=info
+      - DIUN_WATCH_WORKERS=4
+      - DIUN_WATCH_SCHEDULE=0 8 * * *
+      - DIUN_WATCH_JITTER=30s
+      - DIUN_WATCH_FIRSTCHECKNOTIF=false
+      - DIUN_PROVIDERS_FILE_FILENAME=/data/images.yml
+      - DIUN_NOTIF_MAIL_HOST=${SMTP_HOST}
+      - DIUN_NOTIF_MAIL_PORT=${SMTP_PORT}
+      - DIUN_NOTIF_MAIL_SSL=true
+      - DIUN_NOTIF_MAIL_USERNAME=${SMTP_USER}
+      - DIUN_NOTIF_MAIL_PASSWORD=${SMTP_PASS}
+      - DIUN_NOTIF_MAIL_FROM=${SMTP_FROM}
+      - DIUN_NOTIF_MAIL_TO=${ADMIN_EMAIL}
+    mem_limit: 128m
 
 networks:
   homelab:
