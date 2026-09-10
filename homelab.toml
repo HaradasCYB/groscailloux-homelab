@@ -1,0 +1,86 @@
+# Configuration de homelabd / homelabctl (non secrète, versionnée).
+# Les secrets (clés API, SMTP, token) viennent de /opt/homelab/.env.
+# Toute clé inconnue est refusée au démarrage.
+
+[paths]
+base = "/opt/homelab"
+downloads = "/opt/homelab/library/downloads"   # surveillé par auto_import
+downloads_in_container = "/downloads"           # même dossier vu par les Arrs et qBittorrent
+state_file = "/opt/homelab/state/homelabd.json"
+backups = "/opt/homelab/backups"
+
+[urls]
+sonarr = "http://localhost:8989"
+radarr = "http://localhost:7878"
+prowlarr = "http://localhost:9696"
+qbittorrent = "http://localhost:8080"
+jellyfin = "http://localhost:8096"
+jellyseerr = "http://localhost:5055"
+
+[web]
+listen = "0.0.0.0:8765"
+rate_limit_secs = 30
+
+[tasks]
+# Tâches non planifiées par le daemon (restent lançables via `homelabctl run`).
+disabled = []
+
+[tasks.tracker_ratio]
+interval_secs = 1800
+# c411 : seed illimité ; ygg/u2p + publics : 2.0 / 14 j ; défaut : 1.0 / 7 j
+unlimited = ["c411.org"]
+secondary = ["yggleak", "u2p", "ygg.gratis"]
+public_ratio = 2.0
+public_time_min = 20160
+default_ratio = 1.0
+default_time_min = 10080
+
+[tasks.stuck_handler]
+interval_secs = 300
+stall_secs = 28800          # 8 h bloqué avant remplacement
+max_actions_per_run = 5
+pattern = "stalled|metadata|no connections"
+
+[tasks.disk_pressure]
+interval_secs = 900
+hard_pct = 95               # supprime les torrents arrêtés les plus anciens
+crit_pct = 98               # log seulement, action manuelle
+max_actions_per_run = 5
+
+[tasks.tba_bypass]
+interval_secs = 300
+
+[tasks.monitor_sync]
+interval_secs = 600
+
+[tasks.user_poller]
+interval_secs = 60
+max_age_secs = 600
+admin_user_id = 1
+
+[auto_import]
+enabled = true
+settle_secs = 5
+archive_stable_checks = 3
+archive_max_wait_secs = 1800
+radarr_root = "/movies"
+sonarr_root = "/tv"
+
+[cleanup]
+interval_secs = 86400
+transcodes_dir = "/opt/homelab/jellyfin/cache/transcodes"
+transcodes_max_age_days = 1
+empty_download_dirs_max_age_days = 2
+recycle_dirs = ["/opt/homelab/library/media/movies/.recycle", "/opt/homelab/library/media/tvshows/.recycle"]
+recycle_max_age_days = 14
+jellyfin_log_dir = "/opt/homelab/jellyfin/config/log"
+jellyfin_log_max_age_days = 7
+
+[backup]
+excludes = ["library", "backups", "influxdb", "jellyfin/cache", "jellyfin/config/log", "target", "logs"]
+keep_last = 4
+mysql_container = "guacdb"
+
+[vpn]
+qbit_conf = "/opt/homelab/qbittorrent/config/qBittorrent/qBittorrent.conf"
+npm_server_name = "qbittorrent."

@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly homelab state backup
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

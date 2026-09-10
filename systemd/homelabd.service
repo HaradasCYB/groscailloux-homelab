@@ -1,0 +1,23 @@
+[Unit]
+Description=Homelab automation daemon (scheduler, auto-import watcher, onboarder)
+After=network-online.target docker.service homelab-stack.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+SupplementaryGroups=docker
+WorkingDirectory=/opt/homelab
+EnvironmentFile=/opt/homelab/.env
+ExecStart=/usr/local/bin/homelabd --config /opt/homelab/homelab.toml
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/homelab/state /opt/homelab/library /opt/homelab/jellyfin/cache/transcodes /opt/homelab/jellyfin/config/log
+
+[Install]
+WantedBy=multi-user.target

@@ -112,8 +112,11 @@ services:
       test: ["CMD", "curl", "-fsS", "http://localhost:9696/ping"]
     mem_limit: 512m
 
+  # Profils : COMPOSE_PROFILES=vpn (défaut, .env) → gluetun + qbittorrent ;
+  # COMPOSE_PROFILES=novpn → qbittorrent-direct. Bascule via `homelabctl vpn on|off`.
   gluetun:
     <<: *base
+    profiles: ["vpn"]
     image: qmcgaw/gluetun:latest@sha256:bc38477325577b747de8b5667daba6947064f11a96f1b27109c2a554f686598f
     container_name: gluetun
     cap_add:
@@ -141,6 +144,7 @@ services:
     mem_limit: 256m
 
   qbittorrent:
+    profiles: ["vpn"]
     image: lscr.io/linuxserver/qbittorrent:5.1.4-r3-ls452@sha256:3679a75dd2304b695525d83a4ff14c458708b5da4a7ce53044240932139590e1
     container_name: qbittorrent
     network_mode: "service:gluetun"
@@ -160,6 +164,29 @@ services:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v2/app/version"]
     restart: unless-stopped
     logging: *logging
+    mem_limit: 3g
+
+  # Variante sans VPN : même config, ports exposés directement (jamais en même temps que gluetun).
+  qbittorrent-direct:
+    <<: *base
+    profiles: ["novpn"]
+    image: lscr.io/linuxserver/qbittorrent:5.1.4-r3-ls452@sha256:3679a75dd2304b695525d83a4ff14c458708b5da4a7ce53044240932139590e1
+    container_name: qbittorrent-direct
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+    volumes:
+      - /opt/homelab/qbittorrent/config:/config
+      - /opt/homelab/library/downloads:/downloads
+    environment:
+      - TZ=${TZ}
+      - PUID=1000
+      - PGID=1000
+      - WEBUI_PORT=8080
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v2/app/version"]
     mem_limit: 3g
 
   pyload:

@@ -1,0 +1,10 @@
+[Unit]
+Description=Homelab state backup (tar+zstd of service state, guacdb dump)
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/homelab
+ExecStart=/usr/local/bin/homelabctl backup
+Nice=10
+IOSchedulingClass=idle

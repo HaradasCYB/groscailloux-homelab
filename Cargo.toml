@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["crates/homelab-core", "crates/homelabd", "crates/homelabctl"]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/HaradasCYB/groscailloux-homelab"
+
+[workspace.dependencies]
+homelab-core = { path = "crates/homelab-core" }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-journald = "0.3"
+regex = "1"
+clap = { version = "4", features = ["derive", "env"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+rand = "0.8"
+async-trait = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
+opt-level = 2

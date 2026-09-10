@@ -1,0 +1,26 @@
+[package]
+name = "homelab-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+regex.workspace = true
+chrono.workspace = true
+rand.workspace = true
+async-trait.workspace = true
+dotenvy = "0.15"
+nix = { version = "0.29", features = ["fs"] }
+walkdir = "2"
+tempfile = "3"
+
+[dev-dependencies]
+wiremock = "0.6"
