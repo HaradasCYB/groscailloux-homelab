@@ -2,9 +2,8 @@ name: rust
 on:
   push:
     branches: [main, v2]
-    paths: [Cargo.toml, Cargo.lock, rust-toolchain.toml, "crates/**", .github/workflows/rust.yml]
   pull_request:
-    paths: [Cargo.toml, Cargo.lock, rust-toolchain.toml, "crates/**"]
+  workflow_dispatch:
 env:
   CARGO_TERM_COLOR: always
 jobs:
