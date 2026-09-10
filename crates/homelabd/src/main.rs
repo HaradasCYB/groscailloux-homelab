@@ -31,22 +31,25 @@ struct Args {
     no_watcher: bool,
 }
 
+/// Sous systemd, stdout part dans le journal : format compact sans couleur ni
+/// horodatage (journald les fournit), champs inline pour rester greppable.
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let under_systemd = std::env::var_os("JOURNAL_STREAM").is_some();
-    let registry = tracing_subscriber::registry().with(filter);
+    let layer = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .with_ansi(!under_systemd);
     if under_systemd {
-        match tracing_journald::layer() {
-            Ok(layer) => {
-                registry.with(layer).init();
-                return;
-            }
-            Err(e) => eprintln!("journald indisponible ({e}), fallback stderr"),
-        }
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(layer.without_time().compact())
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(layer)
+            .init();
     }
-    registry
-        .with(tracing_subscriber::fmt::layer().with_target(false))
-        .init();
 }
 
 fn env_flag(name: &str) -> bool {

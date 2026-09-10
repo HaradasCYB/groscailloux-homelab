@@ -1,0 +1,21 @@
+name: compose-validate
+on:
+  push:
+    branches: [main, v2]
+    paths: [docker-compose.yml, .env.example, .github/workflows/compose-validate.yml]
+  pull_request:
+    paths: [docker-compose.yml, .env.example]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose config (vpn profile)
+        run: docker compose --env-file .env.example config --quiet
+      - name: docker compose config (novpn profile)
+        run: COMPOSE_PROFILES=novpn docker compose --env-file .env.example config --quiet
+      - name: images are pinned by digest
+        run: |
+          if grep -E '^\s+image:' docker-compose.yml | grep -v '@sha256:'; then
+            echo "::error::toutes les images doivent être pinnées tag@sha256"; exit 1
+          fi

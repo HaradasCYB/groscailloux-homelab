@@ -1,60 +1,62 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guide pour Claude Code dans ce dépôt. Lire aussi ARCHITECTURE.md et AUTOMATION.md.
 
-## What this repo is
+## Ce qu'est ce dépôt
 
-A single-host self-hosted "homelab" stack defined entirely by `docker-compose.yml` plus a couple of helper shell scripts. Not a git repo — changes are made in place on the host (`/opt/homelab`) and applied with `docker compose`. There is no build step, test suite, or CI; "deploy" means restarting containers.
+`/opt/homelab` est **à la fois** le dépôt git (branche `v2`, remote `HaradasCYB/groscailloux-homelab`)
+et le répertoire de production : compose, config et code Rust sont versionnés ; l'état des
+services (`<service>/`), `library/`, `backups/`, `state/`, `logs/` et `.env` sont ignorés par
+git. « Déployer » = `docker compose up -d` pour les conteneurs, `cargo build` + `install` +
+`systemctl restart homelabd` pour l'automatisation (`sudo ./setup.sh` fait tout).
 
-## Common commands
+## Commandes
 
 ```bash
-# Apply changes after editing docker-compose.yml
-docker compose up -d                      # recreate only changed services
-docker compose up -d --force-recreate <svc>
+docker compose config --quiet             # TOUJOURS avant un up -d
+docker compose up -d [svc]                # recrée seulement ce qui a changé
+docker compose ps ; docker compose logs -f <svc>
 
-# Inspect
-docker compose ps
-docker compose logs -f <service>          # e.g. radarr, jellyfin, npm
-docker exec -it <service> sh
+cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test
+cargo build --release --target x86_64-unknown-linux-musl -j4      # laisser 2 vCPU à Jellyfin
+sudo install target/x86_64-unknown-linux-musl/release/homelab{d,ctl} /usr/local/bin/ && sudo systemctl restart homelabd
 
-# Pull newer images for the :latest tags
-docker compose pull && docker compose up -d
-
-# Auto-import watcher (runs continuously, intended to be backgrounded / under systemd)
-./auto-import.sh                          # tails its log at /opt/homelab/logs/auto-import.log
-
-# Force a Jellyfin library rescan
-./refresh-jellyfin.sh
+homelabctl check | list | status | run <task> --dry-run | onboard | vpn | backup
+journalctl -u homelabd -f
 ```
 
-There are no lint/test commands — config is YAML and bash. When editing `docker-compose.yml`, validate with `docker compose config` before `up -d`.
+## Règles
 
-## Architecture — how the services fit together
+- **Secrets** : uniquement dans `.env`. Ne jamais mettre une valeur en dur dans compose, TOML,
+  code, scripts ou docs ; ne jamais coller `.env`, `backups/` ou une config de service dans un
+  outil externe. Les scripts `scripts/*.sh` restants sourcent `.env`.
+- **Images** : pinnées `tag@sha256`. Pour mettre à jour : nouveau tag + digest (`docker pull`
+  puis `docker image inspect --format '{{index .RepoDigests 0}}'`), `up -d <svc>`, mettre
+  `diun/images.yml` en cohérence. Pas de `:latest` nu.
+- **Pas de `chown -R /opt/homelab`** : npm/, homarr/ (root), grafana/ (472), guacamole/mysql (999).
+- **qBittorrent.conf** : arrêter le conteneur avant d'éditer, sinon il écrase le fichier.
+- **Jamais de purge globale** de queue ou de torrents : toute suppression est ciblée et
+  plafonnée (`max_actions_per_run`), c'est un invariant des tâches `stuck_handler`/`disk_pressure`.
+- **Sonarr** : profil 6 `minFormatScore=-9999` (FR d'abord, VOSTFR toléré) ; C411 en
+  interactif seulement. **Jellyfin** : pas de GPU, préférer x264 à HEVC.
+- **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
+  `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
+- **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans
+  `registry()`, section `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run respecté,
+  tests unitaires de la décision, paragraphe dans AUTOMATION.md.
+- **Changement de comportement** = changement de `homelab.toml` (seuils, intervalles) avant
+  changement de code. Les valeurs par défaut du code doivent rester égales à celles du TOML.
+- **Reboot** : `homelab-stack.service` relance compose ; vérifier `docker compose ps` et
+  `systemctl status homelabd` après.
+- Les anciens scripts bash de `scripts/` ne sont plus planifiés ; ils restent comme référence
+  jusqu'à suppression et ne doivent pas être relancés en parallèle de homelabd hors dry-run.
 
-All ~20 services share one user-defined bridge network named `homelab`, so services address each other by container name on their internal port (e.g. `http://radarr:7878`, `http://influxdb:8086`). Host port mappings exist for the UIs but **inter-service URLs in configs must use the container name**, not `localhost` or the host IP.
+## Pièges connus
 
-Three pipelines run on top of this network:
-
-**1. Media acquisition → playback.** Jellyseerr (5055) takes user requests and hands them to Radarr (7878, movies) / Sonarr (8989, TV). Those query Prowlarr (9696) — the unified indexer manager that also feeds Jackett (9117) — and dispatch downloads to qBittorrent (8080) or pyLoad (8000). Flaresolverr (8191) sits behind Prowlarr to bypass Cloudflare on indexer scrapes. All downloaders write to a single shared volume `/opt/homelab/downloads` (mounted into qbittorrent, pyload, radarr, sonarr at `/downloads`). Radarr/Sonarr move completed files into `/opt/homelab/media/{movies,tvshows}`, which Jellyfin (8096) serves read-only from `/media`.
-
-**2. Auto-import bridge.** `auto-import.sh` is the glue between *direct* downloads (pyLoad, manual drops) and the Arr stack. It `inotifywait`s `/opt/homelab/downloads`, pattern-matches filenames against `S\d+E\d+` to classify movie vs. series, and POSTs `DownloadedMoviesScan` / `DownloadedEpisodesScan` to Radarr/Sonarr's `/api/v3/command` endpoints. **API keys are hardcoded in the script** — if you rotate them in the Arr UIs you must update `auto-import.sh` too. The script runs on the host (not in a container) and reaches the Arrs via the container names `radarr`/`sonarr`, which only resolve from inside the `homelab` network — so it's expected to be run via `docker compose run` or with the host's resolver pointed at Docker's embedded DNS, **or** the URLs need to change to `http://localhost:7878` / `:8989`. Check how it's actually launched before assuming it works as-is.
-
-**3. Observability.** Telegraf collects host + Docker metrics (it bind-mounts `/`, `/var/run/docker.sock`, and `HOST_PROC=/hostfs/proc`) and writes to InfluxDB v2 (8086, org `homelab`, bucket `metrics`). Grafana (3000) reads from InfluxDB. The Telegraf → InfluxDB token is in `telegraf/etc/telegraf.conf`; rotating the InfluxDB token requires updating that file and restarting Telegraf.
-
-**Edge / access.** Nginx Proxy Manager (`npm`, ports 80/81/443) is the public reverse proxy and TLS terminator (Let's Encrypt data lives in `npm/letsencrypt`). DuckDNS keeps `groscaillouxmovie.duckdns.org` pointed at the host. A `cloudflared` directory exists but is currently empty — Cloudflare Tunnel is not active. Guacamole stack (guacamole + guacd + guacdb MySQL) on 8081 provides browser-based remote desktop. Homarr (7575) is the dashboard; Portainer (9000) is the Docker UI.
-
-## State and persistence layout
-
-Each service's mutable state lives in `/opt/homelab/<service>/` (usually `config/`) and is bind-mounted, **not** in named Docker volumes. This means:
-- Backups = `tar` of `/opt/homelab/<service>/`. There's a `jellyseerr-backup-20260501/` showing the convention.
-- A `docker compose down -v` will *not* delete service state (no named volumes), but `rm -rf` of a service dir will.
-- File ownership matters: most LinuxServer.io images run as `PUID=1000:PGID=1000` (the `deploy` user); Grafana's dir is owned by uid `472`; Jellyfin runs as `1000:1000` directly. Don't `chown -R` blindly across `/opt/homelab`.
-
-## Conventions and gotchas
-
-- **`SECRET_ENCRYPTION_KEY` is set on every service** with the same value. It's only meaningful to Jellyseerr and Homarr; for the others it's harmless noise. Don't treat its presence as evidence a service uses it.
-- **`TZ=Europe/Paris` appears twice** in many service blocks — duplicate env keys, the second wins, both are the same value, so it's cosmetic. Safe to dedupe when touching a block.
-- **Secrets are committed in plaintext** in `docker-compose.yml` and `auto-import.sh` (InfluxDB password, Grafana admin, MySQL passwords, DuckDNS token, Arr API keys). Treat the whole working tree as sensitive; don't paste it into external tools.
-- **No `version:` key** in the compose file — relies on Compose v2 defaults. Don't add one back; modern Compose warns about it.
-- The `jellyseerr` image `ghcr.io/seerr-team/seerr:latest` is unusual (the canonical image is `fallenbagel/jellyseerr`). If it fails to pull, that's likely why — verify before swapping.
+- `.env` est lu par bash (`.` ), compose et dotenvy : pas d'expression shell, guillemets seulement
+  autour des valeurs avec espaces.
+- Le hook `hooks/qbit-update-port.sh` s'exécute dans l'image gluetun (busybox) : POSIX sh,
+  `wget` uniquement.
+- `GET /api/v3/manualimport` de Sonarr dure ~25 s sur un gros `/downloads` (timeout 5 min).
+- Prowlarr n'a aucune application configurée : les indexers vivent dans Sonarr/Radarr.
+- L'UI d'onboarding est sur l'hôte (8766) ; NPM doit cibler `172.18.0.1:8766`, pas un conteneur.

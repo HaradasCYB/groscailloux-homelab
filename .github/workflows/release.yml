@@ -1,0 +1,30 @@
+name: release
+on:
+  push:
+    tags: ["v2.*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo test
+      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: package
+        run: |
+          mkdir -p dist
+          tar -czf dist/homelab-x86_64-unknown-linux-musl.tar.gz \
+            -C target/x86_64-unknown-linux-musl/release homelabd homelabctl
+          (cd dist && sha256sum homelab-x86_64-unknown-linux-musl.tar.gz > SHA256SUMS)
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/homelab-x86_64-unknown-linux-musl.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true

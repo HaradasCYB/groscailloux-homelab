@@ -19,7 +19,6 @@ anyhow = "1"
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-tracing-journald = "0.3"
 regex = "1"
 clap = { version = "4", features = ["derive", "env"] }
 chrono = { version = "0.4", features = ["serde", "clock"] }
