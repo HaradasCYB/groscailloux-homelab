@@ -298,25 +298,6 @@ services:
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/guacamole/"]
     mem_limit: 1g
 
-  onboarder:
-    <<: *base
-    build: ./onboarder
-    container_name: onboarder
-    ports:
-      - "8765:8765"
-    volumes:
-      - /opt/homelab/scripts:/scripts:ro
-    env_file:
-      - /opt/homelab/.env
-    environment:
-      - TZ=${TZ}
-      - ONBOARD_SCRIPT=/scripts/homelab-onboard-user.sh
-      - JELLYFIN_URL=http://jellyfin:8096
-      - JELLYSEERR_URL=http://jellyseerr:5055
-      - JELLYFIN_PUBLIC_URL=${JELLYFIN_PUBLIC_URL}
-      - JELLYSEERR_PUBLIC_URL=${JELLYSEERR_PUBLIC_URL}
-    mem_limit: 256m
-
   # ---------------------------------------------------------------- dashboards / admin
   homarr:
     <<: *base

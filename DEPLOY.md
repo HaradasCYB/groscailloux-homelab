@@ -34,6 +34,8 @@ Réglages à faire une fois dans les UIs :
 - Jellyseerr : lier Jellyfin, Sonarr, Radarr ; clé API.
 - NPM : proxy hosts `<svc>.<domaine>` → `<container>:<port>` ; pour l'onboarder :
   `172.18.0.1:8766` (homelabd tourne sur l'hôte, 172.18.0.1 = passerelle du réseau `homelab`).
+  Avec ufw actif, autoriser ce flux conteneur → hôte :
+  `sudo ufw allow from 172.18.0.0/16 to any port 8766 proto tcp comment 'homelabd via NPM'`.
 - Grafana : datasource InfluxDB (org/bucket de `.env`, token `INFLUX_TOKEN`).
 
 ## Mise à jour d'une installation existante
