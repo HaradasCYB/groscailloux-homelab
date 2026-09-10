@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Groscailloux — Onboarder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🪨%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg-1: #0f0c1d;
+    --bg-2: #1a1530;
+    --bg-3: #2a2347;
+    --accent: #8b5cf6;
+    --accent-glow: rgba(139, 92, 246, 0.4);
+    --accent-2: #ec4899;
+    --text: #e8e6f0;
+    --text-dim: #9b94b8;
+    --border: #3a325a;
+    --success: #10b981;
+    --error: #ef4444;
+    --shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+    background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 50%, var(--bg-3) 100%);
+    background-attachment: fixed;
+    color: var(--text);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; overflow-x: hidden;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(circle at 20% 20%, var(--accent-glow) 0%, transparent 40%),
+      radial-gradient(circle at 80% 80%, rgba(236, 72, 153, 0.2) 0%, transparent 40%);
+    animation: pulse 8s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 0.4; }
+    50% { opacity: 0.7; }
+  }
+  .card {
+    width: 100%; max-width: 480px;
+    background: rgba(26, 21, 48, 0.85);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    border-radius: 20px; padding: 40px 36px;
+    box-shadow: var(--shadow);
+    position: relative; z-index: 1;
+    animation: fadeIn 0.5s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .header { text-align: center; margin-bottom: 32px; }
+  .logo {
+    font-size: 56px; line-height: 1; margin-bottom: 12px;
+    filter: drop-shadow(0 0 20px var(--accent-glow));
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%,100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  h1 {
+    margin: 0 0 6px; font-size: 24px; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .subtitle { color: var(--text-dim); font-size: 14px; margin: 0; }
+
+  form { display: flex; flex-direction: column; gap: 20px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  label { font-size: 13px; color: var(--text-dim); font-weight: 500; letter-spacing: 0.3px; }
+  input {
+    background: rgba(15, 12, 29, 0.6); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px;
+    color: var(--text); font-size: 15px; font-family: inherit;
+    transition: all 0.2s ease;
+  }
+  input:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+  input::placeholder { color: var(--text-dim); opacity: 0.5; }
+
+  button {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    color: white; border: none; border-radius: 12px;
+    padding: 16px; font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: all 0.2s ease;
+    box-shadow: 0 4px 20px var(--accent-glow);
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+  }
+  button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 30px var(--accent-glow); }
+  button:active:not(:disabled) { transform: translateY(0); }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .spinner {
+    width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white; border-radius: 50%;
+    animation: spin 0.8s linear infinite; display: none;
+  }
+  button.loading .spinner { display: inline-block; }
+  button.loading .label { opacity: 0.8; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .result {
+    margin-top: 24px; padding: 24px; border-radius: 14px;
+    background: rgba(15, 12, 29, 0.7);
+    border: 1px solid var(--border);
+    display: none; animation: fadeIn 0.4s ease;
+  }
+  .result.visible { display: block; }
+  .result.success { border-color: var(--success); }
+  .result.error { border-color: var(--error); }
+  .result-title {
+    margin: 0 0 16px; font-size: 16px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .result.success .result-title { color: var(--success); }
+  .result.error .result-title { color: var(--error); }
+
+  .creds {
+    background: rgba(0,0,0,0.3); border-radius: 10px; padding: 16px;
+    font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", monospace;
+    font-size: 13px; line-height: 1.7; word-break: break-all;
+  }
+  .creds .key { color: var(--accent); }
+  .creds .val { color: var(--text); }
+  .creds .pwd { color: var(--accent-2); font-weight: 600; }
+
+  .actions { display: flex; gap: 8px; margin-top: 16px; }
+  .actions button { flex: 1; padding: 10px; font-size: 13px; }
+
+  .btn-secondary {
+    background: rgba(139, 92, 246, 0.15); color: var(--accent);
+    border: 1px solid var(--border); box-shadow: none;
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: rgba(139, 92, 246, 0.25); transform: none;
+    box-shadow: none;
+  }
+
+  .error-msg {
+    color: var(--error); font-size: 14px; margin: 0; line-height: 1.5;
+  }
+
+  details { margin-top: 12px; }
+  details summary {
+    cursor: pointer; color: var(--text-dim); font-size: 12px;
+    user-select: none; padding: 4px 0;
+  }
+  details summary:hover { color: var(--text); }
+  details pre {
+    background: rgba(0,0,0,0.4); padding: 12px; border-radius: 8px;
+    font-size: 11px; overflow-x: auto; max-height: 200px; margin-top: 8px;
+    color: var(--text-dim);
+  }
+
+  .footer {
+    margin-top: 24px; text-align: center;
+    font-size: 11px; color: var(--text-dim);
+  }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(100px);
+    background: var(--success); color: white; padding: 12px 20px;
+    border-radius: 10px; font-size: 14px; font-weight: 500;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    transition: transform 0.3s ease; z-index: 100;
+  }
+  .toast.visible { transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="header">
+    <div class="logo">🪨</div>
+    <h1>Groscailloux</h1>
+    <p class="subtitle">Créer un nouveau compte utilisateur</p>
+  </div>
+
+  <form id="onboardForm">
+    <div class="field">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" placeholder="ex: hippo" required
+             pattern="[a-zA-Z0-9_-]{2,32}" autocomplete="off" autofocus>
+    </div>
+    <div class="field">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" placeholder="hippo@example.com" required autocomplete="off">
+    </div>
+    <button type="submit" id="submitBtn">
+      <span class="spinner"></span>
+      <span class="label">Créer le compte</span>
+    </button>
+  </form>
+
+  <div id="result" class="result"></div>
+
+  <div class="footer">
+    🎬 Jellyfin · 🎯 Jellyseerr · ✉️ Mail unifié
+  </div>
+</div>
+
+<div id="toast" class="toast">Copié !</div>
+
+<script>
+const form = document.getElementById('onboardForm');
+const btn = document.getElementById('submitBtn');
+const resultBox = document.getElementById('result');
+const toast = document.getElementById('toast');
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('visible');
+  setTimeout(() => toast.classList.remove('visible'), 2000);
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(
+    () => showToast('Copié !'),
+    () => showToast('Échec de la copie')
+  );
+}
+
+function renderSuccess(data) {
+  const credsBlock = `Username : ${data.username}
+Email    : ${data.email}
+Password : ${data.password}
+
+🎬 Streaming  : ${data.jellyfin_url}
+🎯 Requêtes   : ${data.jellyseerr_url}`;
+
+  resultBox.className = 'result visible success';
+  resultBox.innerHTML = `
+    <h3 class="result-title">✓ Compte créé avec succès</h3>
+    <div class="creds">
+      <div><span class="key">Username</span> : <span class="val">${data.username}</span></div>
+      <div><span class="key">Email</span>    : <span class="val">${data.email}</span></div>
+      <div><span class="key">Password</span> : <span class="pwd">${data.password}</span></div>
+      <br>
+      <div>🎬 <span class="key">Streaming</span>  : <span class="val">${data.jellyfin_url}</span></div>
+      <div>🎯 <span class="key">Requêtes</span>   : <span class="val">${data.jellyseerr_url}</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn-secondary" id="copyBtn" type="button">📋 Copier les creds</button>
+      <button class="btn-secondary" id="newBtn" type="button">+ Nouveau compte</button>
+    </div>
+    <details>
+      <summary>Voir le log complet</summary>
+      <pre>${data.log}</pre>
+    </details>
+  `;
+  document.getElementById('copyBtn').onclick = () => copyToClipboard(credsBlock);
+  document.getElementById('newBtn').onclick = () => {
+    form.reset();
+    resultBox.className = 'result';
+    resultBox.innerHTML = '';
+    document.getElementById('username').focus();
+  };
+}
+
+function renderError(message, log) {
+  resultBox.className = 'result visible error';
+  resultBox.innerHTML = `
+    <h3 class="result-title">✗ Erreur</h3>
+    <p class="error-msg">${message}</p>
+    ${log ? `<details><summary>Voir le log</summary><pre>${log}</pre></details>` : ''}
+  `;
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  btn.classList.add('loading');
+  btn.disabled = true;
+  resultBox.className = 'result';
+  resultBox.innerHTML = '';
+
+  const username = document.getElementById('username').value.trim();
+  const email = document.getElementById('email').value.trim();
+
+  try {
+    const res = await fetch('/onboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email })
+    });
+    const data = await res.json();
+    if (data.success) renderSuccess(data);
+    else renderError(data.error || 'Erreur inconnue', data.log);
+  } catch (err) {
+    renderError('Erreur réseau : ' + err.message);
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+});
+</script>
+
+</body>
+</html>

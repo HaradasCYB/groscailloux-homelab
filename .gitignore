@@ -1,0 +1,64 @@
+# --- Secrets : JAMAIS commités
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# --- État des services (bind mounts, restaurés depuis backups/)
+/filebrowser/
+/gluetun/
+/grafana/
+/guacamole/
+/homarr/
+/influxdb/
+/jellyfin/
+/jellyseerr/
+/npm/
+/portainer/
+/prowlarr/
+/pyload/
+/qbittorrent/
+/radarr/
+/sonarr/
+/telegraf/
+# fichiers de config versionnés malgré l'état
+!/telegraf/
+/telegraf/*
+!/telegraf/etc/
+/telegraf/etc/*
+!/telegraf/etc/telegraf.conf.tmpl
+!/sonarr/
+/sonarr/*
+!/sonarr/config/
+/sonarr/config/*
+!/sonarr/config/custom-cont-init.d/
+!/radarr/
+/radarr/*
+!/radarr/config/
+/radarr/config/*
+!/radarr/config/custom-cont-init.d/
+
+# --- Données volumineuses / runtime
+/library/
+/backups/
+/logs/
+/state/
+/conversations/
+
+# --- Build Rust
+/target/
+**/*.rs.bk
+
+# --- Divers
+*.bak
+*.bak-*
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+*.log.*
+.claude/
+.DS_Store
+*.swp

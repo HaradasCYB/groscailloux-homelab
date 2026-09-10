@@ -1,0 +1,11 @@
+[Unit]
+Description=Run qbit-tracker-ratio-policy every 30 minutes
+Requires=qbit-tracker-ratio-policy.service
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=30min
+Unit=qbit-tracker-ratio-policy.service
+
+[Install]
+WantedBy=timers.target

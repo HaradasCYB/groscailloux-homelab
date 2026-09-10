@@ -1,0 +1,11 @@
+[Unit]
+Description=Detect Jellyseerr UI-created local users and replace with unified onboarding
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+ExecStart=/opt/homelab/scripts/jellyseerr-user-poller.sh
+StandardOutput=append:/opt/homelab/logs/jellyseerr-user-poller-systemd.log
+StandardError=append:/opt/homelab/logs/jellyseerr-user-poller-systemd.log

@@ -1,0 +1,11 @@
+[Unit]
+Description=Apply per-tracker share limits to qBittorrent torrents
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+ExecStart=/opt/homelab/scripts/qbit-tracker-ratio-policy.sh
+StandardOutput=append:/opt/homelab/logs/qbit-tracker-ratio-policy-systemd.log
+StandardError=append:/opt/homelab/logs/qbit-tracker-ratio-policy-systemd.log
