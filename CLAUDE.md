@@ -4,7 +4,7 @@ Guide pour Claude Code dans ce dépôt. Lire aussi ARCHITECTURE.md et AUTOMATION
 
 ## Ce qu'est ce dépôt
 
-`/opt/homelab` est **à la fois** le dépôt git (branche `v2`, remote `HaradasCYB/groscailloux-homelab`)
+`/opt/homelab` est **à la fois** le dépôt git (branche `main`, remote `HaradasCYB/groscailloux-homelab`)
 et le répertoire de production : compose, config et code Rust sont versionnés ; l'état des
 services (`<service>/`), `library/`, `backups/`, `state/`, `logs/` et `.env` sont ignorés par
 git. « Déployer » = `docker compose up -d` pour les conteneurs, `cargo build` + `install` +
