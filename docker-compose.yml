@@ -276,8 +276,12 @@ services:
     container_name: guacd
     mem_limit: 512m
 
+  # restart: "no" : l'image ne vérifie pas MySQL au démarrage et reste "Up (healthy)" avec un
+  # login impossible si guacdb n'était pas prêt. Seul compose (homelab-stack.service au boot)
+  # le lance, donc après guacdb healthy ; à chaud, la tâche stack_health de homelabd le relance.
   guacamole:
     <<: *base
+    restart: "no"
     image: guacamole/guacamole:1.6.0@sha256:023af83227f5ddb71a42d03cda19b48c742a904314da4c02eaabb8b305b3e690
     container_name: guacamole
     environment:

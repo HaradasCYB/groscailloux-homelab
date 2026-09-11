@@ -39,6 +39,9 @@ journalctl -u homelabd -f
   plafonnée (`max_actions_per_run`), c'est un invariant des tâches `stuck_handler`/`disk_pressure`.
 - **Sonarr** : profil 6 `minFormatScore=-9999` (FR d'abord, VOSTFR toléré) ; C411 en
   interactif seulement. **Jellyfin** : pas de GPU, préférer x264 à HEVC.
+- **Arrêter un service volontairement** : l'ajouter à `tasks.stack_health.ignore` dans
+  `homelab.toml` (+ restart homelabd) ou désactiver la tâche, sinon `stack_health` le relance
+  dans les 5 min. `guacamole` est en `restart: "no"` exprès (course au boot avec guacdb).
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
   `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans

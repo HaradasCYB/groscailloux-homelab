@@ -79,6 +79,72 @@ pub struct Tasks {
     pub tba_bypass: Interval300,
     pub monitor_sync: Interval600,
     pub user_poller: UserPoller,
+    pub stack_health: StackHealth,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct StackHealth {
+    pub interval_secs: u64,
+    /// Jamais deux redémarrages du même service en moins de N secondes.
+    pub restart_cooldown_secs: i64,
+    /// Un service `unhealthy` depuis au moins N secondes est redémarré.
+    pub unhealthy_grace_secs: i64,
+    /// Services que la tâche ne touche jamais (arrêt volontaire).
+    pub ignore: Vec<String>,
+    /// Sondes applicatives, en plus du healthcheck Docker.
+    pub probes: Vec<Probe>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Probe {
+    pub service: String,
+    #[serde(default = "d_get")]
+    pub method: String,
+    pub url: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default = "d_form")]
+    pub content_type: String,
+    #[serde(default = "d_200")]
+    pub expect_status: u16,
+    #[serde(default)]
+    pub expect_body_contains: String,
+    /// Ne pas redémarrer tant que ces services ne sont pas `healthy`.
+    #[serde(default)]
+    pub requires_healthy: Vec<String>,
+}
+
+impl Default for StackHealth {
+    fn default() -> Self {
+        Self {
+            interval_secs: 300,
+            restart_cooldown_secs: 600,
+            unhealthy_grace_secs: 120,
+            ignore: vec![],
+            probes: vec![Probe {
+                service: "guacamole".into(),
+                method: "POST".into(),
+                url: "http://localhost:8081/guacamole/api/tokens".into(),
+                body: "username=homelabd-probe&password=probe".into(),
+                content_type: d_form(),
+                expect_status: 403,
+                expect_body_contains: "INVALID_CREDENTIALS".into(),
+                requires_healthy: vec!["guacdb".into()],
+            }],
+        }
+    }
+}
+
+fn d_get() -> String {
+    "GET".into()
+}
+fn d_form() -> String {
+    "application/x-www-form-urlencoded".into()
+}
+fn d_200() -> u16 {
+    200
 }
 
 #[derive(Debug, Clone, Deserialize)]

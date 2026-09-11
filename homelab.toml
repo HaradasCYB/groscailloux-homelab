@@ -27,6 +27,28 @@ rate_limit_secs = 30
 # Tâches non planifiées par le daemon (restent lançables via `homelabctl run`).
 disabled = []
 
+[tasks.stack_health]
+# Première passe juste après le boot, puis toutes les 5 min : relance ce qui est arrêté,
+# redémarre ce qui est unhealthy ou dont la sonde applicative échoue. Pour arrêter un
+# service volontairement, l'ajouter à `ignore` (sinon il sera relancé).
+interval_secs = 300
+restart_cooldown_secs = 600
+unhealthy_grace_secs = 120
+ignore = []
+
+# Sonde Guacamole : de faux identifiants doivent produire 403 INVALID_CREDENTIALS ;
+# 500 = extension MySQL morte (guacdb n'était pas prêt au démarrage). ≥ 5 min entre
+# deux sondes pour ne pas déclencher l'extension ban (5 échecs / 300 s).
+[[tasks.stack_health.probes]]
+service = "guacamole"
+method = "POST"
+url = "http://localhost:8081/guacamole/api/tokens"
+body = "username=homelabd-probe&password=probe"
+content_type = "application/x-www-form-urlencoded"
+expect_status = 403
+expect_body_contains = "INVALID_CREDENTIALS"
+requires_healthy = ["guacdb"]
+
 [tasks.tracker_ratio]
 interval_secs = 1800
 # c411 : seed illimité ; ygg/u2p + publics : 2.0 / 14 j ; défaut : 1.0 / 7 j

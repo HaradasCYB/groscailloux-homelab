@@ -18,6 +18,12 @@ pub struct State {
     pub onboarded: BTreeMap<String, OnboardRecord>,
     #[serde(default)]
     pub task_runs: BTreeMap<String, RunInfo>,
+    /// stack_health : dernier redémarrage forcé par service (cooldown).
+    #[serde(default)]
+    pub restarts: BTreeMap<String, i64>,
+    /// stack_health : depuis quand un service est `unhealthy`.
+    #[serde(default)]
+    pub unhealthy_since: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

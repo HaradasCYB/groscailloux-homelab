@@ -42,6 +42,10 @@ fichiers sans toucher à la bibliothèque.
 classification série/film → parse + lookup Arr → ajout si absent → `DownloadedEpisodesScan` /
 `DownloadedMoviesScan`. Archives zip/rar extraites puis supprimées.
 
+**Santé du stack.** `stack_health` (homelabd) relance les services arrêtés, redémarre les
+`unhealthy` et ceux dont la sonde applicative échoue (Guacamole : login test). Guacamole est en
+`restart: "no"` : seul compose le lance, après `guacdb` healthy.
+
 **Garde-fous qBittorrent** (mutex partagé dans homelabd) : share limits par tracker, remplacement
 des téléchargements bloqués > 8 h, suppression des torrents arrêtés les plus anciens quand le
 disque dépasse 95 %.

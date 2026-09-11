@@ -15,6 +15,22 @@ Secrets : `.env` via `EnvironmentFile`.
 
 ## Tâches planifiées
 
+### stack_health — 5 min (première passe ~30 s après le démarrage de homelabd)
+Auto-réparation du stack. `docker compose config --services` donne les services attendus (moins
+`ignore`), `docker compose ps -a --format json` leur état.
+- absent / `exited` / `created` → `docker compose up -d <svc>` (respecte `depends_on`) ;
+- `unhealthy` depuis ≥ `unhealthy_grace_secs` (2 min) → `docker compose restart <svc>` ;
+- sonde applicative (`[[tasks.stack_health.probes]]`) en échec → restart, seulement si les
+  services de `requires_healthy` sont healthy (sinon « waiting ») ;
+- jamais deux restarts du même service en moins de `restart_cooldown_secs` (10 min).
+Sonde par défaut : Guacamole, `POST /guacamole/api/tokens` avec de faux identifiants → attendu
+`403` + `INVALID_CREDENTIALS` ; un `500` signifie que l'extension MySQL est morte (guacdb pas
+prêt au démarrage : l'image ne l'attend jamais). Cette sonde compte comme un échec de login
+côté Guacamole : garder l'intervalle ≥ 5 min (extension `ban` : 5 échecs / 300 s). Une réponse
+`429` (throttling) est considérée non concluante : ni échec ni redémarrage.
+Pour arrêter un service volontairement : l'ajouter à `ignore` avant, sinon il sera relancé.
+Résumé : `expected=21 running=21 healthy=16 started=[] restarted=[] waiting=[] failed=[]`.
+
 ### tracker_ratio — 30 min
 Share limits par tracker via `POST /api/v2/torrents/setShareLimits`.
 `unlimited` (c411) → ratio -1 / temps -1 ; `secondary` (yggleak, u2p, ygg.gratis) et

@@ -80,7 +80,19 @@ Guacamole : `zcat backups/guacdb-<ts>.sql.gz | docker exec -i guacdb mysql -uroo
 
 ## Démarrage machine
 
-`homelab-stack.service` lance `docker compose up -d --remove-orphans` après Docker ; les
-`depends_on` conditionnels (guacamole → guacdb healthy, qbittorrent → gluetun healthy,
-grafana/telegraf → influxdb healthy) remplacent l'ancien script de priorité de boot.
-`homelabd.service` démarre ensuite.
+Au boot, le daemon Docker relance lui-même les conteneurs `restart: unless-stopped`, dans le
+désordre et sans tenir compte des `depends_on`. Deux mécanismes compensent :
+- `homelab-stack.service` lance `docker compose up -d --remove-orphans` après Docker : démarre ce
+  que le daemon n'a pas lancé, en respectant les conditions (`guacamole` est en `restart: "no"`
+  précisément pour n'être lancé que par compose, après `guacdb` healthy — l'image ne vérifie
+  jamais sa base et resterait « Up » avec un login cassé).
+- `homelabd.service` démarre ensuite et sa tâche `stack_health` fait une passe immédiate, puis
+  toutes les 5 min : relance l'arrêté, redémarre l'`unhealthy` et ce dont la sonde échoue
+  (voir AUTOMATION.md).
+
+Après un reboot : `docker compose ps`, `homelabctl status` (stack_health `last_ok`),
+`journalctl -u homelabd | grep stack_health`.
+
+Pas de reboot planifié : aucun gain constaté (mémoire stable), une coupure de 2–3 min pour les
+lectures et téléchargements, et le boot est le moment fragile. Rebooter à la main pour les
+mises à jour du noyau (`apt` le signale), puis vérifier comme ci-dessus.
