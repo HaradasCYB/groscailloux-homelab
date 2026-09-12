@@ -600,6 +600,8 @@ pub struct Secrets {
     pub jellyseerr_public_url: String,
     pub quality_profile_id: i64,
     pub onboard_token: Option<Secret>,
+    /// Protège `/status` et `/status.html` de homelabd (`?token=`).
+    pub status_token: Option<Secret>,
     pub smtp: Option<Smtp>,
 }
 
@@ -649,6 +651,7 @@ impl Secrets {
                 .transpose()?
                 .unwrap_or(6),
             onboard_token: opt("HOMELABD_ONBOARD_TOKEN").map(Secret::new),
+            status_token: opt("HOMELABD_STATUS_TOKEN").map(Secret::new),
             smtp: match (opt("SMTP_HOST"), opt("SMTP_USER"), opt("SMTP_PASS")) {
                 (Some(host), Some(user), Some(pass)) => Some(Smtp {
                     port: opt("SMTP_PORT").and_then(|p| p.parse().ok()).unwrap_or(465),

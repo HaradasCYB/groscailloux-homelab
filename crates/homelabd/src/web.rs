@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
@@ -19,6 +19,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+
+use crate::status_page;
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 
@@ -47,6 +49,7 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/health", get(health))
         .route("/healthz", get(health))
         .route("/status", get(status))
+        .route("/status.html", get(status_html))
         .route("/onboard", post(onboard_handler))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&listen)
@@ -69,13 +72,93 @@ async fn health() -> Json<Value> {
     Json(json!({ "status": "ok", "version": env!("CARGO_PKG_VERSION") }))
 }
 
-async fn status(State(st): State<AppState>) -> Json<Value> {
+/// `/status` et `/status.html` exposent l'activité interne : si `HOMELABD_STATUS_TOKEN` est
+/// défini, ils exigent `?token=` (le sous-domaine d'onboarding est public).
+fn status_allowed(st: &AppState, q: &HashMap<String, String>) -> bool {
+    match &st.ctx.secrets.status_token {
+        Some(t) => q.get("token").map(|g| g == t.expose()).unwrap_or(false),
+        None => true,
+    }
+}
+
+async fn status(
+    State(st): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    if !status_allowed(&st, &q) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "token manquant ou invalide" })),
+        );
+    }
     let runs = st
         .ctx
         .state
         .read(|s| serde_json::to_value(&s.task_runs).unwrap_or(Value::Null))
         .await;
-    Json(json!({ "dry_run": st.ctx.dry_run, "tasks": runs }))
+    (
+        StatusCode::OK,
+        Json(json!({ "dry_run": st.ctx.dry_run, "tasks": runs })),
+    )
+}
+
+async fn status_html(
+    State(st): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    if !status_allowed(&st, &q) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Html("<p>token manquant ou invalide</p>".to_string()),
+        );
+    }
+    let runs = st.ctx.state.read(|s| s.task_runs.clone()).await;
+    let cfg = st.ctx.cfg.clone();
+    if cfg.seedbox.enabled {
+        // le cache de répertoires rclone (1 h) masquerait le quota réécrit toutes les 15 min
+        let rc = format!(
+            "{}/vfs/refresh",
+            cfg.seedbox.rclone_rc.trim_end_matches('/')
+        );
+        let _ = st
+            .ctx
+            .http
+            .post(&rc)
+            .json(&json!({ "dir": ".homelab" }))
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await;
+    }
+    // lecture via le montage rclone : bornée, la seedbox peut être injoignable
+    let probe = tokio::task::spawn_blocking(move || {
+        let disk = homelab_core::disk::usage_percent(&cfg.paths.base).ok();
+        if !cfg.seedbox.enabled {
+            return (disk, None, None);
+        }
+        let mp = &cfg.seedbox.mount_point;
+        let mounted = std::fs::read_dir(mp)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+        let quota = std::fs::read_to_string(mp.join(".homelab/quota.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<status_page::SeedboxQuota>(&s).ok());
+        (disk, quota, Some(mounted))
+    });
+    let (disk, quota, mounted) = tokio::time::timeout(Duration::from_secs(3), probe)
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or((None, None, Some(false)));
+    let tasks = homelab_core::tasks::names();
+    let html = status_page::render(&status_page::PageData {
+        now: homelab_core::state::now(),
+        runs: &runs,
+        tasks: &tasks,
+        vps_disk_pct: disk,
+        seedbox: quota,
+        mount_ok: mounted,
+    });
+    (StatusCode::OK, Html(html))
 }
 
 fn client_ip(headers: &HeaderMap, addr: SocketAddr) -> String {
