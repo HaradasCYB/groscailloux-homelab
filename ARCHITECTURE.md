@@ -66,8 +66,11 @@ et Jackett/FlareSolverr via `172.17.0.1:<port>`.
 
 **Lecture fluide.** 98 % des lectures sont en lecture directe (Playback Reporting, 30 j) : le
 buffering vient de l'acheminement, pas du transcodage. Donc :
-- rclone : `chunk_size = 255k` (SFTP ; 5 → 16 Mo/s par flux, 24 Mo/s via le montage) et
-  `--vfs-read-ahead 256M` ;
+- rclone : `chunk_size = 255k` (SFTP ; 5 → 16 Mo/s par flux, 24 Mo/s via le montage), cache VFS
+  20 Go, **pas** de `--vfs-read-ahead` (il fait télécharger 256 Mo à chaque ouverture, analyses comprises) ;
+- **rien ne lit la vidéo à l'ajout d'un titre** : Intro Skipper `AutoDetectIntros=false`, pas de
+  « Screen Grabber » dans les sources d'images, `SaveLocalMetadata=false` (pas de NFO ni d'images à
+  côté des médias, la seedbox est en lecture seule) ; normalisation audio (LUFS) à 07:00 ;
 - Jellyfin : trickplay en images clés seulement et **jamais pendant un scan** ; tâches lourdes
   (scan 05:00, segments 05:15, trickplay 05:30 max 6 h, Intro Skipper 06:00 max 3 h) dans la fenêtre
   sans lecture 05–13 h ; `cpu_shares` 2048 pour jellyfin, 512 pour les tâches de fond ;

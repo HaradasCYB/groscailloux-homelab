@@ -193,9 +193,10 @@ de livrer le fichier assez vite, et de ne pas faire tourner de tâches lourdes p
 
 | Levier | Réglage |
 |---|---|
-| Lien seedbox | SFTP en blocs de 255 Ko : ~16 Mo/s par flux (contre 5), ~24 Mo/s reçus par Jellyfin ; lecture anticipée de 256 Mo |
+| Lien seedbox | SFTP en blocs de 255 Ko : ~16 Mo/s par flux (contre 5), ~24 Mo/s reçus par Jellyfin ; cache de 20 Go, sans lecture anticipée |
+| Ajout d'un titre | aucune analyse qui lit la vidéo (Intro Skipper, capture d'image, NFO) : tout passe dans la fenêtre de nuit |
 | Vignettes de navigation (trickplay) | images clés seulement, jamais pendant un scan ; tâche nocturne 05:30 (6 h max) |
-| Tâches Jellyfin lourdes | scan 05:00, segments 05:15, Intro Skipper 06:00 : fenêtre sans lecture 05–13 h |
+| Tâches Jellyfin lourdes | scan 05:00, segments 05:15, Intro Skipper 06:00, normalisation audio 07:00 : fenêtre sans lecture 05–13 h |
 | Priorité CPU | `cpu_shares` 2048 pour Jellyfin, 512 pour les tâches de fond (n'agit qu'en cas de contention) |
 | Charge de fond | Jellyseerr : disponibilité recalculée une fois par nuit ; supervision toutes les 30 s |
 

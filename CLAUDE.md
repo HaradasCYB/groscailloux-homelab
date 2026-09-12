@@ -49,6 +49,9 @@ journalctl -u homelabd -f
 - **Lecture Jellyfin** : aucune tâche lourde (trickplay, analyse de segments, scan complet,
   extraction) entre 13 h et 05 h ; trickplay jamais pendant les scans (il lit tout le fichier, par le
   lien seedbox pour ses titres). `cpu_shares` : jellyfin 2048, fond 512 — le garder sur tout nouveau service de fond.
+- **Aucune option qui lit la vidéo à l'ajout d'un titre** (Intro Skipper `AutoDetectIntros`, source
+  d'images « Screen Grabber », `SaveLocalMetadata`/NFO) : sur les dossiers seedbox, chaque lecture passe
+  par le lien (~24 Mo/s partagés) et fait buffer les spectateurs. Pas de `--vfs-read-ahead` sur rclone.
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
   `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans
