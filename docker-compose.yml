@@ -112,6 +112,39 @@ services:
       test: ["CMD", "curl", "-fsS", "http://localhost:9696/ping"]
     mem_limit: 512m
 
+  # Source des indexers publics de Sonarr/Radarr (URLs http://jackett:9117/...). Prowlarr n'est
+  # synchronisé avec aucun Arr : ne pas retirer Jackett tant que les Arrs pointent dessus.
+  jackett:
+    <<: *base
+    image: lscr.io/linuxserver/jackett:v0.24.2572-ls26@sha256:f78e9aa09610e778590ae81074fbcab69188900c0c860f917b31ae86b78fc047
+    container_name: jackett
+    ports:
+      - "9117:9117"
+    volumes:
+      - /opt/homelab/jackett/config:/config
+    environment:
+      - TZ=${TZ}
+      - PUID=1000
+      - PGID=1000
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9117/UI/Login"]
+    mem_limit: 512m
+
+  # Utilisé par Jackett (ServerConfig FlareSolverrUrl) pour les indexers derrière Cloudflare
+  # (1337x, eztv). Pas d'exposition de port : seul Jackett l'appelle sur le réseau homelab.
+  flaresolverr:
+    <<: *base
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2@sha256:c80ae007ce2ccdcd217a12426e4f039ef763ff90738c808d38810c3e59323767
+    container_name: flaresolverr
+    environment:
+      - TZ=${TZ}
+      - LOG_LEVEL=info
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8191/health"]
+    mem_limit: 1g
+
   # Profils : COMPOSE_PROFILES=vpn (défaut, .env) → gluetun + qbittorrent ;
   # COMPOSE_PROFILES=novpn → qbittorrent-direct. Bascule via `homelabctl vpn on|off`.
   gluetun:

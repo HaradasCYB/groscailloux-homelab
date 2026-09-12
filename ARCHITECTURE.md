@@ -11,7 +11,9 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 | jellyfin | lecture, transcodage logiciel (x264 ; éviter HEVC) | `jellyfin/config`, cache tmpfs |
 | jellyseerr (seerr) | demandes utilisateurs → Sonarr/Radarr | `jellyseerr/config` |
 | sonarr / radarr | séries / films : recherche, import, renommage | `*/config`, `library:/data` |
-| prowlarr | gestion d'indexers ; **aucune application synchronisée** aujourd'hui, les indexers sont configurés directement dans les Arrs | `prowlarr/config` |
+| jackett | **source des indexers publics** de Sonarr/Radarr (URLs `http://jackett:9117/api/v2.0/indexers/<id>/results/torznab/`) ; ne pas retirer tant que les Arrs pointent dessus | `jackett/config` |
+| flaresolverr | résolution des défis Cloudflare pour Jackett (1337x, eztv) ; pas de port publié | — |
+| prowlarr | gestion d'indexers ; **aucune application synchronisée** aujourd'hui, les indexers publics passent par Jackett et C411 par son API Torznab directement dans les Arrs | `prowlarr/config` |
 | gluetun | WireGuard ProtonVPN, port forwarding NAT-PMP, netns de qbittorrent | `gluetun/` |
 | qbittorrent | client torrent dans le netns gluetun (`network_mode: service:gluetun`) | `qbittorrent/config` |
 | qbittorrent-direct | même client sans VPN (profil `novpn`) | idem |

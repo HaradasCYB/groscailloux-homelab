@@ -61,5 +61,9 @@ journalctl -u homelabd -f
 - Le hook `hooks/qbit-update-port.sh` s'exécute dans l'image gluetun (busybox) : POSIX sh,
   `wget` uniquement.
 - `GET /api/v3/manualimport` de Sonarr dure ~25 s sur un gros `/downloads` (timeout 5 min).
-- Prowlarr n'a aucune application configurée : les indexers vivent dans Sonarr/Radarr.
+- Prowlarr n'a aucune application configurée : les indexers vivent dans Sonarr/Radarr et les
+  publics passent par **Jackett** (+ FlareSolverr pour Cloudflare). Avant de retirer un service,
+  vérifier qui l'appelle : `grep -r <nom>:<port>` dans les configs et les champs `baseUrl` des
+  indexers Arr (`GET /api/v3/indexer`) — le retrait de Jackett/FlareSolverr le 2026-09-10 a coupé
+  les indexers publics pendant deux jours.
 - L'UI d'onboarding est sur l'hôte (8766) ; NPM doit cibler `172.18.0.1:8766`, pas un conteneur.
