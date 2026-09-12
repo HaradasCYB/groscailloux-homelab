@@ -25,6 +25,7 @@ sudo ./setup.sh                 # ou --from-source pour compiler homelabd locale
 homelabctl check                # chaque service répond avec les clés fournies
 ```
 
+Vue d'ensemble avec schémas (physique, parcours d'une demande, stockage) : [docs/INFRA.md](docs/INFRA.md).
 Détails dans [DEPLOY.md](DEPLOY.md). Architecture et flux dans [ARCHITECTURE.md](ARCHITECTURE.md).
 Chaque tâche automatisée, ses endpoints et ses garde-fous dans [AUTOMATION.md](AUTOMATION.md).
 

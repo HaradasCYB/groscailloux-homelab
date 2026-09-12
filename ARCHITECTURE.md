@@ -1,5 +1,7 @@
 # Architecture
 
+> Schémas (physique, parcours d'une demande, stockage) : [docs/INFRA.md](docs/INFRA.md).
+
 Un hôte, un réseau bridge `homelab` (172.18.0.0/16), tout en bind mounts sous `/opt/homelab`.
 Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'hôte
 (homelabd) par `localhost:<port hôte>`.
