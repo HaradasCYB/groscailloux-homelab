@@ -155,6 +155,37 @@ impl ArrClient {
             .map(|_| ())
     }
 
+    /// Queue brute (tous les champs), pour les tâches qui lisent statusMessages/trackedDownloadState.
+    pub async fn queue_records(&self) -> Result<Vec<Value>> {
+        let v = self.get("api/v3/queue", &[("pageSize", "200")]).await?;
+        Ok(v.get("records")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Aperçu d'import manuel d'un téléchargement, rattaché à une fiche (`movieId` / `seriesId`).
+    pub async fn manual_import_download(
+        &self,
+        download_id: &str,
+        id_param: &str,
+        id: i64,
+    ) -> Result<Vec<Value>> {
+        let id = id.to_string();
+        let resp = self
+            .req(Method::GET, "api/v3/manualimport")
+            .query(&[
+                ("downloadId", download_id),
+                (id_param, id.as_str()),
+                ("filterExistingFiles", "false"),
+            ])
+            .timeout(std::time::Duration::from_secs(300))
+            .send()
+            .await?;
+        let v = json(resp, &format!("{} GET manualimport", self.name)).await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
     pub fn is_radarr(&self) -> bool {
         self.name.starts_with("radarr")
     }

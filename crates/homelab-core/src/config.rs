@@ -124,6 +124,7 @@ pub struct Tasks {
     pub user_poller: UserPoller,
     pub stack_health: StackHealth,
     pub seedbox_refresh: Interval300,
+    pub id_match_import: Interval300,
 }
 
 #[derive(Debug, Clone, Deserialize)]

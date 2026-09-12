@@ -49,6 +49,11 @@ expect_status = 403
 expect_body_contains = "INVALID_CREDENTIALS"
 requires_healthy = ["guacdb"]
 
+[tasks.id_match_import]
+# Débloque les imports « matched to movie/series by ID » (releases C411 en titre français) :
+# import manuel rattaché à la fiche connue par l'historique, fichiers sans rejet seulement.
+interval_secs = 300
+
 [tasks.seedbox_refresh]
 # Nouveaux imports des Arrs seedbox → rafraîchit le cache rclone et signale les fichiers à Jellyfin.
 interval_secs = 300

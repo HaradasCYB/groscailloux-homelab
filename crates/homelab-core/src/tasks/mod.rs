@@ -5,6 +5,7 @@ pub mod auto_import;
 pub mod backup;
 pub mod cleanup;
 pub mod disk_pressure;
+pub mod id_match_import;
 pub mod monitor_sync;
 pub mod onboard;
 pub mod seedbox_refresh;
@@ -53,6 +54,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(stuck_handler::StuckHandler),
         Box::new(disk_pressure::DiskPressure),
         Box::new(tba_bypass::TbaBypass),
+        Box::new(id_match_import::IdMatchImport),
         Box::new(monitor_sync::MonitorSync),
         Box::new(user_poller::UserPoller),
         Box::new(cleanup::Cleanup),

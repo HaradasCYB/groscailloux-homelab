@@ -31,6 +31,16 @@ côté Guacamole : garder l'intervalle ≥ 5 min (extension `ban` : 5 échecs / 
 Pour arrêter un service volontairement : l'ajouter à `ignore` avant, sinon il sera relancé.
 Résumé : `expected=21 running=21 healthy=16 started=[] restarted=[] waiting=[] failed=[]`.
 
+### id_match_import — 5 min
+Radarr/Sonarr bloquent l'import quand le nom de la release ne correspond pas au titre de la fiche,
+même si l'indexer a fourni l'id au grab : message « Found matching movie/series via grab history,
+but release was matched to … by ID ». Fréquent avec les releases C411 titrées en français.
+Pour chaque item de queue (tous les Arrs, VPS et seedbox) `status=completed`,
+`trackedDownloadState=importBlocked` avec ce message : `GET /api/v3/manualimport?downloadId=…&movieId|seriesId=…`,
+puis `ManualImport` (importMode auto → hardlink) des seuls fichiers **sans rejet** ; séries :
+uniquement les fichiers dont l'épisode est identifié, les autres restent en manuel (avertissement
+dans les logs). Au plus 10 téléchargements par passage.
+
 ### seedbox_refresh — 5 min (si `[seedbox] enabled`)
 Lit l'historique `downloadFolderImported` (eventType 3) des Radarr/Sonarr de la seedbox depuis le
 dernier id traité (`state.seedbox_history` ; la première passe initialise le curseur sans rejouer).
