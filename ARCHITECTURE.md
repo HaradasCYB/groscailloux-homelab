@@ -24,7 +24,7 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 | npm | reverse proxy TLS (Let's Encrypt), entrée publique 80/443 | `npm/data`, `npm/letsencrypt` (root) |
 | duckdns | DNS dynamique | — |
 | guacamole / guacd / guacdb | bureau distant navigateur, MySQL 8.0 | `guacamole/mysql` |
-| homarr | tableau « Homelab » : accès VPS, sections Seedbox et Accès & dépôt ; intégrations (VPS + seedbox) dont les secrets sont chiffrés en base avec `SECRET_ENCRYPTION_KEY` (AES-256-CBC) — modifier la base Homarr arrêté, après sauvegarde | `homarr/` (root) |
+| homarr | deux tableaux : **« Groscailloux-TV »** public (accueil : Regarder, Demander, nouveautés, à venir, demandes) et **« Operations »** privé (admin : automatisation homelabd, ressources, lectures, téléchargements VPS + seedbox, conteneurs, mises à jour d'images, Grafana partagé, outils) ; dispositions mobile / tablette / bureau ; français, sombre ; intégrations (VPS + seedbox) dont les secrets sont chiffrés en base avec `SECRET_ENCRYPTION_KEY` (AES-256-CBC) — modifier la base Homarr arrêté, après sauvegarde | `homarr/` (root) |
 | portainer | UI Docker | `portainer/` |
 | influxdb / telegraf / grafana | métriques hôte + conteneurs, rétention 30 j | `influxdb/`, `grafana/` (uid 472) |
 | glances | monitoring live | — |
@@ -97,6 +97,19 @@ NPM termine TLS pour `<service>.<domaine>.duckdns.org` et proxifie vers les cont
 l'UI homelabd, vers la passerelle `172.18.0.1:8766`. qBittorrent n'est joignable que par
 gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-update-port.sh`
 (monté `/gluetun/scripts`) reçoit le port forwardé et l'applique via l'API WebUI locale.
+
+## Sécurité des accès web
+
+- NPM : liste d'accès **« admin-outils »** (authentification HTTP, utilisateur `groscailloux`) devant
+  Sonarr, Radarr, qBittorrent, Prowlarr, Jackett, Grafana, Portainer, pyLoad, Guacamole (y compris le
+  `location /guacamole/` de sa config avancée). Restent directs : Jellyfin, Jellyseerr, Homarr,
+  Filebrowser (sa propre connexion), onboarding (jeton). Grafana : `/public-dashboards/`,
+  `/api/public/`, `/public/` (statiques) et `/apis/` (authentifié par Grafana) sont exemptés, pour le
+  tableau partagé intégré dans Homarr.
+- qBittorrent (VPS) : dispense d'authentification limitée à `127.0.0.0/8` et `172.18.0.1/32`
+  (homelabd depuis l'hôte). **Jamais `172.18.0.0/16`** : NPM est dans ce réseau, qBittorrent était
+  ouvert à Internet sans mot de passe jusqu'au 2026-09-12.
+- homelabd : `/status` et `/status.html` exigent `HOMELABD_STATUS_TOKEN` (le sous-domaine d'onboarding est public).
 
 ## Contraintes d'exploitation
 

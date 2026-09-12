@@ -462,6 +462,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /:/rootfs:ro
+      - /opt/homelab/glances/glances.conf:/etc/glances/glances.conf:ro
     mem_limit: 256m
     cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 

@@ -97,4 +97,13 @@ journalctl -u homelabd -f
 - Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
   même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`).
   Ne pas « nettoyer » par `DELETE /Items/<id>` : sur un dossier de bibliothèque, il peut effacer le disque.
+- **qBittorrent** : ne jamais remettre `172.18.0.0/16` dans `bypass_auth_subnet_whitelist` (NPM y
+  est : qBit serait public sans mot de passe) ; seulement `127.0.0.0/8` et `172.18.0.1/32`.
+- **NPM** : pas d'identifiants admin NPM ici ; la liste d'accès « admin-outils » (id 2) a été écrite en
+  imitant NPM (base + `npm/data/access/2` + bloc dans `location /` de chaque site), sauvegarde
+  `backups/npm-20260912-212419/`. Tout nouvel outil d'admin exposé : même liste. Ne jamais afficher
+  les colonnes `password` des tables NPM ou Homarr.
+- **Homarr** : modifier la base Homarr **arrêté** et après sauvegarde ; titres de section ≤ 20 caractères
+  (sinon le tableau ne se charge plus) ; secrets d'intégration chiffrés AES-256-CBC avec
+  `SECRET_ENCRYPTION_KEY` ; pings des outils protégés par NPM en URL interne (`http://sonarr:8989/ping`…).
 - L'UI d'onboarding est sur l'hôte (8766) ; NPM doit cibler `172.18.0.1:8766`, pas un conteneur.

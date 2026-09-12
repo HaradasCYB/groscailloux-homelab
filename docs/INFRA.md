@@ -217,6 +217,8 @@ de livrer le fichier assez vite, et de ne pas faire tourner de tâches lourdes p
 - Secrets uniquement dans `.env` (600, hors git) ; les archives de sauvegarde le contiennent (600).
 - Accès VPS → seedbox : une clé SFTP **lecture seule** pour le montage (`restrict,command="sftp-server -R"`),
   API en HTTPS avec clés.
+- Outils d'administration derrière une authentification HTTP NPM (liste « admin-outils ») en plus de leur
+  propre connexion ; tableau Homarr d'administration privé (connexion Homarr), tableau public réservé aux spectateurs.
 - Entrée web prévue : NPM en HTTPS. Les ports publiés par Docker contournent le pare-feu de l'hôte
   (ufw) : toute nouvelle publication de port dans `docker-compose.yml` est joignable depuis Internet.
 
