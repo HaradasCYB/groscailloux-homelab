@@ -86,6 +86,9 @@ journalctl -u homelabd -f
 - Le hook `hooks/qbit-update-port.sh` s'exécute dans l'image gluetun (busybox) : POSIX sh,
   `wget` uniquement.
 - `GET /api/v3/manualimport` de Sonarr dure ~25 s sur un gros `/downloads` (timeout 5 min).
+  Avec `folder=` un fichier **situé dans le dossier d'une série**, Sonarr renvoie tous les fichiers de
+  la saison : toujours choisir le candidat par **chemin exact**, jamais le premier (le 12/09, S17E41 a
+  été rattaché à E48 par erreur, corrigé en réimportant chaque fichier vers son épisode).
 - Prowlarr n'a aucune application configurée : les indexers vivent dans Sonarr/Radarr et les
   publics passent par **Jackett** (+ FlareSolverr pour Cloudflare). Avant de retirer un service,
   vérifier qui l'appelle : `grep -r <nom>:<port>` dans les configs et les champs `baseUrl` des

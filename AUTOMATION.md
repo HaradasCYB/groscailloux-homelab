@@ -130,8 +130,13 @@ Fichiers de `jellyfin/cache/transcodes` > 1 j ; dossiers vides de `library/downl
 ## Watcher auto_import (continu)
 
 inotify non récursif sur `paths.downloads` (create, close_write, moved_to), chaque nom traité
-au plus une fois par 2 min. Vidéo (`mkv/mp4/avi`, hors `.!qB`/`.part`) : attente 5 s, puis
-classification : `S01E02`, `1x02`, `Season`, `Saison`, `Complete` ⇒ série, sinon film.
+au plus une fois par 2 min **et un seul traitement à la fois par nom** (verrou « en cours »).
+Vidéo (`mkv/mp4/avi`, hors `.!qB`/`.part`) : attente 5 s puis **attente d'une taille stable**
+(3 relevés identiques à 5 s d'écart, 6 h max) — un envoi Filebrowser/scp écrit par morceaux, un
+scan trop tôt importerait (voire déplacerait) un fichier incomplet. Fichier d'un torrent qBittorrent
+⇒ laissé à `torrent_import`. Classification : `S01E02`, `1x02`, `S01`, `Season`, `Saison`,
+`Complete`, `Intégrale` ⇒ série ; sinon `GET /api/v3/parse` Sonarr : série suivie + épisodes
+identifiés (ex. numérotation absolue « Bleach - 48 ») ⇒ série ; sinon film.
 Série : `GET /api/v3/parse` → `series/lookup` → `GET /series?tvdbId` → `POST /series` si
 absent (profil `QUALITY_PROFILE_ID`, monitor all, pas de recherche) → `DownloadedEpisodesScan`.
 Film : idem côté Radarr (`movie/lookup`, `tmdbId`, `DownloadedMoviesScan`).

@@ -66,8 +66,8 @@ et Jackett/FlareSolverr via `172.17.0.1:<port>`.
 
 **Lecture fluide.** 98 % des lectures sont en lecture directe (Playback Reporting, 30 j) : le
 buffering vient de l'acheminement, pas du transcodage. Donc :
-- rclone : `chunk_size = 255k` (SFTP ; 5 → 16 Mo/s par flux, 24 Mo/s via le montage), cache VFS
-  20 Go, **pas** de `--vfs-read-ahead` (il fait télécharger 256 Mo à chaque ouverture, analyses comprises) ;
+- rclone : `chunk_size = 255k` (SFTP ; 5 → 16 Mo/s par flux, 22–24 Mo/s via le montage), blocs de
+  lecture de 8 Mo (reprise après un saut : 20 Mo en ~3 s au lieu de 4), cache VFS 20 Go, **pas** de `--vfs-read-ahead` (il fait télécharger 256 Mo à chaque ouverture, analyses comprises) ;
 - **rien ne lit la vidéo à l'ajout d'un titre** : Intro Skipper `AutoDetectIntros=false`, pas de
   « Screen Grabber » dans les sources d'images, `SaveLocalMetadata=false` (pas de NFO ni d'images à
   côté des médias, la seedbox est en lecture seule) ; normalisation audio (LUFS) à 07:00 ;

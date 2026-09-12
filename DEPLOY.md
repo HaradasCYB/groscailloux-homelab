@@ -54,6 +54,14 @@ forwarding ProtonVPN poussé dans qBittorrent par `hooks/qbit-update-port.sh`).
 les download clients Sonarr/Radarr et le proxy NPM sont repointés, IPv6 réactivé.
 `homelabctl vpn on` fait l'inverse. Ne jamais lancer les deux profils en même temps.
 
+## Déposer un fichier depuis un PC
+
+Filebrowser (`https://filebrowser.<domaine>`, envoi jusqu'à 50 Go sans tampon côté NPM) → glisser
+la vidéo dans `downloads/`. Le watcher attend la fin de l'envoi (taille stable), puis Sonarr/Radarr
+importent et renomment ; Jellyfin l'affiche aussitôt. Nommer les épisodes `Série - S17E48.ext` :
+en numérotation absolue (« … - 48 »), Sonarr peut viser le mauvais épisode (Bleach : absolu 48 =
+S03E07). Ne pas déposer directement dans `media/` : le fichier y reste inconnu de Sonarr.
+
 ## Seedbox (optionnelle)
 
 Mise en place (déjà faite sur la prod, à refaire sur une nouvelle seedbox) :
