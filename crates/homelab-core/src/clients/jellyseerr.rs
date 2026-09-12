@@ -28,6 +28,16 @@ impl JellyseerrClient {
             .header("X-Api-Key", self.key.expose())
     }
 
+    /// Fiche série TMDB vue par Jellyseerr, titres en français (`name`) et d'origine (`originalName`).
+    pub async fn tv_details(&self, tmdb_id: i64) -> Result<Value> {
+        let resp = self
+            .req(Method::GET, &format!("api/v1/tv/{tmdb_id}"))
+            .query(&[("language", "fr")])
+            .send()
+            .await?;
+        json(resp, "jellyseerr tv").await
+    }
+
     pub async fn status(&self) -> Result<Value> {
         let resp = self.req(Method::GET, "api/v1/status").send().await?;
         json(resp, "jellyseerr status").await

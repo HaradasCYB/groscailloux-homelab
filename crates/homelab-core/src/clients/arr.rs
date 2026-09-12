@@ -255,6 +255,75 @@ impl ArrClient {
         Ok(v.as_array().and_then(|a| a.first().cloned()))
     }
 
+    /// Épisodes manquants suivis (toutes les pages), du plus récent au plus ancien.
+    pub async fn wanted_missing(&self) -> Result<Vec<Value>> {
+        let mut out = Vec::new();
+        for page in 1..=20 {
+            let p = page.to_string();
+            let v = self
+                .get(
+                    "api/v3/wanted/missing",
+                    &[
+                        ("page", p.as_str()),
+                        ("pageSize", "500"),
+                        ("monitored", "true"),
+                        ("sortKey", "airDateUtc"),
+                        ("sortDirection", "descending"),
+                    ],
+                )
+                .await?;
+            let recs = v
+                .get("records")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let total = v.get("totalRecords").and_then(Value::as_i64).unwrap_or(0);
+            out.extend(recs);
+            if out.len() as i64 >= total {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Recherche interactive d'une saison (tous les indexers en recherche interactive).
+    pub async fn releases(&self, series_id: i64, season: i64) -> Result<Vec<Value>> {
+        let (s, n) = (series_id.to_string(), season.to_string());
+        let resp = self
+            .req(Method::GET, "api/v3/release")
+            .query(&[("seriesId", s.as_str()), ("seasonNumber", n.as_str())])
+            .timeout(std::time::Duration::from_secs(300))
+            .send()
+            .await?;
+        let v = json(resp, &format!("{} GET release", self.name)).await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    /// Envoie une release au client en forçant son rattachement (série et épisodes fournis).
+    pub async fn grab_override(
+        &self,
+        release: &Value,
+        series_id: i64,
+        episode_ids: &[i64],
+        download_client_id: i64,
+    ) -> Result<Value> {
+        let body = json!({
+            "guid": release.get("guid"),
+            "indexerId": release.get("indexerId"),
+            "shouldOverride": true,
+            "seriesId": series_id,
+            "episodeIds": episode_ids,
+            "quality": release.get("quality"),
+            "languages": release.get("languages").cloned().unwrap_or_else(|| json!([])),
+            "downloadClientId": download_client_id,
+        });
+        self.post("api/v3/release", &body).await
+    }
+
+    pub async fn quality_profile(&self, id: i64) -> Result<Value> {
+        self.get(&format!("api/v3/qualityprofile/{id}"), &[]).await
+    }
+
     /// Épisodes d'une série (id, saison, numéro, numéro absolu).
     pub async fn episodes(&self, series_id: i64) -> Result<Vec<Value>> {
         let v = self

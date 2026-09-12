@@ -14,6 +14,7 @@ pub mod stuck_handler;
 pub mod tba_bypass;
 pub mod torrent_import;
 pub mod tracker_ratio;
+pub mod unknown_series_grab;
 pub mod user_poller;
 pub mod vpn;
 
@@ -57,6 +58,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(tba_bypass::TbaBypass),
         Box::new(id_match_import::IdMatchImport),
         Box::new(torrent_import::TorrentImport),
+        Box::new(unknown_series_grab::UnknownSeriesGrab),
         Box::new(monitor_sync::MonitorSync),
         Box::new(user_poller::UserPoller),
         Box::new(cleanup::Cleanup),

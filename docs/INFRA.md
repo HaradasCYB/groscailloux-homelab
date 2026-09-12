@@ -26,7 +26,7 @@ flowchart LR
   subgraph VPS
     direction TB
     subgraph host[Hôte · systemd]
-      homelabd["homelabd<br/>11 tâches + watcher<br/>UI onboarding"]
+      homelabd["homelabd<br/>12 tâches + watcher<br/>UI onboarding"]
       rclone["rclone mount<br/>SFTP lecture seule<br/>cache 10 Go"]
       stack[homelab-stack<br/>backup hebdo]
     end
@@ -176,6 +176,7 @@ qBittorrent. Détail des endpoints : [AUTOMATION.md](../AUTOMATION.md).
 | `stack_health` | 5 min | relance les services arrêtés, redémarre les unhealthy, teste Guacamole | 10 min entre deux redémarrages, attend guacdb |
 | `seedbox_refresh` | 5 min | nouveaux imports seedbox → rclone + Jellyfin | curseur persistant ; rien si montage absent |
 | `id_match_import` | 5 min | débloque les imports « matched by ID » | fichiers sans rejet ; 10 max/passage |
+| `unknown_series_grab` | 6 h | prend les releases C411 au titre traduit que Sonarr ne reconnaît pas | titre identique au titre FR ou original ; ≤ 1080p ; 3 recherches/passage |
 | `torrent_import` | 10 min | importe les torrents ajoutés à la main (VPS + seedbox) | fiches non surveillées, hardlink, pas de doublon entre machines ; 10 max/passage |
 | `tba_bypass` | 5 min | importe les épisodes refusés pour « titre TBA » | seul rejet uniquement |
 | `stuck_handler` | 5 min | remplace les téléchargements bloqués > 8 h | 5 max/passage, ciblé |

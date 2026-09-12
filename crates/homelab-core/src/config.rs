@@ -140,6 +140,34 @@ pub struct Tasks {
     pub seedbox_refresh: Interval300,
     pub id_match_import: Interval300,
     pub torrent_import: TorrentImport,
+    pub unknown_series_grab: UnknownSeriesGrab,
+}
+
+/// Grab des releases rejetées « Unknown Series » (titres traduits), sur un seul indexer.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct UnknownSeriesGrab {
+    pub interval_secs: u64,
+    /// Recherches de saison au plus par passage, tous Sonarr confondus.
+    pub max_searches_per_run: usize,
+    /// Nouvelle recherche d'une saison sans candidat après N heures.
+    pub retry_after_hours: i64,
+    /// Nouvelle recherche d'une saison déjà prise après N heures (si elle manque encore).
+    pub grabbed_retry_hours: i64,
+    /// Nom (préfixe, insensible à la casse) de l'indexer dont on accepte les releases.
+    pub indexer: String,
+}
+
+impl Default for UnknownSeriesGrab {
+    fn default() -> Self {
+        Self {
+            interval_secs: 21600,
+            max_searches_per_run: 3,
+            retry_after_hours: 72,
+            grabbed_retry_hours: 168,
+            indexer: "C411".into(),
+        }
+    }
 }
 
 /// Import des torrents ajoutés à la main dans qBittorrent (VPS et seedbox).
@@ -677,6 +705,7 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.torrent_import.interval_secs, 600);
         assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
+        assert_eq!(cfg.tasks.unknown_series_grab.max_searches_per_run, 3);
     }
 
     #[test]

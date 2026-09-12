@@ -72,6 +72,21 @@ Aucune modification des torrents. Jellyfin : LibraryMonitor (VPS) ou `seedbox_re
 Le watcher `auto_import` ignore désormais les vidéos qui appartiennent à un torrent qBittorrent.
 Résumé : `files=3 arr_managed=67 already_linked=8 imported=2 no_match=1 pending=0`.
 
+### unknown_series_grab — 6 h
+Sonarr rejette « Unknown Series » les releases au titre traduit (« New York Police Judiciaire » pour
+*Law & Order*) : jamais prises en automatique, même sur C411. Pour chaque Sonarr (VPS, seedbox) :
+`GET wanted/missing` → saisons avec épisodes diffusés manquants, hors file d'attente, pas cherchées
+récemment (`state.unknown_series` : sans candidat → 72 h, prise → 7 j), les plus récentes d'abord,
+**3 recherches par passage** → `GET release?seriesId&seasonNumber` → releases de `indexer` (C411)
+dont le **seul** rejet est « Unknown Series » → garde-fous : titre parsé **identique** (normalisé)
+au titre FR ou original (Jellyseerr `tv/{tmdbId}?language=fr`), au titre Sonarr ou à un titre
+alternatif (une série voisine est refusée) ; bonne saison ; épisodes tous manquants ; qualité
+autorisée par le profil et ≤ 1080p ; au moins 1 seeder ; marqueur FR (VFF > MULTi > FRENCH >
+VOSTFR). Pack si la moitié de la saison manque, sinon épisodes ; tri langue, résolution, H.264,
+seeders → `POST /api/v3/release` en **grab forcé** (`shouldOverride`, `seriesId`, `episodeIds`).
+L'import est débloqué ensuite par `id_match_import`. C411 ne renvoie pas d'id TVDB : le titre est le
+seul garde-fou possible. Résumé : `grabbed=1 none=2 pending=20`.
+
 ### seedbox_refresh — 5 min (si `[seedbox] enabled`)
 Lit l'historique `downloadFolderImported` (eventType 3) des Radarr/Sonarr de la seedbox depuis le
 dernier id traité (`state.seedbox_history` ; la première passe initialise le curseur sans rejouer).

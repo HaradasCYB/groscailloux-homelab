@@ -63,6 +63,15 @@ max_per_run = 10            # torrents examinés (parse/recherche/import) par pa
 max_attempts = 3            # erreurs avant abandon (état : homelabctl status / state/homelabd.json)
 series_ready_secs = 90      # attente des épisodes d'une série tout juste ajoutée
 
+[tasks.unknown_series_grab]
+# Releases C411 rejetées par Sonarr pour la seule raison « Unknown Series » (titre traduit) :
+# grab forcé si le titre correspond exactement au titre FR/original de la série (Jellyseerr).
+interval_secs = 21600       # 6 h
+max_searches_per_run = 3    # recherches interactives de saison par passage
+retry_after_hours = 72      # saison sans candidat : nouvelle recherche après 3 jours
+grabbed_retry_hours = 168   # saison prise mais encore manquante : après 7 jours
+indexer = "C411"
+
 [tasks.seedbox_refresh]
 # Nouveaux imports des Arrs seedbox → rafraîchit le cache rclone et signale les fichiers à Jellyfin.
 interval_secs = 300

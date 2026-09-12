@@ -30,6 +30,18 @@ pub struct State {
     /// torrent_import : décision par torrent, clé `côté:hash` (`vps:…`, `seedbox:…`).
     #[serde(default)]
     pub torrent_import: BTreeMap<String, TorrentImportRecord>,
+    /// unknown_series_grab : dernière recherche par saison, clé `arr:série:saison`.
+    #[serde(default)]
+    pub unknown_series: BTreeMap<String, SeasonSearchRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeasonSearchRecord {
+    pub at: i64,
+    /// `grabbed`, `none`, `error`.
+    pub outcome: String,
+    #[serde(default)]
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
