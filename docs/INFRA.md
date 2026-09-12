@@ -27,7 +27,7 @@ flowchart LR
     direction TB
     subgraph host[Hôte · systemd]
       homelabd["homelabd<br/>10 tâches + watcher<br/>UI onboarding"]
-      rclone["rclone mount<br/>SFTP lecture seule<br/>cache 40 Go"]
+      rclone["rclone mount<br/>SFTP lecture seule<br/>cache 10 Go"]
       stack[homelab-stack<br/>backup hebdo]
     end
     subgraph docker[Docker · réseau « homelab »]
