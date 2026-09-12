@@ -7,6 +7,7 @@ pub mod cleanup;
 pub mod disk_pressure;
 pub mod monitor_sync;
 pub mod onboard;
+pub mod seedbox_refresh;
 pub mod stack_health;
 pub mod stuck_handler;
 pub mod tba_bypass;
@@ -47,6 +48,7 @@ pub trait Task: Send + Sync {
 pub fn registry() -> Vec<Box<dyn Task>> {
     vec![
         Box::new(stack_health::StackHealth),
+        Box::new(seedbox_refresh::SeedboxRefresh),
         Box::new(tracker_ratio::TrackerRatio),
         Box::new(stuck_handler::StuckHandler),
         Box::new(disk_pressure::DiskPressure),

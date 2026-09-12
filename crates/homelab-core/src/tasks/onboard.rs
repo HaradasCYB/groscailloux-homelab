@@ -160,12 +160,13 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
 
     let jf_id = ctx.jellyfin.create_user(&req.username, &password).await?;
     info!(task = "onboard", username = %req.username, jellyfin_id = %jf_id, "jellyfin user created");
+    let libraries: Vec<String> = [s.jellyfin_lib_films.clone(), s.jellyfin_lib_series.clone()]
+        .into_iter()
+        .chain(s.jellyfin_lib_extra.iter().cloned())
+        .collect();
     if let Err(e) = ctx
         .jellyfin
-        .set_policy(
-            &jf_id,
-            &non_admin_policy(&s.jellyfin_lib_films, &s.jellyfin_lib_series),
-        )
+        .set_policy(&jf_id, &non_admin_policy(&libraries))
         .await
     {
         warn!(task = "onboard", username = %req.username, error = %e, "policy not applied, fix in Jellyfin dashboard");

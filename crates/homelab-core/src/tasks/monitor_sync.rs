@@ -3,7 +3,9 @@
 //! Jellyseerr ajoute les séries sans `addOptions.monitor` ⇒ Sonarr monitore tout.
 //! Règle : monitored = demandée OR a déjà des fichiers ; S00 jamais touchée ;
 //! les séries inconnues de Jellyseerr ne sont pas modifiées.
-//! Source : l'API Jellyseerr (plus de lecture directe du SQLite).
+//! Plusieurs Sonarr (VPS, seedbox) : chaque demande est routée vers le Sonarr dont
+//! l'id Jellyseerr vaut `media.serviceId` — les ids de séries diffèrent d'une instance
+//! à l'autre, un mauvais routage modifierait une autre série.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -14,6 +16,7 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use super::{Report, Task};
+use crate::clients::ArrClient;
 use crate::config::Config;
 use crate::context::TaskContext;
 
@@ -22,9 +25,11 @@ pub struct MonitorSync;
 /// Statuts Jellyseerr exclus : 3 = DECLINED, 4 = FAILED.
 const EXCLUDED_STATUS: [i64; 2] = [3, 4];
 
-/// sonarrSeriesId → saisons demandées (hors demandes refusées/échouées).
-pub fn requested_seasons(requests: &[Value]) -> BTreeMap<i64, BTreeSet<i64>> {
-    let mut out: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
+/// (id du serveur Sonarr dans Jellyseerr, sonarrSeriesId) → saisons demandées.
+pub type Requested = BTreeMap<(i64, i64), BTreeSet<i64>>;
+
+pub fn requested_seasons(requests: &[Value]) -> Requested {
+    let mut out: Requested = BTreeMap::new();
     for r in requests {
         if r.get("type").and_then(Value::as_str) != Some("tv") {
             continue;
@@ -35,6 +40,10 @@ pub fn requested_seasons(requests: &[Value]) -> BTreeMap<i64, BTreeSet<i64>> {
         else {
             continue;
         };
+        let server = r
+            .pointer("/media/serviceId")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         let Some(seasons) = r.get("seasons").and_then(Value::as_array) else {
             continue;
         };
@@ -44,11 +53,19 @@ pub fn requested_seasons(requests: &[Value]) -> BTreeMap<i64, BTreeSet<i64>> {
                 continue;
             }
             if let Some(n) = s.get("seasonNumber").and_then(Value::as_i64) {
-                out.entry(sid).or_default().insert(n);
+                out.entry((server, sid)).or_default().insert(n);
             }
         }
     }
     out
+}
+
+/// Sous-ensemble des demandes qui concernent un serveur Sonarr donné.
+pub fn for_server(map: &Requested, server: i64) -> BTreeMap<i64, BTreeSet<i64>> {
+    map.iter()
+        .filter(|((srv, _), _)| *srv == server)
+        .map(|((_, sid), seasons)| (*sid, seasons.clone()))
+        .collect()
 }
 
 /// Applique la règle sur la copie de `series`. Renvoie (avant, après) des saisons monitorées.
@@ -84,6 +101,47 @@ fn monitored(series: &Value) -> Vec<i64> {
         .unwrap_or_default()
 }
 
+async fn sync_one(
+    ctx: &TaskContext,
+    sonarr: &ArrClient,
+    map: &BTreeMap<i64, BTreeSet<i64>>,
+) -> Result<u32> {
+    if map.is_empty() {
+        return Ok(0);
+    }
+    let mut changes = 0u32;
+    for mut series in sonarr.series().await? {
+        let Some(id) = series.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+        let Some(req) = map.get(&id) else { continue };
+        let title = series
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_string();
+        let (before, after) = apply(&mut series, req);
+        if before == after {
+            continue;
+        }
+        if ctx.dry_run {
+            info!(task = "monitor_sync", service = sonarr.name, series_id = id, %title, ?req, ?before, ?after, "dry-run: would sync");
+            changes += 1;
+            continue;
+        }
+        match sonarr.put_series(id, &series).await {
+            Ok(_) => {
+                changes += 1;
+                info!(task = "monitor_sync", service = sonarr.name, series_id = id, %title, ?req, ?before, ?after, "synced");
+            }
+            Err(e) => {
+                warn!(task = "monitor_sync", service = sonarr.name, series_id = id, %title, error = %e, "put_failed")
+            }
+        }
+    }
+    Ok(changes)
+}
+
 #[async_trait]
 impl Task for MonitorSync {
     fn name(&self) -> &'static str {
@@ -100,39 +158,20 @@ impl Task for MonitorSync {
         if map.is_empty() {
             return Ok(Report::new("no_jellyseerr_requests", 0));
         }
-        let all = ctx.sonarr.series().await?;
+        let sb = &ctx.cfg.seedbox;
+        let mut targets = vec![(&ctx.sonarr, sb.jellyseerr_vps_sonarr_id)];
+        if let Some(s) = &ctx.seedbox_sonarr {
+            targets.push((s, sb.jellyseerr_sonarr_id));
+        }
         let mut changes = 0u32;
-        for mut series in all {
-            let Some(id) = series.get("id").and_then(Value::as_i64) else {
-                continue;
-            };
-            let Some(req) = map.get(&id) else { continue };
-            let title = series
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or("?")
-                .to_string();
-            let (before, after) = apply(&mut series, req);
-            if before == after {
-                continue;
-            }
-            if ctx.dry_run {
-                info!(task = "monitor_sync", series_id = id, %title, ?req, ?before, ?after, "dry-run: would sync");
-                changes += 1;
-                continue;
-            }
-            match ctx.sonarr.put_series(id, &series).await {
-                Ok(_) => {
-                    changes += 1;
-                    info!(task = "monitor_sync", series_id = id, %title, ?req, ?before, ?after, "synced");
-                }
-                Err(e) => {
-                    warn!(task = "monitor_sync", series_id = id, %title, error = %e, "put_failed")
-                }
-            }
+        let mut summary = Vec::new();
+        for (sonarr, server) in targets {
+            let subset = for_server(&map, server);
+            changes += sync_one(ctx, sonarr, &subset).await?;
+            summary.push(format!("{}={}", sonarr.name, subset.len()));
         }
         Ok(Report::new(
-            format!("changes={changes} managed_series={}", map.len()),
+            format!("changes={changes} managed_series[{}]", summary.join(" ")),
             changes,
         ))
     }
@@ -146,14 +185,27 @@ mod tests {
     #[test]
     fn requested_map_skips_declined_and_movies() {
         let reqs = vec![
-            json!({"type":"tv","media":{"externalServiceId":5},"seasons":[{"seasonNumber":1,"status":2},{"seasonNumber":2,"status":3}]}),
+            json!({"type":"tv","media":{"externalServiceId":5,"serviceId":0},"seasons":[{"seasonNumber":1,"status":2},{"seasonNumber":2,"status":3}]}),
             json!({"type":"tv","media":{"externalServiceId":5},"seasons":[{"seasonNumber":3,"status":5}]}),
             json!({"type":"movie","media":{"externalServiceId":9},"seasons":[]}),
             json!({"type":"tv","media":{},"seasons":[{"seasonNumber":1,"status":2}]}),
         ];
         let m = requested_seasons(&reqs);
         assert_eq!(m.len(), 1);
-        assert_eq!(m[&5], BTreeSet::from([1, 3]));
+        assert_eq!(m[&(0, 5)], BTreeSet::from([1, 3]));
+    }
+
+    #[test]
+    fn requests_are_routed_by_jellyseerr_server() {
+        // même sonarrSeriesId 5 sur deux instances différentes : ce ne sont pas les mêmes séries
+        let reqs = vec![
+            json!({"type":"tv","media":{"externalServiceId":5,"serviceId":0},"seasons":[{"seasonNumber":1,"status":2}]}),
+            json!({"type":"tv","media":{"externalServiceId":5,"serviceId":1},"seasons":[{"seasonNumber":4,"status":2}]}),
+        ];
+        let m = requested_seasons(&reqs);
+        assert_eq!(for_server(&m, 0)[&5], BTreeSet::from([1]));
+        assert_eq!(for_server(&m, 1)[&5], BTreeSet::from([4]));
+        assert!(for_server(&m, 2).is_empty());
     }
 
     #[test]

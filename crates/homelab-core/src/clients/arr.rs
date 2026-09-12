@@ -155,8 +155,33 @@ impl ArrClient {
             .map(|_| ())
     }
 
+    pub fn is_radarr(&self) -> bool {
+        self.name.starts_with("radarr")
+    }
+
+    /// Imports réussis (`downloadFolderImported`, eventType 3), du plus récent au plus ancien.
+    pub async fn recent_imports(&self, page_size: u32) -> Result<Vec<Value>> {
+        let size = page_size.to_string();
+        let v = self
+            .get(
+                "api/v3/history",
+                &[
+                    ("page", "1"),
+                    ("pageSize", &size),
+                    ("sortKey", "id"),
+                    ("sortDirection", "descending"),
+                    ("eventType", "3"),
+                ],
+            )
+            .await?;
+        Ok(v.get("records")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
     pub fn scan_command(&self, path: &str) -> Value {
-        let name = if self.name == "radarr" {
+        let name = if self.is_radarr() {
             "DownloadedMoviesScan"
         } else {
             "DownloadedEpisodesScan"

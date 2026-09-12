@@ -32,6 +32,10 @@ services:
       - /opt/homelab/jellyfin/config:/config
       - /opt/homelab/jellyfin/cache:/cache
       - /opt/homelab/library/media:/media:ro
+      # Médias de la seedbox (rclone SFTP lecture seule, homelab-seedbox-mount.service).
+      # rslave + dossier parent (rclone monte dans /mnt/seedbox/media) : chaque (re)montage FUSE
+      # se propage dans le conteneur sans le recréer. Ne pas lier le point de montage FUSE lui-même.
+      - /mnt/seedbox:/seedbox:ro,rslave
     tmpfs:
       - /cache/transcodes:rw,size=2g,uid=1000,gid=1000,mode=1777
     environment:

@@ -76,6 +76,22 @@ impl JellyfinClient {
         check(resp, "jellyfin Users/{id}/Policy").await.map(|_| ())
     }
 
+    /// Signale des fichiers nouveaux : Jellyfin ne scanne que leurs dossiers, pas la bibliothèque.
+    pub async fn media_updated(&self, paths: &[String]) -> Result<()> {
+        let updates: Vec<Value> = paths
+            .iter()
+            .map(|p| json!({ "Path": p, "UpdateType": "Created" }))
+            .collect();
+        let resp = self
+            .req(Method::POST, "Library/Media/Updated")
+            .json(&json!({ "Updates": updates }))
+            .send()
+            .await?;
+        check(resp, "jellyfin Library/Media/Updated")
+            .await
+            .map(|_| ())
+    }
+
     /// Nombre de sessions avec lecture en cours (utile avant un redémarrage).
     pub async fn active_playbacks(&self) -> Result<usize> {
         let resp = self
@@ -94,8 +110,8 @@ impl JellyfinClient {
     }
 }
 
-/// Politique utilisateur non-admin limitée aux deux bibliothèques Films/Séries.
-pub fn non_admin_policy(lib_films: &str, lib_series: &str) -> Value {
+/// Politique utilisateur non-admin limitée aux bibliothèques données (ids Jellyfin).
+pub fn non_admin_policy(libraries: &[String]) -> Value {
     json!({
         "IsAdministrator": false,
         "IsHidden": false,
@@ -115,7 +131,7 @@ pub fn non_admin_policy(lib_films: &str, lib_series: &str) -> Value {
         "EnableAllDevices": true,
         "EnableAllChannels": false,
         "EnableAllFolders": false,
-        "EnabledFolders": [lib_films, lib_series],
+        "EnabledFolders": libraries,
         "EnabledChannels": [],
         "EnabledDevices": [],
         "BlockedTags": [],

@@ -24,6 +24,9 @@ pub struct State {
     /// stack_health : depuis quand un service est `unhealthy`.
     #[serde(default)]
     pub unhealthy_since: BTreeMap<String, i64>,
+    /// seedbox_refresh : dernier id d'historique d'import traité, par Arr.
+    #[serde(default)]
+    pub seedbox_history: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

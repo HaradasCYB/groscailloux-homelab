@@ -170,8 +170,9 @@ impl Task for StuckHandler {
         let re = Regex::new(&format!("(?i){}", ctx.cfg.tasks.stuck_handler.pattern))?;
         let _guard = ctx.qbit_lock.lock().await;
         let mut actions = 0u32;
-        process(ctx, &ctx.sonarr, &re, &mut actions).await?;
-        process(ctx, &ctx.radarr, &re, &mut actions).await?;
+        for arr in ctx.all_arrs() {
+            process(ctx, arr, &re, &mut actions).await?;
+        }
         let tracked = ctx.state.read(|s| s.stuck.len()).await;
         Ok(Report::new(
             format!("actions={actions} tracked={tracked}"),

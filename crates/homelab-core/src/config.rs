@@ -23,6 +23,49 @@ pub struct Config {
     pub backup: Backup,
     #[serde(default)]
     pub vpn: Vpn,
+    #[serde(default)]
+    pub seedbox: Seedbox,
+}
+
+/// Seedbox distante : Radarr/Sonarr qui y rangent les médias, montés en lecture seule sur le
+/// VPS (rclone) et lus par Jellyfin. `enabled = false` ⇒ tout ce qui touche la seedbox est ignoré.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Seedbox {
+    pub enabled: bool,
+    pub radarr_url: String,
+    pub sonarr_url: String,
+    /// Dossier que le Sonarr de la seedbox scanne pour le contournement TBA.
+    pub sonarr_downloads: String,
+    /// Racine des médias côté seedbox (préfixe des chemins d'import des Arrs).
+    pub media_root: String,
+    /// Même arborescence montée sur le VPS (rclone).
+    pub mount_point: PathBuf,
+    /// Même arborescence vue par le conteneur Jellyfin.
+    pub jellyfin_root: String,
+    /// API rc de rclone mount, pour invalider le cache de répertoires après un import.
+    pub rclone_rc: String,
+    /// Id Jellyseerr du serveur Sonarr de la seedbox (`media.serviceId` des demandes).
+    pub jellyseerr_sonarr_id: i64,
+    /// Id Jellyseerr du serveur Sonarr du VPS.
+    pub jellyseerr_vps_sonarr_id: i64,
+}
+
+impl Default for Seedbox {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            radarr_url: String::new(),
+            sonarr_url: String::new(),
+            sonarr_downloads: String::new(),
+            media_root: String::new(),
+            mount_point: "/mnt/seedbox/media".into(),
+            jellyfin_root: "/seedbox/media".into(),
+            rclone_rc: "http://127.0.0.1:5572".into(),
+            jellyseerr_sonarr_id: 1,
+            jellyseerr_vps_sonarr_id: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -80,6 +123,7 @@ pub struct Tasks {
     pub monitor_sync: Interval600,
     pub user_poller: UserPoller,
     pub stack_health: StackHealth,
+    pub seedbox_refresh: Interval300,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -435,6 +479,21 @@ impl Config {
                 bail!("URL invalide dans [urls] : {url}");
             }
         }
+        let sb = &self.seedbox;
+        if sb.enabled {
+            for (k, v) in [
+                ("radarr_url", &sb.radarr_url),
+                ("sonarr_url", &sb.sonarr_url),
+                ("rclone_rc", &sb.rclone_rc),
+            ] {
+                if !v.starts_with("http://") && !v.starts_with("https://") {
+                    bail!("[seedbox] {k} invalide : {v:?}");
+                }
+            }
+            if !sb.media_root.starts_with('/') || sb.sonarr_downloads.is_empty() {
+                bail!("[seedbox] media_root (absolu) et sonarr_downloads sont requis");
+            }
+        }
         Ok(())
     }
 
@@ -453,6 +512,10 @@ pub struct Secrets {
     pub jellyseerr_api_key: Secret,
     pub jellyfin_lib_films: String,
     pub jellyfin_lib_series: String,
+    /// Bibliothèques supplémentaires données aux nouveaux comptes (JELLYFIN_LIB_EXTRA, virgules).
+    pub jellyfin_lib_extra: Vec<String>,
+    pub seedbox_radarr_api_key: Option<Secret>,
+    pub seedbox_sonarr_api_key: Option<Secret>,
     pub jellyfin_public_url: String,
     pub jellyseerr_public_url: String,
     pub quality_profile_id: i64,
@@ -487,6 +550,17 @@ impl Secrets {
             jellyseerr_api_key: req_secret("JELLYSEERR_API_KEY")?,
             jellyfin_lib_films: req("JELLYFIN_LIB_FILMS")?,
             jellyfin_lib_series: req("JELLYFIN_LIB_SERIES")?,
+            jellyfin_lib_extra: opt("JELLYFIN_LIB_EXTRA")
+                .map(|v| {
+                    v.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            seedbox_radarr_api_key: opt("SEEDBOX_RADARR_API_KEY").map(Secret::new),
+            seedbox_sonarr_api_key: opt("SEEDBOX_SONARR_API_KEY").map(Secret::new),
             jellyfin_public_url: req("JELLYFIN_PUBLIC_URL")?,
             jellyseerr_public_url: req("JELLYSEERR_PUBLIC_URL")?,
             quality_profile_id: opt("QUALITY_PROFILE_ID")

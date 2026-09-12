@@ -1,0 +1,27 @@
+[Unit]
+Description=Seedbox media (SFTP, read-only) mounted on /mnt/seedbox/media for Jellyfin
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# Montage dans un sous-dossier : le conteneur Jellyfin lie /mnt/seedbox (dossier ordinaire, rslave),
+# chaque (re)montage FUSE se propage donc dans le conteneur sans le recréer.
+Type=notify
+User=deploy
+Group=deploy
+ExecStartPre=/bin/mkdir -p /opt/homelab/cache/rclone
+ExecStart=/usr/local/bin/rclone mount seedbox:media /mnt/seedbox/media \
+  --config /opt/homelab/rclone/rclone.conf \
+  --read-only --allow-other --umask 022 \
+  --vfs-cache-mode full --vfs-cache-max-size 40G --vfs-cache-max-age 72h \
+  --cache-dir /opt/homelab/cache/rclone \
+  --vfs-read-chunk-size 32M --vfs-read-chunk-streams 4 --buffer-size 32M \
+  --dir-cache-time 1h --attr-timeout 1h \
+  --rc --rc-addr 127.0.0.1:5572 --rc-no-auth \
+  --log-level INFO
+ExecStop=/bin/fusermount3 -uz /mnt/seedbox/media
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

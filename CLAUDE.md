@@ -54,6 +54,19 @@ journalctl -u homelabd -f
 - Les anciens scripts bash de `scripts/` ne sont plus planifiés ; ils restent comme référence
   jusqu'à suppression et ne doivent pas être relancés en parallèle de homelabd hors dry-run.
 
+## Seedbox
+
+- Accès admin : `ssh seedbox` (clé `~/.ssh/seedbox_ed25519`) ; apps via `app-<x> …`, en conteneurs
+  Docker sur la seedbox (Radarr 16127, Sonarr 16126, Jackett 16129, FlareSolverr 16111 sur
+  `172.17.0.1`), qBittorrent natif `127.0.0.1:16141`, autobrr natif `127.0.0.1:16123`. API
+  publiques : `https://kakaouette.tofino.usbx.me/<app>`.
+- Montage : rclone dans **`/mnt/seedbox/media`**, Jellyfin lie le **parent** `/mnt/seedbox`
+  (rslave). Lier le point de montage FUSE lui-même casse la reprise après coupure.
+- Nouvelles demandes Jellyseerr → Arrs seedbox (id 1). Ne rien importer côté seedbox qui existe
+  déjà sur le VPS (doublons dans Jellyfin).
+- Jellyseerr : ne jamais appeler `settings/jellyfin/library?sync=true` sans renvoyer `?enable=`
+  avec la liste complète des bibliothèques.
+
 ## Pièges connus
 
 - `.env` est lu par bash (`.` ), compose et dotenvy : pas d'expression shell, guillemets seulement

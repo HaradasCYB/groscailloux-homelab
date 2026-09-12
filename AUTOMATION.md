@@ -31,6 +31,20 @@ côté Guacamole : garder l'intervalle ≥ 5 min (extension `ban` : 5 échecs / 
 Pour arrêter un service volontairement : l'ajouter à `ignore` avant, sinon il sera relancé.
 Résumé : `expected=21 running=21 healthy=16 started=[] restarted=[] waiting=[] failed=[]`.
 
+### seedbox_refresh — 5 min (si `[seedbox] enabled`)
+Lit l'historique `downloadFolderImported` (eventType 3) des Radarr/Sonarr de la seedbox depuis le
+dernier id traité (`state.seedbox_history` ; la première passe initialise le curseur sans rejouer).
+Pour chaque nouvel import : chemin `media_root/…` → dossier relatif, `POST <rclone_rc>/vfs/refresh`
+sur ce dossier et ses parents, puis `POST /Library/Media/Updated` à Jellyfin avec le chemin
+`jellyfin_root/…` (Jellyfin ne scanne que ces dossiers). Montage absent → avertissement, le
+curseur n'avance pas.
+
+### Arrs multi-instances
+Avec la seedbox activée, `stuck_handler` traite aussi les queues des Arrs seedbox,
+`tba_bypass` scanne aussi `seedbox.sonarr_downloads` avec le Sonarr seedbox, et `monitor_sync`
+**route chaque demande Jellyseerr selon `media.serviceId`** (`jellyseerr_vps_sonarr_id` → Sonarr
+VPS, `jellyseerr_sonarr_id` → Sonarr seedbox) : les ids de séries diffèrent entre instances.
+
 ### tracker_ratio — 30 min
 Share limits par tracker via `POST /api/v2/torrents/setShareLimits`.
 `unlimited` (c411) → ratio -1 / temps -1 ; `secondary` (yggleak, u2p, ygg.gratis) et
@@ -92,6 +106,8 @@ ou le poller. Séquence sous mutex : pré-contrôles Jellyfin + Jellyseerr → n
 (insensible à la casse) → email Jellyseerr libre → `POST /Users/New` → policy non-admin
 limitée aux bibliothèques `JELLYFIN_LIB_FILMS`/`SERIES` → `POST /api/v1/user/import-from-jellyfin`
 → `POST /api/v1/user/{id}/settings/main` (email) → mail de bienvenue via `curl smtps://`.
+La policy donne accès à `JELLYFIN_LIB_FILMS`, `JELLYFIN_LIB_SERIES` et aux ids de `JELLYFIN_LIB_EXTRA`
+(bibliothèques seedbox).
 Le mot de passe (16 caractères alphanumériques) n'apparaît jamais dans les logs.
 
 ## Autres commandes

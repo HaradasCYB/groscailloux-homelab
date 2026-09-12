@@ -54,6 +54,35 @@ forwarding ProtonVPN poussé dans qBittorrent par `hooks/qbit-update-port.sh`).
 les download clients Sonarr/Radarr et le proxy NPM sont repointés, IPv6 réactivé.
 `homelabctl vpn on` fait l'inverse. Ne jamais lancer les deux profils en même temps.
 
+## Seedbox (optionnelle)
+
+Mise en place (déjà faite sur la prod, à refaire sur une nouvelle seedbox) :
+1. Sur la seedbox : `app-jackett|radarr|sonarr|bazarr|autobrr install -p <mdp>`, `app-flaresolverr install`,
+   `app-unpackerr install` ; catégories qBittorrent `radarr`/`sonarr` ; clés API et mots de passe
+   dans le `.env` du VPS (`SEEDBOX_*`).
+2. Réglages des Arrs seedbox clonés depuis ceux du VPS (formats personnalisés, profils, indexers
+   via le Jackett seedbox, C411 en automatique complet, client qBittorrent via le proxy HTTPS).
+3. Clé `~/.ssh/seedbox_sftp_ro` ajoutée dans `~/.ssh/authorized_keys` de la seedbox avec
+   `restrict,command="/usr/lib/openssh/sftp-server -R"` ; rclone ≥ 1.68 dans `/usr/local/bin` ;
+   `user_allow_other` dans `/etc/fuse.conf` ; `mkdir -p /mnt/seedbox/media`.
+4. `[seedbox] enabled = true` dans `homelab.toml`, `sudo homelabctl install` (active
+   `homelab-seedbox-mount.service`), bibliothèques Jellyfin sur `/seedbox/media/Movies` et
+   `/seedbox/media/TV Shows` (surveillance temps réel off), leurs ids dans `JELLYFIN_LIB_EXTRA`.
+5. Jellyseerr : Radarr/Sonarr seedbox en serveurs par défaut ; bibliothèques activées via
+   `…/settings/jellyfin/library?enable=<ids>` (**jamais** `sync=true` seul : il désactive tout).
+
+Vérifier : `homelabctl check` (Arrs seedbox + montage), `systemctl status homelab-seedbox-mount`.
+
+### Couper la seedbox (~10 min, sans impact sur le reste)
+
+1. Jellyseerr → Settings → Services : remettre Radarr/Sonarr du VPS **par défaut**, supprimer ceux
+   de la seedbox (les demandes en cours restent visibles).
+2. `homelab.toml` : `[seedbox] enabled = false` → `sudo systemctl restart homelabd`.
+3. `sudo systemctl disable --now homelab-seedbox-mount`.
+4. Jellyfin : supprimer « Films (Seedbox) » et « Séries (Seedbox) », retirer leurs ids de
+   `JELLYFIN_LIB_EXTRA` ; optionnel : retirer la ligne `/mnt/seedbox:/seedbox` du service jellyfin.
+Les bibliothèques et le pipeline du VPS ne sont jamais touchés par ces étapes.
+
 ## Sauvegarde et restauration
 
 `sudo homelabctl backup` (et le timer `homelab-backup.timer`, dimanche 04:30) produit dans

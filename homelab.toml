@@ -49,6 +49,10 @@ expect_status = 403
 expect_body_contains = "INVALID_CREDENTIALS"
 requires_healthy = ["guacdb"]
 
+[tasks.seedbox_refresh]
+# Nouveaux imports des Arrs seedbox → rafraîchit le cache rclone et signale les fichiers à Jellyfin.
+interval_secs = 300
+
 [tasks.tracker_ratio]
 interval_secs = 1800
 # c411 : seed illimité ; ygg/u2p + publics : 2.0 / 14 j ; défaut : 1.0 / 7 j
@@ -108,3 +112,18 @@ mysql_container = "guacdb"
 [vpn]
 qbit_conf = "/opt/homelab/qbittorrent/config/qBittorrent/qBittorrent.conf"
 npm_server_name = "qbittorrent."
+
+[seedbox]
+# Seedbox (tofino.usbx.me) : Radarr/Sonarr y rangent dans ~/media, monté en lecture seule sur
+# /mnt/seedbox/media (homelab-seedbox-mount.service) et vu par Jellyfin sous /seedbox/media.
+# Couper la seedbox : enabled = false (+ procédure DEPLOY.md).
+enabled = true
+radarr_url = "https://kakaouette.tofino.usbx.me/radarr"
+sonarr_url = "https://kakaouette.tofino.usbx.me/sonarr"
+sonarr_downloads = "/home/kakaouette/downloads/qbittorrent/sonarr"
+media_root = "/home/kakaouette/media"
+mount_point = "/mnt/seedbox/media"
+jellyfin_root = "/seedbox/media"
+rclone_rc = "http://127.0.0.1:5572"
+jellyseerr_vps_sonarr_id = 0
+jellyseerr_sonarr_id = 1

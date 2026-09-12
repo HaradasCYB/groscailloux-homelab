@@ -243,6 +243,37 @@ async fn main() -> Result<()> {
                 }
             );
             println!("✓ watch dir   {}", ctx.cfg.paths.downloads.display());
+            let sb = &ctx.cfg.seedbox;
+            if sb.enabled {
+                for arr in [&ctx.seedbox_sonarr, &ctx.seedbox_radarr]
+                    .into_iter()
+                    .flatten()
+                {
+                    match arr.get("api/v3/system/status", &[]).await {
+                        Ok(v) => println!(
+                            "✓ {:<14} {}",
+                            arr.name,
+                            v.get("version").and_then(|x| x.as_str()).unwrap_or("?")
+                        ),
+                        Err(e) => {
+                            ok = false;
+                            println!("✗ {:<14} {e}", arr.name);
+                        }
+                    }
+                }
+                let mounted = std::fs::read_dir(&sb.mount_point)
+                    .map(|mut d| d.next().is_some())
+                    .unwrap_or(false);
+                if mounted {
+                    println!("✓ seedbox mount {}", sb.mount_point.display());
+                } else {
+                    ok = false;
+                    println!(
+                        "✗ seedbox mount {} vide ou absent (systemctl status homelab-seedbox-mount)",
+                        sb.mount_point.display()
+                    );
+                }
+            }
             if !ok {
                 bail!("au moins un service injoignable");
             }
@@ -280,7 +311,12 @@ async fn install(cfg: &Config) -> Result<()> {
     }
     homelab_core::docker::run("systemctl", &["daemon-reload"], None).await?;
     for n in &names {
-        if n.ends_with(".timer") || n == "homelabd.service" || n == "homelab-stack.service" {
+        let seedbox_mount = n == "homelab-seedbox-mount.service" && cfg.seedbox.enabled;
+        if n.ends_with(".timer")
+            || n == "homelabd.service"
+            || n == "homelab-stack.service"
+            || seedbox_mount
+        {
             homelab_core::docker::run("systemctl", &["enable", n], None).await?;
             println!("enabled {n}");
         }

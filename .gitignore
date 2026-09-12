@@ -47,6 +47,7 @@
 # --- Données volumineuses / runtime
 /library/
 /backups/
+/cache/
 /logs/
 /state/
 /conversations/

@@ -93,36 +93,46 @@ impl Task for TbaBypass {
     }
 
     async fn run(&self, ctx: &TaskContext) -> Result<Report> {
-        let folder = ctx.cfg.paths.downloads_in_container.clone();
-        let preview = ctx.sonarr.manual_import(&folder).await?;
-        let candidates: Vec<&Value> = preview.iter().filter(|i| is_candidate(i)).collect();
-        let (mut actions, mut errors) = (0u32, 0u32);
-        for item in &candidates {
-            let what = label(item);
-            let path = item.get("path").and_then(Value::as_str).unwrap_or("");
-            if ctx.dry_run {
-                info!(task = "tba_bypass", %what, path, "dry-run: would trigger ManualImport");
-                actions += 1;
-                continue;
-            }
-            let cmd = json!({ "name": "ManualImport", "files": [import_file(item)], "importMode": "auto" });
-            match ctx.sonarr.command(cmd).await {
-                Ok(resp) => {
-                    actions += 1;
-                    let cmd_id = resp.get("id").and_then(Value::as_i64).unwrap_or(0);
-                    info!(task = "tba_bypass", %what, path, cmd_id, "bypass_triggered");
-                }
+        let mut targets = vec![(&ctx.sonarr, ctx.cfg.paths.downloads_in_container.clone())];
+        if let Some(s) = &ctx.seedbox_sonarr {
+            targets.push((s, ctx.cfg.seedbox.sonarr_downloads.clone()));
+        }
+        let (mut candidates_total, mut actions, mut errors) = (0usize, 0u32, 0u32);
+        for (sonarr, folder) in targets {
+            let preview = match sonarr.manual_import(&folder).await {
+                Ok(p) => p,
                 Err(e) => {
+                    warn!(task = "tba_bypass", service = sonarr.name, error = %e, "manualimport_failed");
                     errors += 1;
-                    warn!(task = "tba_bypass", %what, path, error = %e, "post_failed");
+                    continue;
+                }
+            };
+            let candidates: Vec<&Value> = preview.iter().filter(|i| is_candidate(i)).collect();
+            candidates_total += candidates.len();
+            for item in &candidates {
+                let what = label(item);
+                let path = item.get("path").and_then(Value::as_str).unwrap_or("");
+                if ctx.dry_run {
+                    info!(task = "tba_bypass", service = sonarr.name, %what, path, "dry-run: would trigger ManualImport");
+                    actions += 1;
+                    continue;
+                }
+                let cmd = json!({ "name": "ManualImport", "files": [import_file(item)], "importMode": "auto" });
+                match sonarr.command(cmd).await {
+                    Ok(resp) => {
+                        actions += 1;
+                        let cmd_id = resp.get("id").and_then(Value::as_i64).unwrap_or(0);
+                        info!(task = "tba_bypass", service = sonarr.name, %what, path, cmd_id, "bypass_triggered");
+                    }
+                    Err(e) => {
+                        errors += 1;
+                        warn!(task = "tba_bypass", service = sonarr.name, %what, path, error = %e, "post_failed");
+                    }
                 }
             }
         }
         Ok(Report::new(
-            format!(
-                "candidates={} actions={actions} errors={errors}",
-                candidates.len()
-            ),
+            format!("candidates={candidates_total} actions={actions} errors={errors}"),
             actions,
         ))
     }

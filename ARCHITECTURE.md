@@ -44,6 +44,21 @@ fichiers sans toucher à la bibliothèque.
 classification série/film → parse + lookup Arr → ajout si absent → `DownloadedEpisodesScan` /
 `DownloadedMoviesScan`. Archives zip/rar extraites puis supprimées.
 
+**Seedbox (acquisition + stockage déportés).** Une seedbox partagée (`tofino.usbx.me`, Toronto,
+3,7 To, outillage Ultra.cc `app-*`) héberge qBittorrent, Radarr, Sonarr, Jackett (+ FlareSolverr),
+Bazarr, Unpackerr et autobrr. Les Arrs y rangent par hardlink dans `~/media/{Movies,TV Shows}`.
+Jellyseerr envoie les **nouvelles demandes** à ces Arrs (serveurs par défaut, id 1) ; ceux du VPS
+(id 0) gardent la bibliothèque existante. Le VPS monte `~/media` en **lecture seule** (rclone SFTP,
+clé restreinte à `sftp-server -R`) sur `/mnt/seedbox/media` ; Jellyfin le voit sous
+`/seedbox/media` dans deux bibliothèques séparées, « Films (Seedbox) » et « Séries (Seedbox) ».
+`seedbox_refresh` (homelabd) signale chaque nouvel import à rclone puis à Jellyfin.
+Si la seedbox tombe : ces deux bibliothèques deviennent indisponibles (Jellyfin ne purge pas, le
+scan échoue), le reste de Jellyfin et le pipeline VPS ne sont pas affectés.
+Lien mesuré : RTT 96 ms, ~12 Mo/s par lecture (1080p et 4K WEB OK, remux 4K limite) ; pas de
+transcodage 4K HEVC (VPS sans GPU). Sur la seedbox, les apps tournent en conteneurs Docker et
+joignent qBittorrent (natif, `127.0.0.1` seulement) via `https://kakaouette.tofino.usbx.me/qbittorrent`
+et Jackett/FlareSolverr via `172.17.0.1:<port>`.
+
 **Santé du stack.** `stack_health` (homelabd) relance les services arrêtés, redémarre les
 `unhealthy` et ceux dont la sonde applicative échoue (Guacamole : login test). Guacamole est en
 `restart: "no"` : seul compose le lance, après `guacdb` healthy.
