@@ -40,6 +40,10 @@ journalctl -u homelabd -f
 - **Indexers** : C411 seul en automatique (RSS + auto) sur les 4 Arrs, les autres en interactif
   seulement. **Profils** FR-friendly : 1080p max (jamais 2160p), `minFormatScore=-9999`, FR d'abord,
   VO/VOSTFR en dernier recours. **Jellyfin** : pas de GPU, préférer x264 à HEVC.
+- **C411** : `animeCategories=[5070]` et `animeStandardFormatSearch=true` dans les deux Sonarr, sinon
+  une série de type « anime » n'interroge jamais C411 (et, C411 étant le seul indexer en auto, rien ne part).
+  Son API limite le débit : un **429** met C411 en pause **1 h** dans l'Arr (« API Request Limit reached »).
+  Éviter les rafales de recherches interactives (une recherche anime = une requête par épisode).
 - **Import d'un téléchargement que l'Arr n'a pas demandé** : `ManualImport` en `importMode: copy`
   (hardlink), jamais `auto` (= déplacement, le torrent perd ses fichiers) ; `GET manualimport` sans
   `downloadId` (liste vide sinon). C'est ce que fait `torrent_import`.
