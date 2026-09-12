@@ -24,7 +24,7 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 | npm | reverse proxy TLS (Let's Encrypt), entrée publique 80/443 | `npm/data`, `npm/letsencrypt` (root) |
 | duckdns | DNS dynamique | — |
 | guacamole / guacd / guacdb | bureau distant navigateur, MySQL 8.0 | `guacamole/mysql` |
-| homarr | dashboard (seul utilisateur de `SECRET_ENCRYPTION_KEY`) | `homarr/` (root) |
+| homarr | tableau « Homelab » : accès VPS, sections Seedbox et Accès & dépôt ; intégrations (VPS + seedbox) dont les secrets sont chiffrés en base avec `SECRET_ENCRYPTION_KEY` (AES-256-CBC) — modifier la base Homarr arrêté, après sauvegarde | `homarr/` (root) |
 | portainer | UI Docker | `portainer/` |
 | influxdb / telegraf / grafana | métriques hôte + conteneurs, rétention 30 j | `influxdb/`, `grafana/` (uid 472) |
 | glances | monitoring live | — |
