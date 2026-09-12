@@ -41,6 +41,37 @@ puis `ManualImport` (importMode auto → hardlink) des seuls fichiers **sans rej
 uniquement les fichiers dont l'épisode est identifié, les autres restent en manuel (avertissement
 dans les logs). Au plus 10 téléchargements par passage.
 
+### torrent_import — 10 min
+Torrents ajoutés **à la main** dans qBittorrent (VPS, et seedbox si `[seedbox] qbit_url` est défini),
+pour qu'ils arrivent dans Jellyfin sans passer par Jellyseerr. Pour chaque torrent terminé pas encore
+jugé (`state.torrent_import`, clé `vps:<hash>` / `seedbox:<hash>`), dans l'ordre :
+1. `GET /api/v3/history?downloadId=<HASH en majuscules>` sur le Radarr et le Sonarr du côté : un
+   enregistrement ⇒ l'Arr gère ce téléchargement (`arr_managed`) ;
+2. `torrents/files` : aucune vidéo hors `sample` ⇒ `no_video` ; VPS : toutes les vidéos ont déjà
+   plus d'un lien (importées) ⇒ `already_linked` ;
+3. série si le nom ou un fichier porte un marqueur d'épisode/saison (`S01E02`, `S01`, `Saison`…),
+   sinon film ; `parse` du nom (puis du premier fichier vidéo) → `lookup` → choix par
+   `matching` : titre identique après normalisation (titre original et alternatifs Radarr compris,
+   « Fusion (2003) » → *The Core*), année, saison ; à défaut premier résultat s'il commence par le
+   même mot (journalisé « approximate match ») ; rien ⇒ `no_match` ;
+4. la fiche a des fichiers dans les Arrs de **l'autre machine** ⇒ `dup_other_side` (pas de doublon Jellyfin) ;
+5. fiche absente ⇒ ajout **non surveillé**, sans recherche (racine et profil du côté : `auto_import`
+   pour le VPS, `[seedbox] radarr_root|sonarr_root|quality_profile_id`) ; série : attente de ses
+   épisodes (`series_ready_secs`) ;
+6. fiche **avec fichiers** : `GET /api/v3/manualimport?folder=<content_path>&movieId|seriesId=…`
+   (**sans** `downloadId` : un téléchargement non suivi renverrait une liste vide), fichiers sans rejet
+   (`select_files`) ; fiche **vide** (son dossier n'existe pas : avec l'id, Radarr et Sonarr répondent
+   500) : `GET manualimport?folder=…` sans id, rejets d'identification ignorés (`Unknown Movie/Series`,
+   `matched … by ID`), film = la fiche choisie, épisodes = `parse` du nom de fichier → saison/numéros
+   (ou numéros absolus) → ids de `GET /api/v3/episode?seriesId=` (`map_episodes`) ; puis
+   `ManualImport` en **`importMode: copy`** (= hardlink). Jamais `auto` : pour un téléchargement non
+   suivi, `auto` = déplacement, le torrent perd ses fichiers.
+Déjà importé ⇒ rejet de l'Arr ⇒ `nothing_importable`. Erreur (Arr injoignable…) ⇒ `retry`, `error`
+après `max_attempts`. Au plus `max_per_run` torrents coûteux par passage, les plus récents d'abord.
+Aucune modification des torrents. Jellyfin : LibraryMonitor (VPS) ou `seedbox_refresh` (seedbox).
+Le watcher `auto_import` ignore désormais les vidéos qui appartiennent à un torrent qBittorrent.
+Résumé : `files=3 arr_managed=67 already_linked=8 imported=2 no_match=1 pending=0`.
+
 ### seedbox_refresh — 5 min (si `[seedbox] enabled`)
 Lit l'historique `downloadFolderImported` (eventType 3) des Radarr/Sonarr de la seedbox depuis le
 dernier id traité (`state.seedbox_history` ; la première passe initialise le curseur sans rejouer).
@@ -116,8 +147,8 @@ ou le poller. Séquence sous mutex : pré-contrôles Jellyfin + Jellyseerr → n
 (insensible à la casse) → email Jellyseerr libre → `POST /Users/New` → policy non-admin
 limitée aux bibliothèques `JELLYFIN_LIB_FILMS`/`SERIES` → `POST /api/v1/user/import-from-jellyfin`
 → `POST /api/v1/user/{id}/settings/main` (email) → mail de bienvenue via `curl smtps://`.
-La policy donne accès à `JELLYFIN_LIB_FILMS`, `JELLYFIN_LIB_SERIES` et aux ids de `JELLYFIN_LIB_EXTRA`
-(bibliothèques seedbox).
+La policy donne accès à `JELLYFIN_LIB_FILMS`, `JELLYFIN_LIB_SERIES` et aux ids éventuels de
+`JELLYFIN_LIB_EXTRA` (vide aujourd'hui : les dossiers seedbox font partie de Films/Séries).
 Le mot de passe (16 caractères alphanumériques) n'apparaît jamais dans les logs.
 
 ## Autres commandes

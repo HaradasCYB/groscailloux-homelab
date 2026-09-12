@@ -49,6 +49,15 @@ pub struct Seedbox {
     pub jellyseerr_sonarr_id: i64,
     /// Id Jellyseerr du serveur Sonarr du VPS.
     pub jellyseerr_vps_sonarr_id: i64,
+    /// WebUI qBittorrent de la seedbox (proxy HTTPS de l'hébergeur), vide = non utilisé.
+    /// Mot de passe : `SEEDBOX_QBIT_PASSWORD`.
+    pub qbit_url: String,
+    pub qbit_user: String,
+    /// Dossiers racines des Radarr/Sonarr de la seedbox (fiches ajoutées par torrent_import).
+    pub radarr_root: String,
+    pub sonarr_root: String,
+    /// Profil de qualité des fiches ajoutées sur la seedbox.
+    pub quality_profile_id: i64,
 }
 
 impl Default for Seedbox {
@@ -64,6 +73,11 @@ impl Default for Seedbox {
             rclone_rc: "http://127.0.0.1:5572".into(),
             jellyseerr_sonarr_id: 1,
             jellyseerr_vps_sonarr_id: 0,
+            qbit_url: String::new(),
+            qbit_user: String::new(),
+            radarr_root: String::new(),
+            sonarr_root: String::new(),
+            quality_profile_id: 7,
         }
     }
 }
@@ -125,6 +139,31 @@ pub struct Tasks {
     pub stack_health: StackHealth,
     pub seedbox_refresh: Interval300,
     pub id_match_import: Interval300,
+    pub torrent_import: TorrentImport,
+}
+
+/// Import des torrents ajoutés à la main dans qBittorrent (VPS et seedbox).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct TorrentImport {
+    pub interval_secs: u64,
+    /// Torrents examinés (parse, recherche, import) au plus par passage, tous côtés confondus.
+    pub max_per_run: usize,
+    /// Tentatives avant d'abandonner un torrent sur erreur (Arr injoignable…).
+    pub max_attempts: u32,
+    /// Attente maximale des épisodes d'une série qui vient d'être ajoutée.
+    pub series_ready_secs: u64,
+}
+
+impl Default for TorrentImport {
+    fn default() -> Self {
+        Self {
+            interval_secs: 600,
+            max_per_run: 10,
+            max_attempts: 3,
+            series_ready_secs: 90,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -494,6 +533,17 @@ impl Config {
             if !sb.media_root.starts_with('/') || sb.sonarr_downloads.is_empty() {
                 bail!("[seedbox] media_root (absolu) et sonarr_downloads sont requis");
             }
+            if !sb.qbit_url.is_empty() {
+                if !sb.qbit_url.starts_with("http://") && !sb.qbit_url.starts_with("https://") {
+                    bail!("[seedbox] qbit_url invalide : {:?}", sb.qbit_url);
+                }
+                if sb.qbit_user.is_empty()
+                    || !sb.radarr_root.starts_with('/')
+                    || !sb.sonarr_root.starts_with('/')
+                {
+                    bail!("[seedbox] qbit_url défini : qbit_user, radarr_root et sonarr_root (absolus) sont requis");
+                }
+            }
         }
         Ok(())
     }
@@ -517,6 +567,7 @@ pub struct Secrets {
     pub jellyfin_lib_extra: Vec<String>,
     pub seedbox_radarr_api_key: Option<Secret>,
     pub seedbox_sonarr_api_key: Option<Secret>,
+    pub seedbox_qbit_password: Option<Secret>,
     pub jellyfin_public_url: String,
     pub jellyseerr_public_url: String,
     pub quality_profile_id: i64,
@@ -562,6 +613,7 @@ impl Secrets {
                 .unwrap_or_default(),
             seedbox_radarr_api_key: opt("SEEDBOX_RADARR_API_KEY").map(Secret::new),
             seedbox_sonarr_api_key: opt("SEEDBOX_SONARR_API_KEY").map(Secret::new),
+            seedbox_qbit_password: opt("SEEDBOX_QBIT_PASSWORD").map(Secret::new),
             jellyfin_public_url: req("JELLYFIN_PUBLIC_URL")?,
             jellyseerr_public_url: req("JELLYSEERR_PUBLIC_URL")?,
             quality_profile_id: opt("QUALITY_PROFILE_ID")
@@ -622,6 +674,9 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.stuck_handler.stall_secs, 28800);
         assert_eq!(cfg.tasks.tracker_ratio.public_time_min, 20160);
         assert!(cfg.task_enabled("tba_bypass"));
+        assert_eq!(cfg.tasks.torrent_import.interval_secs, 600);
+        assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
+        assert_eq!(cfg.seedbox.quality_profile_id, 7);
     }
 
     #[test]

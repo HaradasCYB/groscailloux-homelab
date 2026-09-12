@@ -261,6 +261,15 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+                if let Some(q) = &ctx.seedbox_qbit {
+                    match q.version().await {
+                        Ok(v) => println!("✓ {:<14} {v}", "qbit-seedbox"),
+                        Err(e) => {
+                            ok = false;
+                            println!("✗ {:<14} {e}", "qbit-seedbox");
+                        }
+                    }
+                }
                 let mounted = std::fs::read_dir(&sb.mount_point)
                     .map(|mut d| d.next().is_some())
                     .unwrap_or(false);

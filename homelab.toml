@@ -54,6 +54,15 @@ requires_healthy = ["guacdb"]
 # import manuel rattaché à la fiche connue par l'historique, fichiers sans rejet seulement.
 interval_secs = 300
 
+[tasks.torrent_import]
+# Torrents ajoutés à la main dans qBittorrent (VPS + seedbox), terminés et inconnus des Arrs :
+# fiche ajoutée NON surveillée si besoin, puis import manuel en hardlink (importMode copy).
+# Rien si la fiche a déjà des fichiers sur l'autre machine (doublon Jellyfin).
+interval_secs = 600
+max_per_run = 10            # torrents examinés (parse/recherche/import) par passage
+max_attempts = 3            # erreurs avant abandon (état : homelabctl status / state/homelabd.json)
+series_ready_secs = 90      # attente des épisodes d'une série tout juste ajoutée
+
 [tasks.seedbox_refresh]
 # Nouveaux imports des Arrs seedbox → rafraîchit le cache rclone et signale les fichiers à Jellyfin.
 interval_secs = 300
@@ -132,3 +141,10 @@ jellyfin_root = "/seedbox/media"
 rclone_rc = "http://127.0.0.1:5572"
 jellyseerr_vps_sonarr_id = 0
 jellyseerr_sonarr_id = 1
+# qBittorrent de la seedbox (proxy HTTPS, mot de passe SEEDBOX_QBIT_PASSWORD) et où
+# torrent_import range les fiches qu'il ajoute dans les Arrs seedbox.
+qbit_url = "https://kakaouette.tofino.usbx.me/qbittorrent"
+qbit_user = "kakaouette"
+radarr_root = "/home/kakaouette/media/Movies"
+sonarr_root = "/home/kakaouette/media/TV Shows"
+quality_profile_id = 7      # « FR-friendly H.264 »

@@ -129,6 +129,10 @@ mod tests {
             seeding_time_limit: -2,
             completion_on: done,
             size: 1,
+            progress: 1.0,
+            content_path: String::new(),
+            save_path: String::new(),
+            category: String::new(),
         };
         let ts = vec![
             mk("a", "stoppedUP", 30),

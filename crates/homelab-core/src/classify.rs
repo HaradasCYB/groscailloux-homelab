@@ -25,7 +25,11 @@ pub enum FileKind {
 fn series_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?i)S\d{1,2}E\d{1,2}|\d{1,2}x\d{1,2}|Season|Saison|Complete").unwrap()
+        // S01E02, 3x07, packs de saison « S01 » / « S01-S03 » (mot isolé), Season/Saison/Intégrale
+        Regex::new(
+            r"(?i)S\d{1,2}E\d{1,3}|\b\d{1,2}x\d{1,2}\b|\bS\d{1,2}(?:-S?\d{1,2})?\b|Season|Saison|Complete|Int[ée]grale",
+        )
+        .unwrap()
     })
 }
 
@@ -72,6 +76,11 @@ mod tests {
             "Show 3x07.mkv",
             "Show.Season.2.Complete",
             "Serie.Saison.1.FRENCH",
+            "Gomorra.Les.Origines.S01.REPACK.MULTi.1080p",
+            "Daybreak.2019.S01.MULTi.VFi.1080p",
+            "Show.S01-S03.MULTi",
+            "Anime.S01E105.VOSTFR.mkv",
+            "Kaamelott.Integrale.FRENCH",
         ] {
             assert_eq!(classify(s), MediaKind::Series, "{s}");
         }
@@ -84,6 +93,15 @@ mod tests {
             MediaKind::Movie
         );
         assert_eq!(classify("Un.Juge.Implacable.1975.mkv"), MediaKind::Movie);
+        assert_eq!(
+            classify("On.a.retrouve.la.7eme.compagnie.1975.iNTERNAL.FRENCH.1080p.BluRay.x264-PATHECROUTE"),
+            MediaKind::Movie
+        );
+        assert_eq!(
+            classify("Fusion (2003).HDLight1080p.HEVC.X265.AAC.mkv"),
+            MediaKind::Movie
+        );
+        assert_eq!(classify("Se7en.1995.1080p.mkv"), MediaKind::Movie);
     }
 
     #[test]

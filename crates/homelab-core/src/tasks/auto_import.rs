@@ -14,6 +14,7 @@ use tracing::{info, warn};
 use crate::classify::{classify, file_kind, is_video, ArchiveKind, FileKind, MediaKind};
 use crate::clients::ArrClient;
 use crate::context::TaskContext;
+use crate::matching::{parsed_movie, parsed_series, pick_movie, pick_series};
 
 /// Point d'entrée du watcher : `name` est relatif à `paths.downloads`.
 pub async fn handle_new_entry(ctx: &TaskContext, name: &str) -> Result<()> {
@@ -27,6 +28,16 @@ pub async fn handle_new_entry(ctx: &TaskContext, name: &str) -> Result<()> {
             }
             info!(task = "auto_import", file = name, "detected video");
             let container = format!("{}/{}", ctx.cfg.paths.downloads_in_container, name);
+            if is_torrent_content(ctx, &container).await {
+                // un scan `auto` déplacerait le fichier et casserait le seed : torrent_import
+                // l'importera en hardlink une fois le torrent terminé
+                info!(
+                    task = "auto_import",
+                    file = name,
+                    "qBittorrent torrent, left to torrent_import"
+                );
+                return Ok(());
+            }
             classify_and_scan(ctx, name, &container).await
         }
         FileKind::Archive(kind) => handle_archive(ctx, name, kind).await,
@@ -55,6 +66,21 @@ pub async fn classify_and_scan(ctx: &TaskContext, label: &str, scan_path: &str) 
     }
 }
 
+/// Le fichier appartient-il à un torrent de qBittorrent ? qBit injoignable ⇒ non : il ne peut
+/// pas être en train d'écrire ce fichier.
+async fn is_torrent_content(ctx: &TaskContext, container_path: &str) -> bool {
+    match ctx.qbit.torrents().await {
+        Ok(ts) => ts.iter().any(|t| {
+            t.content_path == container_path
+                || container_path.starts_with(&format!("{}/", t.content_path))
+        }),
+        Err(e) => {
+            warn!(task = "auto_import", error = %e, "qBittorrent unreachable, assuming direct download");
+            false
+        }
+    }
+}
+
 async fn scan(ctx: &TaskContext, arr: &ArrClient, path: &str) -> Result<()> {
     if ctx.dry_run {
         info!(
@@ -78,28 +104,23 @@ async fn scan(ctx: &TaskContext, arr: &ArrClient, path: &str) -> Result<()> {
 }
 
 async fn ensure_movie(ctx: &TaskContext, filename: &str) -> Result<()> {
-    let parsed = ctx.radarr.parse(filename).await?;
-    let Some(title) = parsed
-        .pointer("/parsedMovieInfo/movieTitles/0")
-        .and_then(Value::as_str)
-    else {
+    let parse = ctx.radarr.parse(filename).await?;
+    let Some(parsed) = parsed_movie(&parse) else {
         info!(task = "auto_import", filename, "parse: no movie title");
         return Ok(());
     };
-    let year = parsed
-        .pointer("/parsedMovieInfo/year")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    let term = if year > 0 {
-        format!("{title} {year}")
+    let title = parsed.title.as_str();
+    let term = if parsed.year > 0 {
+        format!("{title} {}", parsed.year)
     } else {
         title.to_string()
     };
     let found = ctx.radarr.lookup("movie", &term).await?;
-    let Some(hit) = found.first() else {
+    let Some(m) = pick_movie(&found, &parsed) else {
         info!(task = "auto_import", term, "lookup: no_match");
         return Ok(());
     };
+    let hit = &m.hit;
     let tmdb = hit.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
     if tmdb == 0 {
         info!(task = "auto_import", term, "lookup: no tmdbId");
@@ -147,19 +168,18 @@ async fn ensure_movie(ctx: &TaskContext, filename: &str) -> Result<()> {
 }
 
 async fn ensure_series(ctx: &TaskContext, filename: &str) -> Result<()> {
-    let parsed = ctx.sonarr.parse(filename).await?;
-    let Some(title) = parsed
-        .pointer("/parsedEpisodeInfo/seriesTitle")
-        .and_then(Value::as_str)
-    else {
+    let parse = ctx.sonarr.parse(filename).await?;
+    let Some(parsed) = parsed_series(&parse) else {
         info!(task = "auto_import", filename, "parse: no series title");
         return Ok(());
     };
+    let title = parsed.title.as_str();
     let found = ctx.sonarr.lookup("series", title).await?;
-    let Some(hit) = found.first() else {
+    let Some(m) = pick_series(&found, &parsed) else {
         info!(task = "auto_import", title, "lookup: no_match");
         return Ok(());
     };
+    let hit = &m.hit;
     let tvdb = hit.get("tvdbId").and_then(Value::as_i64).unwrap_or(0);
     if tvdb == 0 {
         info!(task = "auto_import", title, "lookup: no tvdbId");

@@ -18,6 +18,8 @@ pub struct TaskContext {
     /// Présents seulement si `[seedbox] enabled = true`.
     pub seedbox_sonarr: Option<ArrClient>,
     pub seedbox_radarr: Option<ArrClient>,
+    /// qBittorrent de la seedbox, si `[seedbox] qbit_url` est défini.
+    pub seedbox_qbit: Option<QbitClient>,
     pub qbit: QbitClient,
     pub jellyfin: JellyfinClient,
     pub jellyseerr: JellyseerrClient,
@@ -64,9 +66,24 @@ impl TaskContext {
         } else {
             (None, None)
         };
+        let seedbox_qbit = if cfg.seedbox.enabled && !cfg.seedbox.qbit_url.is_empty() {
+            let pw = secrets
+                .seedbox_qbit_password
+                .clone()
+                .context("[seedbox] qbit_url défini mais SEEDBOX_QBIT_PASSWORD absent")?;
+            Some(QbitClient::with_login(
+                &with_slash(&cfg.seedbox.qbit_url),
+                &cfg.seedbox.qbit_user,
+                pw,
+                http.clone(),
+            )?)
+        } else {
+            None
+        };
         Ok(Self {
             seedbox_sonarr,
             seedbox_radarr,
+            seedbox_qbit,
             sonarr: ArrClient::new(
                 "sonarr",
                 &cfg.urls.sonarr,
@@ -116,6 +133,58 @@ impl TaskContext {
             .chain(self.seedbox_sonarr.as_ref())
             .chain(self.seedbox_radarr.as_ref())
             .collect()
+    }
+}
+
+/// Une machine qui télécharge : son qBittorrent, ses Arrs, où ils rangent.
+pub struct Side<'a> {
+    /// `vps` ou `seedbox` (clé d'état, logs).
+    pub name: &'static str,
+    pub qbit: &'a QbitClient,
+    pub radarr: &'a ArrClient,
+    pub sonarr: &'a ArrClient,
+    pub radarr_root: String,
+    pub sonarr_root: String,
+    pub quality_profile_id: i64,
+    /// Dossier de téléchargement vu par qBittorrent → même dossier sur l'hôte, pour compter
+    /// les hardlinks (VPS seulement ; `None` pour la seedbox, distante).
+    pub local_downloads: Option<(String, std::path::PathBuf)>,
+}
+
+impl TaskContext {
+    /// VPS puis, si la seedbox et son qBittorrent sont configurés, seedbox.
+    pub fn sides(&self) -> Vec<Side<'_>> {
+        let mut out = vec![Side {
+            name: "vps",
+            qbit: &self.qbit,
+            radarr: &self.radarr,
+            sonarr: &self.sonarr,
+            radarr_root: self.cfg.auto_import.radarr_root.clone(),
+            sonarr_root: self.cfg.auto_import.sonarr_root.clone(),
+            quality_profile_id: self.secrets.quality_profile_id,
+            local_downloads: Some((
+                self.cfg.paths.downloads_in_container.clone(),
+                self.cfg.paths.downloads.clone(),
+            )),
+        }];
+        if let (Some(qbit), Some(radarr), Some(sonarr)) = (
+            &self.seedbox_qbit,
+            &self.seedbox_radarr,
+            &self.seedbox_sonarr,
+        ) {
+            let sb = &self.cfg.seedbox;
+            out.push(Side {
+                name: "seedbox",
+                qbit,
+                radarr,
+                sonarr,
+                radarr_root: sb.radarr_root.clone(),
+                sonarr_root: sb.sonarr_root.clone(),
+                quality_profile_id: sb.quality_profile_id,
+                local_downloads: None,
+            });
+        }
+        out
     }
 }
 

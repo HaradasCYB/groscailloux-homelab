@@ -10,7 +10,7 @@ mod qbit;
 pub use arr::{ArrClient, QueueItem};
 pub use jellyfin::JellyfinClient;
 pub use jellyseerr::JellyseerrClient;
-pub use qbit::{QbitClient, Torrent};
+pub use qbit::{QbitClient, Torrent, TorrentFile};
 
 use anyhow::{bail, Context, Result};
 use reqwest::Response;

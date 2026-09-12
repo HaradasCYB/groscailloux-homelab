@@ -37,11 +37,18 @@ journalctl -u homelabd -f
 - **qBittorrent.conf** : arrêter le conteneur avant d'éditer, sinon il écrase le fichier.
 - **Jamais de purge globale** de queue ou de torrents : toute suppression est ciblée et
   plafonnée (`max_actions_per_run`), c'est un invariant des tâches `stuck_handler`/`disk_pressure`.
-- **Sonarr** : profil 6 `minFormatScore=-9999` (FR d'abord, VOSTFR toléré) ; C411 en
-  interactif seulement. **Jellyfin** : pas de GPU, préférer x264 à HEVC.
+- **Indexers** : C411 seul en automatique (RSS + auto) sur les 4 Arrs, les autres en interactif
+  seulement. **Profils** FR-friendly : 1080p max (jamais 2160p), `minFormatScore=-9999`, FR d'abord,
+  VO/VOSTFR en dernier recours. **Jellyfin** : pas de GPU, préférer x264 à HEVC.
+- **Import d'un téléchargement que l'Arr n'a pas demandé** : `ManualImport` en `importMode: copy`
+  (hardlink), jamais `auto` (= déplacement, le torrent perd ses fichiers) ; `GET manualimport` sans
+  `downloadId` (liste vide sinon). C'est ce que fait `torrent_import`.
 - **Arrêter un service volontairement** : l'ajouter à `tasks.stack_health.ignore` dans
   `homelab.toml` (+ restart homelabd) ou désactiver la tâche, sinon `stack_health` le relance
   dans les 5 min. `guacamole` est en `restart: "no"` exprès (course au boot avec guacdb).
+- **Lecture Jellyfin** : aucune tâche lourde (trickplay, analyse de segments, scan complet,
+  extraction) entre 13 h et 05 h ; trickplay jamais pendant les scans (il lit tout le fichier, par le
+  lien seedbox pour ses titres). `cpu_shares` : jellyfin 2048, fond 512 — le garder sur tout nouveau service de fond.
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
   `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans
@@ -63,7 +70,9 @@ journalctl -u homelabd -f
 - Montage : rclone dans **`/mnt/seedbox/media`**, Jellyfin lie le **parent** `/mnt/seedbox`
   (rslave). Lier le point de montage FUSE lui-même casse la reprise après coupure.
 - Nouvelles demandes Jellyseerr → Arrs seedbox (id 1). Ne rien importer côté seedbox qui existe
-  déjà sur le VPS (doublons dans Jellyfin).
+  déjà sur le VPS (doublons dans Jellyfin) : `torrent_import` le refuse (`dup_other_side`).
+- Jellyfin : « Films » et « Séries » ont chacune deux dossiers (`/media/…` et `/seedbox/media/…`) ;
+  plus de bibliothèques « (Seedbox) ». qBittorrent seedbox : `[seedbox] qbit_url` + `SEEDBOX_QBIT_PASSWORD`.
 - Jellyseerr : ne jamais appeler `settings/jellyfin/library?sync=true` sans renvoyer `?enable=`
   avec la liste complète des bibliothèques.
 
@@ -79,4 +88,7 @@ journalctl -u homelabd -f
   vérifier qui l'appelle : `grep -r <nom>:<port>` dans les configs et les champs `baseUrl` des
   indexers Arr (`GET /api/v3/indexer`) — le retrait de Jackett/FlareSolverr le 2026-09-10 a coupé
   les indexers publics pendant deux jours.
+- Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
+  même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`).
+  Ne pas « nettoyer » par `DELETE /Items/<id>` : sur un dossier de bibliothèque, il peut effacer le disque.
 - L'UI d'onboarding est sur l'hôte (8766) ; NPM doit cibler `172.18.0.1:8766`, pas un conteneur.

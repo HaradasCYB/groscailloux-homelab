@@ -42,6 +42,7 @@ services:
       - TZ=${TZ}
       - JELLYFIN_PublishedServerUrl=http://${HOST_IP}:8096
     mem_limit: 4g
+    cpu_shares: 2048          # priorité CPU en cas de contention (défaut 1024)
     cpus: 4
 
   jellyseerr:
@@ -79,6 +80,7 @@ services:
       <<: *hc
       test: ["CMD", "curl", "-fsS", "http://localhost:7878/ping"]
     mem_limit: 1g
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   sonarr:
     <<: *base
@@ -98,6 +100,7 @@ services:
       <<: *hc
       test: ["CMD", "curl", "-fsS", "http://localhost:8989/ping"]
     mem_limit: 1g
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   prowlarr:
     <<: *base
@@ -115,6 +118,7 @@ services:
       <<: *hc
       test: ["CMD", "curl", "-fsS", "http://localhost:9696/ping"]
     mem_limit: 512m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   # Source des indexers publics de Sonarr/Radarr (URLs http://jackett:9117/...). Prowlarr n'est
   # synchronisé avec aucun Arr : ne pas retirer Jackett tant que les Arrs pointent dessus.
@@ -134,6 +138,7 @@ services:
       <<: *hc
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9117/UI/Login"]
     mem_limit: 512m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   # Utilisé par Jackett (ServerConfig FlareSolverrUrl) pour les indexers derrière Cloudflare
   # (1337x, eztv). Pas d'exposition de port : seul Jackett l'appelle sur le réseau homelab.
@@ -148,6 +153,7 @@ services:
       <<: *hc
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8191/health"]
     mem_limit: 1g
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   # Profils : COMPOSE_PROFILES=vpn (défaut, .env) → gluetun + qbittorrent ;
   # COMPOSE_PROFILES=novpn → qbittorrent-direct. Bascule via `homelabctl vpn on|off`.
@@ -202,6 +208,7 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 3g
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   # Variante sans VPN : même config, ports exposés directement (jamais en même temps que gluetun).
   qbittorrent-direct:
@@ -225,6 +232,7 @@ services:
       <<: *hc
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v2/app/version"]
     mem_limit: 3g
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   pyload:
     <<: *base
@@ -243,6 +251,7 @@ services:
       <<: *hc
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8000/"]
     mem_limit: 512m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   filebrowser:
     <<: *base
@@ -259,6 +268,7 @@ services:
       - PGID=1000
       - TZ=${TZ}
     mem_limit: 256m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   # ---------------------------------------------------------------- edge / accès
   npm:
@@ -356,6 +366,7 @@ services:
       <<: *hc
       test: ["CMD", "wget", "-qO-", "http://localhost:7575/api/health/live"]
     mem_limit: 768m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   portainer:
     <<: *base
@@ -367,6 +378,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/homelab/portainer:/data
     mem_limit: 256m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   # ---------------------------------------------------------------- observabilité
   influxdb:
@@ -390,6 +402,7 @@ services:
       <<: *hc
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8086/health"]
     mem_limit: 1536m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   telegraf:
     <<: *base
@@ -410,6 +423,7 @@ services:
       influxdb:
         condition: service_healthy
     mem_limit: 256m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   grafana:
     <<: *base
@@ -431,6 +445,7 @@ services:
       <<: *hc
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3000/api/health"]
     mem_limit: 512m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   glances:
     <<: *base
@@ -447,6 +462,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /:/rootfs:ro
     mem_limit: 256m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   diun:
     <<: *base
@@ -471,6 +487,7 @@ services:
       - DIUN_NOTIF_MAIL_FROM=${SMTP_FROM}
       - DIUN_NOTIF_MAIL_TO=${ADMIN_EMAIL}
     mem_limit: 128m
+    cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
 networks:
   homelab:

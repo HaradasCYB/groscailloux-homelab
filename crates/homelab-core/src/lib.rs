@@ -11,6 +11,7 @@ pub mod context;
 pub mod disk;
 pub mod docker;
 pub mod mail;
+pub mod matching;
 pub mod secret;
 pub mod state;
 pub mod tasks;

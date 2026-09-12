@@ -25,10 +25,10 @@ Une valeur avec espace se met entre guillemets doubles ; pas d'expression shell 
 | `ADMIN_EMAIL` | boîte lue par l'admin | diun |
 | `HOMELABD_ONBOARD_TOKEN` | `openssl rand -hex 32` | `POST /onboard` |
 | `COMPOSE_PROFILES` | `vpn` ou `novpn`, géré par `homelabctl vpn` | docker compose |
-| `JELLYFIN_LIB_EXTRA` | ids des bibliothèques seedbox (virgules) | onboarding (policy) |
+| `JELLYFIN_LIB_EXTRA` | ids de bibliothèques supplémentaires (virgules), vide par défaut | onboarding (policy) |
 | `SEEDBOX_RADARR_API_KEY`, `SEEDBOX_SONARR_API_KEY` | `~/.apps/<app>/config.xml` sur la seedbox | homelabd, Jellyseerr |
 | `SEEDBOX_JACKETT_API_KEY` | `~/.apps/jackett/Jackett/ServerConfig.json` | indexers des Arrs seedbox |
-| `SEEDBOX_QBIT_PASSWORD` | mot de passe WebUI qBittorrent seedbox (installeur hébergeur) | client des Arrs seedbox |
+| `SEEDBOX_QBIT_PASSWORD` | mot de passe WebUI qBittorrent seedbox (installeur hébergeur) | client des Arrs seedbox, `torrent_import` |
 | `SEEDBOX_*_PASSWORD` (jackett, radarr, sonarr, bazarr, autobrr) | générés, passés à `app-<x> install -p` | UIs web seedbox |
 
 La clé SSH `~/.ssh/seedbox_sftp_ro` (hors dépôt) ne donne que du SFTP lecture seule sur la

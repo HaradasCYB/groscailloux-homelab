@@ -26,7 +26,7 @@ flowchart LR
   subgraph VPS
     direction TB
     subgraph host[Hôte · systemd]
-      homelabd["homelabd<br/>10 tâches + watcher<br/>UI onboarding"]
+      homelabd["homelabd<br/>11 tâches + watcher<br/>UI onboarding"]
       rclone["rclone mount<br/>SFTP lecture seule<br/>cache 10 Go"]
       stack[homelab-stack<br/>backup hebdo]
     end
@@ -87,7 +87,9 @@ flowchart LR
 ## Parcours d'une demande
 
 Jellyseerr envoie les nouvelles demandes aux Radarr/Sonarr **de la seedbox** (serveurs par défaut) ;
-ceux du VPS gèrent la bibliothèque existante.
+ceux du VPS gèrent la bibliothèque existante. Sur les quatre Arrs, **seul C411** sert aux grabs
+automatiques (RSS, recherche à l'ajout) ; les autres indexers ne servent qu'en recherche manuelle.
+Qualité : 1080p au plus, jamais de 4K (le VPS transcode sans GPU).
 
 ```mermaid
 sequenceDiagram
@@ -135,7 +137,7 @@ flowchart LR
     sd <-- hardlink --> sm["~/media/Movies · TV Shows"]
   end
   sm -- SFTP lecture seule --> mnt["/mnt/seedbox/media<br/>FUSE rclone · hôte VPS"]
-  mnt -- bind du parent, rslave --> jfs["Jellyfin<br/>/seedbox/media<br/>biblios « Seedbox »"]
+  mnt -- bind du parent, rslave --> jfs["Jellyfin<br/>/seedbox/media<br/>2ᵉ dossier de Films · Séries"]
 
   subgraph V[Chaîne VPS · bibliothèque historique]
     direction LR
@@ -156,7 +158,8 @@ flowchart LR
 
 | Flux | Fonctionnement |
 |---|---|
-| Pipeline historique (VPS) | Radarr/Sonarr du VPS → Jackett (+ FlareSolverr) et C411 → qBittorrent via gluetun → import hardlink dans `library/media`. C411 en recherche interactive seulement dans le Sonarr du VPS. |
+| Pipeline historique (VPS) | Radarr/Sonarr du VPS → Jackett (+ FlareSolverr) et C411 → qBittorrent via gluetun → import hardlink dans `library/media`. C411 seul en automatique, les autres indexers en recherche manuelle. |
+| Torrents ajoutés à la main (VPS + seedbox) | `torrent_import` (10 min) : torrent terminé inconnu des Arrs → fiche non surveillée → import manuel en hardlink → Jellyfin. Refusé si le titre a déjà des fichiers sur l'autre machine. |
 | Dépôts directs (VPS) | Fichier dans `library/downloads` (pyLoad, dépôt manuel) → observateur `auto_import` → classement série/film → ajout de la fiche dans l'Arr → import. Archives extraites d'abord. |
 | Onboarding | `homelabctl onboard`, page d'onboarding (jeton) ou compte créé dans Jellyseerr → compte Jellyfin (bibliothèques autorisées), import Jellyseerr, mail de bienvenue. Mot de passe jamais journalisé. |
 | Observabilité | Telegraf (hôte + Docker) → InfluxDB (30 jours) → Grafana ; Glances en direct. |
@@ -173,6 +176,7 @@ qBittorrent. Détail des endpoints : [AUTOMATION.md](../AUTOMATION.md).
 | `stack_health` | 5 min | relance les services arrêtés, redémarre les unhealthy, teste Guacamole | 10 min entre deux redémarrages, attend guacdb |
 | `seedbox_refresh` | 5 min | nouveaux imports seedbox → rclone + Jellyfin | curseur persistant ; rien si montage absent |
 | `id_match_import` | 5 min | débloque les imports « matched by ID » | fichiers sans rejet ; 10 max/passage |
+| `torrent_import` | 10 min | importe les torrents ajoutés à la main (VPS + seedbox) | fiches non surveillées, hardlink, pas de doublon entre machines ; 10 max/passage |
 | `tba_bypass` | 5 min | importe les épisodes refusés pour « titre TBA » | seul rejet uniquement |
 | `stuck_handler` | 5 min | remplace les téléchargements bloqués > 8 h | 5 max/passage, ciblé |
 | `disk_pressure` | 15 min | disque VPS ≥ 95 % : supprime les vieux torrents arrêtés | hardlinks préservés ; ≥ 98 % alerte seule |
@@ -182,12 +186,25 @@ qBittorrent. Détail des endpoints : [AUTOMATION.md](../AUTOMATION.md).
 | `cleanup` | 24 h | transcodages, dossiers vides, corbeilles, logs | chemins existants seulement |
 | `auto_import` | continu | observe `library/downloads` | refuse de démarrer sans le dossier |
 
+## Lecture fluide
+
+Presque toutes les lectures sont directes (les appareils lisent le fichier tel quel) : ce qui compte est
+de livrer le fichier assez vite, et de ne pas faire tourner de tâches lourdes pendant qu'on regarde.
+
+| Levier | Réglage |
+|---|---|
+| Lien seedbox | SFTP en blocs de 255 Ko : ~16 Mo/s par flux (contre 5), ~24 Mo/s reçus par Jellyfin ; lecture anticipée de 256 Mo |
+| Vignettes de navigation (trickplay) | images clés seulement, jamais pendant un scan ; tâche nocturne 05:30 (6 h max) |
+| Tâches Jellyfin lourdes | scan 05:00, segments 05:15, Intro Skipper 06:00 : fenêtre sans lecture 05–13 h |
+| Priorité CPU | `cpu_shares` 2048 pour Jellyfin, 512 pour les tâches de fond (n'agit qu'en cas de contention) |
+| Charge de fond | Jellyseerr : disponibilité recalculée une fois par nuit ; supervision toutes les 30 s |
+
 ## Résilience
 
 | Événement | Comportement | Retour à la normale |
 |---|---|---|
 | Redémarrage du VPS | Docker relance les conteneurs ; `homelab-stack` lance Guacamole après guacdb ; passe `stack_health`. | automatique |
-| Seedbox injoignable | Bibliothèques « (Seedbox) » indisponibles sans purge ; nouvelles demandes en attente ; VPS intact. | automatique au retour · arrêt définitif : [DEPLOY.md](../DEPLOY.md) |
+| Seedbox injoignable | Titres venant de la seedbox affichés mais illisibles, sans purge (Jellyfin ignore un dossier inaccessible) ; nouvelles demandes en attente ; VPS intact. | automatique au retour · arrêt définitif : [DEPLOY.md](../DEPLOY.md) |
 | Service unhealthy | Redémarré après 2 min. | automatique |
 | Coupure du VPN | Kill-switch : qBittorrent (VPS) sans réseau, aucune fuite. | automatique |
 | Disque VPS ≥ 95 % | `disk_pressure` libère de la place. | manuel à ≥ 98 % |

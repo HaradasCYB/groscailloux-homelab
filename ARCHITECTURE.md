@@ -52,14 +52,26 @@ Bazarr, Unpackerr et autobrr. Les Arrs y rangent par hardlink dans `~/media/{Mov
 Jellyseerr envoie les **nouvelles demandes** à ces Arrs (serveurs par défaut, id 1) ; ceux du VPS
 (id 0) gardent la bibliothèque existante. Le VPS monte `~/media` en **lecture seule** (rclone SFTP,
 clé restreinte à `sftp-server -R`) sur `/mnt/seedbox/media` ; Jellyfin le voit sous
-`/seedbox/media` dans deux bibliothèques séparées, « Films (Seedbox) » et « Séries (Seedbox) ».
+`/seedbox/media` : `/seedbox/media/Movies` et `/seedbox/media/TV Shows` sont un **second dossier**
+des bibliothèques « Films » et « Séries » (une seule bibliothèque par type pour les utilisateurs).
 `seedbox_refresh` (homelabd) signale chaque nouvel import à rclone puis à Jellyfin.
-Si la seedbox tombe : ces deux bibliothèques deviennent indisponibles (Jellyfin ne purge pas, le
-scan échoue), le reste de Jellyfin et le pipeline VPS ne sont pas affectés.
+Si la seedbox tombe : les titres venant de la seedbox restent affichés mais ne se lisent plus ;
+Jellyfin ne les purge pas (« Library folder … is inaccessible or empty, skipping », vérifié en
+10.11.8 sur scan de bibliothèque et scan global) ; le reste de Jellyfin et le pipeline VPS ne sont
+pas affectés.
 Lien mesuré : RTT 96 ms, ~12 Mo/s par lecture (1080p et 4K WEB OK, remux 4K limite) ; pas de
 transcodage 4K HEVC (VPS sans GPU). Sur la seedbox, les apps tournent en conteneurs Docker et
 joignent qBittorrent (natif, `127.0.0.1` seulement) via `https://kakaouette.tofino.usbx.me/qbittorrent`
 et Jackett/FlareSolverr via `172.17.0.1:<port>`.
+
+**Lecture fluide.** 98 % des lectures sont en lecture directe (Playback Reporting, 30 j) : le
+buffering vient de l'acheminement, pas du transcodage. Donc :
+- rclone : `chunk_size = 255k` (SFTP ; 5 → 16 Mo/s par flux, 24 Mo/s via le montage) et
+  `--vfs-read-ahead 256M` ;
+- Jellyfin : trickplay en images clés seulement et **jamais pendant un scan** ; tâches lourdes
+  (scan 05:00, segments 05:15, trickplay 05:30 max 6 h, Intro Skipper 06:00 max 3 h) dans la fenêtre
+  sans lecture 05–13 h ; `cpu_shares` 2048 pour jellyfin, 512 pour les tâches de fond ;
+- Jellyseerr `availability-sync` quotidien (05:00) ; Telegraf toutes les 30 s.
 
 **Santé du stack.** `stack_health` (homelabd) relance les services arrêtés, redémarre les
 `unhealthy` et ceux dont la sonde applicative échoue (Guacamole : login test). Guacamole est en
@@ -85,8 +97,11 @@ gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-updat
 
 ## Contraintes d'exploitation
 
-- Profil Sonarr `6` : `minFormatScore=-9999`, FR préféré, VO/VOSTFR acceptés en dernier recours.
-- Indexer C411 en recherche interactive uniquement dans Sonarr (pas de RSS/auto).
+- **C411 seul en automatique** sur les 4 Arrs (RSS + recherche auto) ; tous les autres indexers en
+  recherche interactive seulement (toujours proposés quand on cherche à la main).
+- Profils « FR-friendly H.264 » (VPS 6, seedbox 7) : **1080p au plus, jamais de 2160p** (CPU du VPS) ;
+  VFF > MULTi > FRENCH, H.264 préféré ; VO/VOSTFR en dernier recours (`No French Marker` -2000,
+  `minFormatScore` -9999) ; rejets durs (langues étrangères, CAM/TS, sample, 3D) à -100000.
 - Jamais de purge globale de queue : chaque suppression est ciblée par id/titre.
 - Arrêter qBittorrent avant d'éditer `qBittorrent.conf` (sinon il l'écrase à l'arrêt).
 - Pas d'accélération matérielle : préférer x264 à x265 pour les releases FR/MULTi.

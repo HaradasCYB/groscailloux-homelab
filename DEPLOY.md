@@ -66,10 +66,12 @@ Mise en place (déjà faite sur la prod, à refaire sur une nouvelle seedbox) :
    `restrict,command="/usr/lib/openssh/sftp-server -R"` ; rclone ≥ 1.68 dans `/usr/local/bin` ;
    `user_allow_other` dans `/etc/fuse.conf` ; `mkdir -p /mnt/seedbox/media`.
 4. `[seedbox] enabled = true` dans `homelab.toml`, `sudo homelabctl install` (active
-   `homelab-seedbox-mount.service`), bibliothèques Jellyfin sur `/seedbox/media/Movies` et
-   `/seedbox/media/TV Shows` (surveillance temps réel off), leurs ids dans `JELLYFIN_LIB_EXTRA`.
+   `homelab-seedbox-mount.service`) ; Jellyfin : ajouter `/seedbox/media/Movies` comme second dossier
+   de « Films » et `/seedbox/media/TV Shows` à « Séries » (Tableau de bord → Bibliothèques → Gérer
+   les dossiers) ; `JELLYFIN_LIB_EXTRA` reste vide ; `[seedbox] qbit_url`/`qbit_user` +
+   `SEEDBOX_QBIT_PASSWORD` pour `torrent_import`.
 5. Jellyseerr : Radarr/Sonarr seedbox en serveurs par défaut ; bibliothèques activées via
-   `…/settings/jellyfin/library?enable=<ids>` (**jamais** `sync=true` seul : il désactive tout).
+   `…/settings/jellyfin/library?enable=<id Films>,<id Séries>` (**jamais** `sync=true` seul : il désactive tout).
 
 Vérifier : `homelabctl check` (Arrs seedbox + montage), `systemctl status homelab-seedbox-mount`.
 
@@ -79,8 +81,9 @@ Vérifier : `homelabctl check` (Arrs seedbox + montage), `systemctl status homel
    de la seedbox (les demandes en cours restent visibles).
 2. `homelab.toml` : `[seedbox] enabled = false` → `sudo systemctl restart homelabd`.
 3. `sudo systemctl disable --now homelab-seedbox-mount`.
-4. Jellyfin : supprimer « Films (Seedbox) » et « Séries (Seedbox) », retirer leurs ids de
-   `JELLYFIN_LIB_EXTRA` ; optionnel : retirer la ligne `/mnt/seedbox:/seedbox` du service jellyfin.
+4. Jellyfin : retirer les dossiers `/seedbox/media/Movies` de « Films » et `/seedbox/media/TV Shows`
+   de « Séries », puis scanner (les titres venant de la seedbox disparaissent) ; optionnel : retirer
+   la ligne `/mnt/seedbox:/seedbox` du service jellyfin.
 Les bibliothèques et le pipeline du VPS ne sont jamais touchés par ces étapes.
 
 ## Sauvegarde et restauration

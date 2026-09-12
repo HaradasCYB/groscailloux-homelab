@@ -211,6 +211,66 @@ impl ArrClient {
             .unwrap_or_default())
     }
 
+    /// Nombre d'événements d'historique (grab, import…) liés à ce téléchargement.
+    /// Les Arrs stockent l'id qBittorrent en majuscules et le filtre y est sensible.
+    pub async fn history_count_for_download(&self, hash: &str) -> Result<i64> {
+        let id = hash.to_ascii_uppercase();
+        let v = self
+            .get(
+                "api/v3/history",
+                &[("downloadId", id.as_str()), ("pageSize", "1")],
+            )
+            .await?;
+        Ok(v.get("totalRecords").and_then(Value::as_i64).unwrap_or(0))
+    }
+
+    /// Aperçu d'import manuel d'un fichier ou dossier quelconque, rattaché à une fiche.
+    /// Sans `downloadId` : pour un téléchargement que l'Arr ne suit pas, il renverrait une liste vide.
+    pub async fn manual_import_folder(
+        &self,
+        folder: &str,
+        id_param: &str,
+        id: i64,
+    ) -> Result<Vec<Value>> {
+        let id = id.to_string();
+        let resp = self
+            .req(Method::GET, "api/v3/manualimport")
+            .query(&[
+                ("folder", folder),
+                (id_param, id.as_str()),
+                ("filterExistingFiles", "false"),
+            ])
+            .timeout(std::time::Duration::from_secs(300))
+            .send()
+            .await?;
+        let v = json(resp, &format!("{} GET manualimport", self.name)).await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    /// Fiche existante par identifiant externe (`movie`/`tmdbId` ou `series`/`tvdbId`).
+    pub async fn find_by(&self, kind: &str, id_param: &str, id: i64) -> Result<Option<Value>> {
+        let v = self
+            .get(&format!("api/v3/{kind}"), &[(id_param, &id.to_string())])
+            .await?;
+        Ok(v.as_array().and_then(|a| a.first().cloned()))
+    }
+
+    /// Épisodes d'une série (id, saison, numéro, numéro absolu).
+    pub async fn episodes(&self, series_id: i64) -> Result<Vec<Value>> {
+        let v = self
+            .get("api/v3/episode", &[("seriesId", &series_id.to_string())])
+            .await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    /// Épisodes connus d'une série (vide juste après l'ajout, le temps du refresh).
+    pub async fn episode_count(&self, series_id: i64) -> Result<usize> {
+        let v = self
+            .get("api/v3/episode", &[("seriesId", &series_id.to_string())])
+            .await?;
+        Ok(v.as_array().map(Vec::len).unwrap_or(0))
+    }
+
     pub fn scan_command(&self, path: &str) -> Value {
         let name = if self.is_radarr() {
             "DownloadedMoviesScan"

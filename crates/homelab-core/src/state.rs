@@ -27,6 +27,28 @@ pub struct State {
     /// seedbox_refresh : dernier id d'historique d'import traité, par Arr.
     #[serde(default)]
     pub seedbox_history: BTreeMap<String, i64>,
+    /// torrent_import : décision par torrent, clé `côté:hash` (`vps:…`, `seedbox:…`).
+    #[serde(default)]
+    pub torrent_import: BTreeMap<String, TorrentImportRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TorrentImportRecord {
+    pub at: i64,
+    pub name: String,
+    /// `imported`, `arr_managed`, `already_linked`, `no_video`, `no_match`, `dup_other_side`,
+    /// `nothing_importable`, `error` (définitifs) ; `retry` (nouvel essai au passage suivant).
+    pub outcome: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub attempts: u32,
+}
+
+impl TorrentImportRecord {
+    pub fn is_final(&self) -> bool {
+        self.outcome != "retry"
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
