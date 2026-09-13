@@ -103,6 +103,9 @@ journalctl -u homelabd -f
   Ne pas « nettoyer » par `DELETE /Items/<id>` : sur un dossier de bibliothèque, il peut effacer le disque.
 - **qBittorrent** : ne jamais remettre `172.18.0.0/16` dans `bypass_auth_subnet_whitelist` (NPM y
   est : qBit serait public sans mot de passe) ; seulement `127.0.0.0/8` et `172.18.0.1/32`.
+  Garder `web_ui_reverse_proxy_enabled` (proxies de confiance `172.18.0.0/16`) : sans ça, qBit voit
+  toutes les connexions venir de NPM et un ban (5 échecs, 1 h) bloque l'accès web pour tout le monde
+  (arrivé le 2026-09-14). Lever un ban : redémarrer qbittorrent (bans en mémoire).
 - **NPM** : pas d'identifiants admin NPM ici ; la liste d'accès « admin-outils » (id 2) a été écrite en
   imitant NPM (base + `npm/data/access/2` + bloc dans `location /` de chaque site), sauvegarde
   `backups/npm-20260912-212419/`. Tout nouvel outil d'admin exposé : même liste. Ne jamais afficher
