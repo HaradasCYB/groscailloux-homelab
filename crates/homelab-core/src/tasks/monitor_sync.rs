@@ -1,7 +1,8 @@
 //! Réconcilie `seasons[].monitored` de Sonarr avec les saisons demandées dans
 //! Jellyseerr (ex `jellyseerr-sonarr-monitor-sync.sh`, toutes les 10 min).
 //! Jellyseerr ajoute les séries sans `addOptions.monitor` ⇒ Sonarr monitore tout.
-//! Règle : monitored = demandée OR a déjà des fichiers ; S00 jamais touchée ;
+//! Règle : monitored = (demandée ET pas déjà présente sur l'autre machine) OR a déjà des
+//! fichiers ici ; S00 jamais touchée ;
 //! les séries inconnues de Jellyseerr ne sont pas modifiées.
 //! Plusieurs Sonarr (VPS, seedbox) : chaque demande est routée vers le Sonarr dont
 //! l'id Jellyseerr vaut `media.serviceId` — les ids de séries diffèrent d'une instance
@@ -69,6 +70,45 @@ pub fn for_server(map: &Requested, server: i64) -> BTreeMap<i64, BTreeSet<i64>> 
 }
 
 /// Applique la règle sur la copie de `series`. Renvoie (avant, après) des saisons monitorées.
+/// Saisons ayant au moins un fichier, par tvdbId (pour savoir ce qu'a l'autre machine).
+pub fn seasons_with_files(all_series: &[Value]) -> BTreeMap<i64, BTreeSet<i64>> {
+    let mut out: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
+    for s in all_series {
+        let Some(tvdb) = s.get("tvdbId").and_then(Value::as_i64).filter(|t| *t > 0) else {
+            continue;
+        };
+        for season in s
+            .get("seasons")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let files = season
+                .pointer("/statistics/episodeFileCount")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            if let (Some(n), true) = (
+                season.get("seasonNumber").and_then(Value::as_i64),
+                files > 0,
+            ) {
+                out.entry(tvdb).or_default().insert(n);
+            }
+        }
+    }
+    out
+}
+
+/// Applique la règle sur la copie de `series`. `elsewhere` : saisons déjà présentes sur l'autre
+/// machine (jamais suivies ici, sinon doublon dans Jellyfin). Renvoie (avant, après).
+pub fn apply_with(
+    series: &mut Value,
+    requested: &BTreeSet<i64>,
+    elsewhere: &BTreeSet<i64>,
+) -> (Vec<i64>, Vec<i64>) {
+    let wanted: BTreeSet<i64> = requested.difference(elsewhere).copied().collect();
+    apply(series, &wanted)
+}
+
 pub fn apply(series: &mut Value, requested: &BTreeSet<i64>) -> (Vec<i64>, Vec<i64>) {
     let before = monitored(series);
     if let Some(seasons) = series.get_mut("seasons").and_then(Value::as_array_mut) {
@@ -104,13 +144,16 @@ fn monitored(series: &Value) -> Vec<i64> {
 async fn sync_one(
     ctx: &TaskContext,
     sonarr: &ArrClient,
+    all_series: Vec<Value>,
     map: &BTreeMap<i64, BTreeSet<i64>>,
+    elsewhere: &BTreeMap<i64, BTreeSet<i64>>,
 ) -> Result<u32> {
     if map.is_empty() {
         return Ok(0);
     }
+    let empty = BTreeSet::new();
     let mut changes = 0u32;
-    for mut series in sonarr.series().await? {
+    for mut series in all_series {
         let Some(id) = series.get("id").and_then(Value::as_i64) else {
             continue;
         };
@@ -120,7 +163,9 @@ async fn sync_one(
             .and_then(Value::as_str)
             .unwrap_or("?")
             .to_string();
-        let (before, after) = apply(&mut series, req);
+        let tvdb = series.get("tvdbId").and_then(Value::as_i64).unwrap_or(0);
+        let other = elsewhere.get(&tvdb).unwrap_or(&empty);
+        let (before, after) = apply_with(&mut series, req, other);
         if before == after {
             continue;
         }
@@ -163,11 +208,26 @@ impl Task for MonitorSync {
         if let Some(s) = &ctx.seedbox_sonarr {
             targets.push((s, sb.jellyseerr_sonarr_id));
         }
+        // séries de chaque Sonarr, puis saisons présentes « ailleurs » pour chacun
+        let mut lists = Vec::new();
+        for (sonarr, _) in &targets {
+            lists.push(sonarr.series().await?);
+        }
+        let files: Vec<BTreeMap<i64, BTreeSet<i64>>> =
+            lists.iter().map(|l| seasons_with_files(l)).collect();
         let mut changes = 0u32;
         let mut summary = Vec::new();
-        for (sonarr, server) in targets {
+        for (i, ((sonarr, server), list)) in targets.into_iter().zip(lists).enumerate() {
+            let mut elsewhere: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
+            for (j, f) in files.iter().enumerate() {
+                if j != i {
+                    for (tvdb, seasons) in f {
+                        elsewhere.entry(*tvdb).or_default().extend(seasons);
+                    }
+                }
+            }
             let subset = for_server(&map, server);
-            changes += sync_one(ctx, sonarr, &subset).await?;
+            changes += sync_one(ctx, sonarr, list, &subset, &elsewhere).await?;
             summary.push(format!("{}={}", sonarr.name, subset.len()));
         }
         Ok(Report::new(
@@ -219,5 +279,20 @@ mod tests {
         let (before, after) = apply(&mut s, &BTreeSet::from([3]));
         assert_eq!(before, vec![0, 1, 2]);
         assert_eq!(after, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn seasons_present_on_the_other_machine_are_not_monitored() {
+        let vps = vec![json!({"tvdbId": 72368, "seasons": [
+            {"seasonNumber": 10, "statistics": {"episodeFileCount": 24}},
+            {"seasonNumber": 9, "statistics": {"episodeFileCount": 0}}]})];
+        let elsewhere = seasons_with_files(&vps);
+        assert_eq!(elsewhere[&72368], BTreeSet::from([10]));
+        let mut sb = json!({"id": 37, "tvdbId": 72368, "seasons": [
+            {"seasonNumber": 9, "monitored": false, "statistics": {"episodeFileCount": 0}},
+            {"seasonNumber": 10, "monitored": true, "statistics": {"episodeFileCount": 0}},
+            {"seasonNumber": 14, "monitored": false, "statistics": {"episodeFileCount": 24}}]});
+        let (_, after) = apply_with(&mut sb, &BTreeSet::from([9, 10, 14]), &elsewhere[&72368]);
+        assert_eq!(after, vec![9, 14]);
     }
 }

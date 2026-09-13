@@ -161,8 +161,8 @@ pub struct UnknownSeriesGrab {
 impl Default for UnknownSeriesGrab {
     fn default() -> Self {
         Self {
-            interval_secs: 21600,
-            max_searches_per_run: 3,
+            interval_secs: 10800,
+            max_searches_per_run: 8,
             retry_after_hours: 72,
             grabbed_retry_hours: 168,
             indexer: "C411".into(),
@@ -708,7 +708,7 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.torrent_import.interval_secs, 600);
         assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
-        assert_eq!(cfg.tasks.unknown_series_grab.max_searches_per_run, 3);
+        assert_eq!(cfg.tasks.unknown_series_grab.max_searches_per_run, 8);
     }
 
     #[test]

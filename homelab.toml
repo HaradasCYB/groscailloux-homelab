@@ -66,8 +66,8 @@ series_ready_secs = 90      # attente des épisodes d'une série tout juste ajou
 [tasks.unknown_series_grab]
 # Releases C411 rejetées par Sonarr pour la seule raison « Unknown Series » (titre traduit) :
 # grab forcé si le titre correspond exactement au titre FR/original de la série (Jellyseerr).
-interval_secs = 21600       # 6 h
-max_searches_per_run = 3    # recherches interactives de saison par passage
+interval_secs = 10800       # 3 h
+max_searches_per_run = 8    # recherches de saison par passage (1 requête C411 chacune ; anime : 1 saison max, une requête par épisode)
 retry_after_hours = 72      # saison sans candidat : nouvelle recherche après 3 jours
 grabbed_retry_hours = 168   # saison prise mais encore manquante : après 7 jours
 indexer = "C411"

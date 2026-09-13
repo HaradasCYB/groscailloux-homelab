@@ -402,66 +402,148 @@ impl Task for UnknownSeriesGrab {
     }
 
     async fn run(&self, ctx: &TaskContext) -> Result<Report> {
-        let mut budget = ctx.cfg.tasks.unknown_series_grab.max_searches_per_run;
+        let budget = ctx.cfg.tasks.unknown_series_grab.max_searches_per_run;
         let mut counts: BTreeMap<String, u32> = BTreeMap::new();
+        // saisons de tous les Sonarr, puis un seul ordre global : nouvelles demandes d'abord
+        struct Ctx<'a> {
+            arr: &'a ArrClient,
+            series: HashMap<i64, Value>,
+            dc: i64,
+        }
+        let mut arrs: Vec<Ctx> = Vec::new();
+        let mut all: Vec<(usize, SeasonTodo)> = Vec::new();
         for arr in ctx.all_sonarr() {
-            if budget == 0 {
-                break;
+            let prepared = async {
+                let todo = plan_seasons(ctx, arr).await?;
+                let series: HashMap<i64, Value> = arr
+                    .series()
+                    .await?
+                    .into_iter()
+                    .filter_map(|s| Some((s.get("id").and_then(Value::as_i64)?, s)))
+                    .collect();
+                let dc = arr
+                    .download_clients()
+                    .await?
+                    .into_iter()
+                    .find(|d| d.get("enable").and_then(Value::as_bool).unwrap_or(false))
+                    .and_then(|d| d.get("id").and_then(Value::as_i64))
+                    .context("aucun client de téléchargement actif")?;
+                anyhow::Ok((todo, series, dc))
             }
-            let todo = match plan_seasons(ctx, arr).await {
-                Ok(t) => t,
+            .await;
+            match prepared {
+                Ok((todo, series, dc)) => {
+                    let i = arrs.len();
+                    all.extend(todo.into_iter().map(|t| (i, t)));
+                    arrs.push(Ctx { arr, series, dc });
+                }
                 Err(e) => {
-                    warn!(task = "unknown_series_grab", service = arr.name, error = %e, "planning failed");
-                    continue;
+                    warn!(task = "unknown_series_grab", service = arr.name, error = %e, "planning failed")
+                }
+            }
+        }
+        // saisons déjà présentes sur l'autre machine : jamais prises ici (doublon Jellyfin)
+        let files: Vec<BTreeMap<i64, std::collections::BTreeSet<i64>>> = arrs
+            .iter()
+            .map(|c| {
+                let list: Vec<Value> = c.series.values().cloned().collect();
+                super::monitor_sync::seasons_with_files(&list)
+            })
+            .collect();
+        let before = all.len();
+        all.retain(|(i, t)| {
+            let tvdb = arrs[*i]
+                .series
+                .get(&t.series_id)
+                .and_then(|s| s.get("tvdbId").and_then(Value::as_i64))
+                .unwrap_or(0);
+            !files.iter().enumerate().any(|(j, f)| {
+                j != *i && f.get(&tvdb).map(|s| s.contains(&t.season)).unwrap_or(false)
+            })
+        });
+        if before > all.len() {
+            counts.insert("dup_other_side".into(), (before - all.len()) as u32);
+        }
+        let entries: Vec<(String, String, bool)> = all
+            .iter()
+            .map(|(i, t)| {
+                let ser = arrs[*i].series.get(&t.series_id);
+                let added = ser
+                    .and_then(|s| s.get("added").and_then(Value::as_str))
+                    .unwrap_or("")
+                    .to_string();
+                let anime =
+                    ser.and_then(|s| s.get("seriesType").and_then(Value::as_str)) == Some("anime");
+                (added, t.latest_air.clone(), anime)
+            })
+            .collect();
+        let chosen = pick_order(&entries, budget);
+        counts.insert("pending".into(), (all.len() - chosen.len()) as u32);
+        // le planificateur coupe une tâche après 10 min ; une recherche de saison dure ~1 min
+        let deadline = std::time::Instant::now() + Duration::from_secs(480);
+        for idx in chosen {
+            if std::time::Instant::now() > deadline {
+                *counts.entry("pending".into()).or_default() += 1;
+                continue;
+            }
+            let (i, s) = &all[idx];
+            let c = &arrs[*i];
+            let Some(ser) = c.series.get(&s.series_id) else {
+                continue;
+            };
+            let (outcome, detail) = match process_season(ctx, c.arr, ser, s, c.dc).await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(task = "unknown_series_grab", service = c.arr.name, series_id = s.series_id, season = s.season, error = %e, "season failed");
+                    ("error".into(), format!("{e:#}").chars().take(200).collect())
                 }
             };
-            *counts.entry("pending".into()).or_default() += todo.len() as u32;
-            let series: HashMap<i64, Value> = arr
-                .series()
-                .await?
-                .into_iter()
-                .filter_map(|s| Some((s.get("id").and_then(Value::as_i64)?, s)))
-                .collect();
-            let dc = arr
-                .download_clients()
-                .await?
-                .into_iter()
-                .find(|d| d.get("enable").and_then(Value::as_bool).unwrap_or(false))
-                .and_then(|d| d.get("id").and_then(Value::as_i64))
-                .context("aucun client de téléchargement actif")?;
-            for s in todo.iter().take(budget) {
-                budget -= 1;
-                *counts.entry("pending".into()).or_default() -= 1;
-                let Some(ser) = series.get(&s.series_id) else {
-                    continue;
+            let sname = ser.get("title").and_then(Value::as_str).unwrap_or("?");
+            info!(task = "unknown_series_grab", service = c.arr.name, series = sname, season = s.season, %outcome, %detail, "season searched");
+            *counts.entry(outcome.clone()).or_default() += 1;
+            if !ctx.dry_run {
+                let rec = SeasonSearchRecord {
+                    at: now(),
+                    outcome,
+                    detail,
                 };
-                let (outcome, detail) = match process_season(ctx, arr, ser, s, dc).await {
-                    Ok(r) => r,
-                    Err(e) => {
-                        warn!(task = "unknown_series_grab", service = arr.name, series_id = s.series_id, season = s.season, error = %e, "season failed");
-                        ("error".into(), format!("{e:#}").chars().take(200).collect())
-                    }
-                };
-                let sname = ser.get("title").and_then(Value::as_str).unwrap_or("?");
-                info!(task = "unknown_series_grab", service = arr.name, series = sname, season = s.season, %outcome, %detail, "season searched");
-                *counts.entry(outcome.clone()).or_default() += 1;
-                if !ctx.dry_run {
-                    let rec = SeasonSearchRecord {
-                        at: now(),
-                        outcome,
-                        detail,
-                    };
-                    let k = key(arr, s.series_id, s.season);
-                    ctx.state
-                        .update(|st| st.unknown_series.insert(k, rec))
-                        .await?;
-                }
+                let k = key(c.arr, s.series_id, s.season);
+                ctx.state
+                    .update(|st| st.unknown_series.insert(k, rec))
+                    .await?;
             }
         }
         let grabbed = counts.get("grabbed").copied().unwrap_or(0);
         let summary: Vec<String> = counts.iter().map(|(k, v)| format!("{k}={v}")).collect();
         Ok(Report::new(summary.join(" "), grabbed))
     }
+}
+
+/// Ordre de traitement : séries ajoutées le plus récemment d'abord (une nouvelle demande passe
+/// devant l'arriéré), puis épisodes diffusés le plus récemment ; au plus une saison d'anime par
+/// passage (recherche épisode par épisode, coûteuse pour la limite d'API de C411).
+/// `entries` : (date d'ajout de la série, dernière diffusion manquante, anime) ; renvoie des indices.
+pub fn pick_order(entries: &[(String, String, bool)], budget: usize) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..entries.len()).collect();
+    idx.sort_by(|a, b| {
+        let (ea, eb) = (&entries[*a], &entries[*b]);
+        eb.0.cmp(&ea.0).then_with(|| eb.1.cmp(&ea.1))
+    });
+    let mut out = Vec::new();
+    let mut anime = false;
+    for i in idx {
+        if out.len() >= budget {
+            break;
+        }
+        if entries[i].2 {
+            if anime {
+                continue;
+            }
+            anime = true;
+        }
+        out.push(i);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -616,6 +698,21 @@ mod tests {
                 .title,
             "A.S02E04.VFF.1080p"
         );
+    }
+
+    #[test]
+    fn new_requests_first_and_one_anime_per_run() {
+        let e = |added: &str, air: &str, anime: bool| (added.to_string(), air.to_string(), anime);
+        let entries = vec![
+            e("2026-05-01", "2026-09-10", false), // arriéré récent
+            e("2026-09-13", "2008-10-01", false), // Mentalist S1, demandé aujourd'hui
+            e("2026-09-13", "2015-02-01", false), // Mentalist S7
+            e("2026-09-12", "2026-09-01", true),  // anime A
+            e("2026-09-12", "2026-08-01", true),  // anime A, autre saison
+        ];
+        assert_eq!(pick_order(&entries, 3), vec![2, 1, 3]);
+        assert_eq!(pick_order(&entries, 10), vec![2, 1, 3, 0]);
+        assert!(pick_order(&entries, 0).is_empty());
     }
 
     #[test]

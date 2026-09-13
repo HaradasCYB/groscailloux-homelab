@@ -72,12 +72,14 @@ Aucune modification des torrents. Jellyfin : LibraryMonitor (VPS) ou `seedbox_re
 Le watcher `auto_import` ignore désormais les vidéos qui appartiennent à un torrent qBittorrent.
 Résumé : `files=3 arr_managed=67 already_linked=8 imported=2 no_match=1 pending=0`.
 
-### unknown_series_grab — 6 h
+### unknown_series_grab — 3 h
 Sonarr rejette « Unknown Series » les releases au titre traduit (« New York Police Judiciaire » pour
 *Law & Order*) : jamais prises en automatique, même sur C411. Pour chaque Sonarr (VPS, seedbox) :
 `GET wanted/missing` → saisons avec épisodes diffusés manquants, hors file d'attente, pas cherchées
-récemment (`state.unknown_series` : sans candidat → 72 h, prise → 7 j), les plus récentes d'abord,
-**3 recherches par passage** → `GET release?seriesId&seasonNumber` → releases de `indexer` (C411)
+récemment (`state.unknown_series` : sans candidat → 72 h, prise → 7 j) et **absentes de l'autre
+machine** ; ordre global : **séries ajoutées le plus récemment d'abord** (une demande passe devant
+l'arriéré), puis diffusion la plus récente ; **8 recherches par passage**, une seule saison d'anime
+(recherche épisode par épisode, limite d'API C411), arrêt après 8 min (le planificateur coupe à 10) → `GET release?seriesId&seasonNumber` → releases de `indexer` (C411)
 dont le **seul** rejet est « Unknown Series » → garde-fous : titre parsé **identique** (normalisé)
 au titre FR ou original (Jellyseerr `tv/{tmdbId}?language=fr`), au titre Sonarr ou à un titre
 alternatif (une série voisine est refusée) ; bonne saison ; épisodes tous manquants ; qualité
@@ -118,6 +120,11 @@ recherche. Max 5 par passage. Les items disparus de la queue sont oubliés.
 fichiers (`POST /api/v2/torrents/delete`, `deleteFiles=true`) jusqu'à 5 torrents en état
 `stoppedUP`, les plus anciens d'abord — les hardlinks de `library/media` survivent.
 ≥ 98 % : log d'erreur, aucune action automatique.
+
+### monitor_sync — note (2026-09-13)
+Une saison demandée n'est suivie que si elle n'a pas déjà des fichiers **sur l'autre machine**
+(rapprochement par tvdbId) : sans ça, une nouvelle demande routée vers la seedbox y faisait suivre
+toutes les saisons historiques, y compris celles présentes sur le VPS (doublons).
 
 ### tba_bypass — 5 min
 `GET /api/v3/manualimport?folder=/downloads&filterExistingFiles=true` (Sonarr, timeout
