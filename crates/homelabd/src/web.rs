@@ -1,6 +1,7 @@
 //! UI d'onboarding (remplace le conteneur Flask `onboarder`) + endpoints de santé.
 //! Si `HOMELABD_ONBOARD_TOKEN` est défini, `POST /onboard` exige l'en-tête
 //! `X-Onboard-Token` ; la page le lit depuis `?token=` et le renvoie.
+//! `/accounts` (page « Comptes ») exige ce même jeton, et refuse tout s'il n'est pas défini.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -10,9 +11,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{Html, IntoResponse};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Form, Json, Router};
+use homelab_core::accounts::{self, Outcome};
 use homelab_core::tasks::onboard::{self, OnboardRequest};
 use homelab_core::{Secret, TaskContext};
 use serde::Deserialize;
@@ -20,7 +22,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::status_page;
+use crate::{accounts_page, status_page};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 
@@ -51,6 +53,8 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/status", get(status))
         .route("/status.html", get(status_html))
         .route("/onboard", post(onboard_handler))
+        .route("/accounts", get(accounts_html))
+        .route("/accounts/premium", post(accounts_toggle))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
@@ -161,6 +165,114 @@ async fn status_html(
     (StatusCode::OK, Html(html))
 }
 
+#[derive(Deserialize)]
+struct ToggleForm {
+    token: String,
+    user_id: String,
+    on: String,
+}
+
+/// Jeton d'onboarding obligatoire : sans `HOMELABD_ONBOARD_TOKEN`, la page reste fermée.
+fn accounts_allowed(st: &AppState, given: Option<&str>) -> bool {
+    match (&st.ctx.secrets.onboard_token, given) {
+        (Some(t), Some(g)) => !g.is_empty() && g == t.expose(),
+        _ => false,
+    }
+}
+
+fn denied() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Html("<p>Jeton manquant ou invalide : ouvrir la page avec ?token=…</p>".to_string()),
+    )
+        .into_response()
+}
+
+async fn accounts_html(
+    State(st): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let token = q.get("token").map(String::as_str);
+    if !accounts_allowed(&st, token) {
+        return denied();
+    }
+    let list = match accounts::list(&st.ctx).await {
+        Ok(l) => l,
+        Err(e) => {
+            warn!(task = "accounts", error = %e, "accounts page: jellyfin unreachable");
+            return (
+                StatusCode::BAD_GATEWAY,
+                Html("<p>Jellyfin injoignable, réessayer dans un instant.</p>".to_string()),
+            )
+                .into_response();
+        }
+    };
+    let msg = q
+        .get("msg")
+        .map(|m| (m.as_str(), q.get("who").map(String::as_str).unwrap_or("")));
+    let html = accounts_page::render(&accounts_page::PageData {
+        now: homelab_core::state::now(),
+        accounts: &list,
+        max_premium: st.ctx.cfg.accounts.max_premium,
+        max_streams: st.ctx.cfg.accounts.max_streams_per_user,
+        token: token.unwrap_or(""),
+        msg,
+    });
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    resp
+}
+
+/// Bascule premium puis redirection (POST → GET) avec le résultat en paramètre.
+async fn accounts_toggle(
+    State(st): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<ToggleForm>,
+) -> Response {
+    if !accounts_allowed(&st, Some(&f.token)) {
+        return denied();
+    }
+    let on = f.on == "1";
+    let ip = client_ip(&headers, addr);
+    let who = accounts::list(&st.ctx)
+        .await
+        .ok()
+        .and_then(|l| l.into_iter().find(|a| a.id == f.user_id).map(|a| a.name))
+        .unwrap_or_default();
+    let code = match accounts::set_premium(&st.ctx, &f.user_id, on).await {
+        Ok(Outcome::Activated) => "activated",
+        Ok(Outcome::Suspended) => "suspended",
+        Ok(Outcome::Unchanged) => "unchanged",
+        Ok(Outcome::CapReached { .. }) => "cap",
+        Err(e) => {
+            warn!(task = "accounts", %ip, user = %who, error = %e, "premium toggle failed");
+            "error"
+        }
+    };
+    info!(task = "accounts", %ip, user = %who, on, result = code, "premium toggle via web");
+    let url = format!(
+        "/accounts?token={}&msg={code}&who={}",
+        urlencode(&f.token),
+        urlencode(&who)
+    );
+    Redirect::to(&url).into_response()
+}
+
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 fn client_ip(headers: &HeaderMap, addr: SocketAddr) -> String {
     headers
         .get("x-forwarded-for")
@@ -230,13 +342,18 @@ async fn onboard_handler(
                 "DRY-RUN : pré-contrôles OK, aucun compte créé".to_string()
             } else {
                 format!(
-                    "Jellyfin Id {} · Jellyseerr id {} · mail {}",
+                    "Jellyfin Id {} · Jellyseerr id {} · mail {} · {}",
                     r.jellyfin_id,
                     r.jellyseerr_id,
                     if r.mail_sent {
                         "envoyé"
                     } else {
                         "NON envoyé (transmettre les identifiants à la main)"
+                    },
+                    if r.premium {
+                        "compte premium"
+                    } else {
+                        "compte suspendu : l'activer depuis /accounts"
                     }
                 )
             };
@@ -252,6 +369,7 @@ async fn onboard_handler(
                     "jellyfin_url": r.jellyfin_url,
                     "jellyseerr_url": r.jellyseerr_url,
                     "mail_sent": r.mail_sent,
+                    "premium": r.premium,
                     "dry_run": r.dry_run,
                     "log": log,
                 })),

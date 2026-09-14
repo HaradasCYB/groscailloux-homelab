@@ -2,6 +2,8 @@
 //! compte Jellyfin (source de vérité du mot de passe) → import Jellyseerr →
 //! email Jellyseerr → mail de bienvenue. Sérialisé par `onboard_lock` : le poller
 //! et l'UI web ne peuvent plus se marcher dessus. Le mot de passe n'est jamais loggé.
+//! Si `accounts.new_accounts_premium = false`, le compte est ensuite suspendu (non-premium) :
+//! l'admin l'active depuis la page « Comptes » (voir `accounts`).
 
 use std::sync::OnceLock;
 
@@ -11,6 +13,7 @@ use regex::Regex;
 use serde_json::Value;
 use tracing::{info, warn};
 
+use crate::accounts::{self, Outcome};
 use crate::clients::jellyfin::non_admin_policy;
 use crate::context::TaskContext;
 use crate::mail;
@@ -33,6 +36,8 @@ pub struct OnboardResult {
     pub jellyfin_url: String,
     pub jellyseerr_url: String,
     pub mail_sent: bool,
+    /// Compte actif dès la création ; `false` = suspendu, en attente d'activation.
+    pub premium: bool,
     pub dry_run: bool,
 }
 
@@ -63,7 +68,16 @@ pub fn welcome_mail(
     from: &str,
     jellyfin_url: &str,
     jellyseerr_url: &str,
+    premium: bool,
 ) -> String {
+    let pending = if premium {
+        ""
+    } else {
+        "
+⏳ Ton compte est cree mais pas encore active : l'administrateur
+   l'active sous peu. D'ici la, la connexion sera refusee.
+"
+    };
     format!(
         "Salut {username},
 
@@ -86,7 +100,7 @@ Voici tes acces :
 Identifiants (les memes sur les deux services) :
    Username : {username}
    Password : {password}
-
+{pending}
 ⚠️  Important — ton compte parent est Jellyfin.
    En cas de changement de mot de passe, la procedure se fait UNIQUEMENT
    sur Jellyfin (Profil → Mot de passe). Le changement sera automatiquement
@@ -151,6 +165,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         jellyfin_url: s.jellyfin_public_url.clone(),
         jellyseerr_url: s.jellyseerr_public_url.clone(),
         mail_sent: false,
+        premium: ctx.cfg.accounts.new_accounts_premium,
         dry_run: ctx.dry_run,
     };
     if ctx.dry_run {
@@ -166,7 +181,10 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         .collect();
     if let Err(e) = ctx
         .jellyfin
-        .set_policy(&jf_id, &non_admin_policy(&libraries))
+        .set_policy(
+            &jf_id,
+            &non_admin_policy(&libraries, ctx.cfg.accounts.max_streams_per_user),
+        )
         .await
     {
         warn!(task = "onboard", username = %req.username, error = %e, "policy not applied, fix in Jellyfin dashboard");
@@ -190,6 +208,23 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         warn!(task = "onboard", username = %req.username, error = %e, "set email failed, fix manually");
     }
 
+    // suspendu après l'import : Jellyseerr doit trouver le compte, et ses droits sont sauvegardés
+    if !ctx.cfg.accounts.new_accounts_premium {
+        match accounts::set_premium_locked(ctx, &jf_id, false).await {
+            Ok(Outcome::Suspended) => {
+                info!(task = "onboard", username = %req.username, "account created suspended (not premium)")
+            }
+            Ok(o) => {
+                result.premium = true;
+                warn!(task = "onboard", username = %req.username, outcome = ?o, "account not suspended")
+            }
+            Err(e) => {
+                result.premium = true;
+                warn!(task = "onboard", username = %req.username, error = %e, "suspend failed, account is active")
+            }
+        }
+    }
+
     if let Some(smtp) = &s.smtp {
         let body = welcome_mail(
             &req.username,
@@ -197,6 +232,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
             &smtp.from,
             &s.jellyfin_public_url,
             &s.jellyseerr_public_url,
+            result.premium,
         );
         match mail::send_plain(
             smtp,

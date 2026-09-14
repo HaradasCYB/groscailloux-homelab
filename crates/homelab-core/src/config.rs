@@ -25,6 +25,31 @@ pub struct Config {
     pub vpn: Vpn,
     #[serde(default)]
     pub seedbox: Seedbox,
+    #[serde(default)]
+    pub accounts: Accounts,
+}
+
+/// Comptes Jellyfin : « premium » = compte actif, sinon suspendu (`IsDisabled`, rien n'est
+/// supprimé). Plafonds dimensionnés pour 6 vCPU sans GPU et le lien seedbox (~190 Mbit/s).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Accounts {
+    /// Comptes premium au plus (admin exclus) ; vérifié à l'activation.
+    pub max_premium: usize,
+    /// Lectures simultanées par compte (`MaxActiveSessions`, 0 = illimité).
+    pub max_streams_per_user: u32,
+    /// Un compte créé par l'onboarding est-il premium d'office ?
+    pub new_accounts_premium: bool,
+}
+
+impl Default for Accounts {
+    fn default() -> Self {
+        Self {
+            max_premium: 25,
+            max_streams_per_user: 2,
+            new_accounts_premium: false,
+        }
+    }
 }
 
 /// Seedbox distante : Radarr/Sonarr qui y rangent les médias, montés en lecture seule sur le
@@ -709,6 +734,9 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
         assert_eq!(cfg.tasks.unknown_series_grab.max_searches_per_run, 8);
+        assert_eq!(cfg.accounts.max_premium, 25);
+        assert_eq!(cfg.accounts.max_streams_per_user, 2);
+        assert!(!cfg.accounts.new_accounts_premium);
     }
 
     #[test]

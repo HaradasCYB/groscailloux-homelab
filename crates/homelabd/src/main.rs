@@ -1,6 +1,7 @@
 //! `homelabd` — daemon d'automatisation : scheduler des tâches périodiques,
 //! watcher du dossier de téléchargement, UI web d'onboarding.
 
+mod accounts_page;
 mod scheduler;
 mod status_page;
 mod watcher;

@@ -4,6 +4,7 @@
 //! encapsulent les endpoints exacts utilisés. `TaskContext` fournit les
 //! verrous partagés (qBittorrent, onboarding) et le mode dry-run global.
 
+pub mod accounts;
 pub mod classify;
 pub mod clients;
 pub mod config;

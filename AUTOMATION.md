@@ -177,6 +177,29 @@ limitée aux bibliothèques `JELLYFIN_LIB_FILMS`/`SERIES` → `POST /api/v1/user
 La policy donne accès à `JELLYFIN_LIB_FILMS`, `JELLYFIN_LIB_SERIES` et aux ids éventuels de
 `JELLYFIN_LIB_EXTRA` (vide aujourd'hui : les dossiers seedbox font partie de Films/Séries).
 Le mot de passe (16 caractères alphanumériques) n'apparaît jamais dans les logs.
+La policy limite aussi les lectures simultanées (`accounts.max_streams_per_user`). Si
+`accounts.new_accounts_premium = false` (réglage actuel), le compte est ensuite **suspendu** (après
+l'import Jellyseerr) et le mail de bienvenue prévient que l'accès sera activé par l'administrateur.
+
+## Comptes premium
+
+Premium = compte Jellyfin actif ; non-premium = `Policy.IsDisabled = true` (fonction native de
+Jellyfin : connexion refusée, jetons existants rejetés, rien n'est supprimé). La politique Jellyfin est
+la seule source de vérité ; les comptes admin ne sont jamais listés ni modifiés.
+
+- **Page** `onboarder.<domaine>/accounts?token=<HOMELABD_ONBOARD_TOKEN>`, derrière la connexion NPM
+  « admin-outils » : un interrupteur par compte, compteur « N premium / max ». Formulaires POST sans
+  JavaScript, jeton en champ caché (anti-CSRF). Lien « Comptes » dans le tableau Homarr Opérations.
+- **CLI** : `homelabctl accounts list | on <compte> | off <compte> | limits` (`--dry-run` respecté).
+- **Suspension** : politique relue puis seuls `IsDisabled` et `MaxActiveSessions` changent (bibliothèques
+  intactes) ; lectures en cours arrêtées ; permissions Jellyseerr sauvegardées dans `state.accounts` puis
+  mises à 0 (une session Jellyseerr ouverte survit à la suspension Jellyfin).
+- **Activation** : refusée au-delà de `accounts.max_premium` ; permissions Jellyseerr restaurées (à
+  défaut de sauvegarde, celles par défaut de Jellyseerr).
+- **Plafonds** (`[accounts]`) : 25 comptes premium, 2 lectures simultanées par compte. Dimensionnés
+  pour 6 vCPU sans GPU (1 à 2 transcodages 1080p) et le lien seedbox (~190 Mbit/s, une douzaine de
+  flux) ; pic mesuré le 2026-09-14 : 4 lectures simultanées pour 13 comptes, 92 % de lecture directe.
+  Pas de limite de débit par utilisateur : elle forcerait des transcodages.
 
 ## Autres commandes
 

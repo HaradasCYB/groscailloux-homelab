@@ -136,6 +136,14 @@ mysql_container = "guacdb"
 qbit_conf = "/opt/homelab/qbittorrent/config/qBittorrent/qBittorrent.conf"
 npm_server_name = "qbittorrent."
 
+[accounts]
+# Premium = compte Jellyfin actif ; non-premium = suspendu (connexion refusée, rien de supprimé).
+# Page d'admin : onboarder.<domaine>/accounts. Plafonds : 6 vCPU sans GPU (1-2 transcodages),
+# lien seedbox ~190 Mbit/s ; pic mesuré 4 lectures pour 13 comptes (2026-09-14).
+max_premium = 25
+max_streams_per_user = 2
+new_accounts_premium = false   # les comptes créés par l'onboarding sont à activer à la main
+
 [seedbox]
 # Seedbox (tofino.usbx.me) : Radarr/Sonarr y rangent dans ~/media, monté en lecture seule sur
 # /mnt/seedbox/media (homelab-seedbox-mount.service) et vu par Jellyfin sous /seedbox/media.

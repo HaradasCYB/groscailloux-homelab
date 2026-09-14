@@ -56,6 +56,10 @@ journalctl -u homelabd -f
 - **Aucune option qui lit la vidéo à l'ajout d'un titre** (Intro Skipper `AutoDetectIntros`, source
   d'images « Screen Grabber », `SaveLocalMetadata`/NFO) : sur les dossiers seedbox, chaque lecture passe
   par le lien (~24 Mo/s partagés) et fait buffer les spectateurs. Pas de `--vfs-read-ahead` sur rclone.
+- **Comptes** : premium = compte Jellyfin actif, non-premium = `IsDisabled` (jamais de suppression de
+  compte pour « bloquer ») ; passer par `homelab_core::accounts` (page `/accounts`, `homelabctl accounts`) qui
+  garde les permissions Jellyseerr. Plafonds dans `[accounts]` (25 premium, 2 lectures par compte) ; pas de
+  `RemoteClientBitrateLimit` (forcerait des transcodages).
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
   `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans

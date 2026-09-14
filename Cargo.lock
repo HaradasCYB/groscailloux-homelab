@@ -575,6 +575,7 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "clap",
  "homelab-core",
  "notify",

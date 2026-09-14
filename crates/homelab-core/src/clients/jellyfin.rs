@@ -53,6 +53,35 @@ impl JellyfinClient {
         }))
     }
 
+    pub async fn user(&self, id: &str) -> Result<Value> {
+        let resp = self.req(Method::GET, &format!("Users/{id}")).send().await?;
+        json(resp, "jellyfin Users/{id}").await
+    }
+
+    /// Sessions d'un utilisateur (appareils connectés, avec ou sans lecture).
+    pub async fn sessions_of(&self, user_id: &str) -> Result<Vec<Value>> {
+        let resp = self.req(Method::GET, "Sessions").send().await?;
+        let v = json(resp, "jellyfin Sessions").await?;
+        Ok(v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|s| s.get("UserId").and_then(Value::as_str) == Some(user_id))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    pub async fn stop_playback(&self, session_id: &str) -> Result<()> {
+        let resp = self
+            .req(Method::POST, &format!("Sessions/{session_id}/Playing/Stop"))
+            .send()
+            .await?;
+        check(resp, "jellyfin Sessions/{id}/Playing/Stop")
+            .await
+            .map(|_| ())
+    }
+
     pub async fn create_user(&self, name: &str, password: &Secret) -> Result<String> {
         let body = json!({ "Name": name, "Password": password.expose() });
         let resp = self
@@ -110,8 +139,9 @@ impl JellyfinClient {
     }
 }
 
-/// Politique utilisateur non-admin limitée aux bibliothèques données (ids Jellyfin).
-pub fn non_admin_policy(libraries: &[String]) -> Value {
+/// Politique utilisateur non-admin limitée aux bibliothèques données (ids Jellyfin), avec au plus
+/// `max_streams` lectures simultanées (0 = illimité).
+pub fn non_admin_policy(libraries: &[String], max_streams: u32) -> Value {
     json!({
         "IsAdministrator": false,
         "IsHidden": false,
@@ -139,7 +169,7 @@ pub fn non_admin_policy(libraries: &[String]) -> Value {
         "BlockedMediaFolders": [],
         "AccessSchedules": [],
         "LoginAttemptsBeforeLockout": 5,
-        "MaxActiveSessions": 0,
+        "MaxActiveSessions": max_streams,
         "AuthenticationProviderId": "Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider",
         "PasswordResetProviderId": "Jellyfin.Server.Implementations.Users.DefaultPasswordResetProvider",
         "SyncPlayAccess": "CreateAndJoinGroups"

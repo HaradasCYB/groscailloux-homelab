@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use homelab_core::accounts::{self, Outcome};
 use homelab_core::tasks::{self, backup, onboard, vpn};
 use homelab_core::{Config, Secret, Secrets, TaskContext};
 use tracing_subscriber::EnvFilter;
@@ -35,6 +36,13 @@ enum Cmd {
         email: String,
         #[arg(long)]
         password: Option<String>,
+    },
+    /// Comptes Jellyfin : list ; on|off <compte> (premium ou suspendu) ; limits (lectures simultanées)
+    Accounts {
+        #[arg(value_parser = ["list", "on", "off", "limits"])]
+        action: String,
+        /// Nom ou id Jellyfin (pour on/off)
+        who: Option<String>,
     },
     /// qBittorrent derrière gluetun (on) ou en direct (off)
     Vpn {
@@ -111,17 +119,65 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
             println!(
-                "\n✓ Onboarding terminé pour {u}\n\n  Username      : {u}\n  Email         : {e}\n  Password      : {p}\n  Jellyfin Id   : {jf}\n  Jellyseerr id : {js}\n  Mail          : {m}\n\n  Streaming : {ju}\n  Requêtes  : {su}\n",
+                "\n✓ Onboarding terminé pour {u}\n\n  Username      : {u}\n  Email         : {e}\n  Password      : {p}\n  Jellyfin Id   : {jf}\n  Jellyseerr id : {js}\n  Mail          : {m}\n  Premium       : {pr}\n\n  Streaming : {ju}\n  Requêtes  : {su}\n",
                 u = r.username,
                 e = r.email,
                 p = r.password.expose(),
                 jf = r.jellyfin_id,
                 js = r.jellyseerr_id,
                 m = if r.mail_sent { "envoyé" } else { "NON envoyé — transmettre à la main" },
+                pr = if r.premium { "oui" } else { "non — à activer (homelabctl accounts on <compte>)" },
                 ju = r.jellyfin_url,
                 su = r.jellyseerr_url
             );
         }
+        Cmd::Accounts { action, who } => match action.as_str() {
+            "list" => {
+                let list = accounts::list(&ctx).await?;
+                let premium = list.iter().filter(|a| a.premium).count();
+                println!(
+                    "{premium} premium / {} max\n\n{:<24} {:<8} {:<8} dernière activité",
+                    ctx.cfg.accounts.max_premium, "compte", "premium", "flux"
+                );
+                for a in list {
+                    println!(
+                        "{:<24} {:<8} {:<8} {}",
+                        a.name,
+                        if a.premium { "oui" } else { "non" },
+                        if a.max_streams == 0 {
+                            "∞".to_string()
+                        } else {
+                            a.max_streams.to_string()
+                        },
+                        a.last_activity.as_deref().unwrap_or("jamais")
+                    );
+                }
+            }
+            "limits" => {
+                let changed = accounts::apply_stream_limit(&ctx).await?;
+                println!(
+                    "{}{} compte(s) → {} lectures simultanées : {}",
+                    if ctx.dry_run { "DRY-RUN : " } else { "" },
+                    changed.len(),
+                    ctx.cfg.accounts.max_streams_per_user,
+                    changed.join(", ")
+                );
+            }
+            on_off => {
+                let who =
+                    who.context("préciser le compte : homelabctl accounts on|off <compte>")?;
+                let a = accounts::resolve(&ctx, &who).await?;
+                let dry = if ctx.dry_run { "DRY-RUN : " } else { "" };
+                match accounts::set_premium(&ctx, &a.id, on_off == "on").await? {
+                    Outcome::Activated => println!("{dry}{} activé (premium)", a.name),
+                    Outcome::Suspended => println!("{dry}{} suspendu", a.name),
+                    Outcome::Unchanged => println!("{} déjà dans cet état", a.name),
+                    Outcome::CapReached { premium, max } => {
+                        bail!("plafond atteint ({premium}/{max} premium) : suspendre un compte ou relever accounts.max_premium")
+                    }
+                }
+            }
+        },
         Cmd::Vpn { mode } => {
             let st = match mode.as_str() {
                 "on" => vpn::switch(&ctx, vpn::Mode::Vpn).await?,

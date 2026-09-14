@@ -33,6 +33,17 @@ pub struct State {
     /// unknown_series_grab : dernière recherche par saison, clé `arr:série:saison`.
     #[serde(default)]
     pub unknown_series: BTreeMap<String, SeasonSearchRecord>,
+    /// Comptes suspendus : permissions Jellyseerr à restaurer, clé = id Jellyfin.
+    #[serde(default)]
+    pub accounts: BTreeMap<String, AccountRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountRecord {
+    pub at: i64,
+    pub jellyseerr_id: i64,
+    /// Permissions Jellyseerr d'avant la suspension (remises à 0 pendant la suspension).
+    pub jellyseerr_permissions: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -161,7 +161,8 @@ flowchart LR
 | Pipeline historique (VPS) | Radarr/Sonarr du VPS → Jackett (+ FlareSolverr) et C411 → qBittorrent via gluetun → import hardlink dans `library/media`. C411 seul en automatique, les autres indexers en recherche manuelle. |
 | Torrents ajoutés à la main (VPS + seedbox) | `torrent_import` (10 min) : torrent terminé inconnu des Arrs → fiche non surveillée → import manuel en hardlink → Jellyfin. Refusé si le titre a déjà des fichiers sur l'autre machine. |
 | Dépôts directs (VPS) | Fichier dans `library/downloads` (pyLoad, dépôt manuel) → observateur `auto_import` → classement série/film → ajout de la fiche dans l'Arr → import. Archives extraites d'abord. |
-| Onboarding | `homelabctl onboard`, page d'onboarding (jeton) ou compte créé dans Jellyseerr → compte Jellyfin (bibliothèques autorisées), import Jellyseerr, mail de bienvenue. Mot de passe jamais journalisé. |
+| Onboarding | `homelabctl onboard`, page d'onboarding (jeton) ou compte créé dans Jellyseerr → compte Jellyfin (bibliothèques autorisées), import Jellyseerr, mail de bienvenue. Mot de passe jamais journalisé. Le compte arrive suspendu, à activer. |
+| Comptes premium | Page « Comptes » (admin) ou `homelabctl accounts` : premium = compte Jellyfin actif, sinon suspendu (connexion refusée, rien de supprimé). 25 comptes premium et 2 lectures simultanées par compte au plus. |
 | Observabilité | Telegraf (hôte + Docker) → InfluxDB (30 jours) → Grafana ; Glances en direct. |
 | Mises à jour | Images figées `tag@sha256` ; diun signale chaque jour les nouvelles versions par mail ; la mise à jour reste manuelle. |
 
@@ -227,6 +228,7 @@ de livrer le fichier assez vite, et de ne pas faire tourner de tâches lourdes p
 ```bash
 homelabctl check          # services joignables, montage seedbox présent
 homelabctl status         # dernier passage de chaque tâche
+homelabctl accounts list  # comptes premium / suspendus
 docker compose ps         # conteneurs et healthchecks
 journalctl -u homelabd -f # journal des tâches
 homelabctl run <tâche> --dry-run

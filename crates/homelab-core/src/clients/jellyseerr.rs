@@ -56,6 +56,31 @@ impl JellyseerrClient {
             .unwrap_or_default())
     }
 
+    /// Permissions données par Jellyseerr aux nouveaux comptes (`settings/main`).
+    pub async fn default_permissions(&self) -> Result<i64> {
+        let resp = self.req(Method::GET, "api/v1/settings/main").send().await?;
+        json(resp, "jellyseerr settings/main")
+            .await?
+            .get("defaultPermissions")
+            .and_then(Value::as_i64)
+            .context("settings/main sans defaultPermissions")
+    }
+
+    /// Permissions Jellyseerr (masque de bits : 2 = admin, 32 = demander…).
+    pub async fn set_permissions(&self, id: i64, permissions: i64) -> Result<()> {
+        let resp = self
+            .req(
+                Method::POST,
+                &format!("api/v1/user/{id}/settings/permissions"),
+            )
+            .json(&json!({ "permissions": permissions }))
+            .send()
+            .await?;
+        check(resp, "jellyseerr settings/permissions")
+            .await
+            .map(|_| ())
+    }
+
     pub async fn delete_user(&self, id: i64) -> Result<()> {
         let resp = self
             .req(Method::DELETE, &format!("api/v1/user/{id}"))
