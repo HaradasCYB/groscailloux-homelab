@@ -46,6 +46,37 @@
   .info-container { bottom: 16.2em !important; }
 }
 
+/* Bande-annonce de la bannière : l'image s'efface en fondu et la vidéo occupe tout le cadre, sous le voile
+   sombre (z-index : vidéo 0 < image 3 < voile 4 < texte 5). Media Bar rognait l'image à 40 % et le
+   complément ElegantFin retirait le dégradé : coupure franche au milieu. */
+.backdrop { transition: opacity 1.2s ease !important; }
+.backdrop.with-video { width: 100% !important; opacity: 0 !important; mask-image: none !important; -webkit-mask-image: none !important; }
+.video-container { transition: opacity 1.2s ease !important; }
+.plot-container.with-video { width: auto !important; }
+
+/* Rangées calées sous la bannière (80vh), quelle que soit la hauteur d'écran : Media Bar les plaçait à
+   65vh et, sur un écran large et bas, « Mes médias » passait sous les boutons. */
+@media only screen and (orientation: landscape) {
+  .homeSectionsContainer { top: calc(80vh - 8.5em) !important; }
+}
+@media only screen and (orientation: landscape) and (max-height: 760px) {
+  .plot-container { display: none !important; }
+  .genre { bottom: 9.3em !important; }
+  .info-container { bottom: 11.3em !important; }
+}
+
+/* Onglets de Jellyfin Enhanced (Découvrir, Demandes, Calendrier) : ses traductions françaises ne couvrent
+   pas ces libellés ; texte d'origine masqué et remplacé, même taille que « Accueil » (14,88 px). */
+#je-native-tab-btn-recommendations .emby-button-foreground,
+#je-native-tab-btn-requests .emby-button-foreground,
+#je-native-tab-btn-calendar .emby-button-foreground { font-size: 0 !important; }
+#je-native-tab-btn-recommendations .emby-button-foreground::after,
+#je-native-tab-btn-requests .emby-button-foreground::after,
+#je-native-tab-btn-calendar .emby-button-foreground::after { font-size: .93rem; }
+#je-native-tab-btn-recommendations .emby-button-foreground::after { content: "Découvrir"; }
+#je-native-tab-btn-requests .emby-button-foreground::after { content: "Demandes"; }
+#je-native-tab-btn-calendar .emby-button-foreground::after { content: "Calendrier"; }
+
 /* Téléphone en portrait : bannière un peu moins haute, logo remonté au-dessus des notes */
 @media only screen and (max-width: 767px) and (orientation: portrait) {
   #slides-container { height: 72vh !important; }

@@ -40,6 +40,10 @@ journalctl -u homelabd -f
 - **Indexers** : C411 seul en automatique (RSS + auto) sur les 4 Arrs, les autres en interactif
   seulement. **Profils** FR-friendly : 1080p max (jamais 2160p), `minFormatScore=-9999`, FR d'abord,
   VO/VOSTFR en dernier recours. **Jellyfin** : pas de GPU, préférer x264 à HEVC.
+- **C411 annonce sur deux domaines** : `c411.org` **et** `tk.c411.tw`. Toute règle par tracker doit viser les deux
+  (`tracker_ratio.unlimited`, décision torrent de `deletion_cleanup`). Jusqu'au 2026-09-14, 24 torrents
+  `c411.tw` héritaient de la limite globale de qBittorrent (ratio 1 / 7 j puis **arrêt**) : 53 torrents C411
+  étaient arrêtés, relancés ce jour-là.
 - **C411** : `animeCategories=[5070]` et `animeStandardFormatSearch=true` dans les deux Sonarr, sinon
   une série de type « anime » n'interroge jamais C411 (et, C411 étant le seul indexer en auto, rien ne part).
   Son API limite le débit : un **429** met C411 en pause **1 h** dans l'Arr (« API Request Limit reached »).
@@ -98,7 +102,12 @@ journalctl -u homelabd -f
 - La bibliothèque « Collections » est donnée à tous les comptes (`JELLYFIN_LIB_EXTRA`) : sans elle, un
   compte ordinaire ne voit ni les sagas ni les rangées de collections.
 - Jellyfin Enhanced : `ThemeSelectorEnabled = false` (ses couleurs Jellyfish entreraient en conflit avec
-  ElegantFin).
+  ElegantFin). Onglets Découvrir / Demandes / Calendrier = pages natives de Jellyfin Enhanced, renommées en
+  français dans le calque CSS (`#je-native-tab-btn-*`). Les anciens onglets Movies / TV Shows / Requests /
+  Letterboxd venaient de SeerrFin (retiré).
+- Après un redémarrage de Jellyfin, une appli restée ouverte (Jellyfin Desktop) garde l'ancienne page : nouveau
+  CSS mais anciens scripts (pas de rangées, ancien logo, SyncPlay qui envoie des titres Seerr sans id →
+  `Guid can't be empty`). Faire recharger (Ctrl+R) ; un redémarrage coupe aussi les groupes SyncPlay.
 - **Accueil** (configs de plugins hors git, sauvegardées dans `backups/jellyfin-ui-*`) : Home Screen Sections
   (16 rangées, ordre Netflix, chargement 4 par 4 : au-delà l'accueil ralentit à froid ; « Séries à venir »
   désactivée car badge et dates en anglais incrustés par le plugin), Collection Sections (Tendances,

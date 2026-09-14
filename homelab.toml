@@ -105,7 +105,7 @@ interval_secs = 300
 [tasks.tracker_ratio]
 interval_secs = 1800
 # c411 : seed illimité ; ygg/u2p + publics : 2.0 / 14 j ; défaut : 1.0 / 7 j
-unlimited = ["c411.org"]
+unlimited = ["c411.org", "c411.tw"]   # C411 annonce aussi via tk.c411.tw (24 torrents mal classés jusqu au 2026-09-14)
 secondary = ["yggleak", "u2p", "ygg.gratis"]
 public_ratio = 2.0
 public_time_min = 20160
