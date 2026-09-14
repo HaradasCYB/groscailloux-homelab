@@ -99,6 +99,13 @@ journalctl -u homelabd -f
   compte ordinaire ne voit ni les sagas ni les rangées de collections.
 - Jellyfin Enhanced : `ThemeSelectorEnabled = false` (ses couleurs Jellyfish entreraient en conflit avec
   ElegantFin).
+- **Accueil** (configs de plugins hors git, sauvegardées dans `backups/jellyfin-ui-*`) : Home Screen Sections
+  (16 rangées, ordre Netflix, chargement 4 par 4 : au-delà l'accueil ralentit à froid ; « Séries à venir »
+  désactivée car badge et dates en anglais incrustés par le plugin), Collection Sections (Tendances,
+  Anime, Les mieux notés, Films français), Auto Collections (collections françaises, orphelines supprimées).
+  Un compte absent de Jellyseerr ne voit pas les rangées « Découvrir ».
+- Tester l'interface : navigateur jetable + compte ordinaire temporaire ; remplacer le CSS dans CE navigateur
+  en interceptant `Branding/Configuration` (et contourner le service worker), jamais en production.
 
 ## Seedbox
 
