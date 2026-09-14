@@ -61,6 +61,7 @@ seedbox, pas dans `.env`.
 | `NPM_ADMIN_TOOLS_PASSWORD` | mot de passe HTTP (utilisateur `groscailloux`) de la liste d'accès NPM « admin-outils » (id 2) devant Sonarr, Radarr, qBittorrent, Prowlarr, Jackett, Grafana, Portainer, pyLoad, Guacamole. NPM le stocke aussi en clair dans sa base (conception NPM) et en apr1 dans `npm/data/access/2`. |
 | `HOMARR_ADMIN_PASSWORD` | compte Homarr `groscailloux` (groupe admin) pour le tableau privé « Operations ». Le compte propriétaire `legroscailloux` existe toujours. |
 | `HOMELABD_STATUS_TOKEN` | jeton de `/status` et `/status.html` (homelabd), présent dans l'iFrame du tableau Operations. |
+| `DONATION_PAYPAL_CLIENT_ID`, `DONATION_PAYPAL_PLAN_ID` | bouton PayPal de la page de don `/don`. Publics une fois la page affichée, mais gardés hors du dépôt pour ne pas y lier le compte PayPal. |
 | `GRAFANA_ADMIN_PASSWORD` | changé le 2026-09-12 (`grafana cli admin reset-admin-password`) : l'ancien avait fuité. Grafana l'enregistre dans sa base, la variable ne sert qu'au premier démarrage. |
 
 Changer l'un d'eux : mettre à jour `.env` **et** l'endroit qui l'utilise (NPM : base + fichier `access/2` puis `nginx -s reload` ; Homarr : hash bcrypt en base ; homelabd : `systemctl restart homelabd` et l'URL de l'iFrame dans Homarr).

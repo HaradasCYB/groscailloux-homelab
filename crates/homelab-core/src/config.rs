@@ -627,7 +627,34 @@ pub struct Secrets {
     pub onboard_token: Option<Secret>,
     /// Protège `/status` et `/status.html` de homelabd (`?token=`).
     pub status_token: Option<Secret>,
+    /// Page de don `/don` (bouton PayPal) : identifiants publics mais propres au compte PayPal,
+    /// gardés hors du dépôt. Absents = pas de page.
+    pub donation: Option<Donation>,
     pub smtp: Option<Smtp>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Donation {
+    pub paypal_client_id: String,
+    pub paypal_plan_id: String,
+}
+
+impl Donation {
+    /// Identifiants PayPal : lettres, chiffres, `-` et `_` seulement (injectés dans du JS et une URL).
+    pub fn from_parts(client_id: Option<String>, plan_id: Option<String>) -> Option<Self> {
+        let ok = |s: &str| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        };
+        match (client_id, plan_id) {
+            (Some(c), Some(p)) if ok(&c) && ok(&p) => Some(Self {
+                paypal_client_id: c,
+                paypal_plan_id: p,
+            }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -677,6 +704,10 @@ impl Secrets {
                 .unwrap_or(6),
             onboard_token: opt("HOMELABD_ONBOARD_TOKEN").map(Secret::new),
             status_token: opt("HOMELABD_STATUS_TOKEN").map(Secret::new),
+            donation: Donation::from_parts(
+                opt("DONATION_PAYPAL_CLIENT_ID"),
+                opt("DONATION_PAYPAL_PLAN_ID"),
+            ),
             smtp: match (opt("SMTP_HOST"), opt("SMTP_USER"), opt("SMTP_PASS")) {
                 (Some(host), Some(user), Some(pass)) => Some(Smtp {
                     port: opt("SMTP_PORT").and_then(|p| p.parse().ok()).unwrap_or(465),
@@ -737,6 +768,14 @@ jellyseerr = "http://js"
         assert_eq!(cfg.accounts.max_premium, 25);
         assert_eq!(cfg.accounts.max_streams_per_user, 2);
         assert!(!cfg.accounts.new_accounts_premium);
+    }
+
+    #[test]
+    fn donation_ids_are_validated() {
+        let d = Donation::from_parts(Some("AbC-1_x".into()), Some("P-1TC2".into()));
+        assert_eq!(d.unwrap().paypal_plan_id, "P-1TC2");
+        assert!(Donation::from_parts(Some("a'b".into()), Some("P-1".into())).is_none());
+        assert!(Donation::from_parts(Some("abc".into()), None).is_none());
     }
 
     #[test]

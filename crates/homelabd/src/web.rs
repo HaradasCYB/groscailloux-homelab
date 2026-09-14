@@ -15,6 +15,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use homelab_core::accounts::{self, Outcome};
+use homelab_core::config::Donation;
 use homelab_core::tasks::onboard::{self, OnboardRequest};
 use homelab_core::{Secret, TaskContext};
 use serde::Deserialize;
@@ -25,6 +26,7 @@ use tracing::{info, warn};
 use crate::{accounts_page, status_page};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
+const DON_HTML: &str = include_str!("../assets/don.html");
 
 #[derive(Clone)]
 struct AppState {
@@ -53,6 +55,7 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/status", get(status))
         .route("/status.html", get(status_html))
         .route("/onboard", post(onboard_handler))
+        .route("/don", get(don))
         .route("/accounts", get(accounts_html))
         .route("/accounts/premium", post(accounts_toggle))
         .with_state(state);
@@ -70,6 +73,27 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
 
 async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+/// Page de don (publique, sans lien avec le reste) : 404 tant que PayPal n'est pas configuré.
+fn don_page(d: &Donation) -> String {
+    DON_HTML
+        .replace("{{CLIENT_ID}}", &d.paypal_client_id)
+        .replace("{{PLAN_ID}}", &d.paypal_plan_id)
+}
+
+async fn don(State(st): State<AppState>) -> Response {
+    match &st.ctx.secrets.donation {
+        Some(d) => (
+            [(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("public, max-age=3600"),
+            )],
+            Html(don_page(d)),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn health() -> Json<Value> {
@@ -379,5 +403,25 @@ async fn onboard_handler(
             warn!(task = "onboard", %ip, error = %e, "web onboarding failed");
             fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn don_page_fills_every_placeholder() {
+        let html = don_page(&Donation {
+            paypal_client_id: "CID-1".into(),
+            paypal_plan_id: "P-9".into(),
+        });
+        assert!(!html.contains("{{"));
+        assert!(html.contains("client-id=CID-1&"));
+        assert!(html.contains("plan_id: 'P-9'"));
+        assert!(html.contains("subscribe?plan_id=P-9"));
+        assert!(html.contains("aucun service"));
+        // un élément id="paypal" masquerait window.paypal et ferait planter le SDK
+        assert!(!html.contains(r#"id="paypal""#));
     }
 }

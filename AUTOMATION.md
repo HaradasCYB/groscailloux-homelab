@@ -181,6 +181,14 @@ La policy limite aussi les lectures simultanées (`accounts.max_streams_per_user
 `accounts.new_accounts_premium = false` (réglage actuel), le compte est ensuite **suspendu** (après
 l'import Jellyseerr) et le mail de bienvenue prévient que l'accès sera activé par l'administrateur.
 
+## Page de don
+
+`GET /don` (public, sous-domaine `don.`) : page statique `crates/homelabd/assets/don.html` avec le
+bouton PayPal (`DONATION_PAYPAL_CLIENT_ID`, `DONATION_PAYPAL_PLAN_ID` dans `.env` ; absents = 404).
+Don facultatif, sans aucun lien avec le service : la page le dit, rien n'y renvoie et elle ne renvoie à
+rien. Le conteneur du bouton ne doit pas avoir `id="paypal"` (l'élément masquerait `window.paypal` et
+le SDK plante).
+
 ## Comptes premium
 
 Premium = compte Jellyfin actif ; non-premium = `Policy.IsDisabled = true` (fonction native de

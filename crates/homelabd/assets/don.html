@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Soutenir mes projets</title>
+<meta name="description" content="Un coup de pouce libre et facultatif pour financer mes projets.">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 29V15' stroke='%232f7d5b' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M16 17c0-6 4-10 11-10 0 7-4 10-11 10z' fill='%232f7d5b'/%3E%3Cpath d='M16 20c0-5-3-8-10-8 0 6 3 8 10 8z' fill='%2378b89a'/%3E%3C/svg%3E">
+<style>
+:root{
+  --ground:#f3f5f1; --card:#ffffff; --ink:#1d2420; --muted:#5b6660; --line:#dde3dc;
+  --leaf:#2f7d5b; --leaf-soft:#78b89a; --wash:#e7f1eb; --focus:#1f6fb2;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --ground:#121614; --card:#1a201d; --ink:#e4ebe6; --muted:#9aa8a0; --line:#2b3430;
+    --leaf:#6cc39a; --leaf-soft:#3f8a67; --wash:#1f2c25; --focus:#7db7e8;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding-block:32px;padding-inline:16px;
+  background:var(--ground);color:var(--ink);
+  font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+main{width:100%;max-width:30rem;background:var(--card);border:1px solid var(--line);border-radius:18px;
+  padding:clamp(22px,5vw,36px);display:grid;gap:18px}
+.mark{width:44px;height:44px}
+h1{margin:0;font:600 clamp(1.6rem,4.6vw,2rem)/1.15 ui-serif,Georgia,"Times New Roman",serif;
+  letter-spacing:-.01em;text-wrap:balance}
+p{margin:0}
+.lead{font-size:1.05rem}
+.muted{color:var(--muted);font-size:.92rem}
+.facts{margin:0;padding:14px 16px;border-radius:12px;background:var(--wash);display:grid;gap:6px;
+  list-style:none;font-size:.93rem}
+.facts li{display:flex;gap:10px;align-items:baseline}
+.facts li::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--leaf);
+  transform:translateY(-1px)}
+#paypal-button-container{min-height:54px}
+.thanks{padding:14px 16px;border-radius:12px;background:var(--wash);border:1px solid var(--leaf-soft);
+  font-weight:600;color:var(--ink)}
+.fallback{font-size:.9rem;color:var(--muted)}
+a{color:var(--leaf);text-underline-offset:3px}
+a:focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:4px}
+footer{border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<main>
+  <svg class="mark" viewBox="0 0 32 32" role="img" aria-label="Pousse">
+    <path d="M16 29V15" stroke="var(--leaf)" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+    <path d="M16 17c0-6 4-10 11-10 0 7-4 10-11 10z" fill="var(--leaf)"/>
+    <path d="M16 20c0-5-3-8-10-8 0 6 3 8 10 8z" fill="var(--leaf-soft)"/>
+  </svg>
+
+  <h1>Soutenir mes projets</h1>
+
+  <p class="lead">Si l'envie t'en prend, tu peux me donner un coup de pouce pour financer les projets
+  sur lesquels je travaille à côté. C'est libre, facultatif, et chaque geste compte.</p>
+
+  <ul class="facts">
+    <li>Le don est entièrement facultatif.</li>
+    <li>Il ne donne accès à aucun service et n'apporte aucun avantage.</li>
+    <li>C'est un don récurrent, résiliable à tout moment depuis ton compte PayPal.</li>
+  </ul>
+
+  <div id="paypal-button-container" aria-live="polite"></div>
+  <p class="thanks" id="thanks" role="status" hidden>Merci pour ton soutien ! Ça me touche beaucoup.</p>
+
+  <p class="fallback">Le bouton ne s'affiche pas ?
+    <a href="https://www.paypal.com/webapps/billing/plans/subscribe?plan_id={{PLAN_ID}}" rel="noopener noreferrer" target="_blank">Faire le don directement sur PayPal</a>.</p>
+
+  <footer><p class="muted">Merci d'être passé par ici.</p></footer>
+</main>
+
+<script src="https://www.paypal.com/sdk/js?client-id={{CLIENT_ID}}&vault=true&intent=subscription" data-sdk-integration-source="button-factory"></script>
+<script>
+  if (window.paypal) {
+    paypal.Buttons({
+      style: { shape: 'rect', color: 'gold', layout: 'vertical', label: 'subscribe' },
+      createSubscription: function (data, actions) {
+        return actions.subscription.create({ plan_id: '{{PLAN_ID}}' });
+      },
+      onApprove: function () {
+        document.getElementById('paypal-button-container').hidden = true;
+        document.getElementById('thanks').hidden = false;
+      }
+    }).render('#paypal-button-container');
+  }
+</script>
+</body>
+</html>
