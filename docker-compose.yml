@@ -365,7 +365,7 @@ services:
     healthcheck:
       <<: *hc
       test: ["CMD", "wget", "-qO-", "http://localhost:7575/api/health/live"]
-    mem_limit: 768m
+    mem_limit: 1536m          # next-server + tâches + websocket + redis ; 768m → OOM le 2026-09-14
     cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   portainer:
