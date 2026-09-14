@@ -6,17 +6,17 @@
 <title>Soutenir mes projets</title>
 <meta name="description" content="Un coup de pouce libre et facultatif pour financer mes projets.">
 <meta name="robots" content="noindex">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 29V15' stroke='%232f7d5b' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M16 17c0-6 4-10 11-10 0 7-4 10-11 10z' fill='%232f7d5b'/%3E%3Cpath d='M16 20c0-5-3-8-10-8 0 6 3 8 10 8z' fill='%2378b89a'/%3E%3C/svg%3E">
+<link rel="icon" href="/avatar.jpg" type="image/jpeg">
 <style>
 :root{
-  --ground:#f3f5f1; --card:#ffffff; --ink:#1d2420; --muted:#5b6660; --line:#dde3dc;
-  --leaf:#2f7d5b; --leaf-soft:#78b89a; --wash:#e7f1eb; --focus:#1f6fb2;
+  --ground:#eef4f9; --card:#ffffff; --ink:#15212c; --muted:#566676; --line:#d8e3ee;
+  --accent:#0a6fb0; --accent-soft:#7cc4ef; --wash:#e4f1fb; --focus:#0a6fb0;
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){
   :root{
-    --ground:#121614; --card:#1a201d; --ink:#e4ebe6; --muted:#9aa8a0; --line:#2b3430;
-    --leaf:#6cc39a; --leaf-soft:#3f8a67; --wash:#1f2c25; --focus:#7db7e8;
+    --ground:#0e141b; --card:#151e28; --ink:#e2eaf2; --muted:#96a6b6; --line:#253240;
+    --accent:#5cc0f5; --accent-soft:#2b7fb3; --wash:#162636; --focus:#8fd3fb;
     color-scheme:dark;
   }
 }
@@ -26,7 +26,8 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;padding-block:32p
   font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
 main{width:100%;max-width:30rem;background:var(--card);border:1px solid var(--line);border-radius:18px;
   padding:clamp(22px,5vw,36px);display:grid;gap:18px}
-.mark{width:44px;height:44px}
+.avatar{width:96px;height:96px;border-radius:50%;object-fit:cover;display:block;
+  border:3px solid var(--accent);box-shadow:0 0 0 5px var(--wash)}
 h1{margin:0;font:600 clamp(1.6rem,4.6vw,2rem)/1.15 ui-serif,Georgia,"Times New Roman",serif;
   letter-spacing:-.01em;text-wrap:balance}
 p{margin:0}
@@ -35,24 +36,22 @@ p{margin:0}
 .facts{margin:0;padding:14px 16px;border-radius:12px;background:var(--wash);display:grid;gap:6px;
   list-style:none;font-size:.93rem}
 .facts li{display:flex;gap:10px;align-items:baseline}
-.facts li::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--leaf);
+.facts li::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);
   transform:translateY(-1px)}
 #paypal-button-container{min-height:54px}
-.thanks{padding:14px 16px;border-radius:12px;background:var(--wash);border:1px solid var(--leaf-soft);
+/* cadre PayPal en clair : sinon fond blanc opaque derrière le bouton en thème sombre */
+#paypal-button-container,#paypal-button-container iframe{color-scheme:light}
+.thanks{padding:14px 16px;border-radius:12px;background:var(--wash);border:1px solid var(--accent-soft);
   font-weight:600;color:var(--ink)}
 .fallback{font-size:.9rem;color:var(--muted)}
-a{color:var(--leaf);text-underline-offset:3px}
+a{color:var(--accent);text-underline-offset:3px}
 a:focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:4px}
 footer{border-top:1px solid var(--line);padding-top:14px}
 </style>
 </head>
 <body>
 <main>
-  <svg class="mark" viewBox="0 0 32 32" role="img" aria-label="Pousse">
-    <path d="M16 29V15" stroke="var(--leaf)" stroke-width="2.4" stroke-linecap="round" fill="none"/>
-    <path d="M16 17c0-6 4-10 11-10 0 7-4 10-11 10z" fill="var(--leaf)"/>
-    <path d="M16 20c0-5-3-8-10-8 0 6 3 8 10 8z" fill="var(--leaf-soft)"/>
-  </svg>
+  <img class="avatar" src="/avatar.jpg" alt="Le gros caillou" width="96" height="96">
 
   <h1>Soutenir mes projets</h1>
 
@@ -74,7 +73,7 @@ footer{border-top:1px solid var(--line);padding-top:14px}
   <footer><p class="muted">Merci d'être passé par ici.</p></footer>
 </main>
 
-<script src="https://www.paypal.com/sdk/js?client-id={{CLIENT_ID}}&vault=true&intent=subscription" data-sdk-integration-source="button-factory"></script>
+<script src="https://www.paypal.com/sdk/js?client-id={{CLIENT_ID}}&vault=true&intent=subscription&locale=fr_FR" data-sdk-integration-source="button-factory"></script>
 <script>
   if (window.paypal) {
     paypal.Buttons({

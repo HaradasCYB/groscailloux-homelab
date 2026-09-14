@@ -187,7 +187,8 @@ l'import Jellyseerr) et le mail de bienvenue prévient que l'accès sera activé
 bouton PayPal (`DONATION_PAYPAL_CLIENT_ID`, `DONATION_PAYPAL_PLAN_ID` dans `.env` ; absents = 404).
 Don facultatif, sans aucun lien avec le service : la page le dit, rien n'y renvoie et elle ne renvoie à
 rien. Le conteneur du bouton ne doit pas avoir `id="paypal"` (l'élément masquerait `window.paypal` et
-le SDK plante).
+le SDK plante). Avatar : `npm/data/don/avatar.jpg` (hors git), servi par NPM en `/avatar.jpg`. Le cadre
+PayPal reste en `color-scheme: light` (sinon fond blanc opaque en thème sombre).
 
 ## Comptes premium
 

@@ -418,6 +418,7 @@ mod tests {
         });
         assert!(!html.contains("{{"));
         assert!(html.contains("client-id=CID-1&"));
+        assert!(html.contains("locale=fr_FR"));
         assert!(html.contains("plan_id: 'P-9'"));
         assert!(html.contains("subscribe?plan_id=P-9"));
         assert!(html.contains("aucun service"));
