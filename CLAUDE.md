@@ -56,10 +56,18 @@ journalctl -u homelabd -f
 - **Aucune option qui lit la vidéo à l'ajout d'un titre** (Intro Skipper `AutoDetectIntros`, source
   d'images « Screen Grabber », `SaveLocalMetadata`/NFO) : sur les dossiers seedbox, chaque lecture passe
   par le lien (~24 Mo/s partagés) et fait buffer les spectateurs. Pas de `--vfs-read-ahead` sur rclone.
-- **Comptes** : premium = compte Jellyfin actif, non-premium = `IsDisabled` (jamais de suppression de
-  compte pour « bloquer ») ; passer par `homelab_core::accounts` (page `/accounts`, `homelabctl accounts`) qui
-  garde les permissions Jellyseerr. Plafonds dans `[accounts]` (25 premium, 2 lectures par compte) ; pas de
-  `RemoteClientBitrateLimit` (forcerait des transcodages).
+- **Médias en écriture pour Jellyfin** (`/media` et `/seedbox` sans `:ro`, rclone sans `--read-only`) : seulement
+  pour que le bouton « Supprimer » marche. Aucune option qui écrit dans les dossiers médias
+  (`SaveLocalMetadata`, `SaveSubtitlesWithMedia`, trickplay avec le média : tous à `false`).
+  Une suppression dans Jellyfin est suivie par `deletion_cleanup` (fiche Arr, Jellyseerr, torrent).
+- **Comptes** : premium = compte Jellyfin actif, non-premium = `IsDisabled` ; passer par
+  `homelab_core::accounts` (page `/accounts`, `homelabctl accounts`) qui garde les permissions Jellyseerr.
+  `accounts.protected` (Haradas, LeGrosCailloux) : jamais suspendus ni supprimés par la page ; les autres
+  admins sont gérés comme tout le monde. Plafonds dans `[accounts]` (25 premium, 2 lectures par
+  compte) ; pas de `RemoteClientBitrateLimit` (forcerait des transcodages).
+- **Historique Arr** : `GET history?movieId=` / `?seriesId=` n'existe pas, le filtre est ignoré et tout
+  l'historique revient. Utiliser `history/movie?movieId=` et `history/series?seriesId=` (seul `downloadId`
+  filtre vraiment `GET history`).
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
   `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans
@@ -104,7 +112,8 @@ journalctl -u homelabd -f
   les indexers publics pendant deux jours.
 - Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
   même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`).
-  Ne pas « nettoyer » par `DELETE /Items/<id>` : sur un dossier de bibliothèque, il peut effacer le disque.
+  `DELETE /Items/<id>` **efface le disque** (c'est le bouton « Supprimer » de Jellyfin) : jamais pour
+  « nettoyer » une vue ou une bibliothèque.
 - **qBittorrent** : ne jamais remettre `172.18.0.0/16` dans `bypass_auth_subnet_whitelist` (NPM y
   est : qBit serait public sans mot de passe) ; seulement `127.0.0.0/8` et `172.18.0.1/32`.
   Garder `web_ui_reverse_proxy_enabled` (proxies de confiance `172.18.0.0/16`) : sans ça, qBit voit

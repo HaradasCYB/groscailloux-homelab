@@ -324,6 +324,67 @@ impl ArrClient {
         self.get(&format!("api/v3/qualityprofile/{id}"), &[]).await
     }
 
+    /// `DELETE` avec paramètres (fiche film / série). Réponse ignorée.
+    pub async fn delete(&self, path: &str, query: &[(&str, &str)]) -> Result<()> {
+        let resp = self.req(Method::DELETE, path).query(query).send().await?;
+        check(resp, &format!("{} DELETE {path}", self.name))
+            .await
+            .map(|_| ())
+    }
+
+    /// Films avec leur `movieFile` (Radarr).
+    pub async fn movies(&self) -> Result<Vec<Value>> {
+        let v = self.get("api/v3/movie", &[]).await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    /// Fichiers d'épisodes d'une série (Sonarr).
+    pub async fn episode_files(&self, series_id: i64) -> Result<Vec<Value>> {
+        let v = self
+            .get(
+                "api/v3/episodefile",
+                &[("seriesId", &series_id.to_string())],
+            )
+            .await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    /// Historique d'un film (`history/movie?movieId=`) ou d'une série (`history/series?seriesId=`).
+    /// Attention : `GET history?movieId=` n'existe pas (filtre ignoré ⇒ tout l'historique).
+    pub async fn title_history(&self, id: i64) -> Result<Vec<Value>> {
+        let (path, key) = if self.is_radarr() {
+            ("api/v3/history/movie", "movieId")
+        } else {
+            ("api/v3/history/series", "seriesId")
+        };
+        let v = self.get(path, &[(key, &id.to_string())]).await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    /// Historique filtré par `downloadId` (filtre supporté par Radarr et Sonarr), 250 évènements au plus.
+    pub async fn history_where(&self, key: &str, value: &str) -> Result<Vec<Value>> {
+        let v = self
+            .get(
+                "api/v3/history",
+                &[(key, value), ("pageSize", "250"), ("sortKey", "date")],
+            )
+            .await?;
+        Ok(v.get("records")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Épisodes suivis ou non (`PUT episode/monitor`).
+    pub async fn set_episodes_monitored(&self, ids: &[i64], monitored: bool) -> Result<()> {
+        self.put(
+            "api/v3/episode/monitor",
+            &json!({ "episodeIds": ids, "monitored": monitored }),
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// Épisodes d'une série (id, saison, numéro, numéro absolu).
     pub async fn episodes(&self, series_id: i64) -> Result<Vec<Value>> {
         let v = self

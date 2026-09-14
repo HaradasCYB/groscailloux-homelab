@@ -121,6 +121,31 @@ fichiers (`POST /api/v2/torrents/delete`, `deleteFiles=true`) jusqu'à 5 torrent
 `stoppedUP`, les plus anciens d'abord — les hardlinks de `library/media` survivent.
 ≥ 98 % : log d'erreur, aucune action automatique.
 
+### deletion_cleanup — 5 min
+
+Suite d'une suppression faite dans Jellyfin (bouton « Supprimer » ; médias montés en écriture pour ça).
+Un fichier connu d'un Arr est tenu pour supprimé seulement si **trois signaux** concordent : absent du
+disque (`NotFound`, pas une erreur d'E/S), absent de Jellyfin (`GET /Items?Fields=Path`), et déjà absent
+au passage précédent (`confirm_after_secs`). Garde-fous : imports de moins de `min_file_age_mins` ignorés ;
+côté seedbox, montage vérifié et cache rclone rafraîchi (`vfs/refresh`) avant de conclure ; plus de
+`abort_if_missing_titles_over` titres manquants d'un coup ⇒ rien n'est fait (disque ou montage) ;
+`max_titles_per_run` titres par passage ; une machine injoignable est sautée, l'autre continue.
+
+- **Film** : `DELETE movie/{id}?deleteFiles=true` ; média Jellyseerr supprimé (le titre redevient
+  demandable) si aucune autre machine n'a le film.
+- **Série entière** : idem côté Sonarr. **Saison entière** : épisodes non surveillés, saison non
+  surveillée, notée dans `deletions.seasons` : `monitor_sync` ne la re-surveille plus, sauf demande
+  Jellyseerr créée après la suppression. **Épisodes isolés** : non surveillés.
+- **Torrents** : sources = historique du titre (`history/movie`, `history/series` filtré sur les épisodes
+  supprimés, jamais un évènement d'un autre titre) + nom de release (`originalFilePath`, `sceneName`).
+  Gardé s'il sert encore (lien physique d'un de ses fichiers sur le VPS, ou autre import du même
+  `downloadId` qui a encore son fichier). C411 ou tracker inconnu : retiré avec ses fichiers seulement à
+  ratio `c411_min_ratio` ou `c411_min_seed_days` de seed (en attente dans `deletions.pending_torrents`,
+  revu à chaque passage) ; autres trackers : tout de suite.
+
+Testé le 2026-09-14 de bout en bout sur un film jetable du VPS (import Radarr, scan, `DELETE /Items`,
+fiche Radarr supprimée, aucun torrent touché).
+
 ### monitor_sync — note (2026-09-13)
 Une saison demandée n'est suivie que si elle n'a pas déjà des fichiers **sur l'autre machine**
 (rapprochement par tvdbId) : sans ça, une nouvelle demande routée vers la seedbox y faisait suivre
@@ -205,6 +230,11 @@ la seule source de vérité ; les comptes admin ne sont jamais listés ni modifi
   mises à 0 (une session Jellyseerr ouverte survit à la suspension Jellyfin).
 - **Activation** : refusée au-delà de `accounts.max_premium` ; permissions Jellyseerr restaurées (à
   défaut de sauvegarde, celles par défaut de Jellyseerr).
+- **Comptes protégés** (`accounts.protected` : Haradas, LeGrosCailloux) : affichés avec un badge,
+  sans interrupteur ni suppression, hors plafond. Les autres admins sont gérés normalement.
+- **Suppression** : bouton « Supprimer » → page de confirmation (`GET /accounts/delete`) → `POST
+  /accounts/delete` : compte Jellyfin puis compte Jellyseerr (ses demandes partent avec). CLI :
+  `homelabctl accounts delete <compte> --yes`.
 - **Plafonds** (`[accounts]`) : 25 comptes premium, 2 lectures simultanées par compte. Dimensionnés
   pour 6 vCPU sans GPU (1 à 2 transcodages 1080p) et le lien seedbox (~190 Mbit/s, une douzaine de
   flux) ; pic mesuré le 2026-09-14 : 4 lectures simultanées pour 13 comptes, 92 % de lecture directe.

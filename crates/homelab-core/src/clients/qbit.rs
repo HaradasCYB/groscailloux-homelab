@@ -48,6 +48,11 @@ pub struct Torrent {
     pub save_path: String,
     #[serde(default)]
     pub category: String,
+    #[serde(default)]
+    pub ratio: f64,
+    /// Secondes passées en seed.
+    #[serde(default)]
+    pub seeding_time: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

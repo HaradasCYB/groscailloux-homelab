@@ -53,6 +53,37 @@ impl JellyfinClient {
         }))
     }
 
+    /// Chemins de tous les films et épisodes de la bibliothèque.
+    pub async fn item_paths(&self) -> Result<std::collections::HashSet<String>> {
+        let resp = self
+            .req(Method::GET, "Items")
+            .query(&[
+                ("Recursive", "true"),
+                ("IncludeItemTypes", "Movie,Episode"),
+                ("Fields", "Path"),
+                ("EnableImages", "false"),
+                ("EnableUserData", "false"),
+            ])
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin Items").await?;
+        Ok(v.get("Items")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|i| i.get("Path").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect())
+    }
+
+    pub async fn delete_user(&self, id: &str) -> Result<()> {
+        let resp = self
+            .req(Method::DELETE, &format!("Users/{id}"))
+            .send()
+            .await?;
+        check(resp, "jellyfin DELETE Users/{id}").await.map(|_| ())
+    }
+
     pub async fn user(&self, id: &str) -> Result<Value> {
         let resp = self.req(Method::GET, &format!("Users/{id}")).send().await?;
         json(resp, "jellyfin Users/{id}").await

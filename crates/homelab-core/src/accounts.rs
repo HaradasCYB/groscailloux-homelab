@@ -2,7 +2,8 @@
 //! (`Policy.IsDisabled`, fonction native : connexion et jetons refusés, rien n'est supprimé).
 //! La politique Jellyfin est la seule source de vérité ; l'état ne garde que les permissions
 //! Jellyseerr à restaurer (une session Jellyseerr ouverte survit à la suspension, on lui retire
-//! donc le droit de demander). Les comptes admin ne sont jamais touchés.
+//! donc le droit de demander). Les comptes protégés (`accounts.protected`) ne sont jamais
+//! suspendus ni supprimés ; les autres, admin compris, sont gérés depuis la page « Comptes ».
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
@@ -16,6 +17,9 @@ pub struct Account {
     pub id: String,
     pub name: String,
     pub premium: bool,
+    pub admin: bool,
+    /// Listé dans `accounts.protected` : ni interrupteur ni suppression.
+    pub protected: bool,
     pub max_streams: u32,
     /// Dernière activité Jellyfin (ISO 8601), si le compte a déjà servi.
     pub last_activity: Option<String>,
@@ -27,6 +31,13 @@ pub enum Outcome {
     Suspended,
     Unchanged,
     CapReached { premium: usize, max: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deleted {
+    pub name: String,
+    /// Compte Jellyseerr supprimé aussi (absent si jamais importé).
+    pub jellyseerr: bool,
 }
 
 fn policy_flag(u: &Value, key: &str) -> bool {
@@ -43,11 +54,18 @@ pub fn is_premium(u: &Value) -> bool {
     !policy_flag(u, "IsDisabled")
 }
 
-/// Comptes premium comptés dans le plafond : non-admin et actifs.
-pub fn premium_count(users: &[Value]) -> usize {
+pub fn is_protected(u: &Value, protected: &[String]) -> bool {
+    u.get("Name")
+        .and_then(Value::as_str)
+        .map(|n| protected.iter().any(|p| p.eq_ignore_ascii_case(n)))
+        .unwrap_or(false)
+}
+
+/// Comptes premium comptés dans le plafond : non protégés et actifs.
+pub fn premium_count(users: &[Value], protected: &[String]) -> usize {
     users
         .iter()
-        .filter(|u| !is_admin(u) && is_premium(u))
+        .filter(|u| !is_protected(u, protected) && is_premium(u))
         .count()
 }
 
@@ -66,16 +84,17 @@ pub fn with_access(policy: &Value, premium: bool, max_streams: u32) -> Value {
     p
 }
 
-/// Comptes non-admin, par nom.
-pub fn accounts(users: &[Value]) -> Vec<Account> {
+/// Tous les comptes, par nom.
+pub fn accounts(users: &[Value], protected: &[String]) -> Vec<Account> {
     let mut out: Vec<Account> = users
         .iter()
-        .filter(|u| !is_admin(u))
         .filter_map(|u| {
             Some(Account {
                 id: u.get("Id")?.as_str()?.to_string(),
                 name: u.get("Name")?.as_str()?.to_string(),
                 premium: is_premium(u),
+                admin: is_admin(u),
+                protected: is_protected(u, protected),
                 max_streams: u
                     .pointer("/Policy/MaxActiveSessions")
                     .and_then(Value::as_u64)
@@ -92,7 +111,10 @@ pub fn accounts(users: &[Value]) -> Vec<Account> {
 }
 
 pub async fn list(ctx: &TaskContext) -> Result<Vec<Account>> {
-    Ok(accounts(&ctx.jellyfin.users().await?))
+    Ok(accounts(
+        &ctx.jellyfin.users().await?,
+        &ctx.cfg.accounts.protected,
+    ))
 }
 
 /// Compte par id Jellyfin ou par nom (insensible à la casse).
@@ -102,7 +124,7 @@ pub async fn resolve(ctx: &TaskContext, who: &str) -> Result<Account> {
         .await?
         .into_iter()
         .find(|a| a.id == who || a.name.to_lowercase() == wanted)
-        .with_context(|| format!("compte introuvable (ou admin) : {who}"))
+        .with_context(|| format!("compte introuvable : {who}"))
 }
 
 /// Active ou suspend un compte. Sérialisé avec l'onboarding (plafond).
@@ -119,15 +141,15 @@ pub async fn set_premium_locked(ctx: &TaskContext, user_id: &str, on: bool) -> R
         .iter()
         .find(|u| u.get("Id").and_then(Value::as_str) == Some(user_id))
         .with_context(|| format!("compte Jellyfin introuvable : {user_id}"))?;
-    if is_admin(user) {
-        bail!("compte administrateur : jamais suspendu par cette page");
+    if is_protected(user, &cfg.protected) {
+        bail!("compte protégé : jamais suspendu par cette page");
     }
     let name = user.get("Name").and_then(Value::as_str).unwrap_or("?");
     if is_premium(user) == on {
         return Ok(Outcome::Unchanged);
     }
     if on {
-        let premium = premium_count(&users);
+        let premium = premium_count(&users, &cfg.protected);
         if !can_activate(premium, cfg.max_premium) {
             return Ok(Outcome::CapReached {
                 premium,
@@ -225,13 +247,66 @@ async fn sync_jellyseerr(ctx: &TaskContext, user_id: &str, on: bool) -> Result<(
     Ok(())
 }
 
-/// Applique `max_streams_per_user` aux comptes non-admin qui ne l'ont pas encore.
+/// Supprime un compte : Jellyfin puis Jellyseerr (ses demandes partent avec). Jamais un compte
+/// protégé. Sérialisé avec l'onboarding.
+pub async fn delete(ctx: &TaskContext, user_id: &str) -> Result<Deleted> {
+    let _guard = ctx.onboard_lock.lock().await;
+    let users = ctx.jellyfin.users().await?;
+    let user = users
+        .iter()
+        .find(|u| u.get("Id").and_then(Value::as_str) == Some(user_id))
+        .with_context(|| format!("compte Jellyfin introuvable : {user_id}"))?;
+    if is_protected(user, &ctx.cfg.accounts.protected) {
+        bail!("compte protégé : jamais supprimé par cette page");
+    }
+    let name = user
+        .get("Name")
+        .and_then(Value::as_str)
+        .unwrap_or("?")
+        .to_string();
+    let js_id = ctx
+        .jellyseerr
+        .users(1000)
+        .await?
+        .iter()
+        .find(|u| u.get("jellyfinUserId").and_then(Value::as_str) == Some(user_id))
+        .and_then(|u| u.get("id").and_then(Value::as_i64));
+    if ctx.dry_run {
+        info!(task = "accounts", user = %name, ?js_id, "dry-run: account not deleted");
+        return Ok(Deleted {
+            name,
+            jellyseerr: js_id.is_some(),
+        });
+    }
+    ctx.jellyfin.delete_user(user_id).await?;
+    info!(task = "accounts", user = %name, "jellyfin account deleted");
+    let mut jellyseerr = false;
+    if let Some(id) = js_id {
+        match ctx.jellyseerr.delete_user(id).await {
+            Ok(()) => {
+                jellyseerr = true;
+                info!(task = "accounts", user = %name, jellyseerr_id = id, "jellyseerr account deleted");
+            }
+            Err(e) => {
+                warn!(task = "accounts", user = %name, error = %e, "jellyseerr account not deleted")
+            }
+        }
+    }
+    ctx.state
+        .update(|s| {
+            s.accounts.remove(user_id);
+        })
+        .await?;
+    Ok(Deleted { name, jellyseerr })
+}
+
+/// Applique `max_streams_per_user` aux comptes non protégés qui ne l'ont pas encore.
 /// Renvoie les noms des comptes modifiés (ou qui le seraient en dry-run).
 pub async fn apply_stream_limit(ctx: &TaskContext) -> Result<Vec<String>> {
     let max = ctx.cfg.accounts.max_streams_per_user;
     let mut changed = Vec::new();
     for u in ctx.jellyfin.users().await? {
-        if is_admin(&u) {
+        if is_protected(&u, &ctx.cfg.accounts.protected) {
             continue;
         }
         let current = u
@@ -292,33 +367,44 @@ mod tests {
         assert_eq!(back["IsDisabled"], json!(false));
     }
 
-    #[test]
-    fn cap_counts_only_active_non_admins() {
-        let mut users = vec![user("admin", true, false), user("off", false, true)];
-        for i in 0..24 {
-            users.push(user(&format!("u{i}"), false, false));
-        }
-        assert_eq!(premium_count(&users), 24);
-        assert!(can_activate(premium_count(&users), 25));
-        users.push(user("u24", false, false));
-        assert_eq!(premium_count(&users), 25);
-        assert!(!can_activate(premium_count(&users), 25));
+    fn prot() -> Vec<String> {
+        vec!["Haradas".into(), "LeGrosCailloux".into()]
     }
 
     #[test]
-    fn accounts_hide_admins_and_sort_by_name() {
+    fn cap_counts_active_unprotected_accounts_admins_included() {
+        let mut users = vec![
+            user("haradas", true, false), // protégé (casse ignorée) : hors plafond
+            user("Paul", true, false),   // admin non protégé : compté
+            user("off", false, true),
+        ];
+        for i in 0..23 {
+            users.push(user(&format!("u{i}"), false, false));
+        }
+        assert_eq!(premium_count(&users, &prot()), 24);
+        assert!(can_activate(premium_count(&users, &prot()), 25));
+        users.push(user("u23", false, false));
+        assert_eq!(premium_count(&users, &prot()), 25);
+        assert!(!can_activate(premium_count(&users, &prot()), 25));
+    }
+
+    #[test]
+    fn accounts_list_everyone_with_flags_sorted_by_name() {
         let users = vec![
             user("Zoe", false, true),
-            user("admin", true, false),
+            user("LeGrosCailloux", true, false),
+            user("Paul", true, false),
             user("alice", false, false),
         ];
-        let a = accounts(&users);
+        let a = accounts(&users, &prot());
         assert_eq!(
             a.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(),
-            ["alice", "Zoe"]
+            ["alice", "LeGrosCailloux", "Paul", "Zoe"]
         );
-        assert!(a[0].premium);
-        assert!(!a[1].premium);
+        assert!(a[0].premium && !a[0].admin && !a[0].protected);
+        assert!(a[1].admin && a[1].protected);
+        assert!(a[2].admin && !a[2].protected);
+        assert!(!a[3].premium);
         assert_eq!(a[0].last_activity.as_deref(), Some("2026-09-14T10:00:00Z"));
     }
 }

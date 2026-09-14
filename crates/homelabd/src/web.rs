@@ -58,6 +58,10 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/don", get(don))
         .route("/accounts", get(accounts_html))
         .route("/accounts/premium", post(accounts_toggle))
+        .route(
+            "/accounts/delete",
+            get(accounts_delete_confirm).post(accounts_delete),
+        )
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
@@ -284,6 +288,77 @@ async fn accounts_toggle(
         urlencode(&who)
     );
     Redirect::to(&url).into_response()
+}
+
+#[derive(Deserialize)]
+struct DeleteForm {
+    token: String,
+    user_id: String,
+}
+
+fn back_to_list(token: &str, code: &str, who: &str) -> Response {
+    Redirect::to(&format!(
+        "/accounts?token={}&msg={code}&who={}",
+        urlencode(token),
+        urlencode(who)
+    ))
+    .into_response()
+}
+
+/// Page de confirmation (GET) : rien n'est supprimé ici.
+async fn accounts_delete_confirm(
+    State(st): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let token = q.get("token").map(String::as_str);
+    if !accounts_allowed(&st, token) {
+        return denied();
+    }
+    let token = token.unwrap_or("");
+    let user_id = q.get("user_id").map(String::as_str).unwrap_or("");
+    match accounts::list(&st.ctx).await {
+        Ok(list) => match list.into_iter().find(|a| a.id == user_id) {
+            Some(a) if a.protected => back_to_list(token, "protected", &a.name),
+            Some(a) => Html(accounts_page::render_confirm(&a, token)).into_response(),
+            None => back_to_list(token, "error", user_id),
+        },
+        Err(e) => {
+            warn!(task = "accounts", error = %e, "delete confirm: jellyfin unreachable");
+            back_to_list(token, "error", user_id)
+        }
+    }
+}
+
+async fn accounts_delete(
+    State(st): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<DeleteForm>,
+) -> Response {
+    if !accounts_allowed(&st, Some(&f.token)) {
+        return denied();
+    }
+    let ip = client_ip(&headers, addr);
+    let who = accounts::list(&st.ctx)
+        .await
+        .ok()
+        .and_then(|l| l.into_iter().find(|a| a.id == f.user_id).map(|a| a.name))
+        .unwrap_or_else(|| f.user_id.clone());
+    match accounts::delete(&st.ctx, &f.user_id).await {
+        Ok(d) => {
+            info!(task = "accounts", %ip, user = %d.name, jellyseerr = d.jellyseerr, "account deleted via web");
+            back_to_list(&f.token, "deleted", &d.name)
+        }
+        Err(e) => {
+            warn!(task = "accounts", %ip, user_id = %f.user_id, error = %e, "account deletion failed");
+            let code = if e.to_string().contains("protégé") {
+                "protected"
+            } else {
+                "error"
+            };
+            back_to_list(&f.token, code, &who)
+        }
+    }
 }
 
 fn urlencode(s: &str) -> String {

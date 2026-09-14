@@ -4,6 +4,7 @@
 pub mod auto_import;
 pub mod backup;
 pub mod cleanup;
+pub mod deletion_cleanup;
 pub mod disk_pressure;
 pub mod id_match_import;
 pub mod monitor_sync;
@@ -59,6 +60,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(id_match_import::IdMatchImport),
         Box::new(torrent_import::TorrentImport),
         Box::new(unknown_series_grab::UnknownSeriesGrab),
+        Box::new(deletion_cleanup::DeletionCleanup),
         Box::new(monitor_sync::MonitorSync),
         Box::new(user_poller::UserPoller),
         Box::new(cleanup::Cleanup),

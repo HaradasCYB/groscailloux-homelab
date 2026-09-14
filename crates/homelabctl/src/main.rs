@@ -37,12 +37,16 @@ enum Cmd {
         #[arg(long)]
         password: Option<String>,
     },
-    /// Comptes Jellyfin : list ; on|off <compte> (premium ou suspendu) ; limits (lectures simultanées)
+    /// Comptes Jellyfin : list ; on|off <compte> (premium ou suspendu) ; delete <compte> --yes ;
+    /// limits (lectures simultanées)
     Accounts {
-        #[arg(value_parser = ["list", "on", "off", "limits"])]
+        #[arg(value_parser = ["list", "on", "off", "delete", "limits"])]
         action: String,
-        /// Nom ou id Jellyfin (pour on/off)
+        /// Nom ou id Jellyfin (pour on/off/delete)
         who: Option<String>,
+        /// Confirme une suppression (définitive : Jellyfin + Jellyseerr)
+        #[arg(long)]
+        yes: bool,
     },
     /// qBittorrent derrière gluetun (on) ou en direct (off)
     Vpn {
@@ -131,10 +135,10 @@ async fn main() -> Result<()> {
                 su = r.jellyseerr_url
             );
         }
-        Cmd::Accounts { action, who } => match action.as_str() {
+        Cmd::Accounts { action, who, yes } => match action.as_str() {
             "list" => {
                 let list = accounts::list(&ctx).await?;
-                let premium = list.iter().filter(|a| a.premium).count();
+                let premium = list.iter().filter(|a| a.premium && !a.protected).count();
                 println!(
                     "{premium} premium / {} max\n\n{:<24} {:<8} {:<8} dernière activité",
                     ctx.cfg.accounts.max_premium, "compte", "premium", "flux"
@@ -142,7 +146,11 @@ async fn main() -> Result<()> {
                 for a in list {
                     println!(
                         "{:<24} {:<8} {:<8} {}",
-                        a.name,
+                        if a.protected {
+                            format!("{} (protégé)", a.name)
+                        } else {
+                            a.name.clone()
+                        },
                         if a.premium { "oui" } else { "non" },
                         if a.max_streams == 0 {
                             "∞".to_string()
@@ -161,6 +169,25 @@ async fn main() -> Result<()> {
                     changed.len(),
                     ctx.cfg.accounts.max_streams_per_user,
                     changed.join(", ")
+                );
+            }
+            "delete" => {
+                let who =
+                    who.context("préciser le compte : homelabctl accounts delete <compte> --yes")?;
+                let a = accounts::resolve(&ctx, &who).await?;
+                if !yes && !ctx.dry_run {
+                    bail!("suppression définitive de {} (Jellyfin + Jellyseerr) : relancer avec --yes", a.name);
+                }
+                let d = accounts::delete(&ctx, &a.id).await?;
+                println!(
+                    "{}{} supprimé{}",
+                    if ctx.dry_run { "DRY-RUN : " } else { "" },
+                    d.name,
+                    if d.jellyseerr {
+                        " (Jellyfin + Jellyseerr)"
+                    } else {
+                        " (Jellyfin)"
+                    }
                 );
             }
             on_off => {

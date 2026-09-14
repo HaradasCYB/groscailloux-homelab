@@ -36,6 +36,7 @@ fn label(task: &str) -> &'static str {
         "id_match_import" => "Imports « matched by ID »",
         "torrent_import" => "Torrents ajoutés à la main",
         "unknown_series_grab" => "Titres traduits (C411)",
+        "deletion_cleanup" => "Suppressions Jellyfin",
         "monitor_sync" => "Saisons demandées",
         "user_poller" => "Comptes Jellyseerr",
         "cleanup" => "Nettoyage",

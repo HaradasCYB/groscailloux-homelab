@@ -63,6 +63,22 @@ max_per_run = 10            # torrents examinés (parse/recherche/import) par pa
 max_attempts = 3            # erreurs avant abandon (état : homelabctl status / state/homelabd.json)
 series_ready_secs = 90      # attente des épisodes d'une série tout juste ajoutée
 
+[tasks.deletion_cleanup]
+# Titre supprimé dans Jellyfin (fichier absent du disque ET de Jellyfin, deux passages de suite) :
+# fiche Radarr/Sonarr retirée (ou saison/épisodes non surveillés), média Jellyseerr libéré, torrent
+# retiré avec ses fichiers (C411 : seulement à ratio 1 ou 7 j de seed).
+interval_secs = 300
+max_titles_per_run = 5
+abort_if_missing_titles_over = 10   # au-delà : disque ou montage en cause, on ne touche à rien
+confirm_after_secs = 240
+min_file_age_mins = 60              # imports récents ignorés (cache rclone, scan Jellyfin)
+c411_min_ratio = 1.0
+c411_min_seed_days = 7
+vps_paths = [
+  ["/movies", "/opt/homelab/library/media/movies", "/media/movies"],
+  ["/tv", "/opt/homelab/library/media/tvshows", "/media/tvshows"],
+]
+
 [tasks.unknown_series_grab]
 # Releases C411 rejetées par Sonarr pour la seule raison « Unknown Series » (titre traduit) :
 # grab forcé si le titre correspond exactement au titre FR/original de la série (Jellyseerr).
@@ -143,6 +159,7 @@ npm_server_name = "qbittorrent."
 max_premium = 25
 max_streams_per_user = 2
 new_accounts_premium = false   # les comptes créés par l'onboarding sont à activer à la main
+protected = ["Haradas", "LeGrosCailloux"]   # ni interrupteur ni suppression sur la page
 
 [seedbox]
 # Seedbox (tofino.usbx.me) : Radarr/Sonarr y rangent dans ~/media, monté en lecture seule sur

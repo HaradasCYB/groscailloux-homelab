@@ -133,6 +133,8 @@ mod tests {
             content_path: String::new(),
             save_path: String::new(),
             category: String::new(),
+            ratio: 0.0,
+            seeding_time: 0,
         };
         let ts = vec![
             mk("a", "stoppedUP", 30),

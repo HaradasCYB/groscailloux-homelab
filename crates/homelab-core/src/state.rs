@@ -36,6 +36,29 @@ pub struct State {
     /// Comptes suspendus : permissions Jellyseerr à restaurer, clé = id Jellyfin.
     #[serde(default)]
     pub accounts: BTreeMap<String, AccountRecord>,
+    /// deletion_cleanup : suppressions constatées et torrents en attente de retrait.
+    #[serde(default)]
+    pub deletions: Deletions,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Deletions {
+    /// Première absence constatée d'un fichier, clé `côté:chemin Arr`.
+    #[serde(default)]
+    pub first_seen: BTreeMap<String, i64>,
+    /// Saisons supprimées, clé `côté:tvdb:saison` → date : monitor_sync ne les re-surveille pas
+    /// (sauf demande Jellyseerr plus récente).
+    #[serde(default)]
+    pub seasons: BTreeMap<String, i64>,
+    /// Torrents C411 à retirer une fois le seuil de seed atteint, clé `côté:hash`.
+    #[serde(default)]
+    pub pending_torrents: BTreeMap<String, PendingTorrent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingTorrent {
+    pub at: i64,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

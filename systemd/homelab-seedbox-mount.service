@@ -1,5 +1,5 @@
 [Unit]
-Description=Seedbox media (SFTP, read-only) mounted on /mnt/seedbox/media for Jellyfin
+Description=Seedbox media (SFTP) mounted on /mnt/seedbox/media for Jellyfin (writable: deletions from Jellyfin)
 Wants=network-online.target
 After=network-online.target
 
@@ -12,7 +12,7 @@ Group=deploy
 ExecStartPre=/bin/mkdir -p /opt/homelab/cache/rclone
 ExecStart=/usr/local/bin/rclone mount seedbox:media /mnt/seedbox/media \
   --config /opt/homelab/rclone/rclone.conf \
-  --read-only --allow-other --umask 022 \
+  --allow-other --umask 022 \
   --vfs-cache-mode full --vfs-cache-max-size 20G --vfs-cache-max-age 72h \
   --cache-dir /opt/homelab/cache/rclone \
   --vfs-read-chunk-size 8M --vfs-read-chunk-streams 4 --buffer-size 32M \

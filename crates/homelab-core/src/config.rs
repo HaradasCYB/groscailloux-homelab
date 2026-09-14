@@ -40,6 +40,8 @@ pub struct Accounts {
     pub max_streams_per_user: u32,
     /// Un compte créé par l'onboarding est-il premium d'office ?
     pub new_accounts_premium: bool,
+    /// Comptes jamais suspendus ni supprimés par la page (noms Jellyfin, casse ignorée).
+    pub protected: Vec<String>,
 }
 
 impl Default for Accounts {
@@ -48,6 +50,7 @@ impl Default for Accounts {
             max_premium: 25,
             max_streams_per_user: 2,
             new_accounts_premium: false,
+            protected: vec!["Haradas".into(), "LeGrosCailloux".into()],
         }
     }
 }
@@ -166,6 +169,54 @@ pub struct Tasks {
     pub id_match_import: Interval300,
     pub torrent_import: TorrentImport,
     pub unknown_series_grab: UnknownSeriesGrab,
+    pub deletion_cleanup: DeletionCleanup,
+}
+
+/// Nettoyage après une suppression dans Jellyfin : fiche Arr, Jellyseerr, torrent.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DeletionCleanup {
+    pub interval_secs: u64,
+    /// Titres (film ou série) nettoyés au plus par passage et par machine.
+    pub max_titles_per_run: usize,
+    /// Plus de titres manquants que ça d'un coup sur une machine ⇒ on n'agit pas (disque, montage).
+    pub abort_if_missing_titles_over: usize,
+    /// Un fichier absent n'est traité qu'après ce délai depuis sa première absence constatée.
+    pub confirm_after_secs: i64,
+    /// Fichiers importés depuis moins longtemps ignorés (cache du montage seedbox, scan Jellyfin).
+    pub min_file_age_mins: i64,
+    /// Torrent C411 (ou tracker inconnu) : retiré seulement à ce ratio…
+    pub c411_min_ratio: f64,
+    /// …ou après ce temps de seed.
+    pub c411_min_seed_days: i64,
+    /// VPS : [racine vue par l'Arr, même dossier sur l'hôte, même dossier vu par Jellyfin].
+    pub vps_paths: Vec<[String; 3]>,
+}
+
+impl Default for DeletionCleanup {
+    fn default() -> Self {
+        Self {
+            interval_secs: 300,
+            max_titles_per_run: 5,
+            abort_if_missing_titles_over: 10,
+            confirm_after_secs: 240,
+            min_file_age_mins: 60,
+            c411_min_ratio: 1.0,
+            c411_min_seed_days: 7,
+            vps_paths: vec![
+                [
+                    "/movies".into(),
+                    "/opt/homelab/library/media/movies".into(),
+                    "/media/movies".into(),
+                ],
+                [
+                    "/tv".into(),
+                    "/opt/homelab/library/media/tvshows".into(),
+                    "/media/tvshows".into(),
+                ],
+            ],
+        }
+    }
 }
 
 /// Grab des releases rejetées « Unknown Series » (titres traduits), sur un seul indexer.
@@ -768,6 +819,9 @@ jellyseerr = "http://js"
         assert_eq!(cfg.accounts.max_premium, 25);
         assert_eq!(cfg.accounts.max_streams_per_user, 2);
         assert!(!cfg.accounts.new_accounts_premium);
+        assert_eq!(cfg.accounts.protected.len(), 2);
+        assert_eq!(cfg.tasks.deletion_cleanup.vps_paths.len(), 2);
+        assert_eq!(cfg.tasks.deletion_cleanup.c411_min_seed_days, 7);
     }
 
     #[test]

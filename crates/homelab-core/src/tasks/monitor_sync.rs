@@ -3,7 +3,8 @@
 //! Jellyseerr ajoute les séries sans `addOptions.monitor` ⇒ Sonarr monitore tout.
 //! Règle : monitored = (demandée ET pas déjà présente sur l'autre machine) OR a déjà des
 //! fichiers ici ; S00 jamais touchée ;
-//! les séries inconnues de Jellyseerr ne sont pas modifiées.
+//! les séries inconnues de Jellyseerr ne sont pas modifiées. Une saison supprimée dans Jellyfin
+//! (`deletion_cleanup`, état `deletions.seasons`) n'est plus demandée, sauf nouvelle demande.
 //! Plusieurs Sonarr (VPS, seedbox) : chaque demande est routée vers le Sonarr dont
 //! l'id Jellyseerr vaut `media.serviceId` — les ids de séries diffèrent d'une instance
 //! à l'autre, un mauvais routage modifierait une autre série.
@@ -56,6 +57,51 @@ pub fn requested_seasons(requests: &[Value]) -> Requested {
             if let Some(n) = s.get("seasonNumber").and_then(Value::as_i64) {
                 out.entry((server, sid)).or_default().insert(n);
             }
+        }
+    }
+    out
+}
+
+/// Saisons supprimées sur une machine (`côté:tvdb:saison` → date), par tvdbId, sauf celles
+/// redemandées depuis dans Jellyseerr (demande créée après la suppression).
+pub fn deleted_seasons(
+    deleted: &BTreeMap<String, i64>,
+    side: &str,
+    requests: &[Value],
+) -> BTreeMap<i64, BTreeSet<i64>> {
+    let mut out: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
+    for (key, at) in deleted {
+        let mut parts = key.splitn(3, ':');
+        let (Some(s), Some(tvdb), Some(season)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let (Ok(tvdb), Ok(season)) = (tvdb.parse::<i64>(), season.parse::<i64>()) else {
+            continue;
+        };
+        if s != side {
+            continue;
+        }
+        let asked_again = requests.iter().any(|r| {
+            r.get("type").and_then(Value::as_str) == Some("tv")
+                && r.pointer("/media/tvdbId").and_then(Value::as_i64) == Some(tvdb)
+                && r.get("createdAt")
+                    .and_then(Value::as_str)
+                    .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+                    .map(|d| d.timestamp() > *at)
+                    .unwrap_or(false)
+                && r.get("seasons")
+                    .and_then(Value::as_array)
+                    .map(|l| {
+                        l.iter().any(|x| {
+                            x.get("seasonNumber").and_then(Value::as_i64) == Some(season)
+                                && !EXCLUDED_STATUS
+                                    .contains(&x.get("status").and_then(Value::as_i64).unwrap_or(0))
+                        })
+                    })
+                    .unwrap_or(false)
+        });
+        if !asked_again {
+            out.entry(tvdb).or_default().insert(season);
         }
     }
     out
@@ -204,21 +250,23 @@ impl Task for MonitorSync {
             return Ok(Report::new("no_jellyseerr_requests", 0));
         }
         let sb = &ctx.cfg.seedbox;
-        let mut targets = vec![(&ctx.sonarr, sb.jellyseerr_vps_sonarr_id)];
+        let mut targets = vec![(&ctx.sonarr, sb.jellyseerr_vps_sonarr_id, "vps")];
         if let Some(s) = &ctx.seedbox_sonarr {
-            targets.push((s, sb.jellyseerr_sonarr_id));
+            targets.push((s, sb.jellyseerr_sonarr_id, "seedbox"));
         }
+        let deleted = ctx.state.read(|s| s.deletions.seasons.clone()).await;
         // séries de chaque Sonarr, puis saisons présentes « ailleurs » pour chacun
         let mut lists = Vec::new();
-        for (sonarr, _) in &targets {
+        for (sonarr, _, _) in &targets {
             lists.push(sonarr.series().await?);
         }
         let files: Vec<BTreeMap<i64, BTreeSet<i64>>> =
             lists.iter().map(|l| seasons_with_files(l)).collect();
         let mut changes = 0u32;
         let mut summary = Vec::new();
-        for (i, ((sonarr, server), list)) in targets.into_iter().zip(lists).enumerate() {
-            let mut elsewhere: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
+        for (i, ((sonarr, server, side), list)) in targets.into_iter().zip(lists).enumerate() {
+            // saisons supprimées ici : traitées comme « déjà ailleurs » (jamais re-surveillées)
+            let mut elsewhere = deleted_seasons(&deleted, side, &requests);
             for (j, f) in files.iter().enumerate() {
                 if j != i {
                     for (tvdb, seasons) in f {
@@ -241,6 +289,24 @@ impl Task for MonitorSync {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn deleted_seasons_stay_excluded_until_requested_again() {
+        let deleted = BTreeMap::from([
+            ("vps:100:2".to_string(), 1_000_000_000),
+            ("seedbox:100:3".to_string(), 1_000_000_000),
+        ]);
+        let old = json!({"type":"tv","createdAt":"2001-01-01T00:00:00.000Z","media":{"tvdbId":100},"seasons":[{"seasonNumber":2,"status":2}]});
+        let ex = deleted_seasons(&deleted, "vps", std::slice::from_ref(&old));
+        assert_eq!(ex.get(&100), Some(&BTreeSet::from([2])));
+        let newer = json!({"type":"tv","createdAt":"2030-01-01T00:00:00.000Z","media":{"tvdbId":100},"seasons":[{"seasonNumber":2,"status":2}]});
+        assert!(deleted_seasons(&deleted, "vps", &[old, newer]).is_empty());
+        // l'autre machine n'est pas concernée par une suppression ici
+        assert_eq!(
+            deleted_seasons(&deleted, "seedbox", &[]).get(&100),
+            Some(&BTreeSet::from([3]))
+        );
+    }
 
     #[test]
     fn requested_map_skips_declined_and_movies() {

@@ -81,6 +81,30 @@ impl JellyseerrClient {
             .map(|_| ())
     }
 
+    /// Id du média Jellyseerr d'un film / d'une série (`kind` = `movie` ou `tv`), s'il existe.
+    pub async fn media_id(&self, kind: &str, tmdb_id: i64) -> Result<Option<i64>> {
+        let resp = self
+            .req(Method::GET, &format!("api/v1/{kind}/{tmdb_id}"))
+            .send()
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Ok(json(resp, "jellyseerr media")
+            .await?
+            .pointer("/mediaInfo/id")
+            .and_then(Value::as_i64))
+    }
+
+    /// Supprime le média (et ses demandes) : le titre redevient demandable.
+    pub async fn delete_media(&self, id: i64) -> Result<()> {
+        let resp = self
+            .req(Method::DELETE, &format!("api/v1/media/{id}"))
+            .send()
+            .await?;
+        check(resp, "jellyseerr DELETE media").await.map(|_| ())
+    }
+
     pub async fn delete_user(&self, id: i64) -> Result<()> {
         let resp = self
             .req(Method::DELETE, &format!("api/v1/user/{id}"))

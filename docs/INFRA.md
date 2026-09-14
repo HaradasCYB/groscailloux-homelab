@@ -26,7 +26,7 @@ flowchart LR
   subgraph VPS
     direction TB
     subgraph host[Hôte · systemd]
-      homelabd["homelabd<br/>12 tâches + watcher<br/>UI onboarding"]
+      homelabd["homelabd<br/>13 tâches + watcher<br/>UI onboarding"]
       rclone["rclone mount<br/>SFTP lecture seule<br/>cache 10 Go"]
       stack[homelab-stack<br/>backup hebdo]
     end
@@ -162,7 +162,8 @@ flowchart LR
 | Torrents ajoutés à la main (VPS + seedbox) | `torrent_import` (10 min) : torrent terminé inconnu des Arrs → fiche non surveillée → import manuel en hardlink → Jellyfin. Refusé si le titre a déjà des fichiers sur l'autre machine. |
 | Dépôts directs (VPS) | Fichier dans `library/downloads` (pyLoad, dépôt manuel) → observateur `auto_import` → classement série/film → ajout de la fiche dans l'Arr → import. Archives extraites d'abord. |
 | Onboarding | `homelabctl onboard`, page d'onboarding (jeton) ou compte créé dans Jellyseerr → compte Jellyfin (bibliothèques autorisées), import Jellyseerr, mail de bienvenue. Mot de passe jamais journalisé. Le compte arrive suspendu, à activer. |
-| Comptes premium | Page « Comptes » (admin) ou `homelabctl accounts` : premium = compte Jellyfin actif, sinon suspendu (connexion refusée, rien de supprimé). 25 comptes premium et 2 lectures simultanées par compte au plus. |
+| Comptes premium | Page « Comptes » (admin) ou `homelabctl accounts` : premium = compte Jellyfin actif, sinon suspendu (connexion refusée, rien de supprimé) ; suppression (Jellyfin + Jellyseerr) après confirmation. Comptes protégés intouchables. 25 comptes premium et 2 lectures simultanées par compte au plus. |
+| Suppression depuis Jellyfin | `deletion_cleanup` (5 min) : titre absent du disque et de Jellyfin deux passages de suite → fiche Radarr/Sonarr retirée (ou saison/épisodes non surveillés), média Jellyseerr libéré, torrent retiré avec ses fichiers (C411 : à ratio 1 ou 7 jours de seed). |
 | Observabilité | Telegraf (hôte + Docker) → InfluxDB (30 jours) → Grafana ; Glances en direct. |
 | Mises à jour | Images figées `tag@sha256` ; diun signale chaque jour les nouvelles versions par mail ; la mise à jour reste manuelle. |
 
