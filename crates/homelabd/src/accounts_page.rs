@@ -128,9 +128,12 @@ form{{margin:0}}
 .sw span{{min-width:62px;text-align:left}}.sw.off span{{color:#8591a0}}
 .sw:focus-visible{{outline:2px solid #60a5fa;outline-offset:2px}}.sw:disabled{{cursor:not-allowed;opacity:.45}}
 .foot{{color:#8591a0;font-size:12px;margin:0}}
+header{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}}
+.new{{flex:none;padding:7px 12px;border-radius:8px;background:#0ea5e9;color:#04121c;font-weight:600;font-size:13px;text-decoration:none}}
+.new:hover{{background:#38bdf8}}.new:focus-visible{{outline:2px solid #60a5fa;outline-offset:2px}}
 @media (prefers-reduced-motion:reduce){{.sw i,.sw i::after{{transition:none}}}}
 </style></head><body><main>
-<header><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></header>
+<header><div><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><a class="new" href="/?token={token}">Créer un compte</a></header>
 <section class="cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} lectures simultanées par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
 {flash}
 <div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th><span hidden>Premium</span></th></tr></thead><tbody>{rows}</tbody></table></div>
@@ -171,6 +174,7 @@ mod tests {
         assert!(html.contains("&lt;bob&gt;"));
         assert!(!html.contains("<bob>"));
         assert!(html.contains(r#"value="t&quot;k""#));
+        assert!(html.contains(r#"href="/?token=t&quot;k""#));
         assert!(html.contains("il y a 1 min"));
         assert!(!html.contains(" disabled>"));
     }
