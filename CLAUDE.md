@@ -77,8 +77,28 @@ journalctl -u homelabd -f
   changement de code. Les valeurs par défaut du code doivent rester égales à celles du TOML.
 - **Reboot** : `homelab-stack.service` relance compose ; vérifier `docker compose ps` et
   `systemctl status homelabd` après.
-- Les anciens scripts bash de `scripts/` ne sont plus planifiés ; ils restent comme référence
-  jusqu'à suppression et ne doivent pas être relancés en parallèle de homelabd hors dry-run.
+- `scripts/` ne contient plus que des outils ponctuels (les anciens scripts bash planifiés ont été
+  retirés) : `jellyfin-branding-apply.sh` et `jellyfin-ui-rollback.sh` (voir « Interface Jellyfin »).
+
+## Interface Jellyfin (« Groscailloux TV », 2026-09-14)
+
+- **Thème** : ElegantFin **épinglé** + calque maison, source `branding/jellyfin/groscailloux-tv.css`, appliqué par
+  `scripts/jellyfin-branding-apply.sh` (sauvegarde l'ancien, refuse tout `@import` en `@main/@master/@latest`).
+  Ne pas éditer le CSS dans l'interface. Monter ElegantFin = changer le tag, repasser le banc d'essai
+  (captures bureau + téléphone), puis appliquer. Jellyfin 10.11 lit ce CSS dans `Branding/Configuration`
+  (champ `CustomCss`), plus `Branding/Css`.
+- **Logo** : `branding/jellyfin/logo/` (source `logo.html`, rendu par Chromium), déposé via
+  `POST /JellyfinEnhanced/UploadBrandingImage` (noms : `banner-light.png`, `banner-dark.png`,
+  `icon-transparent.png`, `favicon.ico`, `apple-touch-icon.png`).
+- **Retour arrière** : `scripts/jellyfin-ui-rollback.sh backups/jellyfin-ui-<date>` (config, plugins,
+  préférences d'affichage ; `--with-db` seulement si Jellyfin ne démarre plus).
+- Plugins IAmParadox27 (Home Screen Sections, Plugin Pages, Collection Sections) : un même numéro de
+  version existe pour plusieurs ABI ; installer par le catalogue du serveur (`/Packages`), qui prend la
+  compilation compatible, et vérifier `targetAbi` dans `meta.json`.
+- La bibliothèque « Collections » est donnée à tous les comptes (`JELLYFIN_LIB_EXTRA`) : sans elle, un
+  compte ordinaire ne voit ni les sagas ni les rangées de collections.
+- Jellyfin Enhanced : `ThemeSelectorEnabled = false` (ses couleurs Jellyfish entreraient en conflit avec
+  ElegantFin).
 
 ## Seedbox
 

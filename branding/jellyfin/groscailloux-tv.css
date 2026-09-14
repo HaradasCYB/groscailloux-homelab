@@ -1,0 +1,74 @@
+/* =====================================================================================
+   Groscailloux TV : CSS personnalisé de Jellyfin (Tableau de bord > Général > Branding).
+   Source versionnée : branding/jellyfin/groscailloux-tv.css ; appliqué par
+   scripts/jellyfin-branding-apply.sh. Ne pas éditer dans l'interface de Jellyfin.
+   Base : ElegantFin, VERSION ÉPINGLÉE (jamais @main : le 2026-09-08 un fichier importé via @main
+   a disparu et l'import est tombé en 404 sans bruit). Monter de version = changer le tag ici,
+   repasser le banc d'essai, puis appliquer.
+   ===================================================================================== */
+@import url("https://cdn.jsdelivr.net/gh/lscambo13/ElegantFin@26.09.05/Theme/ElegantFin-jellyfin-theme-build-latest-minified.css");
+@import url("https://cdn.jsdelivr.net/gh/lscambo13/ElegantFin@26.09.05/Theme/assets/add-ons/media-bar-plugin-support-latest-min.css");
+
+:root { --gc-accent: #2f8fff; --gc-accent-hover: #5aa6ff; }  /* bleu galet (rouge Netflix : #e50914 / #f6121d) */
+
+:root {
+  --darkerGradientPoint: #08090b; --lighterGradientPoint: #121418;
+  --darkerGradientPointAlpha: rgba(8, 9, 11, .88); --lighterGradientPointAlpha: rgba(18, 20, 24, .85);
+  --gradientPointAlpha: rgba(18, 20, 24, .3);
+  --headerColor: rgba(8, 9, 11, .55); --drawerColor: rgba(12, 13, 16, .97);
+  --headerColorGradient: linear-gradient(180deg, rgba(8, 9, 11, .92) 0%, rgba(8, 9, 11, .45) 55%, transparent 100%);
+  --headerColorGradientAlt: linear-gradient(180deg, #08090b, 70%, transparent);
+  --borderColor: #2a2d33; --darkerBorderColor: #1d1f24; --lighterBorderColor: hsla(0, 0%, 100%, .12);
+  --selectorBackgroundColor: #1f2228; --selectorBackgroundColorAlpha: rgba(31, 34, 40, .6); --tableBodyColor: #131519;
+  --textColor: #e6e7ea; --dimTextColor: #a3a7af;
+  --accentColor: var(--gc-accent); --accentHoverColor: var(--gc-accent-hover);
+  --checkboxCheckedBgColor: var(--gc-accent); --highlightOutlineColor: var(--gc-accent);
+  --btnSubmitColor: var(--gc-accent); --btnSubmitBorderColor: var(--gc-accent-hover);
+  --cardResumeProgressColor: var(--gc-accent); --osdSeekBarPlayedColor: var(--gc-accent);
+  --largerRadius: .6em; --largeRadius: .45em; --smallRadius: .3em; --smallerRadius: .25em;
+}
+
+/* Bannière vedette plein écran ; les rangées remontent légèrement dessus, comme sur Netflix */
+#slides-container { left: 0 !important; top: 0 !important; width: 100vw !important; height: 80vh !important; }
+.slide { border: 0 !important; border-radius: 0 !important; }
+.backdrop-overlay {
+  background:
+    linear-gradient(0deg, var(--darkerGradientPoint) 0%, rgba(8, 9, 11, .55) 20%, transparent 50%),
+    linear-gradient(90deg, rgba(8, 9, 11, .88) 0%, rgba(8, 9, 11, .35) 38%, transparent 65%) !important;
+}
+@media only screen and (orientation: landscape) {
+  .logo-container { top: 16% !important; left: var(--sidePadding) !important; max-width: 32vw !important; }
+  /* pile texte remontée d'un cran : plus de chevauchement bouton / résumé */
+  .button-container { bottom: 5.5em !important; }
+  .dots-container { bottom: 6em !important; right: var(--sidePadding) !important; left: auto !important; }
+  .plot-container { bottom: 9.5em !important; height: 4.2em !important; max-width: 44vw !important; }
+  .genre { bottom: 14.2em !important; }
+  .info-container { bottom: 16.2em !important; }
+}
+
+/* Téléphone en portrait : bannière un peu moins haute, logo remonté au-dessus des notes */
+@media only screen and (max-width: 767px) and (orientation: portrait) {
+  #slides-container { height: 72vh !important; }
+  .logo-container { top: calc(100% - 18.5em) !important; max-width: 70vw !important; }
+}
+
+/* Boutons : « Lire » blanc plein, « Plus d'infos » gris translucide (bannière et fiches) */
+.play-button, .detailPagePrimaryContainer .btnPlay, .mainDetailButtons .btnPlay {
+  background: #fff !important; color: #0b0b0c !important; border: 0 !important; font-weight: 700 !important;
+}
+.play-button:hover, .mainDetailButtons .btnPlay:hover { background: rgba(255, 255, 255, .82) !important; }
+.detail-button, .mainDetailButtons .button-flat:not(.btnPlay) {
+  background: rgba(109, 109, 110, .55) !important; color: #fff !important; border: 0 !important;
+}
+
+/* Titres de rangées */
+.sectionTitle, .sectionTitleContainer .sectionTitle { font-weight: 700 !important; font-size: 1.3em !important; letter-spacing: .005em; color: #f2f3f5 !important; }
+
+/* Cartes : zoom discret au survol (souris), rien sur TV */
+.layout-desktop .card .cardBox { transition: transform .18s ease; }
+.layout-desktop .card:hover .cardBox { transform: scale(1.05); z-index: 2; }
+@media (prefers-reduced-motion: reduce) { .layout-desktop .card .cardBox { transition: none; } .layout-desktop .card:hover .cardBox { transform: none; } }
+
+/* En-tête : dégradé sans flou (le flou coûte cher sur les TV et les vieux PC) */
+.skinHeader { background: var(--headerColorGradient) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.layout-tv * { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }

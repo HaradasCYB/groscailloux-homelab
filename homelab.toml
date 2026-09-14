@@ -79,6 +79,16 @@ vps_paths = [
   ["/tv", "/opt/homelab/library/media/tvshows", "/media/tvshows"],
 ]
 
+[tasks.trending]
+# Rangée « Tendances cette semaine » de l'accueil Jellyfin : titres les plus regardés (spectateurs
+# distincts, puis heures), épisodes regroupés par série, depuis Playback Reporting.
+interval_secs = 21600
+days = 7
+fallback_days = 30      # semaine trop calme : complète avec le mois
+size = 10
+min_minutes = 10        # visionnage minimal par spectateur et par titre
+collection_name = "Tendances cette semaine"
+
 [tasks.unknown_series_grab]
 # Releases C411 rejetées par Sonarr pour la seule raison « Unknown Series » (titre traduit) :
 # grab forcé si le titre correspond exactement au titre FR/original de la série (Jellyseerr).

@@ -37,6 +37,7 @@ fn label(task: &str) -> &'static str {
         "torrent_import" => "Torrents ajoutés à la main",
         "unknown_series_grab" => "Titres traduits (C411)",
         "deletion_cleanup" => "Suppressions Jellyfin",
+        "trending" => "Tendances de l'accueil",
         "monitor_sync" => "Saisons demandées",
         "user_poller" => "Comptes Jellyseerr",
         "cleanup" => "Nettoyage",

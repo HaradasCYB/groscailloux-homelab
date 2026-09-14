@@ -170,6 +170,34 @@ pub struct Tasks {
     pub torrent_import: TorrentImport,
     pub unknown_series_grab: UnknownSeriesGrab,
     pub deletion_cleanup: DeletionCleanup,
+    pub trending: Trending,
+}
+
+/// Rangée « Tendances » de l'accueil Jellyfin : collection tenue à jour depuis Playback Reporting.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Trending {
+    pub interval_secs: u64,
+    /// Fenêtre de classement (jours) ; complétée par `fallback_days` si trop peu de titres.
+    pub days: i64,
+    pub fallback_days: i64,
+    pub size: usize,
+    /// Visionnage minimal d'un spectateur sur un titre pour qu'il compte (évite les clics par erreur).
+    pub min_minutes: i64,
+    pub collection_name: String,
+}
+
+impl Default for Trending {
+    fn default() -> Self {
+        Self {
+            interval_secs: 21600,
+            days: 7,
+            fallback_days: 30,
+            size: 10,
+            min_minutes: 10,
+            collection_name: "Tendances cette semaine".into(),
+        }
+    }
 }
 
 /// Nettoyage après une suppression dans Jellyfin : fiche Arr, Jellyseerr, torrent.
@@ -822,6 +850,7 @@ jellyseerr = "http://js"
         assert_eq!(cfg.accounts.protected.len(), 2);
         assert_eq!(cfg.tasks.deletion_cleanup.vps_paths.len(), 2);
         assert_eq!(cfg.tasks.deletion_cleanup.c411_min_seed_days, 7);
+        assert_eq!(cfg.tasks.trending.size, 10);
     }
 
     #[test]

@@ -76,6 +76,129 @@ impl JellyfinClient {
             .collect())
     }
 
+    /// Requête SQL en lecture sur la base de Playback Reporting (plugin) : (colonnes, lignes).
+    pub async fn playback_query(&self, sql: &str) -> Result<(Vec<String>, Vec<Vec<String>>)> {
+        let resp = self
+            .req(Method::POST, "user_usage_stats/submit_custom_query")
+            .json(&json!({ "CustomQueryString": sql, "ReplaceUserId": false }))
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin playback query").await?;
+        let cols = v
+            .get("colums")
+            .or_else(|| v.get("columns"))
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|c| c.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let rows = v
+            .get("results")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_array)
+                    .map(|r| {
+                        r.iter()
+                            .map(|c| {
+                                c.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| c.to_string())
+                            })
+                            .collect()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok((cols, rows))
+    }
+
+    /// Éléments par id (type, série parente), ceux qui n'existent plus sont absents.
+    pub async fn items_by_ids(&self, ids: &[String]) -> Result<Vec<Value>> {
+        let mut out = Vec::new();
+        for chunk in ids.chunks(80) {
+            let resp = self
+                .req(Method::GET, "Items")
+                .query(&[
+                    ("Ids", chunk.join(",").as_str()),
+                    ("Fields", "SeriesId"),
+                    ("EnableImages", "false"),
+                ])
+                .send()
+                .await?;
+            let v = json(resp, "jellyfin Items?Ids").await?;
+            out.extend(
+                v.get("Items")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+        Ok(out)
+    }
+
+    /// Collection (BoxSet) par nom exact, vue par `user_id`.
+    pub async fn find_collection(&self, user_id: &str, name: &str) -> Result<Option<String>> {
+        let resp = self
+            .req(Method::GET, &format!("Users/{user_id}/Items"))
+            .query(&[("Recursive", "true"), ("IncludeItemTypes", "BoxSet")])
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin BoxSets").await?;
+        Ok(v.get("Items")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|i| i.get("Name").and_then(Value::as_str) == Some(name))
+            .and_then(|i| i.get("Id").and_then(Value::as_str))
+            .map(str::to_string))
+    }
+
+    pub async fn collection_children(&self, user_id: &str, id: &str) -> Result<Vec<String>> {
+        let resp = self
+            .req(Method::GET, &format!("Users/{user_id}/Items"))
+            .query(&[("ParentId", id)])
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin collection items").await?;
+        Ok(v.get("Items")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|i| i.get("Id").and_then(Value::as_str).map(str::to_string))
+            .collect())
+    }
+
+    pub async fn create_collection(&self, name: &str, ids: &[String]) -> Result<String> {
+        let resp = self
+            .req(Method::POST, "Collections")
+            .query(&[("Name", name), ("Ids", ids.join(",").as_str())])
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin POST Collections").await?;
+        v.get("Id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .context("Collections sans Id")
+    }
+
+    pub async fn collection_edit(&self, id: &str, ids: &[String], add: bool) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let method = if add { Method::POST } else { Method::DELETE };
+        let resp = self
+            .req(method, &format!("Collections/{id}/Items"))
+            .query(&[("Ids", ids.join(",").as_str())])
+            .send()
+            .await?;
+        check(resp, "jellyfin Collections/{id}/Items")
+            .await
+            .map(|_| ())
+    }
+
     pub async fn delete_user(&self, id: &str) -> Result<()> {
         let resp = self
             .req(Method::DELETE, &format!("Users/{id}"))

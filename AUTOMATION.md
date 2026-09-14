@@ -121,6 +121,14 @@ fichiers (`POST /api/v2/torrents/delete`, `deleteFiles=true`) jusqu'à 5 torrent
 `stoppedUP`, les plus anciens d'abord — les hardlinks de `library/media` survivent.
 ≥ 98 % : log d'erreur, aucune action automatique.
 
+### trending — 6 h
+
+Rangée « Tendances cette semaine » de l'accueil Jellyfin. Classement lu dans Playback Reporting
+(`POST user_usage_stats/submit_custom_query`, SQL en lecture) : épisodes regroupés par série, spectateurs
+distincts puis heures ; un spectateur compte à partir de `min_minutes` sur le titre. Semaine trop calme :
+complétée par `fallback_days`. Tient à jour la collection `collection_name` (création, puis ajouts et
+retraits ciblés). Collection et non playlist : une playlist qui reçoit une série y déplie ses épisodes.
+
 ### deletion_cleanup — 5 min
 
 Suite d'une suppression faite dans Jellyfin (bouton « Supprimer » ; médias montés en écriture pour ça).
@@ -200,7 +208,7 @@ ou le poller. Séquence sous mutex : pré-contrôles Jellyfin + Jellyseerr → n
 limitée aux bibliothèques `JELLYFIN_LIB_FILMS`/`SERIES` → `POST /api/v1/user/import-from-jellyfin`
 → `POST /api/v1/user/{id}/settings/main` (email) → mail de bienvenue via `curl smtps://`.
 La policy donne accès à `JELLYFIN_LIB_FILMS`, `JELLYFIN_LIB_SERIES` et aux ids éventuels de
-`JELLYFIN_LIB_EXTRA` (vide aujourd'hui : les dossiers seedbox font partie de Films/Séries).
+`JELLYFIN_LIB_EXTRA` (aujourd'hui la bibliothèque « Collections » : sagas et rangées de l'accueil).
 Le mot de passe (16 caractères alphanumériques) n'apparaît jamais dans les logs.
 La policy limite aussi les lectures simultanées (`accounts.max_streams_per_user`). Si
 `accounts.new_accounts_premium = false` (réglage actuel), le compte est ensuite **suspendu** (après
