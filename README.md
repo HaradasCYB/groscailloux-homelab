@@ -1,5 +1,7 @@
 # groscailloux-homelab
 
+**Version 1.0.0** (15/09/2026, fin de la bêta) — historique des versions dans [UPDATE.md](UPDATE.md).
+
 Stack média auto-hébergée sur un seul VPS : Jellyfin + Jellyseerr + Sonarr/Radarr/Prowlarr +
 qBittorrent derrière un VPN, observabilité Telegraf/InfluxDB/Grafana, accès distant Guacamole,
 reverse proxy Nginx Proxy Manager. L'automatisation (import, garde-fous qBittorrent, onboarding
