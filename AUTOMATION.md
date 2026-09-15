@@ -245,6 +245,11 @@ LG webOS). Salons `annonces` (modérateurs seulement), `entraide`, `discussion`,
 - **Mails** : toutes les minutes, s'il y a de nouveaux messages d'entraide ou privés de membres et que le
   dernier récapitulatif a plus de 15 min, un mail à `CHAT_ADMIN_EMAIL`. Annonce avec « envoyer aussi par
   mail » : un mail par compte actif ayant une adresse valide dans Jellyseerr (2 s d'écart), sauf l'auteur.
+- **Messages privés de l'admin** : onglet Privé → « Nouveau message privé », un ou plusieurs membres actifs
+  (`GET /members`, `POST /direct`, modérateurs seulement) ; chacun reçoit le message **séparément** dans son
+  fil privé (personne ne voit les autres destinataires), avec mail facultatif (`direct_mail`, adresse
+  Jellyseerr). Côté membre : badge et bannière « Message de l'admin » sur l'accueil (prioritaire sur
+  l'annonce), qui disparaît une fois le message lu ou quand il répond.
 - **Client** : rafraîchi toutes les 5 s panneau ouvert, 60 s fermé, rien onglet caché ; bulle masquée pendant
   la lecture ; bannière de la dernière annonce non lue sur l'accueil ; aucun HTML de message interprété.
 - **Couper** : `[chat] enabled = false` (+ restart homelabd) et désactiver le script dans JavaScript Injector.

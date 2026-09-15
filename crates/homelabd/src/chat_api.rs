@@ -80,6 +80,8 @@ pub fn router(ctx: Arc<TaskContext>) -> anyhow::Result<Router> {
         .route("/chat/api/messages/{id}", delete(remove))
         .route("/chat/api/read", post(read))
         .route("/chat/api/private", get(private_threads))
+        .route("/chat/api/members", get(members))
+        .route("/chat/api/direct", post(direct))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .with_state(st))
 }
@@ -185,7 +187,7 @@ async fn me(State(st): State<ChatState>, headers: HeaderMap) -> ApiResult<Json<V
     let u = auth(&st, &headers).await?;
     let own = Channel::Private(u.id.clone());
     let uc = u.clone();
-    let (unread, private_unread, latest) = db(&st, move |s| {
+    let (unread, private_unread, latest, latest_private) = db(&st, move |s| {
         let mut unread = Vec::new();
         for ch in Channel::PUBLIC {
             unread.push((ch.key(), s.unread(&uc.id, &ch)?));
@@ -204,7 +206,13 @@ async fn me(State(st): State<ChatState>, headers: HeaderMap) -> ApiResult<Json<V
         } else {
             None
         };
-        Ok((unread, private_unread, latest))
+        // message privé de l'admin non lu (bannière de l'accueil, prioritaire sur l'annonce)
+        let latest_private = if uc.moderator {
+            None
+        } else {
+            s.latest_unread_from_moderator(&uc.id, &own)?
+        };
+        Ok((unread, private_unread, latest, latest_private))
     })
     .await?;
     let labels = [
@@ -230,6 +238,7 @@ async fn me(State(st): State<ChatState>, headers: HeaderMap) -> ApiResult<Json<V
         "channels": channels,
         "private": { "key": format!("prive:{}", u.id), "unread": private_unread },
         "latest_announcement": latest,
+        "latest_private": latest_private,
         "limits": { "max_chars": cfg.max_chars, "delete_own_within_secs": cfg.delete_own_within_mins * 60 },
     })))
 }
@@ -342,8 +351,196 @@ async fn private_threads(
     if !u.moderator {
         return Err(err(StatusCode::FORBIDDEN, "réservé à l'admin"));
     }
-    let threads = db(&st, move |s| s.private_threads(&u.id)).await?;
+    let mut threads = db(&st, move |s| s.private_threads(&u.id)).await?;
+    // nom actuel du compte (un fil ouvert par l'admin n'a pas encore de message du membre)
+    if let Ok(names) = active_members(&st).await {
+        for t in &mut threads {
+            if let Some((_, n)) = names.iter().find(|(id, _)| *id == t.member_id) {
+                t.member_name = n.clone();
+            }
+        }
+    }
     Ok(Json(json!({ "threads": threads })))
+}
+
+/// Comptes Jellyfin actifs (non suspendus) : (id normalisé, nom), par nom.
+async fn active_members(st: &ChatState) -> anyhow::Result<Vec<(String, String)>> {
+    let mut out: Vec<(String, String)> = st
+        .ctx
+        .jellyfin
+        .users()
+        .await?
+        .iter()
+        .filter(|u| {
+            !u.pointer("/Policy/IsDisabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter_map(|u| {
+            Some((
+                chat::normalize_id(u.get("Id")?.as_str()?),
+                u.get("Name")?.as_str()?.to_string(),
+            ))
+        })
+        .collect();
+    out.sort_by_key(|(_, n)| n.to_lowercase());
+    Ok(out)
+}
+
+/// Adresses des membres, prises dans Jellyseerr (Jellyfin n'en a pas) : id Jellyfin → email valide.
+async fn member_emails(st: &ChatState) -> anyhow::Result<HashMap<String, String>> {
+    Ok(st
+        .ctx
+        .jellyseerr
+        .users(1000)
+        .await?
+        .iter()
+        .filter_map(|j| {
+            let id = j.get("jellyfinUserId").and_then(Value::as_str)?;
+            let email = j.get("email").and_then(Value::as_str)?;
+            homelab_core::tasks::onboard::valid_email(email)
+                .then(|| (chat::normalize_id(id), email.to_string()))
+        })
+        .collect())
+}
+
+fn moderator_only(u: &ChatUser) -> ApiResult<()> {
+    if u.moderator {
+        Ok(())
+    } else {
+        Err(err(StatusCode::FORBIDDEN, "réservé à l'admin"))
+    }
+}
+
+/// Modérateurs : destinataires possibles d'un message privé (comptes actifs, hors modérateurs).
+async fn members(State(st): State<ChatState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
+    let u = auth(&st, &headers).await?;
+    moderator_only(&u)?;
+    let all = active_members(&st).await.map_err(|e| {
+        warn!(task = "chat", error = %e, "members unreadable");
+        err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
+    })?;
+    let emails = member_emails(&st).await.unwrap_or_default();
+    let list: Vec<Value> = all
+        .into_iter()
+        .filter(|(_, n)| !chat::is_listed(n, &st.ctx.cfg.chat.moderators))
+        .map(|(id, name)| json!({ "id": id, "name": name, "has_email": emails.contains_key(&id) }))
+        .collect();
+    Ok(Json(json!({ "members": list })))
+}
+
+#[derive(Deserialize)]
+struct DirectBody {
+    user_ids: Vec<String>,
+    body: String,
+    #[serde(default)]
+    email: bool,
+}
+
+/// Modérateurs : le même message, envoyé séparément dans le fil privé de chaque destinataire (personne ne
+/// voit la liste des autres), avec mail facultatif.
+async fn direct(
+    State(st): State<ChatState>,
+    headers: HeaderMap,
+    Json(b): Json<DirectBody>,
+) -> ApiResult<Json<Value>> {
+    let u = auth(&st, &headers).await?;
+    moderator_only(&u)?;
+    let cfg = &st.ctx.cfg.chat;
+    let text =
+        chat::validate_body(&b.body, cfg.max_chars).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    let mut wanted: Vec<String> = b.user_ids.iter().map(|i| chat::normalize_id(i)).collect();
+    wanted.sort();
+    wanted.dedup();
+    if wanted.is_empty() || wanted.len() > 50 {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "choisis entre 1 et 50 destinataires",
+        ));
+    }
+    let members = active_members(&st).await.map_err(|e| {
+        warn!(task = "chat", error = %e, "members unreadable");
+        err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
+    })?;
+    let targets: Vec<(String, String)> = members
+        .into_iter()
+        .filter(|(id, _)| wanted.contains(id) && *id != u.id)
+        .collect();
+    if targets.len() != wanted.len() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "destinataire inconnu ou suspendu",
+        ));
+    }
+    if !st.limiter.lock().await.check(&u.id, now(), cfg) {
+        return Err(err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "doucement : attends quelques secondes",
+        ));
+    }
+    let (uc, t2, tx) = (u.clone(), targets.clone(), text.clone());
+    db(&st, move |s| {
+        for (id, _) in &t2 {
+            s.insert(&Channel::Private(id.clone()), &uc, &tx, now())?;
+        }
+        Ok(())
+    })
+    .await?;
+    let names: Vec<String> = targets.iter().map(|(_, n)| n.clone()).collect();
+    info!(task = "chat", by = %u.name, to = ?names, email = b.email, chars = text.chars().count(), "direct message sent");
+    if b.email {
+        let st2 = st.clone();
+        tokio::spawn(async move { mail_direct(st2, u, targets, text).await });
+    }
+    Ok(Json(json!({ "sent": names.len() })))
+}
+
+async fn mail_direct(
+    st: ChatState,
+    author: ChatUser,
+    targets: Vec<(String, String)>,
+    text: String,
+) {
+    let s = &st.ctx.secrets;
+    let Some(smtp) = &s.smtp else {
+        warn!(task = "chat", "direct mail skipped: no SMTP");
+        return;
+    };
+    let emails = match member_emails(&st).await {
+        Ok(e) => e,
+        Err(e) => {
+            warn!(task = "chat", error = %e, "direct mail: Jellyseerr unreadable");
+            return;
+        }
+    };
+    let (mut sent, mut missing, mut failed) = (0, 0, 0);
+    for (id, name) in &targets {
+        let Some(email) = emails.get(id) else {
+            missing += 1;
+            continue;
+        };
+        let (subject, body) = chat::direct_mail(&author.name, name, &text, &s.jellyfin_public_url);
+        if st.ctx.dry_run {
+            sent += 1;
+            continue;
+        }
+        match mail::send_plain(smtp, name, email, &subject, &body).await {
+            Ok(()) => sent += 1,
+            Err(e) => {
+                failed += 1;
+                warn!(task = "chat", user = %name, error = %e, "direct mail failed");
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    info!(
+        task = "chat",
+        sent,
+        missing,
+        failed,
+        dry_run = st.ctx.dry_run,
+        "direct message mailed"
+    );
 }
 
 fn spawn_moderator_mail(st: ChatState) {
@@ -402,25 +599,13 @@ async fn mail_members(st: ChatState, author: ChatUser, text: String) {
         warn!(task = "chat", "announcement mail skipped: no SMTP");
         return;
     };
-    let (users, js_users) = match (
-        st.ctx.jellyfin.users().await,
-        st.ctx.jellyseerr.users(1000).await,
-    ) {
-        (Ok(u), Ok(j)) => (u, j),
+    let (users, emails) = match (st.ctx.jellyfin.users().await, member_emails(&st).await) {
+        (Ok(u), Ok(e)) => (u, e),
         (Err(e), _) | (_, Err(e)) => {
             warn!(task = "chat", error = %e, "announcement mail: users unreadable");
             return;
         }
     };
-    let emails: HashMap<String, String> = js_users
-        .iter()
-        .filter_map(|j| {
-            let id = j.get("jellyfinUserId").and_then(Value::as_str)?;
-            let email = j.get("email").and_then(Value::as_str)?;
-            homelab_core::tasks::onboard::valid_email(email)
-                .then(|| (chat::normalize_id(id), email.to_string()))
-        })
-        .collect();
     let cfg = &st.ctx.cfg.chat;
     let (subject, body) = chat::announcement_mail(&author.name, &text, &s.jellyfin_public_url);
     let (mut sent, mut failed) = (0, 0);

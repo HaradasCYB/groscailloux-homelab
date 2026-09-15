@@ -176,7 +176,10 @@ journalctl -u homelabd -f
 
 ## Pièges connus
 
-- **Tests** : un environnement de test, jamais la prod. Comptes ordinaires temporaires (supprimés avec
+- **Tests** : un environnement de test, jamais la prod. Pour le tchat : une **seconde instance de homelabd**
+  (binaire de la branche, `HOMELABD_DRY_RUN=1`, toutes les tâches dans `tasks.disabled`, `auto_import`
+  coupé, port `127.0.0.1:18766`, `state_file` et `chat.db_file` à part, modérateurs = comptes de test), et
+  le navigateur de test qui redirige `/gc-chat/*` vers elle ; voir `backups/chat-tests-20260915/`. Comptes ordinaires temporaires (supprimés avec
   `homelabctl accounts delete`), et pour les captures, réponses d'API simulées **dans le navigateur de test**
   (interception, voir `backups/chat-tests-20260915/chatshots.js`). Une session ouverte par l'API compte dans
   la limite de 2 appareils : supprimer puis recréer le compte de test plutôt que toucher aux appareils.

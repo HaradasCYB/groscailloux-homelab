@@ -416,6 +416,27 @@ impl ChatStore {
         Ok(out)
     }
 
+    /// Dernier message non lu d'un modérateur dans un salon (bannière « message de l'admin »).
+    pub fn latest_unread_from_moderator(
+        &self,
+        user_id: &str,
+        ch: &Channel,
+    ) -> Result<Option<Message>> {
+        Ok(self
+            .db()
+            .query_row(
+                &format!(
+                    "SELECT {COLS} FROM messages
+                     WHERE channel = ?2 AND deleted_at IS NULL AND author_moderator = 1 AND author_id <> ?1
+                       AND id > COALESCE((SELECT last_read_id FROM reads WHERE user_id = ?1 AND channel = ?2), 0)
+                     ORDER BY id DESC LIMIT 1"
+                ),
+                params![user_id, ch.key()],
+                row_to_message,
+            )
+            .optional()?)
+    }
+
     pub fn meta(&self, key: &str) -> Result<i64> {
         Ok(self
             .db()
@@ -509,6 +530,16 @@ pub fn announcement_mail(author: &str, text: &str, jellyfin_url: &str) -> (Strin
     let body = format!(
         "{text}\n\n— {author}\n\nAnnonce publiee dans le tchat de Groscailloux : {jellyfin_url}\n\
          (bulle en haut a droite, salon Annonces).\n"
+    );
+    (subject, body)
+}
+
+/// Mail d'un message privé de l'admin à un membre : (sujet, corps).
+pub fn direct_mail(author: &str, member: &str, text: &str, jellyfin_url: &str) -> (String, String) {
+    let subject = "Groscailloux : un message de l'admin pour toi".to_string();
+    let body = format!(
+        "Salut {member},\n\n{text}\n\n— {author}\n\nTu peux repondre dans le tchat de Groscailloux : {jellyfin_url}\n\
+         (bulle en haut a droite, onglet \"Ecrire a l'admin\").\n"
     );
     (subject, body)
 }
@@ -663,6 +694,38 @@ mod tests {
         );
         let (subject, body) = moderator_digest(&pending, "https://jf");
         assert!(subject.contains("1 en prive") && body.contains("j'ai un souci"));
+    }
+
+    #[test]
+    fn latest_unread_from_moderator_for_banner() {
+        let s = ChatStore::open_in_memory().unwrap();
+        let (m, a) = (user("mod", true), user("a", false));
+        let pa = Channel::Private("a".into());
+        assert!(s.latest_unread_from_moderator("a", &pa).unwrap().is_none());
+        s.insert(&pa, &m, "ta période d'essai se termine samedi", 10)
+            .unwrap();
+        let got = s.latest_unread_from_moderator("a", &pa).unwrap().unwrap();
+        assert_eq!(got.body, "ta période d'essai se termine samedi");
+        assert!(
+            s.latest_unread_from_moderator("mod", &pa)
+                .unwrap()
+                .is_none(),
+            "pas pour l'auteur"
+        );
+        s.mark_read("a", &pa, got.id).unwrap();
+        assert!(s.latest_unread_from_moderator("a", &pa).unwrap().is_none());
+        s.insert(&pa, &m, "rappel", 30).unwrap();
+        s.insert(&pa, &a, "merci !", 40).unwrap(); // répondre = avoir lu ce qui précède
+        assert!(s.latest_unread_from_moderator("a", &pa).unwrap().is_none());
+        let (subject, body) = direct_mail(
+            "Haradas",
+            "Nina",
+            "ta période d'essai se termine samedi",
+            "https://jf",
+        );
+        assert!(
+            subject.contains("admin") && body.starts_with("Salut Nina,") && body.contains("samedi")
+        );
     }
 
     #[test]

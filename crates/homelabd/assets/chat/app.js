@@ -14,12 +14,14 @@
     entraide: "Une question, un souci de lecture ? Tout le monde peut répondre. Précise le titre et l'appareil.",
     discussion: 'Discussion libre entre membres.',
     prive: "Seuls toi et l'admin voyez cette conversation.",
-    threads: 'Conversations privées des membres.'
+    threads: 'Conversations privées des membres.',
+    compose: 'Choisis un ou plusieurs membres : chacun reçoit le message dans sa conversation privée avec toi.'
   };
 
   var S = {
     token: null, me: null, open: false, tab: 'annonces', thread: null,
-    cache: {}, lastPoll: 0, lastMe: 0, bannerClosed: false, busy: false, el: {}
+    cache: {}, lastPoll: 0, lastMe: 0, bannerClosed: {}, busy: false, el: {},
+    composing: false, recipients: {}, members: null
   };
 
   /* ---------- utilitaires ---------- */
@@ -74,6 +76,7 @@
     return /#\/?video/.test(location.hash) || !!document.querySelector('#videoOsdPage:not(.hide), .videoPlayerContainer:not(.hide)');
   }
   function channelKey() {
+    if (S.tab === 'prive' && S.composing) return null;
     if (S.tab === 'prive') return S.me.user.moderator ? S.thread : S.me.private.key;
     return S.tab;
   }
@@ -116,6 +119,12 @@
       '.gc-empty{margin:auto;color:#6b7686;text-align:center;font-size:.9em;padding:2em 1em}',
       '.gc-thread{display:block;width:100%;text-align:left;background:#151b26;border:1px solid #232b3a;color:inherit;border-radius:.7em;padding:.6em .8em;cursor:pointer;font:inherit}',
       '.gc-thread small{display:block;color:#8d99ad;margin-top:.15em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.gc-new{display:block;width:100%;text-align:left;background:rgba(47,143,255,.12);border:1px dashed rgba(47,143,255,.55);color:#cfe4ff;border-radius:.7em;padding:.6em .8em;cursor:pointer;font:inherit;font-weight:600}',
+      '.gc-new:focus-visible,.gc-thread:focus-visible,.gc-pick:focus-within{outline:2px solid var(--accentColor,#2f8fff)}',
+      '.gc-search{width:100%;box-sizing:border-box;background:#151b26;color:#e8edf5;border:1px solid #232b3a;border-radius:.6em;padding:.5em .7em;font:inherit}',
+      '.gc-pick{display:flex;gap:.6em;align-items:center;padding:.4em .55em;border-radius:.55em;cursor:pointer}',
+      '.gc-pick:hover{background:#151b26}',
+      '.gc-pick small{color:#8d99ad;margin-left:auto;font-size:.8em}',
       '.gc-back{align-self:flex-start;background:none;border:0;color:#8cc4ff;cursor:pointer;font:inherit;font-size:.88em;padding:0}',
       '.gc-form{border-top:1px solid #232b3a;padding:.7em .8em calc(.7em + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:.45em}',
       '.gc-row{display:flex;gap:.5em;align-items:flex-end}',
@@ -177,7 +186,8 @@
     var ta = h('textarea', { id: 'gc-chat-input', rows: '1', placeholder: 'Écrire un message…', 'aria-label': 'Message' });
     var note = h('div', { class: 'gc-note' });
     var mail = h('input', { type: 'checkbox', id: 'gc-chat-mail' });
-    var opt = h('label', { class: 'gc-opt', for: 'gc-chat-mail', hidden: '' }, [mail, 'Envoyer aussi par mail aux membres']);
+    var optText = document.createTextNode('Envoyer aussi par mail aux membres');
+    var opt = h('label', { class: 'gc-opt', for: 'gc-chat-mail', hidden: '' }, [mail, optText]);
     var send = h('button', { type: 'submit', class: 'gc-send', text: 'Envoyer' });
     var form = h('form', { class: 'gc-form', onsubmit: function (e) { e.preventDefault(); post(); } }, [opt, h('div', { class: 'gc-row' }, [ta, send]), note]);
     ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); post(); } });
@@ -195,7 +205,7 @@
     panel.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.stopPropagation(); toggle(false); } });
     document.body.appendChild(panel);
     S.el.panel = panel; S.el.tabs = tabs; S.el.list = list; S.el.ta = ta; S.el.note = note;
-    S.el.form = form; S.el.opt = opt; S.el.mail = mail; S.el.send = send; S.el.intro = panel.querySelector('.gc-intro');
+    S.el.form = form; S.el.opt = opt; S.el.optText = optText; S.el.mail = mail; S.el.send = send; S.el.intro = panel.querySelector('.gc-intro');
   }
   function setNote(t, isErr) { S.el.note.textContent = t || ''; S.el.note.classList.toggle('err', !!isErr); }
   function paintTabs() {
@@ -204,7 +214,7 @@
     var defs = me.channels.map(function (c) { return { key: c.key, label: c.label, n: c.unread }; });
     defs.push({ key: 'prive', label: me.user.moderator ? 'Privé' : "Écrire à l'admin", n: me.private.unread });
     defs.forEach(function (d) {
-      var b = h('button', { type: 'button', class: 'gc-tab', role: 'tab', 'aria-selected': String(S.tab === d.key), onclick: function () { S.tab = d.key; S.thread = null; render(true); } }, [d.label]);
+      var b = h('button', { type: 'button', class: 'gc-tab', role: 'tab', 'aria-selected': String(S.tab === d.key), onclick: function () { S.tab = d.key; S.thread = null; S.composing = false; render(true); } }, [d.label]);
       if (d.n && S.tab !== d.key) b.appendChild(h('span', { class: 'gc-n', text: d.n > 99 ? '99+' : String(d.n) }));
       t.appendChild(b);
     });
@@ -220,6 +230,14 @@
   }
   function composerFor(key) {
     var me = S.me, can;
+    if (S.composing) {
+      S.el.form.hidden = false; S.el.opt.hidden = false; S.el.mail.checked = false;
+      S.el.optText.textContent = 'Envoyer aussi par mail';
+      S.el.ta.placeholder = 'Message privé (chaque destinataire le reçoit séparément)…';
+      return;
+    }
+    S.el.optText.textContent = 'Envoyer aussi par mail aux membres';
+    S.el.ta.placeholder = 'Écrire un message…';
     if (S.tab === 'prive') can = !!key;
     else can = (me.channels.filter(function (c) { return c.key === key; })[0] || {}).can_post;
     S.el.form.hidden = !can;
@@ -230,8 +248,9 @@
     if (!S.me || !S.el.panel) return;
     paintTabs();
     var key = channelKey(), list = S.el.list;
-    S.el.intro.textContent = S.tab === 'prive' && S.me.user.moderator && !S.thread ? INTRO.threads : INTRO[S.tab === 'prive' ? 'prive' : S.tab];
+    S.el.intro.textContent = S.composing ? INTRO.compose : S.tab === 'prive' && S.me.user.moderator && !S.thread ? INTRO.threads : INTRO[S.tab === 'prive' ? 'prive' : S.tab];
     composerFor(key);
+    if (S.composing) { renderCompose(); return; }
     if (S.tab === 'prive' && S.me.user.moderator && !S.thread) { renderThreads(); return; }
     if (reset) {
       list.textContent = '';
@@ -242,8 +261,9 @@
   function renderThreads() {
     var list = S.el.list;
     list.textContent = '';
+    list.appendChild(h('button', { type: 'button', class: 'gc-new', text: '✉  Nouveau message privé', onclick: function () { S.composing = true; S.recipients = {}; render(true); } }));
     api('GET', '/private').then(function (j) {
-      if (S.tab !== 'prive' || S.thread) return;
+      if (S.tab !== 'prive' || S.thread || S.composing) return;
       if (!j.threads.length) { list.appendChild(h('p', { class: 'gc-empty', text: 'Aucune conversation privée pour le moment.' })); return; }
       j.threads.forEach(function (t) {
         var title = t.member_name + (t.unread ? '  •  ' + t.unread + ' non lu(s)' : '');
@@ -252,6 +272,46 @@
         ]));
       });
     }).catch(showErr);
+  }
+  function renderCompose() {
+    var list = S.el.list;
+    list.textContent = '';
+    list.appendChild(h('button', { type: 'button', class: 'gc-back', text: '← Conversations', onclick: function () { S.composing = false; render(true); } }));
+    var search = h('input', { type: 'search', id: 'gc-chat-search', class: 'gc-search', placeholder: 'Chercher un membre…', 'aria-label': 'Chercher un membre' });
+    var box = h('div', { role: 'group', 'aria-label': 'Destinataires' });
+    list.appendChild(search); list.appendChild(box);
+    function paint(ms) {
+      box.textContent = '';
+      var q = search.value.trim().toLowerCase();
+      ms.filter(function (m) { return !q || m.name.toLowerCase().indexOf(q) >= 0; }).forEach(function (m) {
+        var cb = h('input', { type: 'checkbox', value: m.id });
+        cb.checked = !!S.recipients[m.id];
+        cb.addEventListener('change', function () { if (cb.checked) S.recipients[m.id] = m.name; else delete S.recipients[m.id]; count(); });
+        box.appendChild(h('label', { class: 'gc-pick' }, [cb, h('span', { text: m.name }), m.has_email ? null : h('small', { text: 'pas de mail' })]));
+      });
+      if (!box.firstChild) box.appendChild(h('p', { class: 'gc-empty', text: 'Aucun membre trouvé.' }));
+    }
+    function count() {
+      var n = Object.keys(S.recipients).length;
+      setNote(n ? n + ' destinataire(s) : ' + Object.keys(S.recipients).map(function (k) { return S.recipients[k]; }).join(', ') : '');
+    }
+    search.addEventListener('input', function () { if (S.members) paint(S.members); });
+    (S.members ? Promise.resolve({ members: S.members }) : api('GET', '/members')).then(function (j) {
+      S.members = j.members;
+      if (S.composing) { paint(j.members); count(); }
+    }).catch(showErr);
+  }
+  function sendDirect() {
+    var ids = Object.keys(S.recipients), text = S.el.ta.value.trim();
+    if (!ids.length) { setNote('Choisis au moins un destinataire.', true); return; }
+    if (!text) return;
+    S.busy = true; S.el.send.disabled = true;
+    api('POST', '/direct', { user_ids: ids, body: text, email: S.el.mail.checked }).then(function (j) {
+      var mailed = S.el.mail.checked;
+      S.el.ta.value = ''; S.el.ta.style.height = 'auto'; S.recipients = {}; S.composing = false;
+      render(true);
+      setNote('Envoyé à ' + j.sent + ' membre(s)' + (mailed ? ', et par mail à ceux qui ont une adresse.' : '.'));
+    }).catch(showErr).then(function () { S.busy = false; S.el.send.disabled = false; });
   }
   function msgNode(m) {
     var me = S.me, mine = m.author_id === me.user.id;
@@ -310,12 +370,13 @@
   function markRead(key, id) {
     if (!id) return;
     api('POST', '/read', { channel: key, last_id: id }).then(function () {
-      if (key === 'annonces') closeBanner(false);
+      if (S.el.banner && S.el.banner.dataset.channel === key) closeBanner(false);
       refreshMe();
     }).catch(function () {});
   }
   function post() {
     if (S.busy) return;
+    if (S.composing) { sendDirect(); return; }
     var key = channelKey(), text = S.el.ta.value.trim();
     if (!text || !key) return;
     S.busy = true; S.el.send.disabled = true;
@@ -345,16 +406,18 @@
 
   /* ---------- bannière d'annonce (accueil) ---------- */
   function banner() {
-    var a = S.me && S.me.latest_announcement, onHome = /#\/?(home|$)/.test(location.hash || '#/home');
-    if (!a || S.open || S.bannerClosed || !onHome || playing()) { closeBanner(false); return; }
-    if (S.el.banner && S.el.banner.dataset.id === String(a.id)) return;
+    var me = S.me, onHome = /#\/?(home|$)/.test(location.hash || '#/home');
+    var item = null;
+    if (me && me.latest_private && !S.bannerClosed['p' + me.latest_private.id]) item = { key: 'p' + me.latest_private.id, m: me.latest_private, tab: 'prive', channel: me.private.key, icon: '✉️', label: "Message de l'admin : " };
+    else if (me && me.latest_announcement && !S.bannerClosed['a' + me.latest_announcement.id]) item = { key: 'a' + me.latest_announcement.id, m: me.latest_announcement, tab: 'annonces', channel: 'annonces', icon: '📢', label: 'Annonce : ' };
+    if (!item || S.open || !onHome || playing()) { closeBanner(false); return; }
+    if (S.el.banner && S.el.banner.dataset.key === item.key) return;
     closeBanner(false);
-    var txt = a.body.replace(/\s+/g, ' ');
-    var b = h('div', { class: 'gc-banner', role: 'status', 'data-id': String(a.id) }, [
-      h('span', { 'aria-hidden': 'true', text: '📢' }),
-      h('p', {}, [h('b', { text: 'Annonce : ' }), txt]),
-      h('button', { type: 'button', text: 'Lire', onclick: function () { S.tab = 'annonces'; S.thread = null; toggle(true); } }),
-      h('button', { type: 'button', 'aria-label': "Masquer l'annonce", text: '×', onclick: function () { S.bannerClosed = true; closeBanner(true); } })
+    var b = h('div', { class: 'gc-banner', role: 'status', 'data-key': item.key, 'data-channel': item.channel, 'data-msg': String(item.m.id) }, [
+      h('span', { 'aria-hidden': 'true', text: item.icon }),
+      h('p', {}, [h('b', { text: item.label }), item.m.body.replace(/\s+/g, ' ')]),
+      h('button', { type: 'button', text: 'Lire', onclick: function () { S.tab = item.tab; S.thread = null; S.composing = false; toggle(true); } }),
+      h('button', { type: 'button', 'aria-label': 'Masquer', text: '×', onclick: function () { S.bannerClosed[item.key] = true; closeBanner(true); } })
     ]);
     document.body.appendChild(b);
     S.el.banner = b;
@@ -362,7 +425,7 @@
   function closeBanner(markAsRead) {
     var b = S.el.banner;
     if (!b) return;
-    if (markAsRead) api('POST', '/read', { channel: 'annonces', last_id: Number(b.dataset.id) }).then(refreshMe).catch(function () {});
+    if (markAsRead) api('POST', '/read', { channel: b.dataset.channel, last_id: Number(b.dataset.msg) }).then(refreshMe).catch(function () {});
     b.remove(); S.el.banner = null;
   }
 
@@ -376,7 +439,7 @@
     });
   }
   function reset() {
-    S.me = null; S.token = null; S.cache = {}; S.open = false; S.bannerClosed = false;
+    S.me = null; S.token = null; S.cache = {}; S.open = false; S.bannerClosed = {}; S.composing = false; S.members = null;
     if (S.el.btn) S.el.btn.remove();
     if (S.el.panel) S.el.panel.remove();
     closeBanner(false);
