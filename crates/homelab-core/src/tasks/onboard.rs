@@ -121,6 +121,9 @@ Identifiants (les memes sur les deux services) :
    Username : {username}
    Password : {password}
 {pending}{guide}
+💬 Une question, un souci ? Le tchat est dans Jellyfin : bulle en haut a
+   droite (salon Entraide, ou \"Ecrire a l'admin\" pour un message prive).
+
 ⚠️  Important — ton compte parent est Jellyfin.
    En cas de changement de mot de passe, la procedure se fait UNIQUEMENT
    sur Jellyfin (Profil → Mot de passe). Le changement sera automatiquement
@@ -347,6 +350,7 @@ mod tests {
         assert!(m.contains("https://onb/guide"));
         assert!(m.contains("validees automatiquement"));
         assert!(m.contains("Se connecter avec Jellyfin"));
+        assert!(m.contains("Le tchat est dans Jellyfin"));
         assert!(!m.contains("pas encore active"));
         let m = welcome_mail(
             "bob",

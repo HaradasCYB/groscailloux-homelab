@@ -9,6 +9,7 @@ Une valeur avec espace se met entre guillemets doubles ; pas d'expression shell 
 | `TZ` | `Europe/Paris` | tous les conteneurs |
 | `HOST_IP` | IP publique du VPS | Jellyfin `PublishedServerUrl` |
 | `JELLYFIN_PUBLIC_URL`, `JELLYSEERR_PUBLIC_URL` | URLs NPM | mail d'onboarding |
+| `CHAT_ADMIN_EMAIL` (facultatif, repli `GUIDE_CONTACT_EMAIL`) | adresse de l'admin | récapitulatifs du tchat |
 | `ONBOARD_PUBLIC_URL`, `GUIDE_CONTACT_EMAIL`, `GUIDE_CONTACT_DISCORD` | URL NPM de l'onboarder, contact de l'admin | page `/guide`, lien du mail de bienvenue |
 | `SECRET_ENCRYPTION_KEY` | `openssl rand -hex 32` | Homarr |
 | `DUCKDNS_SUBDOMAIN`, `DUCKDNS_TOKEN` | duckdns.org | duckdns |

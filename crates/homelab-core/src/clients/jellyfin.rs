@@ -33,6 +33,22 @@ impl JellyfinClient {
         json(resp, "jellyfin System/Info").await
     }
 
+    /// Compte correspondant au jeton de session d'un membre (`/Users/Me`), `None` si Jellyfin refuse
+    /// le jeton (expiré, déconnecté, compte suspendu). Le jeton n'est ni journalisé ni conservé.
+    pub async fn user_from_token(&self, token: &str) -> Result<Option<Value>> {
+        let url = self.base.join("Users/Me").expect("chemin API valide");
+        let resp = self
+            .http
+            .get(url)
+            .header("X-Emby-Token", token)
+            .send()
+            .await?;
+        if matches!(resp.status().as_u16(), 401 | 403) {
+            return Ok(None);
+        }
+        json(resp, "jellyfin Users/Me").await.map(Some)
+    }
+
     pub async fn users(&self) -> Result<Vec<Value>> {
         let resp = self.req(Method::GET, "Users").send().await?;
         Ok(json(resp, "jellyfin Users")

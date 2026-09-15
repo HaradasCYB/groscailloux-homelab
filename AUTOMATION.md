@@ -229,6 +229,26 @@ modifier : sources et captures dans `backups/guide-draft-20260915/` (`guide.fina
 `build_final.py <asset> <aperçu>`, script de captures `shots.js` avec un compte ordinaire temporaire,
 aucune demande envoyée), puis rebuild de homelabd. Validé par l'utilisateur le 2026-09-15.
 
+## Tchat des membres
+
+Bulle en haut à droite de l'interface web de Jellyfin (navigateur, Jellyfin Desktop, applis Android/iPhone,
+LG webOS). Salons `annonces` (modérateurs seulement), `entraide`, `discussion`, et un fil privé
+`prive:<id Jellyfin>` par membre, lisible par lui et par les modérateurs (`[chat] moderators`).
+
+- **Chemin** : script chargé par JavaScript Injector (`branding/jellyfin/gc-chat-loader.js`) →
+  `/gc-chat/app.js` → API `/gc-chat/api/*`, publiées par NPM (hôte Jellyfin) vers homelabd `/chat/*`.
+- **API** : `GET /me` (salons, non-lus, dernière annonce non lue), `GET|POST /messages`,
+  `DELETE /messages/{id}`, `POST /read`, `GET /private` (modérateurs). 401 sans session valide, 403 hors
+  droits ou hors `beta_users`, 429 au-delà du débit (1 message / 3 s, 30 / 10 min).
+- **Règles** (`homelab_core::chat`, testées) : texte nettoyé, 2 000 caractères ; suppression de son message
+  pendant 15 min, de tout message pour un modérateur (message conservé, marqué supprimé).
+- **Mails** : toutes les minutes, s'il y a de nouveaux messages d'entraide ou privés de membres et que le
+  dernier récapitulatif a plus de 15 min, un mail à `CHAT_ADMIN_EMAIL`. Annonce avec « envoyer aussi par
+  mail » : un mail par compte actif ayant une adresse valide dans Jellyseerr (2 s d'écart), sauf l'auteur.
+- **Client** : rafraîchi toutes les 5 s panneau ouvert, 60 s fermé, rien onglet caché ; bulle masquée pendant
+  la lecture ; bannière de la dernière annonce non lue sur l'accueil ; aucun HTML de message interprété.
+- **Couper** : `[chat] enabled = false` (+ restart homelabd) et désactiver le script dans JavaScript Injector.
+
 ## Page de don
 
 `GET /don` (public, sous-domaine `don.`) : page statique `crates/homelabd/assets/don.html` avec le

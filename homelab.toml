@@ -174,6 +174,21 @@ protected = ["Haradas", "LeGrosCailloux"]   # ni interrupteur ni suppression sur
 # Garde-fou : quota par défaut de Jellyseerr, 10 films + 10 saisons / 7 j (réglé dans Jellyseerr).
 jellyseerr_auto_approve = true
 
+[chat]
+# Tchat des membres dans Jellyfin (bulle en haut à droite) : salons Annonces (modérateurs), Entraide,
+# Discussion, et un fil privé membre ↔ modérateurs. API homelabd /chat/*, publiée par NPM sous
+# /gc-chat/ sur l'adresse de Jellyfin ; script chargé par le plugin JavaScript Injector.
+enabled = true
+moderators = ["Haradas", "LeGrosCailloux"]   # écrivent les annonces, lisent les fils privés
+beta_users = []      # [] = tchat ouvert à tous ; sinon visible de ces comptes seulement (phase de test)
+db_file = "/opt/homelab/state/chat.db"
+max_chars = 2000
+min_gap_secs = 3
+burst_max = 30              # messages au plus par fenêtre et par membre
+burst_window_secs = 600
+delete_own_within_mins = 15
+moderator_mail_interval_mins = 15   # récapitulatif entraide + privé : au plus un mail par intervalle
+
 [seedbox]
 # Seedbox (tofino.usbx.me) : Radarr/Sonarr y rangent dans ~/media, monté en lecture seule sur
 # /mnt/seedbox/media (homelab-seedbox-mount.service) et vu par Jellyfin sous /seedbox/media.

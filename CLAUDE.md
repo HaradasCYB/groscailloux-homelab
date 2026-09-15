@@ -83,6 +83,20 @@ journalctl -u homelabd -f
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).
   Sauvegarde d'avant : `backups/jellyseerr-settings-main-20260915-094557.json`. Une réponse de `settings/main`
   contient la clé API : ne jamais l'afficher (filtrer les champs).
+- **Tchat des membres** (`homelab_core::chat`, API `crates/homelabd/src/chat_api.rs`, client
+  `crates/homelabd/assets/chat/app.js`) : servi sous `/gc-chat/` **sur l'adresse de Jellyfin** (NPM hôte 1,
+  `location ^~ /gc-chat/` → `172.18.0.1:8766/chat/` ; le `^~` est obligatoire, sinon la règle de cache
+  des `.js` de NPM envoie `app.js` à Jellyfin). Chargé par le plugin **JavaScript Injector** (script
+  « Groscailloux Tchat » = `branding/jellyfin/gc-chat-loader.js`, « Requires authentication ») : une mise à
+  jour du tchat = rebuild de homelabd, pas le plugin. Identité = jeton de session Jellyfin vérifié par
+  `/Users/Me`, cache mémoire 5 min (une suspension prend effet sous 5 min), jamais écrit ni journalisé.
+  Modérateurs et phase de test (`beta_users`) dans `[chat]` ; base `state/chat.db` (sauvegardée par
+  `homelabctl backup`). Mails : récapitulatif à `CHAT_ADMIN_EMAIL` (repli `GUIDE_CONTACT_EMAIL`), annonces
+  aux comptes actifs ayant une adresse **valide** dans Jellyseerr (celle de Haradas y vaut `haradas`).
+  Pas de tchat dans les applis natives (Android TV, Swiftfin).
+- **NPM hôte 1 (Jellyfin)** : sa configuration avancée contient les réglages SyncPlay (tampons coupés,
+  délais 3600 s ; avant le 2026-09-15 ils n'étaient que dans le fichier conf, pas en base) et la route du
+  tchat. Toujours éditer base **et** fichier ensemble (sauvegarde `backups/npm-*-chat`).
 - **Historique Arr** : `GET history?movieId=` / `?seriesId=` n'existe pas, le filtre est ignoré et tout
   l'historique revient. Utiliser `history/movie?movieId=` et `history/series?seriesId=` (seul `downloadId`
   filtre vraiment `GET history`).
@@ -151,6 +165,15 @@ journalctl -u homelabd -f
 
 ## Pièges connus
 
+- **Tests** : un environnement de test, jamais la prod. Comptes ordinaires temporaires (supprimés avec
+  `homelabctl accounts delete`), et pour les captures, réponses d'API simulées **dans le navigateur de test**
+  (interception, voir `backups/chat-tests-20260915/chatshots.js`). Une session ouverte par l'API compte dans
+  la limite de 2 appareils : supprimer puis recréer le compte de test plutôt que toucher aux appareils.
+- **`GET /Devices?userId=` ignore le filtre** et renvoie **tous** les appareils : le 2026-09-15, une boucle
+  `DELETE /Devices` dessus a déconnecté tous les membres de toutes leurs applis. Aucune suppression en boucle
+  sans vérifier le nombre et le propriétaire (`LastUserId`) de chaque élément.
+- **JavaScript Injector** active aussi les scripts d'autres plugins qui s'y enregistrent (Jellysleep : minuteur
+  de mise en veille dans le lecteur, visible depuis le 2026-09-15).
 - **Rotation de la clé API Jellyseerr** (faite le 2026-09-15, clé exposée dans une conversation) : `POST
   /api/v1/settings/main/regenerate`, puis tous les consommateurs dans la foulée : `.env` (`JELLYSEERR_API_KEY`,
   restart homelabd), `JellyseerrApiKey` de Jellyfin Enhanced **et** de Home Screen Sections (API des plugins),

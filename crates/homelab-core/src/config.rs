@@ -27,6 +27,43 @@ pub struct Config {
     pub seedbox: Seedbox,
     #[serde(default)]
     pub accounts: Accounts,
+    #[serde(default)]
+    pub chat: Chat,
+}
+/// Tchat des membres dans Jellyfin (voir `chat`). Modérateurs : écrivent les annonces, lisent les fils
+/// privés, suppriment tout message. `beta_users` non vide = tchat visible de ces comptes seulement.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Chat {
+    pub enabled: bool,
+    pub moderators: Vec<String>,
+    pub beta_users: Vec<String>,
+    pub db_file: PathBuf,
+    pub max_chars: usize,
+    pub min_gap_secs: u64,
+    pub burst_max: usize,
+    pub burst_window_secs: u64,
+    /// Un membre peut supprimer son message pendant ce délai.
+    pub delete_own_within_mins: i64,
+    /// Au plus un mail récapitulatif (entraide + privé) par intervalle.
+    pub moderator_mail_interval_mins: i64,
+}
+
+impl Default for Chat {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            moderators: vec!["Haradas".into(), "LeGrosCailloux".into()],
+            beta_users: Vec::new(),
+            db_file: "/opt/homelab/state/chat.db".into(),
+            max_chars: 2000,
+            min_gap_secs: 3,
+            burst_max: 30,
+            burst_window_secs: 600,
+            delete_own_within_mins: 15,
+            moderator_mail_interval_mins: 15,
+        }
+    }
 }
 
 /// Comptes Jellyfin : « premium » = compte actif, sinon suspendu (`IsDisabled`, rien n'est
@@ -712,6 +749,8 @@ pub struct Secrets {
     /// Contact affiché par le guide (`GUIDE_CONTACT_EMAIL`, `GUIDE_CONTACT_DISCORD`), hors du dépôt.
     pub guide_contact_email: Option<String>,
     pub guide_contact_discord: Option<String>,
+    /// Destinataire des récapitulatifs du tchat (`CHAT_ADMIN_EMAIL`, repli `GUIDE_CONTACT_EMAIL`).
+    pub chat_admin_email: Option<String>,
     pub quality_profile_id: i64,
     pub onboard_token: Option<Secret>,
     /// Protège `/status` et `/status.html` de homelabd (`?token=`).
@@ -791,6 +830,7 @@ impl Secrets {
                 .map(|u| u.trim_end_matches('/').to_string()),
             guide_contact_email: opt("GUIDE_CONTACT_EMAIL"),
             guide_contact_discord: opt("GUIDE_CONTACT_DISCORD"),
+            chat_admin_email: opt("CHAT_ADMIN_EMAIL").or_else(|| opt("GUIDE_CONTACT_EMAIL")),
             quality_profile_id: opt("QUALITY_PROFILE_ID")
                 .map(|v| v.parse::<i64>().context("QUALITY_PROFILE_ID non numérique"))
                 .transpose()?
