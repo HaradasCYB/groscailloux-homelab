@@ -36,7 +36,8 @@ pub struct Config {
 pub struct Accounts {
     /// Comptes premium au plus (admin exclus) ; vérifié à l'activation.
     pub max_premium: usize,
-    /// Lectures simultanées par compte (`MaxActiveSessions`, 0 = illimité).
+    /// Appareils connectés par compte (`MaxActiveSessions`, 0 = illimité) : Jellyfin refuse une
+    /// nouvelle connexion au-delà ; un appareil déjà connecté n'est pas limité (testé le 2026-09-15).
     pub max_streams_per_user: u32,
     /// Un compte créé par l'onboarding est-il premium d'office ?
     pub new_accounts_premium: bool,

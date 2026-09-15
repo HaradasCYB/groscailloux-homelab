@@ -167,7 +167,7 @@ npm_server_name = "qbittorrent."
 # Page d'admin : onboarder.<domaine>/accounts. Plafonds : 6 vCPU sans GPU (1-2 transcodages),
 # lien seedbox ~190 Mbit/s ; pic mesuré 4 lectures pour 13 comptes (2026-09-14).
 max_premium = 25
-max_streams_per_user = 2
+max_streams_per_user = 2      # MaxActiveSessions : refuse une 3e connexion, ne limite pas les lectures
 new_accounts_premium = false   # les comptes créés par l'onboarding sont à activer à la main
 protected = ["Haradas", "LeGrosCailloux"]   # ni interrupteur ni suppression sur la page
 # Demandes Jellyseerr validées d'office (films et séries, jamais 4K), à la création et à l'activation.

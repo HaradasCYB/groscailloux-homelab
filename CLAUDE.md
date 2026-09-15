@@ -73,9 +73,11 @@ journalctl -u homelabd -f
 - **Comptes** : premium = compte Jellyfin actif, non-premium = `IsDisabled` ; passer par
   `homelab_core::accounts` (page `/accounts`, `homelabctl accounts`) qui garde les permissions Jellyseerr.
   `accounts.protected` (Haradas, LeGrosCailloux) : jamais suspendus ni supprimés par la page ; les autres
-  admins sont gérés comme tout le monde. Plafonds dans `[accounts]` (25 premium, 2 lectures par
-  compte) ; pas de `RemoteClientBitrateLimit` (forcerait des transcodages). `MaxActiveSessions` compte les
-  **appareils connectés**, pas les lectures : un 3e appareil actif ne peut pas se connecter.
+  admins sont gérés comme tout le monde. Plafonds dans `[accounts]` (25 premium, 2 appareils par
+  compte) ; pas de `RemoteClientBitrateLimit` (forcerait des transcodages). `MaxActiveSessions` (testé le
+  2026-09-15) : ne joue **qu'à la connexion**. Jellyfin ouvert sur 2 appareils ⇒ la connexion d'un 3e est refusée
+  (403 « maximum number of sessions », l'appli web reste sur l'écran de connexion **sans message**) ; une appli
+  fermée libère sa place ; un appareil déjà connecté rouvre sans contrôle. Ce n'est donc pas une limite de lectures.
 - **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
   la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).
@@ -94,7 +96,8 @@ journalctl -u homelabd -f
 - **Reboot** : `homelab-stack.service` relance compose ; vérifier `docker compose ps` et
   `systemctl status homelabd` après.
 - `scripts/` ne contient plus que des outils ponctuels (les anciens scripts bash planifiés ont été
-  retirés) : `jellyfin-branding-apply.sh` et `jellyfin-ui-rollback.sh` (voir « Interface Jellyfin »).
+  retirés) : `jellyfin-branding-apply.sh`, `jellyfin-ui-rollback.sh` (voir « Interface Jellyfin ») et
+  `jellyseerr-rotate-key.py` (voir « Pièges connus »).
 
 ## Interface Jellyfin (« Groscailloux TV », 2026-09-14)
 
@@ -103,6 +106,9 @@ journalctl -u homelabd -f
   Ne pas éditer le CSS dans l'interface. Monter ElegantFin = changer le tag, repasser le banc d'essai
   (captures bureau + téléphone), puis appliquer. Jellyfin 10.11 lit ce CSS dans `Branding/Configuration`
   (champ `CustomCss`), plus `Branding/Css`.
+- **Écran de connexion** : aucun compte listé (`IsHidden = true` pour tous, et dans `non_admin_policy` pour les
+  nouveaux, depuis le 2026-09-15 : la liste publique exposait les noms). Titre : `--loginPageText` dans le calque
+  (« Connecte-toi » ; plus long, il passe sur deux lignes et chevauche le cadre).
 - **Logo** : `branding/jellyfin/logo/` (source `logo.html`, rendu par Chromium), déposé via
   `POST /JellyfinEnhanced/UploadBrandingImage` (noms : `banner-light.png`, `banner-dark.png`,
   `icon-transparent.png`, `favicon.ico`, `apple-touch-icon.png`).
@@ -144,6 +150,13 @@ journalctl -u homelabd -f
   avec la liste complète des bibliothèques.
 
 ## Pièges connus
+
+- **Rotation de la clé API Jellyseerr** (faite le 2026-09-15, clé exposée dans une conversation) : `POST
+  /api/v1/settings/main/regenerate`, puis tous les consommateurs dans la foulée : `.env` (`JELLYSEERR_API_KEY`,
+  restart homelabd), `JellyseerrApiKey` de Jellyfin Enhanced **et** de Home Screen Sections (API des plugins),
+  Homarr (intégration « Jellyseerr », secret chiffré : Homarr arrêté, base sauvegardée). Tout est fait par
+  `sudo scripts/jellyseerr-rotate-key.py` (~12 s de coupure, aucune clé affichée). Nouveau consommateur de la clé
+  = l'ajouter au script.
 
 - `.env` est lu par bash (`.` ), compose et dotenvy : pas d'expression shell, guillemets seulement
   autour des valeurs avec espaces.

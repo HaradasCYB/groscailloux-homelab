@@ -294,11 +294,12 @@ impl JellyfinClient {
 }
 
 /// Politique utilisateur non-admin limitée aux bibliothèques données (ids Jellyfin), avec au plus
-/// `max_streams` lectures simultanées (0 = illimité).
+/// `max_streams` appareils connectés (`MaxActiveSessions`, 0 = illimité ; ne limite que les nouvelles connexions).
 pub fn non_admin_policy(libraries: &[String], max_streams: u32) -> Value {
     json!({
         "IsAdministrator": false,
-        "IsHidden": false,
+        // absent de la liste publique de l'écran de connexion (chacun tape son nom)
+        "IsHidden": true,
         "IsDisabled": false,
         "EnableUserPreferenceAccess": true,
         "EnableRemoteAccess": true,

@@ -10,6 +10,7 @@
 @import url("https://cdn.jsdelivr.net/gh/lscambo13/ElegantFin@26.09.05/Theme/assets/add-ons/media-bar-plugin-support-latest-min.css");
 
 :root { --gc-accent: #2f8fff; --gc-accent-hover: #5aa6ff; }  /* bleu galet (rouge Netflix : #e50914 / #f6121d) */
+:root { --loginPageText: "Connecte-toi"; }  /* titre de l'écran de connexion (ElegantFin : anglais) */
 
 :root {
   --darkerGradientPoint: #08090b; --lighterGradientPoint: #121418;
