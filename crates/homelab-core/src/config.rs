@@ -705,6 +705,12 @@ pub struct Secrets {
     pub seedbox_qbit_password: Option<Secret>,
     pub jellyfin_public_url: String,
     pub jellyseerr_public_url: String,
+    /// Adresse publique de l'onboarder (`ONBOARD_PUBLIC_URL`) : lien vers `/guide` dans le mail de
+    /// bienvenue. Absente = pas de lien.
+    pub onboard_public_url: Option<String>,
+    /// Contact affiché par le guide (`GUIDE_CONTACT_EMAIL`, `GUIDE_CONTACT_DISCORD`), hors du dépôt.
+    pub guide_contact_email: Option<String>,
+    pub guide_contact_discord: Option<String>,
     pub quality_profile_id: i64,
     pub onboard_token: Option<Secret>,
     /// Protège `/status` et `/status.html` de homelabd (`?token=`).
@@ -780,6 +786,10 @@ impl Secrets {
             seedbox_qbit_password: opt("SEEDBOX_QBIT_PASSWORD").map(Secret::new),
             jellyfin_public_url: req("JELLYFIN_PUBLIC_URL")?,
             jellyseerr_public_url: req("JELLYSEERR_PUBLIC_URL")?,
+            onboard_public_url: opt("ONBOARD_PUBLIC_URL")
+                .map(|u| u.trim_end_matches('/').to_string()),
+            guide_contact_email: opt("GUIDE_CONTACT_EMAIL"),
+            guide_contact_discord: opt("GUIDE_CONTACT_DISCORD"),
             quality_profile_id: opt("QUALITY_PROFILE_ID")
                 .map(|v| v.parse::<i64>().context("QUALITY_PROFILE_ID non numérique"))
                 .transpose()?

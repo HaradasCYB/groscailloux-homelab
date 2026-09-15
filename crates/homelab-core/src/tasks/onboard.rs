@@ -62,6 +62,7 @@ pub fn generate_password() -> Secret {
     Secret::new(s)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn welcome_mail(
     username: &str,
     password: &str,
@@ -69,6 +70,8 @@ pub fn welcome_mail(
     jellyfin_url: &str,
     jellyseerr_url: &str,
     premium: bool,
+    auto_approve: bool,
+    guide_url: Option<&str>,
 ) -> String {
     let pending = if premium {
         ""
@@ -77,6 +80,23 @@ pub fn welcome_mail(
 ⏳ Ton compte est cree mais pas encore active : l'administrateur
    l'active sous peu. D'ici la, la connexion sera refusee.
 "
+    };
+    let guide = match guide_url {
+        Some(u) => format!(
+            "
+📘 Guide pour bien demarrer (se connecter, naviguer, demander un film,
+   suivre ta demande) :
+   {u}
+"
+        ),
+        None => String::new(),
+    };
+    let requests = if auto_approve {
+        "   Tes demandes sont validees automatiquement, dans la limite d'un quota
+   par semaine affiche sur ton profil Jellyseerr.
+"
+    } else {
+        ""
     };
     format!(
         "Salut {username},
@@ -96,17 +116,18 @@ Voici tes acces :
 
 🎯 Requetes (demander de nouveaux contenus) :
    {jellyseerr_url}
-
+{requests}
 Identifiants (les memes sur les deux services) :
    Username : {username}
    Password : {password}
-{pending}
+{pending}{guide}
 ⚠️  Important — ton compte parent est Jellyfin.
    En cas de changement de mot de passe, la procedure se fait UNIQUEMENT
    sur Jellyfin (Profil → Mot de passe). Le changement sera automatiquement
    actif sur Jellyseerr egalement.
 
-Sur Jellyseerr, connecte-toi via l'onglet \"Use your Jellyfin account\".
+Sur Jellyseerr, utilise les memes identifiants (formulaire
+\"Se connecter avec Jellyfin\").
 
 —
 Jellyseerr Groscailloux
@@ -253,6 +274,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
     }
 
     if let Some(smtp) = &s.smtp {
+        let guide_url = s.onboard_public_url.as_ref().map(|u| format!("{u}/guide"));
         let body = welcome_mail(
             &req.username,
             password.expose(),
@@ -260,6 +282,8 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
             &s.jellyfin_public_url,
             &s.jellyseerr_public_url,
             result.premium,
+            ctx.cfg.accounts.jellyseerr_auto_approve,
+            guide_url.as_deref(),
         );
         match mail::send_plain(
             smtp,
@@ -306,6 +330,37 @@ mod tests {
         assert!(valid_username("hippo_42"));
         assert!(!valid_username("a"));
         assert!(!valid_username("with space"));
+    }
+
+    #[test]
+    fn welcome_mail_guide_and_auto_approve() {
+        let m = welcome_mail(
+            "bob",
+            "pw",
+            "f@x.io",
+            "https://jf",
+            "https://js",
+            true,
+            true,
+            Some("https://onb/guide"),
+        );
+        assert!(m.contains("https://onb/guide"));
+        assert!(m.contains("validees automatiquement"));
+        assert!(m.contains("Se connecter avec Jellyfin"));
+        assert!(!m.contains("pas encore active"));
+        let m = welcome_mail(
+            "bob",
+            "pw",
+            "f@x.io",
+            "https://jf",
+            "https://js",
+            false,
+            false,
+            None,
+        );
+        assert!(!m.contains("Guide pour bien demarrer"));
+        assert!(!m.contains("validees automatiquement"));
+        assert!(m.contains("pas encore active"));
     }
 
     #[test]

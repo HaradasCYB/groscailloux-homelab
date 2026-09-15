@@ -216,6 +216,18 @@ l'import Jellyseerr) et le mail de bienvenue prévient que l'accès sera activé
 Avant la suspension, `accounts.jellyseerr_auto_approve` ajoute la validation automatique des demandes
 (bit 128, `accounts::request_permissions`) aux droits Jellyseerr de l'import ; la suspension les
 sauvegarde et l'activation les rend (en ajoutant le bit aux comptes suspendus avant ce réglage).
+Le mail de bienvenue renvoie vers le guide (`ONBOARD_PUBLIC_URL` + `/guide`, pas de lien si absent) et
+annonce la validation automatique.
+
+## Guide des nouveaux membres
+
+`GET /guide` (public, sans jeton, sur l'onboarder) : `crates/homelabd/assets/guide.html`, captures
+intégrées, affiches floutées. Le fichier ne contient ni adresse ni contact (dépôt public) : `guide.rs`
+remplace `{{JELLYFIN_URL}}`, `{{JELLYSEERR_URL}}` (et `_HOST`) et `{{CONTACT}}` depuis `.env`
+(`JELLYFIN_PUBLIC_URL`, `JELLYSEERR_PUBLIC_URL`, `GUIDE_CONTACT_EMAIL`, `GUIDE_CONTACT_DISCORD`). Pour le
+modifier : sources et captures dans `backups/guide-draft-20260915/` (`guide.final.tmpl.html`,
+`build_final.py <asset> <aperçu>`, script de captures `shots.js` avec un compte ordinaire temporaire,
+aucune demande envoyée), puis rebuild de homelabd. Validé par l'utilisateur le 2026-09-15.
 
 ## Page de don
 

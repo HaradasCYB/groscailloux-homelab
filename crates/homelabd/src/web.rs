@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::{accounts_page, status_page};
+use crate::{accounts_page, guide, status_page};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const DON_HTML: &str = include_str!("../assets/don.html");
@@ -55,6 +55,8 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/status", get(status))
         .route("/status.html", get(status_html))
         .route("/onboard", post(onboard_handler))
+        .route("/guide", get(guide_html))
+        .route("/guide/icon.png", get(guide_icon))
         .route("/don", get(don))
         .route("/accounts", get(accounts_html))
         .route("/accounts/premium", post(accounts_toggle))
@@ -77,6 +79,35 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
 
 async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+/// Guide des nouveaux membres (public, lien du mail de bienvenue).
+async fn guide_html(State(st): State<AppState>) -> Response {
+    (
+        [(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("public, max-age=3600"),
+        )],
+        Html(guide::page(&st.ctx.secrets)),
+    )
+        .into_response()
+}
+
+async fn guide_icon() -> Response {
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("image/png"),
+            ),
+            (
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("public, max-age=86400"),
+            ),
+        ],
+        guide::ICON_PNG,
+    )
+        .into_response()
 }
 
 /// Page de don (publique, sans lien avec le reste) : 404 tant que PayPal n'est pas configuré.
