@@ -208,6 +208,33 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         warn!(task = "onboard", username = %req.username, error = %e, "set email failed, fix manually");
     }
 
+    // droits de l'import (defaultPermissions) + validation automatique : posés avant la suspension,
+    // qui les sauvegarde pour l'activation
+    if ctx.cfg.accounts.jellyseerr_auto_approve {
+        let perms = ctx
+            .jellyseerr
+            .users(1000)
+            .await
+            .ok()
+            .and_then(|us| {
+                us.iter()
+                    .find(|u| u.get("id").and_then(Value::as_i64) == Some(js_id))
+                    .and_then(|u| u.get("permissions").and_then(Value::as_i64))
+            })
+            .unwrap_or(0);
+        let wanted = accounts::request_permissions(perms, true);
+        if wanted != perms {
+            match ctx.jellyseerr.set_permissions(js_id, wanted).await {
+                Ok(()) => {
+                    info!(task = "onboard", username = %req.username, permissions = wanted, "jellyseerr auto-approve set")
+                }
+                Err(e) => {
+                    warn!(task = "onboard", username = %req.username, error = %e, "auto-approve not set, fix in Jellyseerr")
+                }
+            }
+        }
+    }
+
     // suspendu après l'import : Jellyseerr doit trouver le compte, et ses droits sont sauvegardés
     if !ctx.cfg.accounts.new_accounts_premium {
         match accounts::set_premium_locked(ctx, &jf_id, false).await {

@@ -42,6 +42,8 @@ pub struct Accounts {
     pub new_accounts_premium: bool,
     /// Comptes jamais suspendus ni supprimés par la page (noms Jellyfin, casse ignorée).
     pub protected: Vec<String>,
+    /// Demandes Jellyseerr validées sans l'admin (bit 128) : donné à la création et à l'activation.
+    pub jellyseerr_auto_approve: bool,
 }
 
 impl Default for Accounts {
@@ -51,6 +53,7 @@ impl Default for Accounts {
             max_streams_per_user: 2,
             new_accounts_premium: false,
             protected: vec!["Haradas".into(), "LeGrosCailloux".into()],
+            jellyseerr_auto_approve: true,
         }
     }
 }

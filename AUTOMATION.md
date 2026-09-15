@@ -213,6 +213,9 @@ Le mot de passe (16 caractères alphanumériques) n'apparaît jamais dans les lo
 La policy limite aussi les lectures simultanées (`accounts.max_streams_per_user`). Si
 `accounts.new_accounts_premium = false` (réglage actuel), le compte est ensuite **suspendu** (après
 l'import Jellyseerr) et le mail de bienvenue prévient que l'accès sera activé par l'administrateur.
+Avant la suspension, `accounts.jellyseerr_auto_approve` ajoute la validation automatique des demandes
+(bit 128, `accounts::request_permissions`) aux droits Jellyseerr de l'import ; la suspension les
+sauvegarde et l'activation les rend (en ajoutant le bit aux comptes suspendus avant ce réglage).
 
 ## Page de don
 

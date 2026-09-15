@@ -170,6 +170,9 @@ max_premium = 25
 max_streams_per_user = 2
 new_accounts_premium = false   # les comptes créés par l'onboarding sont à activer à la main
 protected = ["Haradas", "LeGrosCailloux"]   # ni interrupteur ni suppression sur la page
+# Demandes Jellyseerr validées d'office (films et séries, jamais 4K), à la création et à l'activation.
+# Garde-fou : quota par défaut de Jellyseerr, 10 films + 10 saisons / 7 j (réglé dans Jellyseerr).
+jellyseerr_auto_approve = true
 
 [seedbox]
 # Seedbox (tofino.usbx.me) : Radarr/Sonarr y rangent dans ~/media, monté en lecture seule sur

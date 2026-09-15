@@ -62,13 +62,25 @@ journalctl -u homelabd -f
   par le lien (~24 Mo/s partagés) et fait buffer les spectateurs. Pas de `--vfs-read-ahead` sur rclone.
 - **Médias en écriture pour Jellyfin** (`/media` et `/seedbox` sans `:ro`, rclone sans `--read-only`) : seulement
   pour que le bouton « Supprimer » marche. Aucune option qui écrit dans les dossiers médias
-  (`SaveLocalMetadata`, `SaveSubtitlesWithMedia`, trickplay avec le média : tous à `false`).
-  Une suppression dans Jellyfin est suivie par `deletion_cleanup` (fiche Arr, Jellyseerr, torrent).
+  (`SaveLocalMetadata`, `SaveSubtitlesWithMedia`, trickplay avec le média : tous à `false` ; `MetadataSavers`
+  vide sur Films et Séries, sinon Jellyfin écrit des `.nfo`). Une suppression dans Jellyfin est suivie par
+  `deletion_cleanup` (fiche Arr, Jellyseerr, torrent).
+- **Clé rclone de la seedbox** (`authorized_keys` côté seedbox, commentaire `homelab-sftp-rd`) : `sftp-server -P
+  write,mkdir,rename,…` = lecture + suppression, **aucune écriture** (un `open` en création peut laisser un fichier
+  vide). Sauvegarde `~/.ssh/authorized_keys.bak-20260915`. Une écriture sur `/mnt/seedbox` réussit en local puis
+  reste coincée dans le cache (`cache/rclone/vfsMeta`, rclone réessaie toutes les 5 min, « permission denied ») :
+  arrêter le montage, retirer les entrées (vfsMeta + vfs), relancer.
 - **Comptes** : premium = compte Jellyfin actif, non-premium = `IsDisabled` ; passer par
   `homelab_core::accounts` (page `/accounts`, `homelabctl accounts`) qui garde les permissions Jellyseerr.
   `accounts.protected` (Haradas, LeGrosCailloux) : jamais suspendus ni supprimés par la page ; les autres
   admins sont gérés comme tout le monde. Plafonds dans `[accounts]` (25 premium, 2 lectures par
-  compte) ; pas de `RemoteClientBitrateLimit` (forcerait des transcodages).
+  compte) ; pas de `RemoteClientBitrateLimit` (forcerait des transcodages). `MaxActiveSessions` compte les
+  **appareils connectés**, pas les lectures : un 3e appareil actif ne peut pas se connecter.
+- **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
+  la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
+  Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).
+  Sauvegarde d'avant : `backups/jellyseerr-settings-main-20260915-094557.json`. Une réponse de `settings/main`
+  contient la clé API : ne jamais l'afficher (filtrer les champs).
 - **Historique Arr** : `GET history?movieId=` / `?seriesId=` n'existe pas, le filtre est ignoré et tout
   l'historique revient. Utiliser `history/movie?movieId=` et `history/series?seriesId=` (seul `downloadId`
   filtre vraiment `GET history`).

@@ -25,6 +25,20 @@ pub struct Account {
     pub last_activity: Option<String>,
 }
 
+/// Bits Jellyseerr : 2 = admin (a déjà tout), 128 = demandes validées d'office (films et séries, hors 4K).
+const JS_ADMIN: i64 = 2;
+pub const JS_AUTO_APPROVE: i64 = 128;
+
+/// Droits Jellyseerr d'un compte actif, avec la validation automatique si `auto`. Un compte sans
+/// droits (0 : suspendu) ou admin est laissé tel quel.
+pub fn request_permissions(perms: i64, auto: bool) -> i64 {
+    if !auto || perms == 0 || perms & JS_ADMIN != 0 {
+        perms
+    } else {
+        perms | JS_AUTO_APPROVE
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     Activated,
@@ -216,11 +230,12 @@ async fn sync_jellyseerr(ctx: &TaskContext, user_id: &str, on: bool) -> Result<(
         // sans sauvegarde (suspendu via homelabctl pendant que le daemon réécrivait l'état, ou à
         // la main) : permissions par défaut de Jellyseerr plutôt qu'un compte actif sans droits
         let restore = match saved {
-            Some(p) => Some(p),
-            None if perms == 0 => Some(ctx.jellyseerr.default_permissions().await?),
-            None => None,
+            Some(p) => p,
+            None if perms == 0 => ctx.jellyseerr.default_permissions().await?,
+            None => perms,
         };
-        if let Some(p) = restore {
+        let p = request_permissions(restore, ctx.cfg.accounts.jellyseerr_auto_approve);
+        if p != perms {
             ctx.jellyseerr.set_permissions(js_id, p).await?;
         }
         ctx.state
@@ -338,6 +353,20 @@ pub async fn apply_stream_limit(ctx: &TaskContext) -> Result<Vec<String>> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn auto_approve_added_only_to_active_non_admin() {
+        assert_eq!(request_permissions(32, true), 160);
+        assert_eq!(request_permissions(160, true), 160);
+        assert_eq!(request_permissions(48, true), 176); // gestion des demandes gardée
+        assert_eq!(
+            request_permissions(0, true),
+            0,
+            "suspendu : reste sans droits"
+        );
+        assert_eq!(request_permissions(34, true), 34, "admin : inchangé");
+        assert_eq!(request_permissions(32, false), 32);
+    }
 
     fn user(name: &str, admin: bool, disabled: bool) -> Value {
         json!({
