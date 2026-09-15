@@ -13,6 +13,7 @@
     --success: #10b981; --error: #ef4444; --shadow: 0 20px 60px rgba(0,0,0,0.4);
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     margin: 0; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
     background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 50%, var(--bg-3) 100%);
@@ -97,6 +98,11 @@
       <label for="email">Email</label>
       <input type="email" id="email" name="email" placeholder="hippo@example.com" required autocomplete="off">
     </div>
+    <div class="field" id="tokenField" hidden>
+      <label for="token">Jeton d'accès</label>
+      <input type="password" id="token" name="token" placeholder="ouvre plutôt la page depuis Homarr" autocomplete="off">
+      <p class="note">Page ouverte sans jeton. Passe par la tuile « Créer un compte » de Homarr (il sera ensuite retenu sur cet appareil), ou colle-le ici.</p>
+    </div>
     <button type="submit" id="submitBtn"><span class="spinner"></span><span class="label">Créer le compte</span></button>
   </form>
   <div id="result" class="result"></div>
@@ -108,7 +114,16 @@ const form = document.getElementById('onboardForm');
 const btn = document.getElementById('submitBtn');
 const resultBox = document.getElementById('result');
 const toast = document.getElementById('toast');
-const token = new URLSearchParams(location.search).get('token') || '';
+// Le jeton vient de ?token= (lien Homarr) ; retenu sur l'appareil pour une adresse tapée sans lui.
+const store = {
+  get() { try { return localStorage.getItem('onboardToken') || ''; } catch { return ''; } },
+  set(v) { try { v ? localStorage.setItem('onboardToken', v) : localStorage.removeItem('onboardToken'); } catch {} },
+};
+const tokenField = document.getElementById('tokenField');
+const tokenInput = document.getElementById('token');
+let token = new URLSearchParams(location.search).get('token') || store.get();
+if (new URLSearchParams(location.search).get('token')) store.set(token);
+if (!token) tokenField.hidden = false;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 function showToast(msg) { toast.textContent = msg; toast.classList.add('visible'); setTimeout(() => toast.classList.remove('visible'), 2000); }
@@ -145,10 +160,20 @@ form.addEventListener('submit', async (e) => {
   resultBox.className = 'result'; resultBox.innerHTML = '';
   const username = document.getElementById('username').value.trim();
   const email = document.getElementById('email').value.trim();
+  if (!tokenField.hidden) token = tokenInput.value.trim();
   try {
     const res = await fetch('/onboard', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Onboard-Token': token }, body: JSON.stringify({ username, email }) });
     const data = await res.json();
-    if (data.success) renderSuccess(data); else renderError(data.error || 'Erreur inconnue');
+    if (res.status === 401) {
+      store.set('');
+      tokenField.hidden = false;
+      tokenInput.value = '';
+      renderError('Jeton manquant ou invalide : ouvre la page depuis la tuile « Créer un compte » de Homarr, ou colle le jeton ci-dessus.');
+    } else if (data.success) {
+      store.set(token);
+      tokenField.hidden = true;
+      renderSuccess(data);
+    } else renderError(data.error || 'Erreur inconnue');
   } catch (err) { renderError('Erreur réseau : ' + err.message); }
   finally { btn.classList.remove('loading'); btn.disabled = false; }
 });
