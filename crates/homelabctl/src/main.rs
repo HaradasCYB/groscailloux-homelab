@@ -38,7 +38,7 @@ enum Cmd {
         password: Option<String>,
     },
     /// Comptes Jellyfin : list ; on|off <compte> (premium ou suspendu) ; delete <compte> --yes ;
-    /// limits (appareils connectés par compte)
+    /// limits (applique `max_devices_per_user`, appareils connectés par compte ; 0 = illimité)
     Accounts {
         #[arg(value_parser = ["list", "on", "off", "delete", "limits"])]
         action: String,
@@ -162,12 +162,12 @@ async fn main() -> Result<()> {
                 }
             }
             "limits" => {
-                let changed = accounts::apply_stream_limit(&ctx).await?;
+                let changed = accounts::apply_device_limit(&ctx).await?;
                 println!(
-                    "{}{} compte(s) → {} appareils connectés au plus : {}",
+                    "{}{} compte(s) → appareils connectés au plus : {} (0 = illimité) : {}",
                     if ctx.dry_run { "DRY-RUN : " } else { "" },
                     changed.len(),
-                    ctx.cfg.accounts.max_streams_per_user,
+                    ctx.cfg.accounts.max_devices_per_user,
                     changed.join(", ")
                 );
             }

@@ -30,6 +30,7 @@ pub struct Config {
     #[serde(default)]
     pub chat: Chat,
 }
+
 /// Tchat des membres dans Jellyfin (voir `chat`). Modérateurs : écrivent les annonces, lisent les fils
 /// privés, suppriment tout message. `beta_users` non vide = tchat visible de ces comptes seulement.
 #[derive(Debug, Clone, Deserialize)]
@@ -73,9 +74,11 @@ impl Default for Chat {
 pub struct Accounts {
     /// Comptes premium au plus (admin exclus) ; vérifié à l'activation.
     pub max_premium: usize,
-    /// Appareils connectés par compte (`MaxActiveSessions`, 0 = illimité) : Jellyfin refuse une
-    /// nouvelle connexion au-delà ; un appareil déjà connecté n'est pas limité (testé le 2026-09-15).
-    pub max_streams_per_user: u32,
+    /// Appareils connectés par compte (`MaxActiveSessions` de Jellyfin, 0 = illimité). Jellyfin ne
+    /// l'applique qu'à la connexion et compte les sessions fantômes de l'appli iOS : laissé à 0.
+    pub max_devices_per_user: u32,
+    /// Lectures simultanées par compte (tâche `playback_limit`, 0 = illimité ; comptes protégés exemptés).
+    pub max_playbacks_per_user: usize,
     /// Un compte créé par l'onboarding est-il premium d'office ?
     pub new_accounts_premium: bool,
     /// Comptes jamais suspendus ni supprimés par la page (noms Jellyfin, casse ignorée).
@@ -88,7 +91,8 @@ impl Default for Accounts {
     fn default() -> Self {
         Self {
             max_premium: 25,
-            max_streams_per_user: 2,
+            max_devices_per_user: 0,
+            max_playbacks_per_user: 2,
             new_accounts_premium: false,
             protected: vec!["Haradas".into(), "LeGrosCailloux".into()],
             jellyseerr_auto_approve: true,
@@ -212,6 +216,27 @@ pub struct Tasks {
     pub unknown_series_grab: UnknownSeriesGrab,
     pub deletion_cleanup: DeletionCleanup,
     pub trending: Trending,
+    pub playback_limit: PlaybackLimit,
+}
+
+/// Lectures simultanées par compte : arrêt des lectures en trop (voir `tasks::playback_limit`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct PlaybackLimit {
+    pub interval_secs: u64,
+    /// Une lecture en trop n'est arrêtée qu'après ce délai (le temps de changer d'appareil).
+    pub grace_secs: i64,
+    pub max_actions_per_run: usize,
+}
+
+impl Default for PlaybackLimit {
+    fn default() -> Self {
+        Self {
+            interval_secs: 20,
+            grace_secs: 30,
+            max_actions_per_run: 5,
+        }
+    }
 }
 
 /// Rangée « Tendances » de l'accueil Jellyfin : collection tenue à jour depuis Playback Reporting.
@@ -899,7 +924,9 @@ jellyseerr = "http://js"
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
         assert_eq!(cfg.tasks.unknown_series_grab.max_searches_per_run, 8);
         assert_eq!(cfg.accounts.max_premium, 25);
-        assert_eq!(cfg.accounts.max_streams_per_user, 2);
+        assert_eq!(cfg.accounts.max_devices_per_user, 0);
+        assert_eq!(cfg.accounts.max_playbacks_per_user, 2);
+        assert_eq!(cfg.tasks.playback_limit.grace_secs, 30);
         assert!(!cfg.accounts.new_accounts_premium);
         assert_eq!(cfg.accounts.protected.len(), 2);
         assert_eq!(cfg.tasks.deletion_cleanup.vps_paths.len(), 2);

@@ -275,7 +275,7 @@ async fn accounts_html(
         now: homelab_core::state::now(),
         accounts: &list,
         max_premium: st.ctx.cfg.accounts.max_premium,
-        max_streams: st.ctx.cfg.accounts.max_streams_per_user,
+        max_playbacks: st.ctx.cfg.accounts.max_playbacks_per_user,
         token: token.unwrap_or(""),
         msg,
     });

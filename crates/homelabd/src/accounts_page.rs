@@ -12,7 +12,8 @@ pub struct PageData<'a> {
     pub now: i64,
     pub accounts: &'a [Account],
     pub max_premium: usize,
-    pub max_streams: u32,
+    /// Lectures simultanées par compte (`accounts.max_playbacks_per_user`, 0 = illimité).
+    pub max_playbacks: usize,
     pub token: &'a str,
     /// Code de résultat de la dernière action (`activated`, `suspended`, `cap`, …) et compte visé.
     pub msg: Option<(&'a str, &'a str)>,
@@ -131,10 +132,10 @@ pub fn render(d: &PageData<'_>) -> String {
         if a.protected {
             badges.push_str(r#"<span class="badge prot">Protégé</span>"#);
         }
-        let streams = if a.max_streams == 0 {
+        let streams = if a.protected || d.max_playbacks == 0 {
             "illimité".to_string()
         } else {
-            format!("{} max", a.max_streams)
+            format!("{} max", d.max_playbacks)
         };
         let actions = if a.protected {
             r#"<span class="lock">Géré dans Jellyfin</span>"#.to_string()
@@ -176,12 +177,12 @@ pub fn render(d: &PageData<'_>) -> String {
         "Comptes Groscailloux",
         &format!(
             r#"<header><div><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><a class="new" href="/?token={token}">Créer un compte</a></header>
-<section class="cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} appareils connectés par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
+<section class="cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} lectures simultanées par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
 {flash}
 <div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
 <p class="foot">Les comptes protégés ne se gèrent que dans le tableau de bord Jellyfin et ne comptent pas dans le plafond. Les nouveaux comptes arrivent suspendus.</p>"#,
             max = d.max_premium,
-            streams = d.max_streams,
+            streams = d.max_playbacks,
         ),
     )
 }
@@ -228,7 +229,7 @@ mod tests {
             now: 1060,
             accounts: &list,
             max_premium: 25,
-            max_streams: 2,
+            max_playbacks: 2,
             token: "t\"k",
             msg: Some(("suspended", "<bob>")),
         });
@@ -250,7 +251,7 @@ mod tests {
             now: 0,
             accounts: &list,
             max_premium: 1,
-            max_streams: 2,
+            max_playbacks: 2,
             token: "t",
             msg: Some(("cap", "")),
         });
@@ -270,7 +271,7 @@ mod tests {
             now: 0,
             accounts: &list,
             max_premium: 25,
-            max_streams: 2,
+            max_playbacks: 2,
             token: "t",
             msg: None,
         });

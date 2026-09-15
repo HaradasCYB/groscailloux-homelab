@@ -73,11 +73,12 @@ journalctl -u homelabd -f
 - **Comptes** : premium = compte Jellyfin actif, non-premium = `IsDisabled` ; passer par
   `homelab_core::accounts` (page `/accounts`, `homelabctl accounts`) qui garde les permissions Jellyseerr.
   `accounts.protected` (Haradas, LeGrosCailloux) : jamais suspendus ni supprimés par la page ; les autres
-  admins sont gérés comme tout le monde. Plafonds dans `[accounts]` (25 premium, 2 appareils par
-  compte) ; pas de `RemoteClientBitrateLimit` (forcerait des transcodages). `MaxActiveSessions` (testé le
-  2026-09-15) : ne joue **qu'à la connexion**. Jellyfin ouvert sur 2 appareils ⇒ la connexion d'un 3e est refusée
-  (403 « maximum number of sessions », l'appli web reste sur l'écran de connexion **sans message**) ; une appli
-  fermée libère sa place ; un appareil déjà connecté rouvre sans contrôle. Ce n'est donc pas une limite de lectures.
+  admins sont gérés comme tout le monde. Plafonds dans `[accounts]` : 25 premium, **2 lectures
+  simultanées** par compte (tâche `playback_limit`, comptes protégés exemptés) ; pas de `RemoteClientBitrateLimit`
+  (forcerait des transcodages). **`MaxActiveSessions` reste à 0** (`max_devices_per_user`) : il ne joue qu'à la
+  connexion (403 « maximum number of sessions », affiché comme une erreur d'identifiants ou sans message) et
+  l'appli **iOS crée une nouvelle session à chaque ouverture** : le 2026-09-15, 5 sessions fantômes d'un iPhone
+  bloquaient la TV et la voiture d'un membre, Quick Connect compris.
 - **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
   la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).

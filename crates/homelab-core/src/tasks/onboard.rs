@@ -207,7 +207,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         .jellyfin
         .set_policy(
             &jf_id,
-            &non_admin_policy(&libraries, ctx.cfg.accounts.max_streams_per_user),
+            &non_admin_policy(&libraries, ctx.cfg.accounts.max_devices_per_user),
         )
         .await
     {

@@ -15,6 +15,14 @@ Secrets : `.env` via `EnvironmentFile`.
 
 ## Tâches planifiées
 
+### playback_limit — 20 s
+Lectures simultanées par compte (`accounts.max_playbacks_per_user`, 2 ; comptes `accounts.protected`
+exemptés ; 0 = illimité). `GET /Sessions` : pour chaque compte au-delà du maximum, les lectures les plus
+récentes (première apparition la plus tardive, à égalité la moins avancée) qui durent depuis `grace_secs`
+(30 s, le temps de passer d'un appareil à l'autre) reçoivent un message à l'écran (« Ce compte regarde déjà
+sur 2 écrans… ») puis un ordre d'arrêt (`Sessions/{id}/Playing/Stop`) ; 3 tentatives au plus par lecture,
+`max_actions_per_run` arrêts par passage. Remplace `MaxActiveSessions`, laissé à 0 (voir CLAUDE.md).
+
 ### stack_health — 5 min (première passe ~30 s après le démarrage de homelabd)
 Auto-réparation du stack. `docker compose config --services` donne les services attendus (moins
 `ignore`), `docker compose ps -a --format json` leur état.

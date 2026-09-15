@@ -182,7 +182,7 @@ pub async fn set_premium_locked(ctx: &TaskContext, user_id: &str, on: bool) -> R
     }
     let policy = user.get("Policy").context("Users sans Policy")?;
     ctx.jellyfin
-        .set_policy(user_id, &with_access(policy, on, cfg.max_streams_per_user))
+        .set_policy(user_id, &with_access(policy, on, cfg.max_devices_per_user))
         .await?;
     info!(task = "accounts", user = %name, ?outcome, "premium changed");
     if !on {
@@ -315,10 +315,10 @@ pub async fn delete(ctx: &TaskContext, user_id: &str) -> Result<Deleted> {
     Ok(Deleted { name, jellyseerr })
 }
 
-/// Applique `max_streams_per_user` aux comptes non protégés qui ne l'ont pas encore.
+/// Applique `max_devices_per_user` (`MaxActiveSessions`) aux comptes non protégés qui ne l'ont pas encore.
 /// Renvoie les noms des comptes modifiés (ou qui le seraient en dry-run).
-pub async fn apply_stream_limit(ctx: &TaskContext) -> Result<Vec<String>> {
-    let max = ctx.cfg.accounts.max_streams_per_user;
+pub async fn apply_device_limit(ctx: &TaskContext) -> Result<Vec<String>> {
+    let max = ctx.cfg.accounts.max_devices_per_user;
     let mut changed = Vec::new();
     for u in ctx.jellyfin.users().await? {
         if is_protected(&u, &ctx.cfg.accounts.protected) {
@@ -342,7 +342,7 @@ pub async fn apply_stream_limit(ctx: &TaskContext) -> Result<Vec<String>> {
             ctx.jellyfin
                 .set_policy(id, &with_access(policy, is_premium(&u), max))
                 .await?;
-            info!(task = "accounts", user = %name, max, "stream limit applied");
+            info!(task = "accounts", user = %name, max, "device limit applied");
         }
         changed.push(name.to_string());
     }

@@ -9,6 +9,7 @@ pub mod disk_pressure;
 pub mod id_match_import;
 pub mod monitor_sync;
 pub mod onboard;
+pub mod playback_limit;
 pub mod seedbox_refresh;
 pub mod stack_health;
 pub mod stuck_handler;
@@ -63,6 +64,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(unknown_series_grab::UnknownSeriesGrab),
         Box::new(deletion_cleanup::DeletionCleanup),
         Box::new(trending::Trending),
+        Box::new(playback_limit::PlaybackLimit),
         Box::new(monitor_sync::MonitorSync),
         Box::new(user_poller::UserPoller),
         Box::new(cleanup::Cleanup),

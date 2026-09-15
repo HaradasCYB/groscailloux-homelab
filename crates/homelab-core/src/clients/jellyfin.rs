@@ -242,6 +242,34 @@ impl JellyfinClient {
             .unwrap_or_default())
     }
 
+    /// Toutes les sessions connues de Jellyfin.
+    pub async fn sessions(&self) -> Result<Vec<Value>> {
+        let resp = self.req(Method::GET, "Sessions").send().await?;
+        Ok(json(resp, "jellyfin Sessions")
+            .await?
+            .as_array()
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Message affiché à l'écran d'une session (`timeout_ms` : durée d'affichage).
+    pub async fn send_message(
+        &self,
+        session_id: &str,
+        header: &str,
+        text: &str,
+        timeout_ms: u64,
+    ) -> Result<()> {
+        let resp = self
+            .req(Method::POST, &format!("Sessions/{session_id}/Message"))
+            .json(&json!({ "Header": header, "Text": text, "TimeoutMs": timeout_ms }))
+            .send()
+            .await?;
+        check(resp, "jellyfin Sessions/{id}/Message")
+            .await
+            .map(|_| ())
+    }
+
     pub async fn stop_playback(&self, session_id: &str) -> Result<()> {
         let resp = self
             .req(Method::POST, &format!("Sessions/{session_id}/Playing/Stop"))
