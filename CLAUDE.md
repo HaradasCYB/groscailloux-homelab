@@ -94,7 +94,9 @@ journalctl -u homelabd -f
   Modérateurs et phase de test (`beta_users`) dans `[chat]` ; base `state/chat.db` (sauvegardée par
   `homelabctl backup`). Mails : récapitulatif à `CHAT_ADMIN_EMAIL` (repli `GUIDE_CONTACT_EMAIL`), annonces
   aux comptes actifs ayant une adresse **valide** dans Jellyseerr (celle de Haradas y vaut `haradas`).
-  Pas de tchat dans les applis natives (Android TV, Swiftfin).
+  Pas de tchat dans les applis natives (Android TV, Swiftfin). **Jamais de `window.confirm/alert/prompt`** dans
+  les scripts injectés : la WebView de l'appli iPhone et Jellyfin Desktop les ignorent (réponse « non » sans rien
+  afficher) — le bouton Supprimer du tchat était inerte pour cette raison ; confirmer dans la page.
 - **« Lire sur » (diffuser vers un autre appareil)** : filtré par `branding/jellyfin/gc-cast-filter.js`
   (JavaScript Injector, déployé avec `scripts/jellyfin-js-apply.py`) : seulement ses propres appareils,
   et seulement ceux qui ont la même adresse publique que l'appareil courant (même box = même Wi-Fi ; pas en
@@ -109,6 +111,11 @@ journalctl -u homelabd -f
 - **NPM hôte 1 (Jellyfin)** : sa configuration avancée contient les réglages SyncPlay (tampons coupés,
   délais 3600 s ; avant le 2026-09-15 ils n'étaient que dans le fichier conf, pas en base) et la route du
   tchat. Toujours éditer base **et** fichier ensemble (sauvegarde `backups/npm-*-chat`).
+- **Titre mal identifié par Jellyfin** : un film au titre court ou ambigu peut être rattaché au mauvais TMDB
+  (le 2026-09-15, *Midnight* 2021 → *Before Midnight* 2013) ; Jellyseerr, qui compare les ids TMDB, laisse alors la
+  demande « en cours ». Corriger par `POST /Items/RemoteSearch/Movie` (ProviderIds Tmdb) puis
+  `/Items/RemoteSearch/Apply/{id}`, et lancer le job Jellyseerr `jellyfin-full-scan` (le scan « recently added »
+  ne revoit pas un titre ajouté la veille).
 - **Historique Arr** : `GET history?movieId=` / `?seriesId=` n'existe pas, le filtre est ignoré et tout
   l'historique revient. Utiliser `history/movie?movieId=` et `history/series?seriesId=` (seul `downloadId`
   filtre vraiment `GET history`).

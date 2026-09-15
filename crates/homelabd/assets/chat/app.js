@@ -115,6 +115,11 @@
       '.gc-body a{color:#8cc4ff}',
       '.gc-del{margin-left:auto;background:none;border:0;color:#8d99ad;cursor:pointer;font:inherit;font-size:.95em;opacity:.7}',
       '.gc-del:hover,.gc-del:focus-visible{opacity:1;color:#ff8a8a}',
+      '.gc-confirm{margin-left:auto;display:inline-flex;gap:.4em;align-items:center;color:#e8edf5}',
+      '.gc-confirm button{border:0;border-radius:.4em;padding:.15em .55em;font:inherit;font-size:.95em;cursor:pointer}',
+      '.gc-yes{background:#d9534f;color:#fff}',
+      '.gc-no{background:#232b3a;color:#e8edf5}',
+      '.gc-confirm button:focus-visible{outline:2px solid #fff}',
       '.gc-gone{color:#6b7686;font-style:italic}',
       '.gc-empty{margin:auto;color:#6b7686;text-align:center;font-size:.9em;padding:2em 1em}',
       '.gc-thread{display:block;width:100%;text-align:left;background:#151b26;border:1px solid #232b3a;color:inherit;border-radius:.7em;padding:.6em .8em;cursor:pointer;font:inherit}',
@@ -318,7 +323,7 @@
     var box = h('div', { class: 'gc-msg' + (mine ? ' me' : '') + (m.channel === 'annonces' ? ' ann' : ''), 'data-id': String(m.id) });
     var meta = h('div', { class: 'gc-meta' }, [h('b', { text: m.author_name }), m.author_moderator ? h('span', { class: 'gc-role', text: 'admin' }) : null, h('span', { text: when(m.created_at) })]);
     var canDel = !m.deleted && (me.user.moderator || (mine && Date.now() / 1000 - m.created_at <= me.limits.delete_own_within_secs));
-    if (canDel) meta.appendChild(h('button', { type: 'button', class: 'gc-del', title: 'Supprimer', 'aria-label': 'Supprimer ce message', text: '🗑', onclick: function () { del(m.id); } }));
+    if (canDel) meta.appendChild(h('button', { type: 'button', class: 'gc-del', title: 'Supprimer', 'aria-label': 'Supprimer ce message', text: '🗑', onclick: function (e) { askDelete(e.currentTarget, m.id); } }));
     box.appendChild(meta);
     var body = h('div', { class: 'gc-body' + (m.deleted ? ' gc-gone' : '') });
     if (m.deleted) body.textContent = 'Message supprimé.'; else body.appendChild(rich(m.body));
@@ -392,12 +397,25 @@
       c.last = Math.max(c.last, j.message.id);
     }).catch(showErr).then(function () { S.busy = false; S.el.send.disabled = false; S.el.ta.focus(); });
   }
-  function del(id) {
-    if (!window.confirm('Supprimer ce message ?')) return;
+  /* confirmation dans le message lui-même : window.confirm() n'existe pas dans les WebView de l'appli iPhone
+     et de Jellyfin Desktop (il y répond « non » sans rien afficher) */
+  function askDelete(btn, id) {
+    var box = h('span', { class: 'gc-confirm', role: 'group', 'aria-label': 'Confirmer la suppression' });
+    var keep = h('button', { type: 'button', class: 'gc-no', text: 'Annuler' });
+    var yes = h('button', { type: 'button', class: 'gc-yes', text: 'Supprimer' });
+    function restore() { if (box.parentNode) box.replaceWith(btn); btn.focus(); }
+    keep.addEventListener('click', restore);
+    yes.addEventListener('click', function () { yes.disabled = true; keep.disabled = true; del(id, restore); });
+    box.appendChild(h('span', { text: 'Supprimer ?' })); box.appendChild(yes); box.appendChild(keep);
+    btn.replaceWith(box);
+    yes.focus();
+    setTimeout(restore, 8000); // sans réponse : on remet la corbeille
+  }
+  function del(id, onFail) {
     api('DELETE', '/messages/' + id).then(function () {
       var n = S.el.list.querySelector('[data-id="' + id + '"]');
       if (n) n.replaceWith(msgNode({ id: id, channel: channelKey(), author_id: '', author_name: n.querySelector('b').textContent, author_moderator: false, body: '', created_at: Date.now() / 1000, deleted: true }));
-    }).catch(showErr);
+    }).catch(function (e) { if (onFail) onFail(); showErr(e); });
   }
   function showErr(e) {
     if (e && e.status === 401) { reset(); return; }
