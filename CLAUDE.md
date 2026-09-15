@@ -94,6 +94,17 @@ journalctl -u homelabd -f
   `homelabctl backup`). Mails : récapitulatif à `CHAT_ADMIN_EMAIL` (repli `GUIDE_CONTACT_EMAIL`), annonces
   aux comptes actifs ayant une adresse **valide** dans Jellyseerr (celle de Haradas y vaut `haradas`).
   Pas de tchat dans les applis natives (Android TV, Swiftfin).
+- **« Lire sur » (diffuser vers un autre appareil)** : filtré par `branding/jellyfin/gc-cast-filter.js`
+  (JavaScript Injector, déployé avec `scripts/jellyfin-js-apply.py`) : seulement ses propres appareils,
+  et seulement ceux qui ont la même adresse publique que l'appareil courant (même box = même Wi-Fi ; pas en
+  données mobiles). Adresse inconnue ou privée ⇒ rien d'autre proposé. Jellyfin garde la liste des cibles en
+  mémoire pendant la vie de la page : le filtre doit être chargé avant la première ouverture du menu.
+  Google Cast ne marche que dans Chrome et l'appli Android (« non pris en charge » dans Safari et Jellyfin
+  Desktop, c'est normal) ; AirPlay passe par le bouton du lecteur dans Safari/iPhone.
+- **Adresses des clients** : `KnownProxies = 172.18.0.0/16` (réseau Docker entier) dans la configuration
+  réseau de Jellyfin, lu **au démarrage seulement**. Avant le 2026-09-15 il valait l'ancienne IP de NPM
+  (`.15`, NPM est passé en `.16`) : Jellyfin voyait tout le monde comme NPM, donc comme réseau local.
+  Aucune limite de débit « distant » n'est réglée, ce qui compte si ça change.
 - **NPM hôte 1 (Jellyfin)** : sa configuration avancée contient les réglages SyncPlay (tampons coupés,
   délais 3600 s ; avant le 2026-09-15 ils n'étaient que dans le fichier conf, pas en base) et la route du
   tchat. Toujours éditer base **et** fichier ensemble (sauvegarde `backups/npm-*-chat`).
@@ -110,8 +121,8 @@ journalctl -u homelabd -f
 - **Reboot** : `homelab-stack.service` relance compose ; vérifier `docker compose ps` et
   `systemctl status homelabd` après.
 - `scripts/` ne contient plus que des outils ponctuels (les anciens scripts bash planifiés ont été
-  retirés) : `jellyfin-branding-apply.sh`, `jellyfin-ui-rollback.sh` (voir « Interface Jellyfin ») et
-  `jellyseerr-rotate-key.py` (voir « Pièges connus »).
+  retirés) : `jellyfin-branding-apply.sh`, `jellyfin-ui-rollback.sh` (voir « Interface Jellyfin »),
+  `jellyseerr-rotate-key.py` (voir « Pièges connus ») et `jellyfin-js-apply.py` (scripts JavaScript Injector).
 
 ## Interface Jellyfin (« Groscailloux TV », 2026-09-14)
 
