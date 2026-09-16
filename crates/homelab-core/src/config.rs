@@ -324,6 +324,11 @@ pub struct UnknownSeriesGrab {
     pub retry_after_hours: i64,
     /// Nouvelle recherche d'une saison déjà prise après N heures (si elle manque encore).
     pub grabbed_retry_hours: i64,
+    /// Nouvelle tentative après une erreur (indexer indisponible, recherche trop longue).
+    pub error_retry_hours: i64,
+    /// Anime : nombre d'épisodes interrogés par passage (Sonarr interroge l'indexer épisode par épisode ;
+    /// une saison entière dépasse le délai du proxy de la seedbox).
+    pub anime_episodes_per_run: usize,
     /// Nom (préfixe, insensible à la casse) de l'indexer dont on accepte les releases.
     pub indexer: String,
 }
@@ -335,6 +340,8 @@ impl Default for UnknownSeriesGrab {
             max_searches_per_run: 8,
             retry_after_hours: 72,
             grabbed_retry_hours: 168,
+            anime_episodes_per_run: 2,
+            error_retry_hours: 1,
             indexer: "C411".into(),
         }
     }

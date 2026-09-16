@@ -286,6 +286,22 @@ impl ArrClient {
         Ok(out)
     }
 
+    /// Recherche interactive d'un seul épisode. Pour un anime, Sonarr interroge l'indexer épisode par
+    /// épisode : une recherche de saison entière dépasse le délai du proxy de la seedbox (504 après 300 s).
+    pub async fn releases_for_episode(&self, episode_id: i64) -> Result<Vec<Value>> {
+        let id = episode_id.to_string();
+        let resp = self
+            .req(Method::GET, "api/v3/release")
+            .query(&[("episodeId", id.as_str())])
+            // ~200 s en pratique (tous les indexers interactifs sont interrogés) ; le proxy de la
+            // seedbox coupe à 300 s, on reste juste en dessous.
+            .timeout(std::time::Duration::from_secs(280))
+            .send()
+            .await?;
+        let v = json(resp, &format!("{} GET release (épisode)", self.name)).await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
     /// Recherche interactive d'une saison (tous les indexers en recherche interactive).
     pub async fn releases(&self, series_id: i64, season: i64) -> Result<Vec<Value>> {
         let (s, n) = (series_id.to_string(), season.to_string());

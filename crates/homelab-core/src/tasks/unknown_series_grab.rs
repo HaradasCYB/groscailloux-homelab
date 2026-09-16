@@ -178,14 +178,22 @@ pub fn choose<'a>(
 }
 
 /// Faut-il (re)chercher cette saison ?
-pub fn due(rec: Option<&SeasonSearchRecord>, now: i64, retry_h: i64, grabbed_h: i64) -> bool {
+pub fn due(
+    rec: Option<&SeasonSearchRecord>,
+    now: i64,
+    retry_h: i64,
+    grabbed_h: i64,
+    error_h: i64,
+) -> bool {
     match rec {
         None => true,
         Some(r) => {
-            let wait = if r.outcome == "grabbed" {
-                grabbed_h
-            } else {
-                retry_h
+            // une erreur (indexer indisponible, recherche trop longue) n'est pas une absence de candidat :
+            // on réessaie vite, sinon la saison reste bloquée trois jours pour un incident passager
+            let wait = match r.outcome.as_str() {
+                "grabbed" => grabbed_h,
+                "error" => error_h,
+                _ => retry_h,
             };
             now - r.at >= wait * 3600
         }
@@ -244,7 +252,42 @@ async fn process_season(
 ) -> Result<(String, String)> {
     let cfg = &ctx.cfg.tasks.unknown_series_grab;
     let title = series.get("title").and_then(Value::as_str).unwrap_or("?");
-    let releases = arr.releases(todo.series_id, todo.season).await?;
+    // Anime : Sonarr interroge l'indexer épisode par épisode. Une recherche de saison entière dépasse le
+    // délai du proxy de la seedbox (504 au bout de 300 s, saisons 2 et 3 d'Attack on Titan jamais cherchées
+    // le 2026-09-16) : on avance par petits paquets d'épisodes, les résultats sont les mêmes (packs compris).
+    let anime = series.get("seriesType").and_then(Value::as_str) == Some("anime");
+    let releases = if anime {
+        let eps = arr.episodes(todo.series_id).await?;
+        let mut ids: Vec<i64> = eps
+            .iter()
+            .filter(|e| e.get("seasonNumber").and_then(Value::as_i64) == Some(todo.season))
+            .filter(|e| {
+                e.get("episodeNumber")
+                    .and_then(Value::as_i64)
+                    .is_some_and(|n| todo.missing_numbers.contains(&n))
+            })
+            .filter_map(|e| e.get("id").and_then(Value::as_i64))
+            .collect();
+        ids.sort_unstable();
+        ids.truncate(cfg.anime_episodes_per_run);
+        let mut out: Vec<Value> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for id in ids {
+            for r in arr.releases_for_episode(id).await? {
+                let guid = r
+                    .get("guid")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if guid.is_empty() || seen.insert(guid) {
+                    out.push(r);
+                }
+            }
+        }
+        out
+    } else {
+        arr.releases(todo.series_id, todo.season).await?
+    };
     let names = names_for(ctx, series).await;
     let mut cands = Vec::new();
     for r in &releases {
@@ -380,6 +423,7 @@ async fn plan_seasons(ctx: &TaskContext, arr: &ArrClient) -> Result<Vec<SeasonTo
                 t,
                 cfg.retry_after_hours,
                 cfg.grabbed_retry_hours,
+                cfg.error_retry_hours,
             )
         })
         .collect();
@@ -722,11 +766,14 @@ mod tests {
             outcome: outcome.into(),
             detail: String::new(),
         };
-        assert!(due(None, 1000, 72, 168));
-        assert!(!due(Some(&r("none", 0)), 71 * 3600, 72, 168));
-        assert!(due(Some(&r("none", 0)), 72 * 3600, 72, 168));
-        assert!(!due(Some(&r("grabbed", 0)), 100 * 3600, 72, 168));
-        assert!(due(Some(&r("grabbed", 0)), 168 * 3600, 72, 168));
+        assert!(due(None, 1000, 72, 168, 1));
+        assert!(!due(Some(&r("none", 0)), 71 * 3600, 72, 168, 1));
+        assert!(due(Some(&r("none", 0)), 72 * 3600, 72, 168, 1));
+        assert!(!due(Some(&r("grabbed", 0)), 100 * 3600, 72, 168, 1));
+        assert!(due(Some(&r("grabbed", 0)), 168 * 3600, 72, 168, 1));
+        // une erreur ne bloque pas la saison trois jours : nouvelle tentative dans l'heure
+        assert!(!due(Some(&r("error", 0)), 1800, 72, 168, 1));
+        assert!(due(Some(&r("error", 0)), 3600, 72, 168, 1));
     }
 
     #[test]
