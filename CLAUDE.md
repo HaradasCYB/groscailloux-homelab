@@ -94,7 +94,13 @@ journalctl -u homelabd -f
   Modérateurs et phase de test (`beta_users`) dans `[chat]` ; base `state/chat.db` (sauvegardée par
   `homelabctl backup`). Mails : récapitulatif à `CHAT_ADMIN_EMAIL` (repli `GUIDE_CONTACT_EMAIL`), annonces
   aux comptes actifs ayant une adresse **valide** dans Jellyseerr (celle de Haradas y vaut `haradas`).
-  Pas de tchat dans les applis natives (Android TV, Swiftfin). **Jamais de `window.confirm/alert/prompt`** dans
+  Pas de tchat dans les applis natives (Android TV, Swiftfin).
+  **Téléviseurs** (webOS, Tizen, Android TV — détectés par l'agent, l'absence de pointeur ou ≤ 2 cœurs) :
+  boucle à 3 s au lieu de 1 s, sondages espacés (10 s ouvert / 180 s fermé), ni ombre ni animation, et les
+  bandeaux (annonce, message privé, aide à la qualité) se ferment à la touche **Retour** (keyCode 461 webOS,
+  10009 Tizen) **et** s'effacent seuls au bout de 12 s : sans pointeur, la croix est inatteignable. Mesuré le
+  2026-09-16 sur un téléviseur simulé (processeur bridé 6x) : nos scripts coûtent ~2 points de processeur sur
+  l'accueil et rien de mesurable en lecture — la lenteur vient du client webOS lui-même. **Jamais de `window.confirm/alert/prompt`** dans
   les scripts injectés : la WebView de l'appli iPhone et Jellyfin Desktop les ignorent (réponse « non » sans rien
   afficher) — le bouton Supprimer du tchat était inerte pour cette raison ; confirmer dans la page.
 - **Saccades en cours de lecture** : Jellyfin choisit **une seule qualité par session** (pas d'ABR). En « Auto »,

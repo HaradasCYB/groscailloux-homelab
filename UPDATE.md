@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.1.0](#110--16092026--la-lecture-saide-elle-même)** | 16/09/2026 | **La lecture s'aide elle-même** |
+| **[1.1.1](#111--16092026--adapté-aux-téléviseurs)** | 16/09/2026 | **Adapté aux téléviseurs** |
+| [1.1.0](#110--16092026--la-lecture-saide-elle-même) | 16/09/2026 | La lecture s'aide elle-même |
 | [1.0.0](#100--15092026--fin-de-la-bêta--une-seule-plateforme-vps--seedbox) | 12 → 15/09/2026 | Fin de la bêta : une seule plateforme VPS + seedbox |
 | [0.9.0](#090--10--11092026--la-refonte--homelabd) | 10 → 11/09/2026 | La refonte : l'automatisation réécrite en Rust (homelabd) |
 | [0.3.0](#030--août-2026-reconstitué--jellyfin-enrichi) | août 2026 | Jellyfin enrichi par les plugins |
@@ -19,6 +20,18 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.1.1 — 16/09/2026 — Adapté aux téléviseurs
+
+Sur une TV, on n'a pas de souris : un membre s'est retrouvé avec une notification qu'il ne pouvait pas fermer.
+
+- Les bandeaux (annonce, message de l'admin, aide à la qualité) se ferment maintenant avec la touche
+  **Retour** de la télécommande et s'effacent seuls au bout de douze secondes.
+- Le tchat tourne au ralenti sur ces appareils : surveillance trois fois moins fréquente, sondages espacés,
+  ni ombre portée ni animation.
+- Mesure faite sur un téléviseur simulé (processeur bridé six fois) : nos scripts coûtent environ deux points
+  de processeur sur l'accueil et rien de mesurable pendant la lecture. La lenteur de l'application vient du
+  client webOS lui-même, pas de ce qu'on y ajoute.
 
 ## 1.1.0 — 16/09/2026 — La lecture s'aide elle-même
 

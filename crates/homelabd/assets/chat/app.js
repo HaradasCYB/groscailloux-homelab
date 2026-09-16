@@ -8,7 +8,20 @@
   window.__gcChat = true;
 
   var API = '/gc-chat/api';
-  var POLL_OPEN = 5000, POLL_CLOSED = 60000, ME_OPEN = 20000;
+
+  /* Téléviseurs (LG webOS, Tizen, Android TV…) : peu de puissance et une télécommande, pas de souris.
+     On ralentit tout, on allège le rendu, et le bandeau se ferme tout seul et à la touche Retour. */
+  var TV = (function () {
+    try {
+      if (/web0?s|webos|tizen|smart-?tv|netcast|viera|bravia|hbbtv|aft[a-z]|android\s?tv|googletv|crkey/i
+        .test(navigator.userAgent || '')) return true;
+      if (window.matchMedia && matchMedia('(hover: none) and (pointer: none)').matches) return true;
+      return (navigator.hardwareConcurrency || 8) <= 2;
+    } catch (e) { return false; }
+  })();
+  var LOOP = TV ? 3000 : 1000;
+  var BANNER_AUTO = TV ? 12000 : 0; // sur TV, le bandeau disparaît seul
+  var POLL_OPEN = TV ? 10000 : 5000, POLL_CLOSED = TV ? 180000 : 60000, ME_OPEN = TV ? 30000 : 20000;
   var INTRO = {
     annonces: "Les nouvelles de Groscailloux. Seul l'admin publie ici.",
     entraide: "Une question, un souci de lecture ? Tout le monde peut répondre. Précise le titre et l'appareil.",
@@ -144,7 +157,11 @@
       '.gc-banner p{margin:0;flex:1;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}',
       '.gc-banner button{flex:none;background:none;border:0;color:#8cc4ff;cursor:pointer;font:inherit}',
       '@media (max-width:600px){.gc-panel{width:100vw;border-left:0}.gc-banner{top:4.6em}}'
-    ].join('\n');
+    ].concat(TV ? [
+      // Téléviseur : ombres portées et animations coûtent cher au compositeur, et la lecture saccade avec.
+      '.gc-banner,.gc-panel{box-shadow:none!important;transition:none!important}',
+      '.gc-banner{font-size:16px}'
+    ] : []).join('\n');
     document.head.appendChild(h('style', { id: 'gc-chat-css', text: c }));
   }
 
@@ -439,9 +456,20 @@
     ]);
     document.body.appendChild(b);
     S.el.banner = b;
+    if (BANNER_AUTO) {
+      // Télécommande : pas de pointeur pour viser la croix. Retour/Échap ferme, et sinon il s'efface seul.
+      var hide = function () { S.bannerClosed[item.key] = true; closeBanner(false); };
+      S.bannerTimer = setTimeout(hide, BANNER_AUTO);
+      S.bannerKey = function (e) {
+        if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack' || e.keyCode === 461 || e.keyCode === 10009) hide();
+      };
+      document.addEventListener('keydown', S.bannerKey, true);
+    }
   }
   function closeBanner(markAsRead) {
     var b = S.el.banner;
+    if (S.bannerTimer) { clearTimeout(S.bannerTimer); S.bannerTimer = null; }
+    if (S.bannerKey) { document.removeEventListener('keydown', S.bannerKey, true); S.bannerKey = null; }
     if (!b) return;
     if (markAsRead) api('POST', '/read', { channel: b.dataset.channel, last_id: Number(b.dataset.msg) }).then(refreshMe).catch(function () {});
     b.remove(); S.el.banner = null;
@@ -487,6 +515,6 @@
     banner();
   }
   window.addEventListener('hashchange', function () { if (S.me) { ensureButton(); banner(); } });
-  setInterval(loop, 1000);
+  setInterval(loop, LOOP);
   loop();
 })();

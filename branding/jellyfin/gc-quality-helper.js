@@ -2,18 +2,32 @@
 // d'ABR). Si la connexion faiblit, la lecture directe — qui exige le débit du fichier en continu — cale et le
 // lecteur relance le flux en boucle (constaté le 2026-09-15 : 4,7 Mbit/s demandés, 2 à 4 Mbit/s disponibles).
 // Ce script surveille la progression de l'image et, au troisième blocage en trois minutes, propose dans la
-// page de passer en qualité réduite (2 Mbit/s). Le changement passe par la commande Jellyfin
-// SetMaxStreamingBitrate : la lecture continue au même endroit et le réglage est mémorisé par l'appareil.
+// page de passer en qualité réduite (2 Mbit/s). Le changement passe par le menu du lecteur (roue crantée →
+// Qualité) : la lecture continue au même endroit et le réglage est mémorisé par l'appareil.
+// Sur téléviseur, le bandeau se ferme seul et à la touche Retour, et les relevés sont espacés.
 // Jamais de window.confirm/alert/prompt : ignorés par la WebView iPhone et Jellyfin Desktop.
 // Déposé dans JavaScript Injector (« Groscailloux Qualité ») par scripts/jellyfin-js-apply.py.
 (function (root) {
   'use strict';
 
+  /* Téléviseurs (LG webOS, Tizen, Android TV…) : peu de puissance, et une télécommande sans pointeur.
+     On surveille moins souvent, sans ombre portée, et le bandeau se ferme seul ou à la touche Retour. */
+  var TV = (function () {
+    try {
+      if (typeof navigator === 'undefined') return false;
+      if (/web0?s|webos|tizen|smart-?tv|netcast|viera|bravia|hbbtv|aft[a-z]|android\s?tv|googletv|crkey/i
+        .test(navigator.userAgent || '')) return true;
+      if (typeof window !== 'undefined' && window.matchMedia
+        && matchMedia('(hover: none) and (pointer: none)').matches) return true;
+      return (navigator.hardwareConcurrency || 8) <= 2;
+    } catch (e) { return false; }
+  })();
+
   var WINDOW_MS = 180000;   // fenêtre glissante : 3 minutes
   var MIN_STALLS = 3;       // blocages avant de proposer
   var COOLDOWN_MS = 15000;  // un même blocage n'est compté qu'une fois (≈ 30 s de gêne avant de proposer)
-  var POLL_MS = 2000;       // cadence de surveillance de l'image
-  var HIDE_MS = 25000;      // le bandeau s'efface tout seul
+  var POLL_MS = TV ? 4000 : 2000;   // cadence de surveillance de l'image
+  var HIDE_MS = TV ? 15000 : 25000; // le bandeau s'efface tout seul
   var START_GRACE_S = 10;   // les hésitations des 10 premières secondes ne comptent pas
   var BITRATE = 2000000;    // 2 Mbit/s : ~3x de marge sur un 1080p en lecture directe
 
@@ -49,7 +63,8 @@
 
   if (typeof window === 'undefined' || root !== window || !window.document) return; // tests
 
-  var stalls = [], offered = false, banner = null, hideTimer = null, watched = null, last = null, lastCount = 0;
+  var stalls = [], offered = false, banner = null, hideTimer = null, keyHandler = null,
+    watched = null, last = null, lastCount = 0;
 
   function style() {
     if (document.getElementById('gc-quality-style')) return;
@@ -64,7 +79,8 @@
       '.gc-q .gc-q-yes[disabled]{opacity:.6;cursor:default}',
       '.gc-q .gc-q-no{background:#232b3a;color:#e8edf5}',
       '.gc-q button:focus-visible{outline:2px solid #fff;outline-offset:2px}',
-      '@media (max-width:480px){.gc-q{bottom:14vh;left:.6em;right:.6em;transform:none;max-width:none}}'
+      '@media (max-width:480px){.gc-q{bottom:14vh;left:.6em;right:.6em;transform:none;max-width:none}}',
+      TV ? '.gc-q{box-shadow:none;font-size:17px}' : ''
     ].join('');
     var el = document.createElement('style');
     el.id = 'gc-quality-style';
@@ -74,8 +90,15 @@
 
   function close() {
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    if (keyHandler) { document.removeEventListener('keydown', keyHandler, true); keyHandler = null; }
     if (banner && banner.parentNode) banner.parentNode.removeChild(banner);
     banner = null;
+  }
+
+  /* Télécommande : Retour (webOS 461, Tizen 10009), Échap ou Retour arrière ferment le bandeau. */
+  function onRemoteBack(e) {
+    if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack'
+      || e.keyCode === 461 || e.keyCode === 10009) close();
   }
 
   function waitFor(test, timeout) {
@@ -150,6 +173,9 @@
     banner.appendChild(yes);
     banner.appendChild(no);
     document.body.appendChild(banner);
+    keyHandler = onRemoteBack;
+    document.addEventListener('keydown', keyHandler, true);
+    if (TV) yes.focus(); // sans pointeur, le bouton doit être atteignable à la télécommande
     hideTimer = setTimeout(close, HIDE_MS);
   }
 

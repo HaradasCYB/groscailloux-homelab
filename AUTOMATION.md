@@ -248,7 +248,7 @@ même blocage n'est compté qu'une fois par 15 s. Au 3ᵉ blocage en 3 minutes, 
 (jamais `window.confirm`) propose de réduire la qualité : il pilote le menu du lecteur (roue crantée →
 Qualité) et choisit le palier le plus haut sous 2 Mbit/s, ce qui garde la position et mémorise le choix pour
 l'appareil. Aucun réglage serveur n'est touché : pas de `RemoteClientBitrateLimit`, la lecture directe reste
-la règle. Banc d'essai : compte ordinaire temporaire, navigateur jetable, connexion bridée à 2 Mbit/s
+la règle. Sur téléviseur, les relevés passent à 4 s, le bandeau donne le focus au bouton, se ferme à la touche Retour et s'efface après 15 s. Banc d'essai : compte ordinaire temporaire, navigateur jetable, connexion bridée à 2 Mbit/s
 (`Network.emulateNetworkConditions`) — mesuré le 2026-09-16 : 4,98 → 1,56 Mbit/s, 57 s d'image par minute
 contre 15 avant.
 
