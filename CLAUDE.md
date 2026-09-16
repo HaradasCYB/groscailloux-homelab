@@ -97,6 +97,18 @@ journalctl -u homelabd -f
   Pas de tchat dans les applis natives (Android TV, Swiftfin). **Jamais de `window.confirm/alert/prompt`** dans
   les scripts injectés : la WebView de l'appli iPhone et Jellyfin Desktop les ignorent (réponse « non » sans rien
   afficher) — le bouton Supprimer du tchat était inerte pour cette raison ; confirmer dans la page.
+- **Saccades en cours de lecture** : Jellyfin choisit **une seule qualité par session** (pas d'ABR). En « Auto »,
+  un 1080p part tel quel (~5 Mbit/s) : si le débit du membre baisse, la lecture cale et jellyfin-web relance le
+  flux toutes les ~30 s (journal : « non-keyframe breaks »), ce qui aggrave le retard. Le 2026-09-15, un membre a
+  eu ce cas (4,7 Mbit/s demandés, 2 à 4 Mbit/s disponibles ; serveur à 80 % de CPU libre, fichier déjà à 93 % dans
+  le cache rclone) ; à 1,5 Mbit/s la même lecture a tenu 55 min sans une relance. Pour diagnostiquer : taille et
+  cadence des segments dans `npm/data/logs/proxy-host-1_access.log` (horodatage **UTC**), journaux ffmpeg
+  (`jellyfin/config/log/FFmpeg.*`), croissance du cache dans `journalctl -u homelab-seedbox-mount`, et
+  `docker_container_net` dans InfluxDB. Aide en place : `branding/jellyfin/gc-quality-helper.js` (JavaScript
+  Injector, « Groscailloux Qualité ») surveille la progression de l'image — les événements `waiting` ne suffisent
+  pas, hls.js les absorbe — et propose au 3ᵉ blocage de passer au palier sous 2 Mbit/s **par le menu du lecteur**
+  (roue crantée → Qualité) : la commande `SetMaxStreamingBitrate` n'est pas gérée par le client web
+  (« does not recognize ») et écrire `maxbitrate-Video-*` ne change pas la lecture en cours.
 - **« Lire sur » (diffuser vers un autre appareil)** : filtré par `branding/jellyfin/gc-cast-filter.js`
   (JavaScript Injector, déployé avec `scripts/jellyfin-js-apply.py`) : seulement ses propres appareils,
   et seulement ceux qui ont la même adresse publique que l'appareil courant (même box = même Wi-Fi ; pas en

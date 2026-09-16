@@ -19,6 +19,7 @@ PLUGIN = "f5a34f7b2e8a4e6aa7223a216a81b374"  # JavaScript Injector
 SCRIPTS = {
     "Groscailloux Tchat": "branding/jellyfin/gc-chat-loader.js",
     "Groscailloux Lire sur": "branding/jellyfin/gc-cast-filter.js",
+    "Groscailloux Qualité": "branding/jellyfin/gc-quality-helper.js",
 }
 
 env = dict(l.split("=", 1) for l in open(f"{BASE}/.env").read().splitlines() if "=" in l and not l.startswith("#"))
