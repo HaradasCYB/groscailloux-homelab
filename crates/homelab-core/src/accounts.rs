@@ -404,7 +404,7 @@ mod tests {
     fn cap_counts_active_unprotected_accounts_admins_included() {
         let mut users = vec![
             user("haradas", true, false), // protégé (casse ignorée) : hors plafond
-            user("Paul", true, false),   // admin non protégé : compté
+            user("Paul", true, false),    // admin non protégé : compté
             user("off", false, true),
         ];
         for i in 0..23 {

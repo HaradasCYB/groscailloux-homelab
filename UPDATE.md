@@ -11,13 +11,39 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.0.0](#100--15092026--fin-de-la-bêta--une-seule-plateforme-vps--seedbox)** | 12 → 15/09/2026 | **Fin de la bêta : une seule plateforme VPS + seedbox** |
+| **[1.1.0](#110--16092026--la-lecture-saide-elle-même)** | 16/09/2026 | **La lecture s'aide elle-même** |
+| [1.0.0](#100--15092026--fin-de-la-bêta--une-seule-plateforme-vps--seedbox) | 12 → 15/09/2026 | Fin de la bêta : une seule plateforme VPS + seedbox |
 | [0.9.0](#090--10--11092026--la-refonte--homelabd) | 10 → 11/09/2026 | La refonte : l'automatisation réécrite en Rust (homelabd) |
 | [0.3.0](#030--août-2026-reconstitué--jellyfin-enrichi) | août 2026 | Jellyfin enrichi par les plugins |
 | [0.2.0](#020--fin-mai-2026-reconstitué--stabilisation) | fin mai 2026 | Stabilisation |
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.1.0 — 16/09/2026 — La lecture s'aide elle-même
+
+Un membre a vu sa série saccader alors que le serveur ne peinait pas : sa connexion était descendue sous le
+débit du film. Jellyfin ne sait pas s'adapter en cours de lecture — il ne choisit sa qualité qu'au démarrage —
+et relance le flux en boucle quand le tampon se vide. La plateforme propose désormais la solution elle-même.
+
+### Pour les membres
+
+- **Bandeau d'aide dans le lecteur** : quand l'image se fige trois fois en trois minutes, un bandeau propose de
+  réduire la qualité. Un clic et le film repart au même endroit, sans rechargement ; le choix est retenu pour
+  cet appareil. Mesuré sur une connexion bridée à 2 Mbit/s : 4,98 → 1,56 Mbit/s, et 57 s d'image par minute au
+  lieu de 15.
+- **Guide complété** : une section « Ça saccade ? » explique ce que fait « Auto », pourquoi une lecture directe
+  réclame environ 5 Mbit/s en continu, et comment fixer la qualité à la main. PDF régénéré.
+- Aucun plafond de débit n'est imposé côté serveur : la lecture directe et la qualité maximale restent la règle.
+
+### Pour l'administration
+
+- **Diagnostic outillé** : la panne a été reconstituée à partir de la taille et de la cadence des segments dans
+  les journaux du proxy, des journaux ffmpeg et de la croissance du cache rclone — méthode notée dans CLAUDE.md.
+- **Métrique réseau corrigée** : Telegraf mesurait le trafic de son propre conteneur (~20 ko/30 s) et non celui
+  du serveur ; il tourne désormais dans l'espace réseau de l'hôte et les compteurs correspondent au système.
+- Banc d'essai reproductible : compte ordinaire temporaire, navigateur jetable et connexion bridée, sans aucune
+  écriture sur la production.
 
 ## 1.0.0 — 15/09/2026 — Fin de la bêta : une seule plateforme VPS + seedbox
 
