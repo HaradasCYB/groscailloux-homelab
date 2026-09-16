@@ -405,7 +405,13 @@ services:
     cpu_shares: 512           # tâche de fond : cède le CPU à jellyfin
 
   telegraf:
-    <<: *base
+    # Pas de `<<: *base` ici : `network_mode: host` et `networks:` s'excluent. L'espace réseau de l'hôte est
+    # nécessaire pour que [[inputs.net]] mesure les interfaces du serveur : /hostfs/proc/net pointe sur
+    # /proc/self/net, donc sur l'espace réseau du conteneur, et le graphe ne montrait que le trafic de
+    # telegraf lui-même (~20 ko/30 s). InfluxDB est alors joint par 127.0.0.1:8086 (port déjà publié).
+    restart: unless-stopped
+    logging: *logging
+    network_mode: host
     image: telegraf:1.38.3@sha256:88eb354ac9926d70791b70558d69644b527b3c7e6f02c2af9165038a3e306a6d
     container_name: telegraf
     group_add:

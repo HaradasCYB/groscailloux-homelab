@@ -13,7 +13,7 @@
   omit_hostname = false
 
 [[outputs.influxdb_v2]]
-  urls = ["http://influxdb:8086"]
+  urls = ["http://127.0.0.1:8086"]   # telegraf est en network_mode: host
   token = "${INFLUX_TOKEN}"
   organization = "homelab"
   bucket = "metrics"
