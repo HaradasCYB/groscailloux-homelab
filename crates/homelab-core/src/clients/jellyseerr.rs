@@ -38,6 +38,15 @@ impl JellyseerrClient {
         json(resp, "jellyseerr tv").await
     }
 
+    pub async fn movie_details(&self, tmdb_id: i64) -> Result<Value> {
+        let resp = self
+            .req(Method::GET, &format!("api/v1/movie/{tmdb_id}"))
+            .query(&[("language", "fr")])
+            .send()
+            .await?;
+        json(resp, "jellyseerr movie").await
+    }
+
     pub async fn status(&self) -> Result<Value> {
         let resp = self.req(Method::GET, "api/v1/status").send().await?;
         json(resp, "jellyseerr status").await

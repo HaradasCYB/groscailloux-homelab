@@ -1,6 +1,7 @@
 //! Une tâche = un ancien script bash. `registry()` liste celles que le scheduler
 //! planifie ; `find()` sert à `homelabctl run <nom>`.
 
+pub mod anime_library;
 pub mod auto_import;
 pub mod backup;
 pub mod cleanup;
@@ -66,6 +67,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(series_search::SeriesSearch),
         Box::new(movie_search::MovieSearch),
         Box::new(indexer_unblock::IndexerUnblock),
+        Box::new(anime_library::AnimeLibrary),
         Box::new(deletion_cleanup::DeletionCleanup),
         Box::new(trending::Trending),
         Box::new(playback_limit::PlaybackLimit),

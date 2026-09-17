@@ -38,6 +38,7 @@ fn label(task: &str) -> &'static str {
         "series_search" => "Recherche des séries (TMDB)",
         "movie_search" => "Rattrapage des films (TMDB)",
         "indexer_unblock" => "Déblocage des indexeurs",
+        "anime_library" => "Rangement des animés",
         "deletion_cleanup" => "Suppressions Jellyfin",
         "trending" => "Tendances de l'accueil",
         "monitor_sync" => "Saisons demandées",

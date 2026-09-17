@@ -77,6 +77,8 @@ c411_min_seed_days = 7
 vps_paths = [
   ["/movies", "/opt/homelab/library/media/movies", "/media/movies"],
   ["/tv", "/opt/homelab/library/media/tvshows", "/media/tvshows"],
+  ["/anime-films", "/opt/homelab/library/media/anime-films", "/media/anime-films"],
+  ["/anime", "/opt/homelab/library/media/anime", "/media/anime"],
 ]
 
 [tasks.trending]
@@ -122,6 +124,20 @@ retry_after_hours = 72
 error_retry_hours = 1
 query_gap_secs = 15
 indexer = "C411"
+
+[tasks.anime_library]
+# Animation japonaise (classement TMDB, tags manuels `anime` / `pas-anime` prioritaires) rangée dans les
+# bibliothèques « Anime » et « Films d'animation » : tag `anime` + déplacement par l'éditeur de l'Arr.
+# Jamais ressortie automatiquement. `only_tmdb` = essai limité à ces identifiants (vide = tous).
+interval_secs = 1800
+max_moves_per_run = 5
+max_lookups_per_run = 150
+recheck_days = 30
+vps_series_root = "/anime"
+vps_movies_root = "/anime-films"
+seedbox_series_root = "/home/kakaouette/media/Anime"
+seedbox_movies_root = "/home/kakaouette/media/Anime Movies"
+only_tmdb = []
 
 [tasks.indexer_unblock]
 # Indexeurs mis en pause par Sonarr/Radarr (429, délais) : pause levée dans leur base (application

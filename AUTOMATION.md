@@ -139,6 +139,39 @@ déblocage est signalé par mail (`CHAT_ADMIN_EMAIL`). homelabd est cloisonné (
 Premier passage le 2026-09-17 : C411 (Sonarr seedbox, niveau 9, bloqué jusqu'à 21 h 33) et U2P, WorldTorrent,
 JK-nortorrent (Sonarr VPS) remis en service.
 
+### anime_library — 30 min
+Range l'**animation japonaise** dans deux bibliothèques Jellyfin dédiées : « Anime » (séries : `/media/anime` +
+`/seedbox/media/Anime`) et « Films d'animation » (films : `/media/anime-films` + `/seedbox/media/Anime Movies`).
+Dossiers racines des Arrs : `/anime` et `/anime-films` sur le VPS (liens de `sonarr|radarr/config/custom-cont-init.d/symlinks.sh`
+vers `/data/media/anime*`), `~/media/Anime` et `~/media/Anime Movies` sur la seedbox.
+
+- **Classement** (`homelab_core::anime`) : fiche TMDB lue par Jellyseerr (`tv/{id}`, `movie/{id}`), en cache
+  `recheck_days` (30 ; 1 jour pour une fiche introuvable) dans `anime_class`. Anime = genre Animation (16) **et**
+  origine japonaise (langue `ja`, ou pays `JP` seul / majoritaire en japonais), ou Animation + mot-clé `anime`
+  sans autre langue. Le type « anime » de Sonarr n'est **pas** utilisé (*Bleach*, *Re:Zero*, *FMA: Brotherhood*
+  y étaient en « standard ») ; les prises de vues réelles japonaises et l'animation américaine, chinoise ou
+  française restent dans Séries/Films. Tags manuels prioritaires : `anime` ⇒ rangé, `pas-anime` ⇒ jamais déplacé.
+- **Déplacement** : fiche hors du dossier anime classée anime, sans téléchargement en cours ni fichier en lecture
+  dans Jellyfin (`Sessions` : `en_lecture`, passage suivant ; Jellyfin injoignable ⇒ rien) ⇒ tag `anime` +
+  `PUT series/editor` ou `movie/editor` (`rootFolderPath`, `moveFiles`) ; renommage sur le même disque, hardlinks
+  et torrents intacts. Au plus `max_moves_per_run` (5) par passage, `max_lookups_per_run` (150) fiches TMDB lues.
+  Puis attente des commandes de déplacement (4 min au plus), `vfs/refresh` rclone de l'ancien et du nouveau
+  dossier (seedbox) et `Library/Media/Updated` pour Jellyfin. Le déplacement est noté dans `anime_moves` avant
+  l'appel : `deletion_cleanup` ignore la fiche pendant 6 h.
+- **Jamais dans l'autre sens** : une fiche du dossier anime classée non-anime est seulement signalée
+  (`a_verifier`) ; fiche sans identifiant TMDB : `inconnu`, laissée en place.
+- **Jellyfin après un déplacement** : côté VPS la surveillance en temps réel suffit (la fiche passe de bibliothèque
+  en une minute) ; côté **seedbox** (montage rclone), `Library/Media/Updated` rafraîchit l'ancienne fiche sans créer
+  la nouvelle : le titre disparaît de Séries/Films et n'apparaît dans Anime qu'à l'analyse de la médiathèque (05 h).
+  La réidentification peut se tromper (le 2026-09-17 : *L'Attaque des Titans* → spin-off, *Slime* → *Slime
+  Diaries*) : comparer `ProviderIds.Tmdb` des bibliothèques Anime / Films d'animation au `tmdbId` de l'Arr.
+- `only_tmdb` limite la tâche à quelques titres (essai) ; l'essai à blanc lit tout et liste tout sans plafond.
+- Migration du 2026-09-17 : 27 fiches (23 séries, 4 films) en 5 lots, `deletion_cleanup` suspendu, tailles et
+  nombres de fichiers identiques avant/après (Arr et disque), aucune suppression dans l'historique des Arrs ;
+  pilote avec un compte ordinaire temporaire : épisode vu et reprises conservés.
+- Nouvelles demandes : Jellyseerr range déjà les séries qu'il reconnaît comme animés (`activeAnimeDirectory`,
+  `animeTags` des serveurs Sonarr) ; la tâche rattrape le reste et les films.
+
 ### seedbox_refresh — 5 min (si `[seedbox] enabled`)
 Lit l'historique `downloadFolderImported` (eventType 3) des Radarr/Sonarr de la seedbox depuis le
 dernier id traité (`state.seedbox_history` ; la première passe initialise le curseur sans rejouer).

@@ -189,6 +189,17 @@ struct Title {
     files: Vec<FileRef>,
 }
 
+/// Fiche déplacée par `anime_library` depuis moins de `MOVE_GRACE_SECS`.
+fn recently_moved(moves: &BTreeMap<String, i64>, side: &str, t: &Title, now: i64) -> bool {
+    let kind = match t.kind {
+        Kind::Movie => "movie",
+        Kind::Series { .. } => "series",
+    };
+    moves
+        .get(&format!("{side}:{kind}:{}", t.id))
+        .is_some_and(|at| now - at < super::anime_library::MOVE_GRACE_SECS)
+}
+
 fn str_of(v: &Value, k: &str) -> Option<String> {
     v.get(k)
         .and_then(Value::as_str)
@@ -196,7 +207,7 @@ fn str_of(v: &Value, k: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn side_maps(ctx: &TaskContext, side: &str) -> Vec<PathMap> {
+pub(crate) fn side_maps(ctx: &TaskContext, side: &str) -> Vec<PathMap> {
     if side == "vps" {
         ctx.cfg
             .tasks
@@ -249,7 +260,7 @@ async fn seedbox_mount_ok(ctx: &TaskContext) -> bool {
 }
 
 /// Invalide le cache de répertoires rclone pour les dossiers parents d'un fichier (relatifs au montage).
-async fn rclone_refresh(ctx: &TaskContext, host: &std::path::Path) {
+pub(crate) async fn rclone_refresh(ctx: &TaskContext, host: &std::path::Path) {
     let mp = &ctx.cfg.seedbox.mount_point;
     let Ok(rel) = host.strip_prefix(mp) else {
         return;
@@ -816,6 +827,12 @@ impl Task for DeletionCleanup {
                     continue;
                 }
             };
+            // fiches rangées par anime_library il y a peu : un déplacement n'est pas une suppression
+            let moves = ctx.state.read(|s| s.anime_moves.clone()).await;
+            let titles: Vec<Title> = titles
+                .into_iter()
+                .filter(|t| !recently_moved(&moves, side.name, t, now))
+                .collect();
             let prefix = format!("{}:", side.name);
             let keys: BTreeSet<String> = titles
                 .iter()
@@ -942,6 +959,38 @@ mod tests {
         assert_eq!(j, "/seedbox/media/Movies/Y/y.mkv");
         assert!(map_path(&maps(), "/moviesX/a.mkv").is_none());
         assert!(map_path(&maps(), "/tv/a.mkv").is_none());
+    }
+
+    #[test]
+    fn titles_moved_by_anime_library_are_left_alone() {
+        let t = |kind: Kind, id: i64| Title {
+            kind,
+            id,
+            tmdb: 1,
+            name: "x".into(),
+            files: vec![],
+        };
+        let now = 1_000_000;
+        let moves: BTreeMap<String, i64> = [
+            ("seedbox:series:7".to_string(), now - 60),
+            ("vps:movie:3".to_string(), now - 7 * 3600),
+        ]
+        .into_iter()
+        .collect();
+        let series = |id| {
+            t(
+                Kind::Series {
+                    tvdb: 1,
+                    total_files: 1,
+                },
+                id,
+            )
+        };
+        assert!(recently_moved(&moves, "seedbox", &series(7), now));
+        assert!(!recently_moved(&moves, "vps", &series(7), now));
+        assert!(!recently_moved(&moves, "seedbox", &t(Kind::Movie, 7), now));
+        // déplacé il y a plus de 6 h : suivi normal
+        assert!(!recently_moved(&moves, "vps", &t(Kind::Movie, 3), now));
     }
 
     #[test]

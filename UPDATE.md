@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.3.0](#130--17092026--recherche-par-identifiant-et-indexeurs-toujours-disponibles)** | 17/09/2026 | **Recherche par identifiant et indexeurs toujours disponibles** |
+| **[1.4.0](#140--17092026--les-menus-anime-et-films-danimation)** | 17/09/2026 | **Les menus Anime et Films d'animation** |
+| [1.3.0](#130--17092026--recherche-par-identifiant-et-indexeurs-toujours-disponibles) | 17/09/2026 | Recherche par identifiant et indexeurs toujours disponibles |
 | [1.2.0](#120--17092026--les-séries-aux-titres-traduits) | 17/09/2026 | Les séries aux titres traduits |
 | [1.1.1](#111--16092026--adapté-aux-téléviseurs) | 16/09/2026 | Adapté aux téléviseurs |
 | [1.1.0](#110--16092026--la-lecture-saide-elle-même) | 16/09/2026 | La lecture s'aide elle-même |
@@ -22,6 +23,21 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.4.0 — 17/09/2026 — Les menus Anime et Films d'animation
+
+Beaucoup d'animés vont arriver : ils avaient besoin de leur propre place, sans se mélanger aux autres séries.
+
+- **Deux nouveaux menus** dans Jellyfin : **Anime** (séries) et **Films d'animation**, pour l'animation
+  japonaise. Les autres dessins animés (américains, chinois, français) et les séries japonaises en prises de vues
+  réelles restent dans Séries et Films.
+- **Rangement automatique et sans erreur** : le classement s'appuie sur la fiche TMDB de chaque titre (genre
+  Animation et origine japonaise), pas sur le type « anime » de Sonarr, qui manquait la moitié des animés. Un
+  animé demandé arrive directement au bon endroit ; ce qui passe à travers est rangé dans la demi-heure, jamais
+  pendant qu'on le regarde. L'admin peut forcer un titre dans un sens ou dans l'autre avec un tag.
+- **27 titres déjà présents rangés** (23 séries, 4 films), sans perte de fichier : l'historique, les épisodes vus
+  et les reprises sont conservés. Deux séries rattachées à la mauvaise fiche par Jellyfin après le déplacement
+  ont été ré-identifiées.
 
 ## 1.3.0 — 17/09/2026 — Recherche par identifiant et indexeurs toujours disponibles
 

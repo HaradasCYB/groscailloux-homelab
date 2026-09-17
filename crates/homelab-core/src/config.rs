@@ -216,6 +216,7 @@ pub struct Tasks {
     pub series_search: SeriesSearch,
     pub movie_search: MovieSearch,
     pub indexer_unblock: IndexerUnblock,
+    pub anime_library: AnimeLibrary,
     pub deletion_cleanup: DeletionCleanup,
     pub trending: Trending,
     pub playback_limit: PlaybackLimit,
@@ -310,6 +311,16 @@ impl Default for DeletionCleanup {
                     "/opt/homelab/library/media/tvshows".into(),
                     "/media/tvshows".into(),
                 ],
+                [
+                    "/anime-films".into(),
+                    "/opt/homelab/library/media/anime-films".into(),
+                    "/media/anime-films".into(),
+                ],
+                [
+                    "/anime".into(),
+                    "/opt/homelab/library/media/anime".into(),
+                    "/media/anime".into(),
+                ],
             ],
         }
     }
@@ -380,6 +391,42 @@ impl Default for MovieSearch {
             error_retry_hours: 1,
             query_gap_secs: 15,
             indexer: "C411".into(),
+        }
+    }
+}
+
+/// Rangement de l'animation japonaise dans les dossiers « Anime » et « Films d'animation » (voir `tasks::anime_library`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct AnimeLibrary {
+    pub interval_secs: u64,
+    /// Fiches déplacées au plus par passage (tous Arrs confondus).
+    pub max_moves_per_run: usize,
+    /// Fiches TMDB lues au plus par passage (le reste attend le passage suivant).
+    pub max_lookups_per_run: usize,
+    /// Classement mis en cache, revu après N jours (1 jour pour une fiche introuvable).
+    pub recheck_days: i64,
+    /// Dossiers racines vus par les Arrs du VPS et de la seedbox.
+    pub vps_series_root: String,
+    pub vps_movies_root: String,
+    pub seedbox_series_root: String,
+    pub seedbox_movies_root: String,
+    /// Essai : seuls ces identifiants TMDB sont traités (vide = tous).
+    pub only_tmdb: Vec<i64>,
+}
+
+impl Default for AnimeLibrary {
+    fn default() -> Self {
+        Self {
+            interval_secs: 1800,
+            max_moves_per_run: 5,
+            max_lookups_per_run: 150,
+            recheck_days: 30,
+            vps_series_root: "/anime".into(),
+            vps_movies_root: "/anime-films".into(),
+            seedbox_series_root: "/home/kakaouette/media/Anime".into(),
+            seedbox_movies_root: "/home/kakaouette/media/Anime Movies".into(),
+            only_tmdb: Vec::new(),
         }
     }
 }
@@ -1002,7 +1049,7 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.playback_limit.grace_secs, 30);
         assert!(!cfg.accounts.new_accounts_premium);
         assert_eq!(cfg.accounts.protected.len(), 2);
-        assert_eq!(cfg.tasks.deletion_cleanup.vps_paths.len(), 2);
+        assert_eq!(cfg.tasks.deletion_cleanup.vps_paths.len(), 4);
         assert_eq!(cfg.tasks.deletion_cleanup.c411_min_seed_days, 7);
         assert_eq!(cfg.tasks.trending.size, 10);
     }

@@ -145,6 +145,19 @@ journalctl -u homelabd -f
   rattaché au spin-off *Junior High School* (TVDB 299882) alors que Sonarr avait la bonne fiche (267440) —
   `POST /Items/RemoteSearch/Series` (ProviderIds Tvdb), `Apply` (peut dépasser 3 min, vérifier ensuite plutôt que
   relancer) puis `Refresh` récursif en `FullRefresh` + `ReplaceAllMetadata` pour rattacher tous les épisodes.
+- **Animés** : bibliothèques Jellyfin « Anime » (séries) et « Films d'animation » (films), dossiers `/anime` et
+  `/anime-films` (VPS), `Anime` et `Anime Movies` (seedbox), rangés par `anime_library` d'après **TMDB** (genre
+  Animation + origine japonaise), jamais d'après le type « anime » de Sonarr. Forcer : tag `anime` ou `pas-anime`
+  dans l'Arr. Tout déplacement en masse hors de cette tâche : `deletion_cleanup` dans `tasks.disabled` pendant ce
+  temps. Ids Jellyfin : Anime `0c41907140d802bb58430fed7e2cd79e`, Films d'animation `bebdce85c5b682ddbce0412f41cff060`
+  (dans `JELLYFIN_LIB_EXTRA` et les `EnabledFolders` des comptes ; ordre du menu `OrderedViews` : Films, Séries, Anime, Films
+  d'animation, Collections, posé à la création du compte) ; Jellyseerr : les 4 bibliothèques activées,
+  `activeAnimeDirectory` + `animeTags` des deux Sonarr sur le dossier et le tag anime. **Une bibliothèque Jellyfin
+  créée par l'API reste vide**, et **un déplacement sur la seedbox n'apparaît pas** dans la nouvelle bibliothèque,
+  tant que l'analyse complète de la médiathèque n'est pas passée (ni `Items/{id}/Refresh`, ni
+  `Library/Media/Updated`, ni un redémarrage ; vu le 2026-09-17, analyse de 65 à 315 s) : ranger en masse
+  **avant 13 h**, ou attendre l'analyse de 05 h. Après une réidentification, vérifier les `ProviderIds` contre
+  l'Arr : le 2026-09-17, *L'Attaque des Titans* est repartie sur son spin-off et *Slime* sur *Slime Diaries*.
 - **Historique Arr** : `GET history?movieId=` / `?seriesId=` n'existe pas, le filtre est ignoré et tout
   l'historique revient. Utiliser `history/movie?movieId=` et `history/series?seriesId=` (seul `downloadId`
   filtre vraiment `GET history`).

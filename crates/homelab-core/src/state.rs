@@ -45,12 +45,26 @@ pub struct State {
     pub indexer_app_restarts: BTreeMap<String, i64>,
     #[serde(default)]
     pub indexer_alerts: BTreeMap<String, i64>,
+    /// anime_library : classement TMDB en cache, clé `tv:<tmdb>` / `movie:<tmdb>` → (date, classe).
+    #[serde(default)]
+    pub anime_class: BTreeMap<String, AnimeClassRecord>,
+    /// anime_library : fiches déplacées, clé `côté:movie:<id>` / `côté:series:<id>` → date ;
+    /// deletion_cleanup les laisse tranquilles quelques heures.
+    #[serde(default)]
+    pub anime_moves: BTreeMap<String, i64>,
     /// Comptes suspendus : permissions Jellyseerr à restaurer, clé = id Jellyfin.
     #[serde(default)]
     pub accounts: BTreeMap<String, AccountRecord>,
     /// deletion_cleanup : suppressions constatées et torrents en attente de retrait.
     #[serde(default)]
     pub deletions: Deletions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnimeClassRecord {
+    pub at: i64,
+    /// `anime`, `not_anime` ou `unknown`.
+    pub class: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

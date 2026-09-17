@@ -213,6 +213,9 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
     {
         warn!(task = "onboard", username = %req.username, error = %e, "policy not applied, fix in Jellyfin dashboard");
     }
+    if let Err(e) = ctx.jellyfin.set_view_order(&jf_id, &libraries).await {
+        warn!(task = "onboard", username = %req.username, error = %e, "library order not applied");
+    }
     result.jellyfin_id = jf_id.clone();
 
     let imported = ctx.jellyseerr.import_from_jellyfin(&[&jf_id]).await?;

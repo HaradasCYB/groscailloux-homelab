@@ -303,6 +303,29 @@ impl JellyfinClient {
         check(resp, "jellyfin Users/{id}/Policy").await.map(|_| ())
     }
 
+    /// Ordre des bibliothèques dans le menu d'un compte (`OrderedViews`) ; sans lui, Jellyfin les trie par nom
+    /// et « Anime » passerait avant « Films ».
+    pub async fn set_view_order(&self, user_id: &str, libraries: &[String]) -> Result<()> {
+        let resp = self
+            .req(Method::GET, &format!("Users/{user_id}"))
+            .send()
+            .await?;
+        let user = json(resp, "jellyfin Users/{id}").await?;
+        let mut cfg = user
+            .get("Configuration")
+            .cloned()
+            .context("compte Jellyfin sans Configuration")?;
+        cfg["OrderedViews"] = json!(libraries);
+        let resp = self
+            .req(Method::POST, &format!("Users/{user_id}/Configuration"))
+            .json(&cfg)
+            .send()
+            .await?;
+        check(resp, "jellyfin Users/{id}/Configuration")
+            .await
+            .map(|_| ())
+    }
+
     /// Signale des fichiers nouveaux : Jellyfin ne scanne que leurs dossiers, pas la bibliothèque.
     pub async fn media_updated(&self, paths: &[String]) -> Result<()> {
         let updates: Vec<Value> = paths
@@ -334,6 +357,24 @@ impl JellyfinClient {
                     .count()
             })
             .unwrap_or(0))
+    }
+
+    /// Chemins des fichiers en cours de lecture (sessions actives depuis 5 min).
+    pub async fn playing_paths(&self) -> Result<Vec<String>> {
+        let resp = self
+            .req(Method::GET, "Sessions")
+            .query(&[("activeWithinSeconds", "300")])
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin Sessions").await?;
+        Ok(v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.pointer("/NowPlayingItem/Path").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 }
 
