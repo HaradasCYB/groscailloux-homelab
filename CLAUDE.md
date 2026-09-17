@@ -37,6 +37,14 @@ journalctl -u homelabd -f
 - **qBittorrent.conf** : arrêter le conteneur avant d'éditer, sinon il écrase le fichier.
 - **Jamais de purge globale** de queue ou de torrents : toute suppression est ciblée et
   plafonnée (`max_actions_per_run`), c'est un invariant des tâches `stuck_handler`/`disk_pressure`.
+- **Une saison entière en une requête** : sans pack, `series_search` prend **une release par épisode manquant**
+  dans le même lot de résultats (`choose_episodes`, plafond `max_grabs_per_season` 20), puis reprend 15 min
+  après. Avant, c'était un épisode toutes les 2 h : 22 h pour une saison de 11 épisodes (BLACK TORCH, le
+  2026-09-17).
+- **Deux clés C411, deux compteurs** (`homelab_core::indexer`) : indexers Prowlarr « C411 » et « C411 (2) »,
+  `[indexers] c411_max_per_hour` = 40 **par clé** (80/h au total), `manual_reserve` 10 pour `/recherche`. Une
+  clé qui répond 429 est mise de côté `cooldown_after_429_mins` (15) et la requête repart **aussitôt sur
+  l'autre** : tant qu'une clé répond, rien ne s'arrête. La clé RSS des Arrs est la deuxième (`C411_RSS_API_KEY`).
 - **Aucune recherche depuis Sonarr/Radarr** : C411 y est en **RSS seulement** (`enableAutomaticSearch` et
   `enableInteractiveSearch` à `false` sur les 4 Arrs, depuis le 2026-09-17). Un bouton « Search » sur une saison
   d'animé interrogeait C411 épisode par épisode : 30 requêtes d'un coup, « API Request Limit reached, disabled

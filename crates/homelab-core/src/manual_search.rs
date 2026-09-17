@@ -373,63 +373,47 @@ pub async fn run(
     let mut notes = Vec::new();
     let mut raw: Vec<(String, Value)> = Vec::new();
 
-    match prow.indexer_id(&cfg.c411_indexer).await? {
-        None => notes.push(format!("{} absent de Prowlarr", cfg.c411_indexer)),
-        Some(_) if tmdb <= 0 => {
-            notes.push("fiche sans identifiant TMDB : C411 non interrogé".into())
-        }
-        Some(id) => {
-            if crate::budget::take(ctx, true).await? {
-                match prow.search_by_tmdb(tmdb, season, id).await {
-                    Ok(list) => {
-                        let n = list.len();
-                        raw.extend(
-                            list.into_iter()
-                                .filter(|r| r.get("tmdbId").is_none() || tmdb_matches(r, tmdb))
-                                .map(|r| (cfg.c411_indexer.clone(), r)),
-                        );
-                        notes.push(format!(
-                            "{} : {n} release(s) par identifiant",
-                            cfg.c411_indexer
-                        ));
-                    }
-                    Err(e) => notes.push(format!(
-                        "{} indisponible ({e:#}) : indexeur en pause ou limite atteinte",
-                        cfg.c411_indexer
-                    )),
-                }
-            } else {
+    if tmdb <= 0 {
+        notes.push("fiche sans identifiant TMDB : recherche par titre seulement".into());
+    } else {
+        match crate::indexer::search_tmdb(ctx, prow, tmdb, season, true).await {
+            Ok(Some(list)) => {
+                let n = list.len();
+                raw.extend(
+                    list.into_iter()
+                        .filter(|r| r.get("tmdbId").is_none() || tmdb_matches(r, tmdb))
+                        .map(|r| (cfg.c411_indexer.clone(), r)),
+                );
                 notes.push(format!(
-                    "plafond de {} requêtes C411 par heure atteint : réessayer plus tard",
-                    ctx.cfg.indexers.c411_max_per_hour
+                    "{} : {n} release(s) par identifiant",
+                    cfg.c411_indexer
                 ));
             }
+            Ok(None) => notes.push(format!(
+                "plafond de {} requêtes par heure et par clé atteint : réessayer plus tard",
+                ctx.cfg.indexers.c411_max_per_hour
+            )),
+            Err(e) => notes.push(format!("{} indisponible ({e:#})", cfg.c411_indexer)),
         }
     }
 
     // repli : rien par identifiant → titres de la fiche en texte libre (même indexer, même budget)
     if raw.is_empty() {
-        if let Some(id) = prow.indexer_id(&cfg.c411_indexer).await? {
-            for name in text_names(&item, cfg.text_queries) {
-                if !crate::budget::take(ctx, true).await? {
-                    notes.push(
-                        "plafond horaire atteint : recherche en texte libre abandonnée".into(),
-                    );
+        for name in text_names(&item, cfg.text_queries) {
+            match crate::indexer::search_text(ctx, prow, &name, 100, true).await {
+                Ok(Some(list)) => {
+                    notes.push(format!(
+                        "{} « {name} » : {} release(s)",
+                        cfg.c411_indexer,
+                        list.len()
+                    ));
+                    raw.extend(list.into_iter().map(|r| (cfg.c411_indexer.clone(), r)));
+                }
+                Ok(None) => {
+                    notes.push("plafond horaire atteint : recherche par titre abandonnée".into());
                     break;
                 }
-                match prow.search(&name, id, 100).await {
-                    Ok(list) => {
-                        notes.push(format!(
-                            "{} « {name} » : {} release(s)",
-                            cfg.c411_indexer,
-                            list.len()
-                        ));
-                        raw.extend(list.into_iter().map(|r| (cfg.c411_indexer.clone(), r)));
-                    }
-                    Err(e) => {
-                        notes.push(format!("{} « {name} » : erreur ({e:#})", cfg.c411_indexer))
-                    }
-                }
+                Err(e) => notes.push(format!("{} « {name} » : erreur ({e:#})", cfg.c411_indexer)),
             }
         }
     }

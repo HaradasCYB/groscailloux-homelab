@@ -105,8 +105,10 @@ max_actions_per_run = 5
 # de C411 et bloquaient l'indexeur jusqu'à 24 h. Release confiée à Sonarr (release/push) ; refus
 # d'identification ou indexeur bloqué → qBittorrent avec l'étiquette homelab:series=<id>.
 interval_secs = 600         # 10 min : une demande part dans les minutes qui suivent
-max_queries_per_run = 2     # requêtes C411 au plus par passage (12/h : quota C411 partagé avec les 4 Arrs, 429 vers 50/h)
-query_gap_secs = 15         # écart minimal entre deux requêtes C411
+max_queries_per_run = 6     # requêtes au plus par passage (36/h au pire, sous le plafond par clé)
+query_gap_secs = 5          # écart minimal entre deux requêtes
+max_grabs_per_season = 20   # saison sans pack : tous les épisodes manquants pris dans le même passage
+episode_retry_mins = 15     # puis reprise 15 min après (le temps de l'import), au lieu de 2 h
 retry_after_hours = 24      # saison sans candidat : nouvelle recherche le lendemain
 grabbed_retry_hours = 168   # saison prise mais encore manquante : après 7 jours
 error_retry_hours = 1       # erreur (indexeur indisponible, délai dépassé) : nouvelle tentative dans l'heure
@@ -117,12 +119,12 @@ prowlarr_url_for_arrs = "http://prowlarr:9696"  # Prowlarr vu des conteneurs Son
 [tasks.movie_search]
 # Rattrapage des films suivis encore manquants 24 h après l'ajout, par identifiant TMDB chez C411
 # (la recherche de Radarr, qui marche par identifiant, reste la voie normale).
-interval_secs = 3600
-max_per_run = 1
+interval_secs = 900
+max_per_run = 3
 missing_hours = 24
 retry_after_hours = 72
 error_retry_hours = 1
-query_gap_secs = 15
+query_gap_secs = 5
 indexer = "C411"
 
 [tasks.anime_library]
@@ -241,8 +243,9 @@ jellyseerr_view_requests = true
 # C411 est le SEUL indexer, dans les 4 Arrs comme dans Prowlarr (les indexers publics et Jackett ont été
 # retirés le 2026-09-17 : ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes
 # et remplissaient le journal d'erreurs). Un seul compteur horaire pour tout ce qui l'interroge.
-c411_max_per_hour = 20        # limite de C411 vers 50/h (partagée avec les Arrs), Prowlarr coupe à 30/h
-manual_reserve = 6            # requêtes gardées pour la page /recherche : les tâches s'arrêtent à 14/h
+c411_max_per_hour = 40        # PAR CLÉ (deux clés = 80/h) ; Prowlarr coupe à 45/h par indexer
+cooldown_after_429_mins = 15  # clé qui prend un 429 : mise de côté, tout continue sur l'autre
+manual_reserve = 10           # requêtes gardées pour la page /recherche
 allow_no_french = true        # release sans français (VO) prise en dernier recours, si rien de français
 max_gb_per_episode = 6.0      # au-delà, écartée du choix automatique (reste visible sur la page)
 max_gb_per_movie = 25.0

@@ -146,6 +146,12 @@ Les recherches passent par Prowlarr, avec l'autre clé, sous le budget commun ci
 toutes les 5 min et lève une pause 15 min après le dernier échec (10 fois par jour au plus).
 
 ### Budget de l'indexer (commun)
+`homelab_core::indexer` : deux clés déclarées dans Prowlarr, un compteur horaire **par clé**
+(`c411_max_per_hour`, 40), `manual_reserve` (10) gardées pour `/recherche`, bascule immédiate sur l'autre clé
+si l'une répond 429 (mise de côté `cooldown_after_429_mins`). `search_tmdb` et `search_text` sont les deux
+seules portes d'entrée : tâches et page passent par elles.
+
+### Ancien budget (remplacé)
 `homelab_core::budget` : un seul compteur horaire glissant (`state.c411_queries`) pour `series_search`,
 `movie_search` et la page `/recherche`. `[indexers] c411_max_per_hour` (20) moins `manual_reserve` (6) pour les
 tâches de fond, la réserve restant à la page. Avant le 2026-09-17, chacun avait son plafond (12/h, 1/h, 6/h)

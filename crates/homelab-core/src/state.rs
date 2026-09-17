@@ -52,10 +52,14 @@ pub struct State {
     /// deletion_cleanup les laisse tranquilles quelques heures.
     #[serde(default)]
     pub anime_moves: BTreeMap<String, i64>,
-    /// Dates (secondes) des requêtes envoyées à C411, tous usages confondus : plafond horaire commun
-    /// aux tâches et à la page /recherche.
-    #[serde(default, alias = "manual_search_queries")]
-    pub c411_queries: Vec<i64>,
+    /// Dates (secondes) des requêtes envoyées à l'indexer, **par clé** : plafond horaire commun aux
+    /// tâches et à la page /recherche.
+    /// (Nouveau format : l'ancien champ `c411_queries`, une simple liste, est ignoré.)
+    #[serde(default)]
+    pub c411_key_queries: BTreeMap<String, Vec<i64>>,
+    /// Clés mises de côté après un 429, jusqu'à cette date.
+    #[serde(default)]
+    pub c411_cooldowns: BTreeMap<String, i64>,
     /// Comptes suspendus : permissions Jellyseerr à restaurer, clé = id Jellyfin.
     #[serde(default)]
     pub accounts: BTreeMap<String, AccountRecord>,

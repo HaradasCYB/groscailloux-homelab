@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.8.0](#180--17092026--lindexeur-ne-tombe-plus)** | 17/09/2026 | **L'indexeur ne tombe plus** |
+| **[1.9.0](#190--18092026--une-saison-complète-du-premier-coup)** | 18/09/2026 | **Une saison complète du premier coup** |
+| [1.8.0](#180--17092026--lindexeur-ne-tombe-plus) | 17/09/2026 | L'indexeur ne tombe plus |
 | [1.7.0](#170--17092026--plus-de-confusion-avec-les-spin-offs) | 17/09/2026 | Plus de confusion avec les spin-offs |
 | [1.6.0](#160--17092026--un-seul-indexeur-et-une-recherche-plus-souple) | 17/09/2026 | Un seul indexeur, et une recherche plus souple |
 | [1.5.0](#150--17092026--tout-le-monde-voit-tout-et-une-vraie-recherche-manuelle) | 17/09/2026 | Tout le monde voit tout, et une vraie recherche manuelle |
@@ -27,6 +28,19 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.9.0 — 18/09/2026 — Une saison complète du premier coup
+
+- **Une série demandée arrive en entier** : quand aucun pack de saison n'existe, la plateforme prend
+  maintenant **tous les épisodes manquants d'un coup**, à partir de la même recherche. Avant, c'était un
+  épisode toutes les deux heures — près d'une journée pour une saison. *BLACK TORCH* est passé de 1 à 11
+  épisodes en quelques minutes.
+- **Quatre fois plus de recherches possibles** : deux accès distincts à la source, chacun avec son propre
+  compteur (80 recherches par heure au total, contre 20), et une part réservée aux recherches lancées à la
+  main pour qu'elles passent toujours.
+- **Plus de coupure quand un accès sature** : l'accès concerné est mis de côté quelques minutes et tout
+  continue sur l'autre, sans que personne ne s'en aperçoive.
+- **Les films aussi** : rattrapage toutes les 15 minutes au lieu d'une heure, trois titres par passage.
 
 ## 1.8.0 — 17/09/2026 — L'indexeur ne tombe plus
 

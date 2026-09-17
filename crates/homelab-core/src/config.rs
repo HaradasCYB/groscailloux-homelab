@@ -39,9 +39,10 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Indexers {
-    /// Requêtes C411 au plus par heure glissante, tous usages confondus (la limite de l'indexer est
-    /// vers 50/h, partagée avec les 4 Arrs ; Prowlarr coupe à 30/h).
+    /// Requêtes au plus par heure glissante **et par clé** (deux clés : `C411` et `C411 (2)`).
     pub c411_max_per_hour: usize,
+    /// Une clé qui répond 429 est mise de côté ce nombre de minutes ; les requêtes passent sur l'autre.
+    pub cooldown_after_429_mins: i64,
     /// Requêtes de cette réserve gardées pour la page `/recherche` : les tâches de fond s'arrêtent avant.
     pub manual_reserve: usize,
     /// Prendre une release sans français (VO) quand aucune release française n'est acceptable.
@@ -54,8 +55,9 @@ pub struct Indexers {
 impl Default for Indexers {
     fn default() -> Self {
         Self {
-            c411_max_per_hour: 20,
-            manual_reserve: 6,
+            c411_max_per_hour: 40,
+            cooldown_after_429_mins: 15,
+            manual_reserve: 10,
             allow_no_french: true,
             max_gb_per_episode: 6.0,
             max_gb_per_movie: 25.0,
@@ -403,6 +405,10 @@ pub struct SeriesSearch {
     pub indexer: String,
     /// Noms de la série essayés en texte libre quand la recherche par identifiant ne donne rien.
     pub text_queries: usize,
+    /// Épisodes envoyés au plus pour une saison sans pack, dans le même passage.
+    pub max_grabs_per_season: usize,
+    /// Délai (minutes) avant de reprendre une saison dont on vient de prendre des épisodes.
+    pub episode_retry_mins: i64,
     /// Adresse de Prowlarr vue depuis les conteneurs Sonarr/Radarr du VPS (lien de téléchargement envoyé).
     pub prowlarr_url_for_arrs: String,
 }
@@ -411,13 +417,15 @@ impl Default for SeriesSearch {
     fn default() -> Self {
         Self {
             interval_secs: 600,
-            max_queries_per_run: 2,
-            query_gap_secs: 15,
+            max_queries_per_run: 6,
+            query_gap_secs: 5,
             retry_after_hours: 24,
             grabbed_retry_hours: 168,
             error_retry_hours: 1,
             indexer: "C411".into(),
             text_queries: 2,
+            max_grabs_per_season: 20,
+            episode_retry_mins: 15,
             prowlarr_url_for_arrs: "http://prowlarr:9696".into(),
         }
     }
@@ -442,8 +450,8 @@ pub struct MovieSearch {
 impl Default for MovieSearch {
     fn default() -> Self {
         Self {
-            interval_secs: 3600,
-            max_per_run: 1,
+            interval_secs: 900,
+            max_per_run: 3,
             missing_hours: 24,
             retry_after_hours: 72,
             error_retry_hours: 1,
@@ -1118,7 +1126,9 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.torrent_import.interval_secs, 600);
         assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
-        assert_eq!(cfg.tasks.series_search.max_queries_per_run, 2);
+        assert_eq!(cfg.tasks.series_search.max_queries_per_run, 6);
+        assert_eq!(cfg.tasks.series_search.max_grabs_per_season, 20);
+        assert_eq!(cfg.indexers.c411_max_per_hour, 40);
         assert_eq!(cfg.accounts.max_premium, 25);
         assert_eq!(cfg.accounts.max_devices_per_user, 0);
         assert_eq!(cfg.accounts.max_playbacks_per_user, 2);

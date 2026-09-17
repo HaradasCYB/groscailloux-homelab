@@ -6,7 +6,6 @@
 
 pub mod accounts;
 pub mod anime;
-pub mod budget;
 pub mod chat;
 pub mod classify;
 pub mod clients;
@@ -14,6 +13,7 @@ pub mod config;
 pub mod context;
 pub mod disk;
 pub mod docker;
+pub mod indexer;
 pub mod mail;
 pub mod manual_search;
 pub mod matching;

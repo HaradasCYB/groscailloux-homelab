@@ -240,8 +240,35 @@ pub fn choose<'a>(
     best(false).or_else(|| if allow_vo { best(true) } else { None })
 }
 
-/// Délai après la prise d'épisodes seuls (le temps du téléchargement et de l'import).
-pub const EPISODE_RETRY_HOURS: i64 = 2;
+/// Une release par épisode manquant, prise dans le **même lot de résultats** (aucune requête de plus) :
+/// sans pack de saison, c'est ce qui permet de récupérer une saison entière d'un coup. Mêmes règles que
+/// `choose` ; au plus `max` releases, les épisodes les plus anciens d'abord.
+pub fn choose_episodes<'a>(
+    cands: &'a [Candidate],
+    season: i64,
+    missing: &HashSet<i64>,
+    allowed: &HashSet<i64>,
+    max_gb: f64,
+    allow_vo: bool,
+    max: usize,
+) -> Vec<&'a Candidate> {
+    let mut wanted: Vec<i64> = missing.iter().copied().collect();
+    wanted.sort_unstable();
+    let mut out = Vec::new();
+    for ep in wanted {
+        if out.len() >= max {
+            break;
+        }
+        let one: HashSet<i64> = [ep].into_iter().collect();
+        if let Some(c) = choose(cands, season, false, &one, allowed, max_gb, allow_vo) {
+            // une release couvrant plusieurs épisodes ne doit pas être prise deux fois
+            if !out.iter().any(|x: &&Candidate| x.title == c.title) {
+                out.push(c);
+            }
+        }
+    }
+    out
+}
 
 /// Faut-il (re)chercher ? Une erreur (indexeur indisponible, délai dépassé) est retentée vite.
 pub fn due(
@@ -250,18 +277,19 @@ pub fn due(
     retry_h: i64,
     grabbed_h: i64,
     error_h: i64,
+    episode_mins: i64,
 ) -> bool {
     match rec {
         None => true,
         Some(r) => {
-            let wait = match r.outcome.as_str() {
-                "grabbed" => grabbed_h,
-                // un épisode seul pris : le reste de la saison est recherché peu après son import
-                "grabbed_episode" => grabbed_h.min(EPISODE_RETRY_HOURS),
-                "error" => error_h,
-                _ => retry_h,
+            let wait_secs = match r.outcome.as_str() {
+                "grabbed" => grabbed_h * 3600,
+                // des épisodes viennent d'être pris : on reprend vite, le temps de l'import
+                "grabbed_episode" => (grabbed_h * 3600).min(episode_mins * 60),
+                "error" => error_h * 3600,
+                _ => retry_h * 3600,
             };
-            now - r.at >= wait * 3600
+            now - r.at >= wait_secs
         }
     }
 }
@@ -575,7 +603,6 @@ async fn names_for(ctx: &TaskContext, series: &Value) -> Vec<String> {
 async fn season_candidates(
     ctx: &TaskContext,
     prow: &ProwlarrClient,
-    indexer_id: i64,
     arr: &ArrClient,
     series: &Value,
     todo: &SeasonTodo,
@@ -586,13 +613,15 @@ async fn season_candidates(
     let names = names_for(ctx, series).await;
     let mut out = Vec::new();
     if tmdb > 0 {
-        if !throttle.take().await || !crate::budget::take(ctx, false).await? {
+        if !throttle.take().await {
             return Ok((out, "budget"));
         }
-        for r in prow
-            .search_by_tmdb(tmdb, Some(todo.season), indexer_id)
-            .await?
-        {
+        let Some(found) =
+            crate::indexer::search_tmdb(ctx, prow, tmdb, Some(todo.season), false).await?
+        else {
+            return Ok((out, "budget"));
+        };
+        for r in found {
             if !tmdb_matches(&r, tmdb) {
                 continue;
             }
@@ -616,10 +645,13 @@ async fn season_candidates(
     // secours : série sans identifiant TMDB, ou identifiant absent des releases de l'indexer
     let mut seen: HashSet<String> = HashSet::new();
     for name in names.iter().take(cfg.text_queries) {
-        if !throttle.take().await || !crate::budget::take(ctx, false).await? {
+        if !throttle.take().await {
             break;
         }
-        for r in prow.search(name, indexer_id, 100).await? {
+        let Some(found) = crate::indexer::search_text(ctx, prow, name, 100, false).await? else {
+            break;
+        };
+        for r in found {
             let Some(title) = r.get("title").and_then(Value::as_str) else {
                 continue;
             };
@@ -664,7 +696,6 @@ async fn season_candidates(
 async fn process_season(
     ctx: &TaskContext,
     prow: &ProwlarrClient,
-    indexer_id: i64,
     arr: &ArrClient,
     series: &Value,
     todo: &SeasonTodo,
@@ -672,17 +703,10 @@ async fn process_season(
 ) -> Result<(String, String)> {
     let cfg = &ctx.cfg.tasks.series_search;
     let title = series.get("title").and_then(Value::as_str).unwrap_or("?");
-    let (cands, how) =
-        season_candidates(ctx, prow, indexer_id, arr, series, todo, throttle).await?;
+    let (cands, how) = season_candidates(ctx, prow, arr, series, todo, throttle).await?;
     if how == "budget" {
         return Ok(("pending".into(), String::new()));
     }
-    let episodes = arr.episodes(todo.series_id).await?;
-    let season_eps: Vec<&Value> = episodes
-        .iter()
-        .filter(|e| e.get("seasonNumber").and_then(Value::as_i64) == Some(todo.season))
-        .collect();
-    let want_pack = todo.missing_numbers.len() * 2 >= season_eps.len().max(1);
     let profile_id = series
         .get("qualityProfileId")
         .and_then(Value::as_i64)
@@ -700,7 +724,74 @@ async fn process_season(
             ix.allow_no_french,
         )
     };
-    let chosen = pick(want_pack).or_else(|| pick(!want_pack));
+    // pack de saison si possible ; sinon toutes les releases d'épisodes manquants, en une fois
+    let pack = pick(true);
+    let singles = if pack.is_some() {
+        Vec::new()
+    } else {
+        choose_episodes(
+            &cands,
+            todo.season,
+            &todo.missing_numbers,
+            &allowed,
+            ix.max_gb_per_episode,
+            ix.allow_no_french,
+            cfg.max_grabs_per_season,
+        )
+    };
+    if pack.is_none() && singles.len() > 1 {
+        if ctx.dry_run {
+            let list: Vec<&str> = singles.iter().map(|c| c.title.as_str()).collect();
+            info!(
+                task = "series_search",
+                service = arr.name,
+                series = title,
+                season = todo.season,
+                releases = singles.len(),
+                how,
+                "dry-run: would grab every missing episode"
+            );
+            return Ok((
+                "dry_run".into(),
+                format!("{} épisode(s) : {}", singles.len(), list.join(" ; ")),
+            ));
+        }
+        let target = Target::Season {
+            series_id: todo.series_id,
+            season: todo.season,
+        };
+        let mut ok = 0usize;
+        let mut last = String::new();
+        for c in &singles {
+            match send_release(ctx, prow, arr, &c.title, &c.release, &cfg.indexer, target).await {
+                Ok((outcome, detail)) => {
+                    if outcome == "grabbed" {
+                        ok += 1;
+                    }
+                    last = detail;
+                }
+                Err(e) => {
+                    warn!(task = "series_search", service = arr.name, release = %c.title, error = %e, "envoi impossible");
+                    last = format!("{e:#}");
+                }
+            }
+        }
+        info!(
+            task = "series_search",
+            service = arr.name,
+            series = title,
+            season = todo.season,
+            grabbed = ok,
+            total = singles.len(),
+            how,
+            "saison prise épisode par épisode"
+        );
+        return Ok((
+            if ok > 0 { "grabbed_episode" } else { "error" }.into(),
+            format!("{ok}/{} épisode(s) pris ({last})", singles.len()),
+        ));
+    }
+    let chosen = pack.or_else(|| pick(false));
     let Some(c) = chosen else {
         return Ok((
             "none".into(),
@@ -784,6 +875,7 @@ async fn plan_seasons(ctx: &TaskContext, arr: &ArrClient) -> Result<Vec<SeasonTo
                 cfg.retry_after_hours,
                 cfg.grabbed_retry_hours,
                 cfg.error_retry_hours,
+                cfg.episode_retry_mins,
             )
         })
         .collect())
@@ -807,12 +899,6 @@ impl Task for SeriesSearch {
         let cfg = &ctx.cfg.tasks.series_search;
         let Some(prow) = &ctx.prowlarr else {
             return Ok(Report::new("prowlarr non configuré (PROWLARR_API_KEY)", 0));
-        };
-        let Some(indexer_id) = prow.indexer_id(&cfg.indexer).await? else {
-            return Ok(Report::new(
-                format!("indexer « {} » absent de Prowlarr", cfg.indexer),
-                0,
-            ));
         };
         let mut counts: BTreeMap<String, u32> = BTreeMap::new();
         struct Ctx<'a> {
@@ -889,16 +975,8 @@ impl Task for SeriesSearch {
             let Some(ser) = c.series.get(&s.series_id) else {
                 continue;
             };
-            let (outcome, detail) = match process_season(
-                ctx,
-                prow,
-                indexer_id,
-                c.arr,
-                ser,
-                s,
-                &mut throttle,
-            )
-            .await
+            let (outcome, detail) = match process_season(ctx, prow, c.arr, ser, s, &mut throttle)
+                .await
             {
                 Ok(r) => r,
                 Err(e) => {
@@ -1058,6 +1136,49 @@ mod tests {
     }
 
     #[test]
+    fn a_whole_season_is_taken_in_one_pass() {
+        let mk = |t: &str, ep: i64| {
+            series_candidate(&result(t, 1, 20), &info(1, false, &[ep], 9, 1080), 1).unwrap()
+        };
+        let cands: Vec<Candidate> = (1..=11)
+            .map(|e| mk(&format!("Show.S01E{e:02}.VOSTFR.1080p.x264"), e))
+            .collect();
+        let allowed: HashSet<i64> = [9].into_iter().collect();
+        let missing: HashSet<i64> = (1..=11).collect();
+        let got = choose_episodes(&cands, 1, &missing, &allowed, 6.0, true, 20);
+        assert_eq!(got.len(), 11, "toute la saison en une fois");
+        let mut eps: Vec<i64> = got.iter().flat_map(|c| c.episodes.clone()).collect();
+        eps.sort_unstable();
+        assert_eq!(
+            eps,
+            (1..=11).collect::<Vec<_>>(),
+            "un épisode chacun, sans doublon"
+        );
+        // plafond respecté, et seuls les épisodes manquants sont pris
+        assert_eq!(
+            choose_episodes(&cands, 1, &missing, &allowed, 6.0, true, 3).len(),
+            3
+        );
+        let two: HashSet<i64> = [4, 7].into_iter().collect();
+        let got = choose_episodes(&cands, 1, &two, &allowed, 6.0, true, 20);
+        assert_eq!(got.len(), 2);
+        assert!(got
+            .iter()
+            .all(|c| c.episodes == vec![4] || c.episodes == vec![7]));
+        // sans candidat acceptable : rien
+        assert!(choose_episodes(
+            &cands,
+            1,
+            &missing,
+            &[7].into_iter().collect(),
+            6.0,
+            true,
+            20
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn spinoffs_and_mini_series_are_rejected() {
         let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let real = names(&["Smoking Behind the Supermarket with You"]);
@@ -1153,14 +1274,15 @@ mod tests {
             outcome: outcome.into(),
             detail: String::new(),
         };
-        assert!(due(None, 1000, 24, 168, 1));
-        assert!(!due(Some(&r("none", 0)), 23 * 3600, 24, 168, 1));
-        assert!(due(Some(&r("none", 0)), 24 * 3600, 24, 168, 1));
-        assert!(!due(Some(&r("grabbed", 0)), 100 * 3600, 24, 168, 1));
-        assert!(!due(Some(&r("error", 0)), 1800, 24, 168, 1));
-        assert!(!due(Some(&r("grabbed_episode", 0)), 3600, 24, 168, 1));
-        assert!(due(Some(&r("grabbed_episode", 0)), 2 * 3600, 24, 168, 1));
-        assert!(due(Some(&r("error", 0)), 3600, 24, 168, 1));
+        assert!(due(None, 1000, 24, 168, 1, 15));
+        assert!(!due(Some(&r("none", 0)), 23 * 3600, 24, 168, 1, 15));
+        assert!(due(Some(&r("none", 0)), 24 * 3600, 24, 168, 1, 15));
+        assert!(!due(Some(&r("grabbed", 0)), 100 * 3600, 24, 168, 1, 15));
+        assert!(!due(Some(&r("error", 0)), 1800, 24, 168, 1, 15));
+        // épisodes pris : on reprend au bout de 15 min, plus 2 h
+        assert!(!due(Some(&r("grabbed_episode", 0)), 600, 24, 168, 1, 15));
+        assert!(due(Some(&r("grabbed_episode", 0)), 900, 24, 168, 1, 15));
+        assert!(due(Some(&r("error", 0)), 3600, 24, 168, 1, 15));
     }
 
     #[test]

@@ -97,7 +97,6 @@ pub fn best_movie_release<'a>(
 async fn process_movie(
     ctx: &TaskContext,
     prow: &ProwlarrClient,
-    indexer_id: i64,
     arr: &ArrClient,
     movie: &Value,
     throttle: &mut Throttle,
@@ -106,11 +105,14 @@ async fn process_movie(
     let id = movie.get("id").and_then(Value::as_i64).unwrap_or(0);
     let tmdb = movie.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
     let title = movie.get("title").and_then(Value::as_str).unwrap_or("?");
-    if !throttle.take().await || !crate::budget::take(ctx, false).await? {
+    if !throttle.take().await {
         return Ok(("pending".into(), String::new()));
     }
+    let Some(found) = crate::indexer::search_tmdb(ctx, prow, tmdb, None, false).await? else {
+        return Ok(("pending".into(), String::new()));
+    };
     let mut items = Vec::new();
-    for r in prow.search_by_tmdb(tmdb, None, indexer_id).await? {
+    for r in found {
         if !tmdb_matches(&r, tmdb) {
             continue;
         }
@@ -179,12 +181,6 @@ impl Task for MovieSearch {
         let Some(prow) = &ctx.prowlarr else {
             return Ok(Report::new("prowlarr non configuré (PROWLARR_API_KEY)", 0));
         };
-        let Some(indexer_id) = prow.indexer_id(&cfg.indexer).await? else {
-            return Ok(Report::new(
-                format!("indexer « {} » absent de Prowlarr", cfg.indexer),
-                0,
-            ));
-        };
         let radarrs: Vec<&ArrClient> = std::iter::once(&ctx.radarr)
             .chain(ctx.seedbox_radarr.as_ref())
             .collect();
@@ -213,6 +209,7 @@ impl Task for MovieSearch {
                                 cfg.retry_after_hours,
                                 cfg.retry_after_hours,
                                 cfg.error_retry_hours,
+                                15,
                             )
                         {
                             todo.push((arr, m));
@@ -238,15 +235,7 @@ impl Task for MovieSearch {
         let mut throttle = Throttle::new(cfg.max_per_run, cfg.query_gap_secs);
         for (arr, movie) in &todo {
             let id = movie.get("id").and_then(Value::as_i64).unwrap_or(0);
-            let (outcome, detail) = match process_movie(
-                ctx,
-                prow,
-                indexer_id,
-                arr,
-                movie,
-                &mut throttle,
-            )
-            .await
+            let (outcome, detail) = match process_movie(ctx, prow, arr, movie, &mut throttle).await
             {
                 Ok(r) => r,
                 Err(e) => {
