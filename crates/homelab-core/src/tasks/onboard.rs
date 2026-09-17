@@ -237,7 +237,8 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
 
     // droits de l'import (defaultPermissions) + validation automatique : posés avant la suspension,
     // qui les sauvegarde pour l'activation
-    if ctx.cfg.accounts.jellyseerr_auto_approve {
+    let bits = accounts::granted_bits(&ctx.cfg.accounts);
+    if bits != 0 {
         let perms = ctx
             .jellyseerr
             .users(1000)
@@ -249,7 +250,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
                     .and_then(|u| u.get("permissions").and_then(Value::as_i64))
             })
             .unwrap_or(0);
-        let wanted = accounts::request_permissions(perms, true);
+        let wanted = accounts::request_permissions(perms, bits);
         if wanted != perms {
             match ctx.jellyseerr.set_permissions(js_id, wanted).await {
                 Ok(()) => {

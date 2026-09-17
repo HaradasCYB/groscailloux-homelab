@@ -45,6 +45,7 @@ struct OnboardBody {
 pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
     let listen = ctx.cfg.web.listen.clone();
     let chat = crate::chat_api::router(ctx.clone())?;
+    let search = crate::search_page::router(ctx.clone());
     let state = AppState {
         ctx,
         last_request: Arc::new(Mutex::new(HashMap::new())),
@@ -66,7 +67,8 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
             get(accounts_delete_confirm).post(accounts_delete),
         )
         .with_state(state)
-        .merge(chat);
+        .merge(chat)
+        .merge(search);
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
         .with_context(|| format!("bind {listen}"))?;

@@ -388,6 +388,19 @@ pub async fn send_release(
 ) -> Result<(String, String)> {
     let tag = target.tag();
     let tag = tag.as_str();
+    // release sans .torrent (Nyaa) : lien magnet ajouté directement au qBittorrent du même côté
+    if let (None, Some(magnet)) = (
+        release.get("downloadUrl").and_then(Value::as_str),
+        release.get("magnetUrl").and_then(Value::as_str),
+    ) {
+        let qbit = qbit_for(ctx, arr).context("aucun qBittorrent pour ce côté")?;
+        qbit.add_url(&prow.resolve_magnet(magnet).await?, tag)
+            .await?;
+        return Ok((
+            "grabbed".into(),
+            format!("{c_title} (lien magnet ajouté à qBittorrent, {})", arr.name),
+        ));
+    }
     let url = release
         .get("downloadUrl")
         .and_then(Value::as_str)

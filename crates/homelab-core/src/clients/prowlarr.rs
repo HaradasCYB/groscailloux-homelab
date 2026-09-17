@@ -98,6 +98,34 @@ impl ProwlarrClient {
         Ok(resp.bytes().await?.to_vec())
     }
 
+    /// Lien magnet d'une release qui n'a pas de `.torrent` (Nyaa) : Prowlarr répond par une redirection vers
+    /// `magnet:…`, que le client HTTP ne sait pas suivre.
+    pub async fn resolve_magnet(&self, url: &str) -> Result<String> {
+        if url.starts_with("magnet:") {
+            return Ok(url.to_string());
+        }
+        let client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(60))
+            .build()?;
+        let resp = client
+            .get(url)
+            .header("X-Api-Key", self.key.expose())
+            .send()
+            .await?;
+        let location = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        anyhow::ensure!(
+            location.starts_with("magnet:"),
+            "Prowlarr n'a pas renvoyé de lien magnet (HTTP {})",
+            resp.status()
+        );
+        Ok(location.to_string())
+    }
+
     /// Recherche en texte libre sur un indexer. Les résultats portent `title`, `downloadUrl`,
     /// `publishDate`, `size` et `seeders`.
     pub async fn search(&self, query: &str, indexer_id: i64, limit: u32) -> Result<Vec<Value>> {

@@ -25,17 +25,31 @@ pub struct Account {
     pub last_activity: Option<String>,
 }
 
-/// Bits Jellyseerr : 2 = admin (a déjà tout), 128 = demandes validées d'office (films et séries, hors 4K).
+/// Bits Jellyseerr : 2 = admin (a déjà tout), 128 = demandes validées d'office (films et séries, hors 4K),
+/// 16384 = voir toutes les demandes (lecture seule : ni validation ni refus).
 const JS_ADMIN: i64 = 2;
 pub const JS_AUTO_APPROVE: i64 = 128;
+pub const JS_REQUEST_VIEW: i64 = 16384;
 
-/// Droits Jellyseerr d'un compte actif, avec la validation automatique si `auto`. Un compte sans
+/// Droits ajoutés à tout compte actif d'après `[accounts]`.
+pub fn granted_bits(cfg: &crate::config::Accounts) -> i64 {
+    let mut bits = 0;
+    if cfg.jellyseerr_auto_approve {
+        bits |= JS_AUTO_APPROVE;
+    }
+    if cfg.jellyseerr_view_requests {
+        bits |= JS_REQUEST_VIEW;
+    }
+    bits
+}
+
+/// Droits Jellyseerr d'un compte actif, complétés par `bits` (voir `granted_bits`). Un compte sans
 /// droits (0 : suspendu) ou admin est laissé tel quel.
-pub fn request_permissions(perms: i64, auto: bool) -> i64 {
-    if !auto || perms == 0 || perms & JS_ADMIN != 0 {
+pub fn request_permissions(perms: i64, bits: i64) -> i64 {
+    if perms == 0 || perms & JS_ADMIN != 0 {
         perms
     } else {
-        perms | JS_AUTO_APPROVE
+        perms | bits
     }
 }
 
@@ -234,7 +248,7 @@ async fn sync_jellyseerr(ctx: &TaskContext, user_id: &str, on: bool) -> Result<(
             None if perms == 0 => ctx.jellyseerr.default_permissions().await?,
             None => perms,
         };
-        let p = request_permissions(restore, ctx.cfg.accounts.jellyseerr_auto_approve);
+        let p = request_permissions(restore, granted_bits(&ctx.cfg.accounts));
         if p != perms {
             ctx.jellyseerr.set_permissions(js_id, p).await?;
         }
@@ -356,16 +370,22 @@ mod tests {
 
     #[test]
     fn auto_approve_added_only_to_active_non_admin() {
-        assert_eq!(request_permissions(32, true), 160);
-        assert_eq!(request_permissions(160, true), 160);
-        assert_eq!(request_permissions(48, true), 176); // gestion des demandes gardée
+        let both = JS_AUTO_APPROVE | JS_REQUEST_VIEW;
+        assert_eq!(request_permissions(32, JS_AUTO_APPROVE), 160);
+        assert_eq!(request_permissions(160, JS_AUTO_APPROVE), 160);
+        assert_eq!(request_permissions(48, JS_AUTO_APPROVE), 176); // gestion des demandes gardée
+        assert_eq!(request_permissions(160, both), 16544);
         assert_eq!(
-            request_permissions(0, true),
+            request_permissions(0, both),
             0,
             "suspendu : reste sans droits"
         );
-        assert_eq!(request_permissions(34, true), 34, "admin : inchangé");
-        assert_eq!(request_permissions(32, false), 32);
+        assert_eq!(request_permissions(34, both), 34, "admin : inchangé");
+        assert_eq!(request_permissions(32, 0), 32);
+        let mut cfg = crate::config::Accounts::default();
+        assert_eq!(granted_bits(&cfg), both);
+        cfg.jellyseerr_view_requests = false;
+        assert_eq!(granted_bits(&cfg), JS_AUTO_APPROVE);
     }
 
     fn user(name: &str, admin: bool, disabled: bool) -> Value {

@@ -226,6 +226,19 @@ protected = ["Haradas", "LeGrosCailloux"]   # ni interrupteur ni suppression sur
 # Demandes Jellyseerr validées d'office (films et séries, jamais 4K), à la création et à l'activation.
 # Garde-fou : quota par défaut de Jellyseerr, 10 films + 10 saisons / 7 j (réglé dans Jellyseerr).
 jellyseerr_auto_approve = true
+# Chaque membre voit toutes les demandes (Jellyseerr et onglet Demandes de Jellyfin), sans pouvoir les
+# valider ni les refuser : vue d'ensemble demandée par l'admin le 2026-09-17.
+jellyseerr_view_requests = true
+
+[manual_search]
+# Page /recherche (onboarder, liste admin-outils + jeton) : recherche manuelle d'une saison ou d'un film par
+# identifiant TMDB chez C411 (via Prowlarr), plus Nyaa pour les animés ; à utiliser au lieu de la recherche
+# de Sonarr/Radarr pour un animé (des centaines de requêtes, 429 de C411, délai dépassé du proxy seedbox).
+max_queries_per_hour = 6
+c411_indexer = "C411"
+nyaa_indexer = "Nyaa.si"
+nyaa_queries = 2
+results_ttl_mins = 30
 
 [chat]
 # Tchat des membres dans Jellyfin (bulle en haut à droite) : salons Annonces (modérateurs), Entraide,

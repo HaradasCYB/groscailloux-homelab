@@ -158,6 +158,19 @@ journalctl -u homelabd -f
   `Library/Media/Updated`, ni un redémarrage ; vu le 2026-09-17, analyse de 65 à 315 s) : ranger en masse
   **avant 13 h**, ou attendre l'analyse de 05 h. Après une réidentification, vérifier les `ProviderIds` contre
   l'Arr : le 2026-09-17, *L'Attaque des Titans* est repartie sur son spin-off et *Slime* sur *Slime Diaries*.
+- **Recherche manuelle** : passer par la page **`/recherche`** de homelabd (hôte d'onboarding, liste « admin-outils »
+  + jeton), jamais par la recherche de Sonarr/Radarr sur un **animé** : celle-ci interroge chaque indexeur avec
+  chaque titre connu, épisode par épisode (le 2026-09-17 : plusieurs minutes, « timed out » du proxy seedbox à
+  300 s, et 429 de C411 pendant une heure). La page cherche par identifiant TMDB chez C411 (1 requête, plafond
+  `[manual_search] max_queries_per_hour`) et chez Nyaa pour les animés (liens **magnet** : ajoutés au qBittorrent
+  du côté concerné avec l'étiquette `homelab:`). Toutes les releases sont montrées et marquées (VOSTFR, hors
+  profil, autre saison…), le choix reste à l'admin.
+- **Vue d'ensemble des membres** : onglets Demandes et Calendrier de Jellyfin Enhanced ouverts à tous
+  (`DownloadsFilterByUserRequests` et `CalendarFilterByLibraryAccess` à `false`, `SonarrInstances`/`RadarrInstances`
+  = VPS **et** seedbox) et droit Jellyseerr « voir les demandes » (bit 16384) sur les comptes actifs, dans
+  `defaultPermissions` et à l'activation (`[accounts] jellyseerr_view_requests`). Chaque membre voit donc les
+  demandes des autres, avec leur pseudo. Le lien compte Jellyfin ↔ Jellyseerr est en cache 30 min dans le plugin.
+  Sauvegardes : `backups/jellyfin-ui-20260917-191027-overview/`.
 - **Historique Arr** : `GET history?movieId=` / `?seriesId=` n'existe pas, le filtre est ignoré et tout
   l'historique revient. Utiliser `history/movie?movieId=` et `history/series?seriesId=` (seul `downloadId`
   filtre vraiment `GET history`).

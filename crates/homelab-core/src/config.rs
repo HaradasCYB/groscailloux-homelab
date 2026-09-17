@@ -29,6 +29,36 @@ pub struct Config {
     pub accounts: Accounts,
     #[serde(default)]
     pub chat: Chat,
+    #[serde(default)]
+    pub manual_search: ManualSearch,
+}
+
+/// Page `/recherche` : recherche manuelle d'une saison ou d'un film par identifiant TMDB (voir `manual_search`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ManualSearch {
+    /// Requêtes C411 au plus par heure glissante pour la page (s'ajoutent à `series_search` et `movie_search` ;
+    /// la limite de Prowlarr est de 25/h).
+    pub max_queries_per_hour: usize,
+    /// Noms des indexers dans Prowlarr.
+    pub c411_indexer: String,
+    pub nyaa_indexer: String,
+    /// Requêtes Nyaa (texte) au plus par recherche d'animé, une par titre différent.
+    pub nyaa_queries: usize,
+    /// Résultats gardés en mémoire.
+    pub results_ttl_mins: i64,
+}
+
+impl Default for ManualSearch {
+    fn default() -> Self {
+        Self {
+            max_queries_per_hour: 6,
+            c411_indexer: "C411".into(),
+            nyaa_indexer: "Nyaa.si".into(),
+            nyaa_queries: 2,
+            results_ttl_mins: 30,
+        }
+    }
 }
 
 /// Tchat des membres dans Jellyfin (voir `chat`). Modérateurs : écrivent les annonces, lisent les fils
@@ -85,6 +115,8 @@ pub struct Accounts {
     pub protected: Vec<String>,
     /// Demandes Jellyseerr validées sans l'admin (bit 128) : donné à la création et à l'activation.
     pub jellyseerr_auto_approve: bool,
+    /// Voir toutes les demandes dans Jellyseerr et l'onglet Demandes de Jellyfin (bit 16384, lecture seule).
+    pub jellyseerr_view_requests: bool,
 }
 
 impl Default for Accounts {
@@ -96,6 +128,7 @@ impl Default for Accounts {
             new_accounts_premium: false,
             protected: vec!["Haradas".into(), "LeGrosCailloux".into()],
             jellyseerr_auto_approve: true,
+            jellyseerr_view_requests: true,
         }
     }
 }

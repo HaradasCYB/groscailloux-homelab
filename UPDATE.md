@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.4.0](#140--17092026--les-menus-anime-et-films-danimation)** | 17/09/2026 | **Les menus Anime et Films d'animation** |
+| **[1.5.0](#150--17092026--tout-le-monde-voit-tout-et-une-vraie-recherche-manuelle)** | 17/09/2026 | **Tout le monde voit tout, et une vraie recherche manuelle** |
+| [1.4.0](#140--17092026--les-menus-anime-et-films-danimation) | 17/09/2026 | Les menus Anime et Films d'animation |
 | [1.3.0](#130--17092026--recherche-par-identifiant-et-indexeurs-toujours-disponibles) | 17/09/2026 | Recherche par identifiant et indexeurs toujours disponibles |
 | [1.2.0](#120--17092026--les-séries-aux-titres-traduits) | 17/09/2026 | Les séries aux titres traduits |
 | [1.1.1](#111--16092026--adapté-aux-téléviseurs) | 16/09/2026 | Adapté aux téléviseurs |
@@ -23,6 +24,18 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.5.0 — 17/09/2026 — Tout le monde voit tout, et une vraie recherche manuelle
+
+- **Demandes et Calendrier pour tout le monde** : chaque membre voit désormais les demandes de tous (avec leur
+  auteur) et le calendrier complet des sorties à venir, comme l'administrateur. Jusqu'ici, chacun ne voyait que
+  ses propres demandes, et le calendrier ignorait la moitié des séries. Les nouveaux comptes en profitent
+  d'office. Personne d'autre que l'administrateur ne peut valider ou refuser une demande.
+- **Recherche manuelle** (administration) : une page dédiée cherche une saison ou un film par identifiant, chez
+  l'indexeur principal et chez un indexeur d'animés, et affiche toutes les releases avec leurs écarts (VOSTFR,
+  qualité hors profil, autre saison…). Un clic lance le téléchargement. La recherche manuelle des animés depuis
+  Sonarr ou Radarr échouait (« timed out ») et bloquait l'indexeur principal pendant une heure ; ici, une saison
+  d'animé sort en quelques secondes et une seule requête est envoyée.
 
 ## 1.4.0 — 17/09/2026 — Les menus Anime et Films d'animation
 

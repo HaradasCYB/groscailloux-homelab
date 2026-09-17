@@ -265,6 +265,39 @@ existe → marqué et ignoré. Sinon `DELETE /api/v1/user/{id}` puis onboarding 
 Fichiers de `jellyfin/cache/transcodes` > 1 j ; dossiers vides de `library/downloads`
 (profondeur ≤ 3) > 2 j ; fichiers des `.recycle` Sonarr/Radarr > 14 j ; logs Jellyfin > 7 j.
 
+## Recherche manuelle (`/recherche`)
+
+Page de homelabd (hôte d'onboarding, liste NPM « admin-outils » + jeton) : chercher un titre des 4 Arrs, choisir
+une saison ou le film, voir les releases, en télécharger une. Elle remplace la recherche de Sonarr/Radarr pour les
+**animés** : celle-ci interroge chaque indexeur avec chaque titre connu, épisode par épisode (le 2026-09-17,
+plusieurs minutes, délai dépassé du proxy de la seedbox — « timed out » — et 429 de C411 pour une heure).
+
+- Logique dans `homelab_core::manual_search`, rendu dans `crates/homelabd/src/search_page.rs` (serveur, sans
+  JavaScript : la page de résultats se recharge seule tant que la recherche tourne, rien ne bloque une requête HTTP).
+- **C411 par identifiant TMDB** (une requête par saison ou par film, via Prowlarr), plafond propre à la page
+  (`[manual_search] max_queries_per_hour`, 6/h ; s'ajoute aux 12/h de `series_search` et 1/h de `movie_search`,
+  sous la limite de 25/h de Prowlarr). Plafond atteint, indexeur en pause ou fiche sans identifiant : la page le dit.
+- **Nyaa.si** en plus pour un animé (fiche dans un dossier anime ou de type anime) : `nyaa_queries` (2) requêtes
+  texte, un titre chacune. Nyaa ne donne que des liens **magnet** : `send_release` les ajoute directement au
+  qBittorrent du même côté avec l'étiquette `homelab:`, lue par `torrent_import`.
+- **Rien n'est filtré** : toutes les releases sont montrées, triées comme le choix automatique (sans écart d'abord,
+  puis bonne œuvre et bonne saison, langue, saison complète, résolution, H.264, sources) et **marquées** :
+  « sans français », « VOSTFR », « plus de 1080p », « hors profil », « aucune source », « autre saison »,
+  « saison inconnue », « titre non reconnu ». L'admin garde la main : un pack VOSTFR reste téléchargeable.
+- « Télécharger » passe par `series_search::send_release` (même chemin que les recherches automatiques) ;
+  `dry_run` journalise sans rien envoyer. Résultats gardés `results_ttl_mins` (30) en mémoire.
+
+## Vue d'ensemble des membres (Jellyfin Enhanced)
+
+Chaque membre voit les mêmes onglets que l'admin : **Demandes** (toutes, avec leur demandeur) et **Calendrier**
+(VPS et seedbox). Réglages, tous globaux (les nouveaux comptes en héritent) :
+`DownloadsFilterByUserRequests = false`, `CalendarFilterByLibraryAccess = false`, `SonarrInstances` et
+`RadarrInstances` avec les deux machines. Côté Jellyseerr, le droit **« voir les demandes » (bit 16384)** est posé
+sur les comptes actifs, dans `defaultPermissions`, et à chaque activation (`accounts::granted_bits`, réglage
+`[accounts] jellyseerr_view_requests`) : sans lui, Jellyseerr ne renvoie que les demandes du membre. Ce droit est
+en lecture seule — ni validation ni refus. Le plugin garde 30 min en cache le lien compte Jellyfin ↔ compte
+Jellyseerr : un changement de droits met ce temps à se voir.
+
 ## Watcher auto_import (continu)
 
 inotify non récursif sur `paths.downloads` (create, close_write, moved_to), chaque nom traité

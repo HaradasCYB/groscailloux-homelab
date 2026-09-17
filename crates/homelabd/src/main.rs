@@ -5,6 +5,7 @@ mod accounts_page;
 mod chat_api;
 mod guide;
 mod scheduler;
+mod search_page;
 mod status_page;
 mod watcher;
 mod web;

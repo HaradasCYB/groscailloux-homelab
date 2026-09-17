@@ -14,6 +14,7 @@ pub mod context;
 pub mod disk;
 pub mod docker;
 pub mod mail;
+pub mod manual_search;
 pub mod matching;
 pub mod secret;
 pub mod state;

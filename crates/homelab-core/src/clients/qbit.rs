@@ -198,6 +198,31 @@ impl QbitClient {
     }
 
     /// Ajoute un `.torrent` (contenu brut), démarré, avec des étiquettes. `save_path` vide = dossier par défaut.
+    /// Ajout par lien (magnet), avec étiquettes.
+    pub async fn add_url(&self, url: &str, tags: &str) -> Result<()> {
+        let (url, tags) = (url.to_string(), tags.to_string());
+        let resp = self
+            .send(
+                move |r| {
+                    r.form(&[
+                        ("urls", url.as_str()),
+                        ("tags", tags.as_str()),
+                        ("paused", "false"),
+                        ("stopped", "false"),
+                    ])
+                },
+                Method::POST,
+                "api/v2/torrents/add",
+            )
+            .await?;
+        let resp = check(resp, "qbit torrents/add").await?;
+        let body = resp.text().await.unwrap_or_default();
+        if body.trim().eq_ignore_ascii_case("fails.") {
+            bail!("qBittorrent a refusé le lien (déjà présent ou invalide)");
+        }
+        Ok(())
+    }
+
     pub async fn add_torrent(&self, torrent: Vec<u8>, save_path: &str, tags: &str) -> Result<()> {
         let (save, tags) = (save_path.to_string(), tags.to_string());
         let resp = self

@@ -52,6 +52,9 @@ pub struct State {
     /// deletion_cleanup les laisse tranquilles quelques heures.
     #[serde(default)]
     pub anime_moves: BTreeMap<String, i64>,
+    /// Page /recherche : dates (secondes) des requêtes C411, pour le plafond horaire.
+    #[serde(default)]
+    pub manual_search_queries: Vec<i64>,
     /// Comptes suspendus : permissions Jellyseerr à restaurer, clé = id Jellyfin.
     #[serde(default)]
     pub accounts: BTreeMap<String, AccountRecord>,
