@@ -11,7 +11,6 @@
   watch_repo: true
   max_tags: 3
   include_tags: ['^\d+\.\d+\.\d+\.\d+-ls\d+$']
-- name: lscr.io/linuxserver/jackett:v0.24.2572-ls26
   watch_repo: true
   max_tags: 3
   include_tags: ['^v\d+\.\d+\.\d+-ls\d+$']
@@ -65,7 +64,6 @@
   watch_repo: true
   max_tags: 3
   include_tags: ['^\d+\.\d+\.\d+$']
-- name: ghcr.io/flaresolverr/flaresolverr:v3.5.2
   watch_repo: true
   max_tags: 3
   include_tags: ['^v\d+\.\d+\.\d+$']

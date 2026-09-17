@@ -6,6 +6,7 @@
 
 pub mod accounts;
 pub mod anime;
+pub mod budget;
 pub mod chat;
 pub mod classify;
 pub mod clients;

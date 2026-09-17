@@ -139,6 +139,12 @@ déblocage est signalé par mail (`CHAT_ADMIN_EMAIL`). homelabd est cloisonné (
 Premier passage le 2026-09-17 : C411 (Sonarr seedbox, niveau 9, bloqué jusqu'à 21 h 33) et U2P, WorldTorrent,
 JK-nortorrent (Sonarr VPS) remis en service.
 
+### Budget de l'indexer (commun)
+`homelab_core::budget` : un seul compteur horaire glissant (`state.c411_queries`) pour `series_search`,
+`movie_search` et la page `/recherche`. `[indexers] c411_max_per_hour` (20) moins `manual_reserve` (6) pour les
+tâches de fond, la réserve restant à la page. Avant le 2026-09-17, chacun avait son plafond (12/h, 1/h, 6/h)
+sans voir les autres.
+
 ### anime_library — 30 min
 Range l'**animation japonaise** dans deux bibliothèques Jellyfin dédiées : « Anime » (séries : `/media/anime` +
 `/seedbox/media/Anime`) et « Films d'animation » (films : `/media/anime-films` + `/seedbox/media/Anime Movies`).
@@ -224,6 +230,11 @@ côté seedbox, montage vérifié et cache rclone rafraîchi (`vfs/refresh`) ava
 
 - **Film** : `DELETE movie/{id}?deleteFiles=true` ; média Jellyseerr supprimé (le titre redevient
   demandable) si aucune autre machine n'a le film.
+- **Demande retirée dans Jellyseerr** (média « en attente » ou « en cours » sans demande) : fiche Arr et
+  fichiers supprimés, torrents traités comme ci-dessus, média Jellyseerr retiré. Les médias « disponible » et
+  « partiel » sont intouchables (le scan Jellyfin en crée un par titre de la bibliothèque). Garde-fous :
+  Jellyseerr injoignable ⇒ rien, abandon au-delà de `abort_if_missing_titles_over` d'un coup,
+  `max_titles_per_run` par passage, jamais un titre en cours de lecture.
 - **Série entière** : idem côté Sonarr. **Saison entière** : épisodes non surveillés, saison non
   surveillée, notée dans `deletions.seasons` : `monitor_sync` ne la re-surveille plus, sauf demande
   Jellyseerr créée après la suppression. **Épisodes isolés** : non surveillés.

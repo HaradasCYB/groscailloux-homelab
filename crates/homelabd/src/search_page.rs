@@ -82,13 +82,13 @@ pub fn human_size(bytes: i64) -> String {
     }
 }
 
-fn lang_label(rank: Option<u8>) -> &'static str {
+fn lang_label(rank: u8) -> &'static str {
     match rank {
-        Some(4) => "VF",
-        Some(3) => "MULTi",
-        Some(2) => "FRENCH",
-        Some(1) => "VOSTFR",
-        _ => "—",
+        4 => "VF",
+        3 => "MULTi",
+        2 => "FRENCH",
+        1 => "VOSTFR",
+        _ => "VO",
     }
 }
 
@@ -481,7 +481,7 @@ mod tests {
             title: title.into(),
             size: 3 * 1_073_741_824,
             seeders: 12,
-            lang: Some(3),
+            lang: 3,
             resolution: 1080,
             h264: true,
             quality: "WEBDL-1080p".into(),

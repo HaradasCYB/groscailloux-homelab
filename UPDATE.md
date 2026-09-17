@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.5.0](#150--17092026--tout-le-monde-voit-tout-et-une-vraie-recherche-manuelle)** | 17/09/2026 | **Tout le monde voit tout, et une vraie recherche manuelle** |
+| **[1.6.0](#160--17092026--un-seul-indexeur-et-une-recherche-plus-souple)** | 17/09/2026 | **Un seul indexeur, et une recherche plus souple** |
+| [1.5.0](#150--17092026--tout-le-monde-voit-tout-et-une-vraie-recherche-manuelle) | 17/09/2026 | Tout le monde voit tout, et une vraie recherche manuelle |
 | [1.4.0](#140--17092026--les-menus-anime-et-films-danimation) | 17/09/2026 | Les menus Anime et Films d'animation |
 | [1.3.0](#130--17092026--recherche-par-identifiant-et-indexeurs-toujours-disponibles) | 17/09/2026 | Recherche par identifiant et indexeurs toujours disponibles |
 | [1.2.0](#120--17092026--les-séries-aux-titres-traduits) | 17/09/2026 | Les séries aux titres traduits |
@@ -24,6 +25,23 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.6.0 — 17/09/2026 — Un seul indexeur, et une recherche plus souple
+
+- **Le ménage dans les indexeurs** : 34 indexeurs publics inutilisés ont été retirés des quatre applications de
+  téléchargement ; il n'en reste qu'un, celui qui sert vraiment. Les recherches manuelles ne dépassent plus le
+  délai d'attente et le journal d'erreurs s'est vidé. Deux services devenus inutiles ont été arrêtés.
+- **Un seul compteur de requêtes** au lieu de trois qui s'ignoraient, avec une réserve pour les recherches
+  lancées à la main : elles passent toujours.
+- **Plus de souplesse sur la langue** : quand aucune version française n'existe, la version originale est
+  acceptée en dernier recours (l'ordre reste VF, MULTi, FRENCH, VOSTFR, puis VO). Des titres qui ne partaient
+  jamais se téléchargent enfin.
+- **Choix plus sûr** : les versions démesurées (plus de 6 Go par épisode, 25 Go par film) sont écartées du choix
+  automatique, et une version à une seule source passe derrière une version bien partagée.
+- **Reprise plus rapide** : quand l'indexeur est momentanément en pause, la recherche est retentée dans l'heure
+  au lieu du lendemain — c'est ce qui immobilisait deux séries depuis la veille.
+- **Demande supprimée = titre supprimé** : retirer une demande efface la fiche et ses fichiers, libère le
+  torrent et rend le titre à nouveau demandable, au lieu de le laisser « en cours » pour toujours.
 
 ## 1.5.0 — 17/09/2026 — Tout le monde voit tout, et une vraie recherche manuelle
 

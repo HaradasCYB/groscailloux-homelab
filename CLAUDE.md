@@ -37,8 +37,12 @@ journalctl -u homelabd -f
 - **qBittorrent.conf** : arrêter le conteneur avant d'éditer, sinon il écrase le fichier.
 - **Jamais de purge globale** de queue ou de torrents : toute suppression est ciblée et
   plafonnée (`max_actions_per_run`), c'est un invariant des tâches `stuck_handler`/`disk_pressure`.
-- **Indexers** : C411 seul en automatique (RSS + auto) sur les 4 Arrs, les autres en interactif
-  seulement. **Profils** FR-friendly : 1080p max (jamais 2160p), `minFormatScore=-9999`, FR d'abord,
+- **Indexers** : **C411 est le seul indexer**, dans les 4 Arrs comme dans Prowlarr (2026-09-17 : les 34
+  indexers publics passant par Jackett ont été retirés, Jackett et FlareSolverr arrêtés et sortis du compose ;
+  ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes et remplissaient le
+  journal d'erreurs — sauvegarde `backups/indexers-20260917-204443/`). Un seul compteur horaire pour tout ce
+  qui l'interroge : `[indexers] c411_max_per_hour` (20), dont `manual_reserve` (6) gardées pour `/recherche`
+  (les tâches s'arrêtent à 14/h) ; Prowlarr coupe à 30/h, C411 vers 50/h. **Profils** FR-friendly : 1080p max (jamais 2160p), `minFormatScore=-9999`, FR d'abord,
   VO/VOSTFR en dernier recours. **Jellyfin** : pas de GPU, préférer x264 à HEVC.
 - **C411 annonce sur deux domaines** : `c411.org` **et** `tk.c411.tw`. Toute règle par tracker doit viser les deux
   (`tracker_ratio.unlimited`, décision torrent de `deletion_cleanup`). Jusqu'au 2026-09-14, 24 torrents
@@ -158,6 +162,16 @@ journalctl -u homelabd -f
   `Library/Media/Updated`, ni un redémarrage ; vu le 2026-09-17, analyse de 65 à 315 s) : ranger en masse
   **avant 13 h**, ou attendre l'analyse de 05 h. Après une réidentification, vérifier les `ProviderIds` contre
   l'Arr : le 2026-09-17, *L'Attaque des Titans* est repartie sur son spin-off et *Slime* sur *Slime Diaries*.
+- **Langue** : `lang_rank` classe VF 4 > MULTi 3 > FRENCH 2 > VOSTFR 1 > **VO 0** ; une release sans français
+  n'est prise qu'en dernier recours (`[indexers] allow_no_french`), quand aucune française n'est acceptable.
+  Plafonds de taille du choix automatique : `max_gb_per_episode` (6) et `max_gb_per_movie` (25) — sinon un pack
+  de 134 Go à une seule source peut gagner contre un 27,8 Go bien partagé. Un refus « blocked till … » compte
+  comme une **erreur** (nouvelle tentative dans l'heure), plus comme « aucun candidat » (24 h).
+- **Suppression d'une demande dans Jellyseerr** : `deletion_cleanup` supprime la fiche Arr **et ses fichiers**,
+  retire les torrents devenus inutiles, puis la fiche média. **Seuls les médias « en attente » (2) ou « en
+  cours » (3) sans demande** sont concernés : un scan Jellyfin crée une fiche média pour tout ce qui est déjà
+  dans la bibliothèque (237 médias pour 117 demandes), toutes « disponible » ou « partiel » — les toucher
+  effacerait la médiathèque.
 - **Recherche manuelle** : passer par la page **`/recherche`** de homelabd (hôte d'onboarding, liste « admin-outils »
   + jeton), jamais par la recherche de Sonarr/Radarr sur un **animé** : celle-ci interroge chaque indexeur avec
   chaque titre connu, épisode par épisode (le 2026-09-17 : plusieurs minutes, « timed out » du proxy seedbox à

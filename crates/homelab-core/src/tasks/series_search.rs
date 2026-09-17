@@ -45,26 +45,35 @@ pub struct Candidate {
     pub resolution: i64,
     pub h264: bool,
     pub seeders: i64,
+    pub size: i64,
 }
 
-/// Rang de langue d'après le titre : VF > MULTi > FRENCH > VOSTFR ; `None` = pas de français.
-pub fn lang_rank(title: &str) -> Option<u8> {
+/// Rang de langue d'après le titre : VF 4 > MULTi 3 > FRENCH 2 > VOSTFR 1 > **VO 0** (aucun marqueur
+/// français). Une release de rang 0 n'est prise qu'en dernier recours (voir `choose`).
+pub fn lang_rank(title: &str) -> u8 {
     let words: Vec<String> = title
         .split(|c: char| !c.is_ascii_alphanumeric())
         .map(str::to_ascii_uppercase)
         .collect();
     let has = |w: &[&str]| words.iter().any(|x| w.contains(&x.as_str()));
     if has(&["VFF", "TRUEFRENCH", "VFQ", "VFI", "VF2", "VFB"]) {
-        Some(4)
+        4
     } else if has(&["MULTI"]) {
-        Some(3)
+        3
     } else if has(&["FRENCH"]) {
-        Some(2)
+        2
     } else if has(&["VOSTFR", "SUBFRENCH"]) {
-        Some(1)
+        1
     } else {
-        None
+        0
     }
+}
+
+/// Taille acceptable pour le choix automatique : `max_gb` par épisode (ou par film). Une saison
+/// complète est jugée sur sa taille divisée par le nombre d'épisodes annoncés.
+pub fn size_ok(size: i64, units: usize, max_gb: f64) -> bool {
+    let units = units.max(1) as f64;
+    size <= 0 || (size as f64 / units) / 1_073_741_824.0 <= max_gb
 }
 
 /// Le titre parsé d'une release correspond-il **exactement** (après normalisation) à un nom de la série ?
@@ -93,7 +102,7 @@ pub fn series_candidate(result: &Value, info: &Value, season: i64) -> Option<Can
     }
     let quality = info.get("quality").cloned().unwrap_or(Value::Null);
     Some(Candidate {
-        lang_rank: lang_rank(&title)?,
+        lang_rank: lang_rank(&title),
         season,
         episodes: info
             .get("episodeNumbers")
@@ -110,6 +119,13 @@ pub fn series_candidate(result: &Value, info: &Value, season: i64) -> Option<Can
             .unwrap_or(0),
         h264: is_h264(&title),
         seeders: result.get("seeders").and_then(Value::as_i64).unwrap_or(0),
+        size: result
+            .get("size")
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
+            .unwrap_or(0),
         release: json!({
             "title": title,
             "downloadUrl": url,
@@ -162,16 +178,27 @@ pub fn acceptable(release: &Value, resolution: i64, seeders: i64, allowed: &Hash
 }
 
 /// Meilleur candidat pour une saison : pack si `want_pack`, sinon épisodes tous manquants.
+/// Les releases trop grosses (`max_gb` par épisode) sont écartées ; une release sans français n'est
+/// prise que si `allow_vo` et qu'aucune release française n'est acceptable ; à langue et qualité
+/// égales, une release à une seule source passe derrière les autres.
 pub fn choose<'a>(
     cands: &'a [Candidate],
     season: i64,
     want_pack: bool,
     missing: &HashSet<i64>,
     allowed: &HashSet<i64>,
+    max_gb: f64,
+    allow_vo: bool,
 ) -> Option<&'a Candidate> {
     let ok = |c: &&Candidate| {
+        let units = if c.full_season {
+            missing.len().max(c.episodes.len())
+        } else {
+            c.episodes.len()
+        };
         c.season == season
             && acceptable(&c.release, c.resolution, c.seeders, allowed)
+            && size_ok(c.size, units, max_gb)
             && if want_pack {
                 c.full_season
             } else {
@@ -180,10 +207,13 @@ pub fn choose<'a>(
                     && c.episodes.iter().all(|e| missing.contains(e))
             }
     };
-    cands
-        .iter()
-        .filter(ok)
-        .max_by_key(|c| (c.lang_rank, c.resolution, c.h264, c.seeders))
+    let best = |vo: bool| {
+        cands
+            .iter()
+            .filter(|c| ok(c) && (vo || c.lang_rank > 0))
+            .max_by_key(|c| (c.lang_rank, c.resolution, c.seeders >= 2, c.h264, c.seeders))
+    };
+    best(false).or_else(|| if allow_vo { best(true) } else { None })
 }
 
 /// Délai après la prise d'épisodes seuls (le temps du téléchargement et de l'import).
@@ -434,8 +464,12 @@ pub async fn send_release(
     let rejected = push_rejections(&decision);
     if !rejected.is_empty() {
         if !rejected.iter().all(|r| bypassable_rejection(r)) {
+            // « blocked till … » : l'indexeur est en pause, pas un mauvais candidat → retenté dans l'heure
+            let blocked = rejected
+                .iter()
+                .any(|r| r.to_ascii_lowercase().contains("blocked till"));
             return Ok((
-                "none".into(),
+                if blocked { "error" } else { "none" }.into(),
                 format!("{c_title} refusé : {}", rejected.join(" ; ")),
             ));
         }
@@ -527,7 +561,7 @@ async fn season_candidates(
     let tmdb = series.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
     let mut out = Vec::new();
     if tmdb > 0 {
-        if !throttle.take().await {
+        if !throttle.take().await || !crate::budget::take(ctx, false).await? {
             return Ok((out, "budget"));
         }
         for r in prow
@@ -540,9 +574,6 @@ async fn season_candidates(
             let Some(title) = r.get("title").and_then(Value::as_str) else {
                 continue;
             };
-            if lang_rank(title).is_none() {
-                continue;
-            }
             let parse = arr.parse(title).await?;
             let info = parse.get("parsedEpisodeInfo").cloned().unwrap_or_default();
             if let Some(c) = series_candidate(&r, &info, todo.season) {
@@ -557,14 +588,14 @@ async fn season_candidates(
     let names = names_for(ctx, series).await;
     let mut seen: HashSet<String> = HashSet::new();
     for name in names.iter().take(cfg.text_queries) {
-        if !throttle.take().await {
+        if !throttle.take().await || !crate::budget::take(ctx, false).await? {
             break;
         }
         for r in prow.search(name, indexer_id, 100).await? {
             let Some(title) = r.get("title").and_then(Value::as_str) else {
                 continue;
             };
-            if !seen.insert(title.to_string()) || lang_rank(title).is_none() {
+            if !seen.insert(title.to_string()) {
                 continue;
             }
             // une release portant l'identifiant d'une autre œuvre est écartée d'office
@@ -617,22 +648,19 @@ async fn process_season(
         .and_then(Value::as_i64)
         .unwrap_or(0);
     let allowed = allowed_qualities(&arr.quality_profile(profile_id).await?);
-    let chosen = choose(
-        &cands,
-        todo.season,
-        want_pack,
-        &todo.missing_numbers,
-        &allowed,
-    )
-    .or_else(|| {
+    let ix = &ctx.cfg.indexers;
+    let pick = |pack: bool| {
         choose(
             &cands,
             todo.season,
-            !want_pack,
+            pack,
             &todo.missing_numbers,
             &allowed,
+            ix.max_gb_per_episode,
+            ix.allow_no_french,
         )
-    });
+    };
+    let chosen = pick(want_pack).or_else(|| pick(!want_pack));
     let Some(c) = chosen else {
         return Ok((
             "none".into(),
@@ -879,14 +907,11 @@ mod tests {
 
     #[test]
     fn language_ranks() {
-        assert_eq!(
-            lang_rank("L.Attaque.Des.Titans.S04.MULTI.VFF.1080p"),
-            Some(4)
-        );
-        assert_eq!(lang_rank("Show.S01.MULTi.1080p"), Some(3));
-        assert_eq!(lang_rank("Show.S01.FRENCH.720p"), Some(2));
-        assert_eq!(lang_rank("Show.S01E02.VOSTFR.1080p"), Some(1));
-        assert_eq!(lang_rank("Shingeki.no.Kyojin.S04.1080p.WEB"), None);
+        assert_eq!(lang_rank("L.Attaque.Des.Titans.S04.MULTI.VFF.1080p"), 4);
+        assert_eq!(lang_rank("Show.S01.MULTi.1080p"), 3);
+        assert_eq!(lang_rank("Show.S01.FRENCH.720p"), 2);
+        assert_eq!(lang_rank("Show.S01E02.VOSTFR.1080p"), 1);
+        assert_eq!(lang_rank("Shingeki.no.Kyojin.S04.1080p.WEB.x264"), 0, "VO");
     }
 
     #[test]
@@ -919,8 +944,14 @@ mod tests {
         let c = series_candidate(&r, &info(4, true, &[], 9, 1080), 4).unwrap();
         assert!(c.full_season && c.h264 && c.lang_rank == 4 && c.resolution == 1080);
         assert!(series_candidate(&r, &info(3, true, &[], 9, 1080), 4).is_none());
+        // VO : gardée avec le rang 0 (prise seulement en dernier recours par `choose`)
         let vo = result("Shingeki.no.Kyojin.S04.1080p.WEB", 1429, 65);
-        assert!(series_candidate(&vo, &info(4, true, &[], 9, 1080), 4).is_none());
+        assert_eq!(
+            series_candidate(&vo, &info(4, true, &[], 9, 1080), 4)
+                .unwrap()
+                .lang_rank,
+            0
+        );
     }
 
     #[test]
@@ -938,13 +969,70 @@ mod tests {
         let allowed: HashSet<i64> = [4, 9].into_iter().collect();
         let missing: HashSet<i64> = (1..=30).collect();
         assert_eq!(
-            choose(&cands, 4, true, &missing, &allowed).unwrap().title,
+            choose(&cands, 4, true, &missing, &allowed, 6.0, true)
+                .unwrap()
+                .title,
             "A.S04.VFF.1080p.WEB.x264"
         );
         let only720: HashSet<i64> = [4].into_iter().collect();
         assert_eq!(
-            choose(&cands, 4, true, &missing, &only720).unwrap().title,
+            choose(&cands, 4, true, &missing, &only720, 6.0, true)
+                .unwrap()
+                .title,
             "A.S04.VFF.720p.HDTV.x264"
+        );
+    }
+
+    #[test]
+    fn vo_only_as_a_last_resort_and_size_capped() {
+        let big = json!({"title": "A.S04.VFF.1080p.BluRay.x264", "downloadUrl": "http://p/dl", "tmdbId": 1,
+                         "seeders": 1, "size": 134_000_000_000i64});
+        let mk = |v: Value, res: i64, qid: i64| {
+            series_candidate(&v, &info(4, true, &[], qid, res), 4).unwrap()
+        };
+        let vo = json!({"title": "A.S04.1080p.BluRay.x265", "downloadUrl": "http://p/dl", "tmdbId": 1,
+                        "seeders": 39, "size": 27_800_000_000i64});
+        let cands = vec![mk(big, 1080, 9), mk(vo, 1080, 9)];
+        let allowed: HashSet<i64> = [9].into_iter().collect();
+        let missing: HashSet<i64> = (1..=26).collect();
+        // 134 Go pour 26 épisodes = 4,8 Gio/épisode : sous le plafond de 6, le français gagne
+        assert_eq!(
+            choose(&cands, 4, true, &missing, &allowed, 6.0, true)
+                .unwrap()
+                .lang_rank,
+            4
+        );
+        // plafond serré : le pack français est écarté, la VO est prise en dernier recours
+        assert_eq!(
+            choose(&cands, 4, true, &missing, &allowed, 2.0, true)
+                .unwrap()
+                .lang_rank,
+            0
+        );
+        // sans autorisation VO : rien
+        assert!(choose(&cands, 4, true, &missing, &allowed, 2.0, false).is_none());
+        assert!(size_ok(134_000_000_000, 26, 6.0), "4,8 Gio par épisode");
+        assert!(!size_ok(134_000_000_000, 26, 4.0));
+        assert!(!size_ok(30_000_000_000, 1, 25.0), "film de 28 Gio");
+        assert!(size_ok(0, 1, 6.0), "taille inconnue : on ne bloque pas");
+    }
+
+    #[test]
+    fn one_seeder_loses_to_a_healthy_release() {
+        let mk = |t: &str, seeders: i64, qid: i64| {
+            series_candidate(&result(t, 1, seeders), &info(4, true, &[], qid, 1080), 4).unwrap()
+        };
+        let cands = vec![
+            mk("A.S04.VFF.1080p.x264", 1, 9),
+            mk("A.S04.VFF.1080p.x265", 39, 9),
+        ];
+        let allowed: HashSet<i64> = [9].into_iter().collect();
+        let missing: HashSet<i64> = (1..=10).collect();
+        assert_eq!(
+            choose(&cands, 4, true, &missing, &allowed, 6.0, true)
+                .unwrap()
+                .title,
+            "A.S04.VFF.1080p.x265"
         );
     }
 
@@ -956,7 +1044,7 @@ mod tests {
         let cands = vec![mk("A.S02E03.VFF.1080p", 3), mk("A.S02E04.VFF.1080p", 4)];
         let missing: HashSet<i64> = [4].into_iter().collect();
         assert_eq!(
-            choose(&cands, 2, false, &missing, &HashSet::new())
+            choose(&cands, 2, false, &missing, &HashSet::new(), 6.0, true)
                 .unwrap()
                 .title,
             "A.S02E04.VFF.1080p"

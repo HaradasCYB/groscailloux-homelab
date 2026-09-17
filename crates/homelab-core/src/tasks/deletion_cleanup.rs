@@ -287,6 +287,177 @@ pub(crate) async fn rclone_refresh(ctx: &TaskContext, host: &std::path::Path) {
     }
 }
 
+/// Fiches média Jellyseerr **en attente (2) ou en cours (3)** sans demande : l'admin a retiré la demande,
+/// le titre n'est plus voulu. Renvoie (`movie`/`tv`, identifiant TMDB, id du média).
+///
+/// L'état compte : un scan Jellyfin crée une fiche média pour **tout** ce qui est déjà dans la
+/// bibliothèque (237 médias pour 117 demandes le 2026-09-17). Ces fiches-là sont « disponible » (5) ou
+/// « partiel » (4) et ne doivent jamais être touchées, sous peine d'effacer la médiathèque.
+pub fn dropped_media(media: &[Value], requests: &[Value]) -> Vec<(String, i64, i64)> {
+    let kept: BTreeSet<i64> = requests
+        .iter()
+        .filter_map(|r| r.pointer("/media/id").and_then(Value::as_i64))
+        .collect();
+    media
+        .iter()
+        .filter_map(|m| {
+            let id = m.get("id").and_then(Value::as_i64)?;
+            let tmdb = m.get("tmdbId").and_then(Value::as_i64).filter(|t| *t > 0)?;
+            let kind = m.get("mediaType").and_then(Value::as_str)?;
+            let status = m.get("status").and_then(Value::as_i64).unwrap_or(0);
+            (!kept.contains(&id) && matches!(status, 2 | 3)).then(|| (kind.to_string(), tmdb, id))
+        })
+        .collect()
+}
+
+/// Supprime une fiche dont la demande a été retirée : fiche Arr **et fichiers**, torrents devenus inutiles,
+/// puis la fiche média Jellyseerr (le titre redevient demandable).
+async fn drop_title(
+    ctx: &TaskContext,
+    side: &Side<'_>,
+    t: &Title,
+    media_id: i64,
+) -> Result<String> {
+    let torrents = side.qbit.torrents().await.unwrap_or_default();
+    let hashes = source_hashes(side, t, None, &torrents).await;
+    let (arr, path, params) = match t.kind {
+        Kind::Movie => (
+            side.radarr,
+            format!("api/v3/movie/{}", t.id),
+            [("deleteFiles", "true"), ("addImportExclusion", "false")],
+        ),
+        Kind::Series { .. } => (
+            side.sonarr,
+            format!("api/v3/series/{}", t.id),
+            [("deleteFiles", "true"), ("addImportListExclusion", "false")],
+        ),
+    };
+    if ctx.dry_run {
+        info!(task = "deletion_cleanup", side = side.name, title = %t.name, files = t.files.len(), "dry-run: would drop (request removed)");
+        return Ok(format!("{} « {} » (demande retirée)", side.name, t.name));
+    }
+    arr.delete(&path, &params).await?;
+    info!(task = "deletion_cleanup", side = side.name, title = %t.name, files = t.files.len(), "dropped: request removed in jellyseerr");
+    let mut notes = Vec::new();
+    for h in &hashes {
+        if let Some(tor) = torrents.iter().find(|x| x.hash.eq_ignore_ascii_case(h)) {
+            notes.push(handle_torrent(ctx, side, tor).await);
+        }
+    }
+    if let Err(e) = ctx.jellyseerr.delete_media(media_id).await {
+        warn!(task = "deletion_cleanup", title = %t.name, error = %e, "jellyseerr media not released");
+    }
+    Ok(format!(
+        "{} « {} » (demande retirée{})",
+        side.name,
+        t.name,
+        if notes.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", notes.join(" "))
+        }
+    ))
+}
+
+/// Fiches de cette machine correspondant à des demandes retirées, avec tous leurs fichiers.
+async fn dropped_titles(
+    ctx: &TaskContext,
+    side: &Side<'_>,
+    dropped: &[(String, i64, i64)],
+) -> Result<Vec<(Title, i64)>> {
+    let maps = side_maps(ctx, side.name);
+    let mut out = Vec::new();
+    for (kind, tmdb, media_id) in dropped {
+        if kind == "movie" {
+            let Some(m) = side
+                .radarr
+                .movies()
+                .await?
+                .into_iter()
+                .find(|m| m.get("tmdbId").and_then(Value::as_i64) == Some(*tmdb))
+            else {
+                continue;
+            };
+            let file = m.get("movieFile");
+            let files = file
+                .and_then(|f| str_of(f, "path"))
+                .and_then(|path| {
+                    map_path(&maps, &path).map(|(host, jf)| (f_id(file), path, host, jf))
+                })
+                .map(|(id, path, host, jellyfin)| {
+                    vec![FileRef {
+                        id,
+                        key: format!("{}:{path}", side.name),
+                        host,
+                        jellyfin,
+                        original: file.and_then(|f| str_of(f, "originalFilePath")),
+                        scene: file.and_then(|f| str_of(f, "sceneName")),
+                    }]
+                })
+                .unwrap_or_default();
+            out.push((
+                Title {
+                    kind: Kind::Movie,
+                    id: m.get("id").and_then(Value::as_i64).unwrap_or(0),
+                    tmdb: *tmdb,
+                    name: str_of(&m, "title").unwrap_or_default(),
+                    files,
+                },
+                *media_id,
+            ));
+        } else {
+            let Some(sr) = side
+                .sonarr
+                .series()
+                .await?
+                .into_iter()
+                .find(|s| s.get("tmdbId").and_then(Value::as_i64) == Some(*tmdb))
+            else {
+                continue;
+            };
+            let id = sr.get("id").and_then(Value::as_i64).unwrap_or(0);
+            let files: Vec<FileRef> = side
+                .sonarr
+                .episode_files(id)
+                .await
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|f| {
+                    let path = str_of(f, "path")?;
+                    let (host, jellyfin) = map_path(&maps, &path)?;
+                    Some(FileRef {
+                        id: f.get("id").and_then(Value::as_i64)?,
+                        key: format!("{}:{path}", side.name),
+                        host,
+                        jellyfin,
+                        original: str_of(f, "originalFilePath"),
+                        scene: str_of(f, "sceneName"),
+                    })
+                })
+                .collect();
+            out.push((
+                Title {
+                    kind: Kind::Series {
+                        tvdb: sr.get("tvdbId").and_then(Value::as_i64).unwrap_or(0),
+                        total_files: files.len(),
+                    },
+                    id,
+                    tmdb: *tmdb,
+                    name: str_of(&sr, "title").unwrap_or_default(),
+                    files,
+                },
+                *media_id,
+            ));
+        }
+    }
+    Ok(out)
+}
+
+fn f_id(file: Option<&Value>) -> i64 {
+    file.and_then(|f| f.get("id").and_then(Value::as_i64))
+        .unwrap_or(0)
+}
+
 /// Titres de cette machine dont au moins un fichier a disparu du disque.
 async fn titles_with_missing_files(
     ctx: &TaskContext,
@@ -922,8 +1093,67 @@ impl Task for DeletionCleanup {
                 summary.push(done.join(" ; "));
             }
         }
+        // demandes retirées dans Jellyseerr : la fiche Arr et ses fichiers partent avec elles
+        match dropped_now(ctx).await {
+            Err(e) => {
+                warn!(task = "deletion_cleanup", error = %e, "jellyseerr unreachable: dropped requests skipped");
+                summary.push("demandes=jellyseerr_injoignable".into());
+            }
+            Ok(dropped) if dropped.is_empty() => {}
+            Ok(dropped) => {
+                if dropped.len() > cfg.abort_if_missing_titles_over {
+                    warn!(
+                        task = "deletion_cleanup",
+                        titles = dropped.len(),
+                        "too many dropped requests at once: nothing done"
+                    );
+                    summary.push(format!("demandes=abandon({} d'un coup)", dropped.len()));
+                } else {
+                    let playing = ctx.jellyfin.playing_paths().await.unwrap_or_default();
+                    let mut done = Vec::new();
+                    for side in ctx.sides() {
+                        let titles = match dropped_titles(ctx, &side, &dropped).await {
+                            Ok(t) => t,
+                            Err(e) => {
+                                warn!(task = "deletion_cleanup", side = side.name, error = %e, "arr unreachable: dropped requests skipped");
+                                continue;
+                            }
+                        };
+                        for (t, media_id) in titles.into_iter().take(cfg.max_titles_per_run) {
+                            if t.files
+                                .iter()
+                                .any(|f| playing.iter().any(|p| p.starts_with(&f.jellyfin)))
+                            {
+                                info!(task = "deletion_cleanup", side = side.name, title = %t.name, "playing: kept for now");
+                                continue;
+                            }
+                            match drop_title(ctx, &side, &t, media_id).await {
+                                Ok(s) => {
+                                    actions += 1;
+                                    done.push(s);
+                                }
+                                Err(e) => {
+                                    warn!(task = "deletion_cleanup", side = side.name, title = %t.name, error = %e, "drop failed");
+                                    done.push(format!("{} « {} » (erreur)", side.name, t.name));
+                                }
+                            }
+                        }
+                    }
+                    if !done.is_empty() {
+                        summary.push(done.join(" ; "));
+                    }
+                }
+            }
+        }
         Ok(Report::new(summary.join(" | "), actions))
     }
+}
+
+/// Demandes retirées dans Jellyseerr, telles qu'elles se présentent maintenant.
+async fn dropped_now(ctx: &TaskContext) -> Result<Vec<(String, i64, i64)>> {
+    let media = ctx.jellyseerr.all_media().await?;
+    let requests = ctx.jellyseerr.all_requests().await?;
+    Ok(dropped_media(&media, &requests))
 }
 
 #[cfg(test)]
@@ -947,6 +1177,34 @@ mod tests {
             "ratio": ratio, "seeding_time": days * 86_400
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn media_without_request_is_dropped() {
+        let media = vec![
+            json!({"id": 1, "tmdbId": 100, "mediaType": "tv", "status": 3}),
+            json!({"id": 2, "tmdbId": 200, "mediaType": "movie", "status": 3}),
+            json!({"id": 3, "tmdbId": 0, "mediaType": "movie", "status": 2}),
+            json!({"id": 4, "mediaType": "tv", "status": 2}),
+            // fiches créées par le scan de la bibliothèque : jamais touchées
+            json!({"id": 5, "tmdbId": 300, "mediaType": "movie", "status": 5}),
+            json!({"id": 6, "tmdbId": 400, "mediaType": "tv", "status": 4}),
+        ];
+        let requests = vec![
+            json!({"id": 9, "media": {"id": 2}}),
+            json!({"id": 10, "media": {}}),
+        ];
+        let out = dropped_media(&media, &requests);
+        assert_eq!(
+            out,
+            vec![("tv".to_string(), 100, 1)],
+            "seul le média sans demande et avec TMDB"
+        );
+        assert!(dropped_media(
+            &media,
+            &[json!({"media": {"id": 1}}), json!({"media": {"id": 2}})]
+        )
+        .is_empty());
     }
 
     #[test]

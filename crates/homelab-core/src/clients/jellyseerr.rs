@@ -142,6 +142,40 @@ impl JellyseerrClient {
         check(resp, "jellyseerr settings/main").await.map(|_| ())
     }
 
+    /// Toutes les fiches média (paginé par 100) : un média sans demande = demande retirée par l'admin.
+    pub async fn all_media(&self) -> Result<Vec<Value>> {
+        let mut out = Vec::new();
+        let mut skip = 0u32;
+        loop {
+            let resp = self
+                .req(Method::GET, "api/v1/media")
+                .query(&[
+                    ("take", "100"),
+                    ("skip", &skip.to_string()),
+                    ("filter", "all"),
+                ])
+                .send()
+                .await?;
+            let v = json(resp, "jellyseerr media").await?;
+            let page = v
+                .get("results")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let n = page.len() as u32;
+            out.extend(page);
+            let total = v
+                .pointer("/pageInfo/results")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as u32;
+            skip += n;
+            if n == 0 || skip >= total {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     /// Toutes les requêtes (paginé par 100), tous statuts confondus.
     pub async fn all_requests(&self) -> Result<Vec<Value>> {
         let mut out = Vec::new();

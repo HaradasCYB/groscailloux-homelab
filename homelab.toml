@@ -230,14 +230,22 @@ jellyseerr_auto_approve = true
 # valider ni les refuser : vue d'ensemble demandée par l'admin le 2026-09-17.
 jellyseerr_view_requests = true
 
+[indexers]
+# C411 est le SEUL indexer, dans les 4 Arrs comme dans Prowlarr (les indexers publics et Jackett ont été
+# retirés le 2026-09-17 : ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes
+# et remplissaient le journal d'erreurs). Un seul compteur horaire pour tout ce qui l'interroge.
+c411_max_per_hour = 20        # limite de C411 vers 50/h (partagée avec les Arrs), Prowlarr coupe à 30/h
+manual_reserve = 6            # requêtes gardées pour la page /recherche : les tâches s'arrêtent à 14/h
+allow_no_french = true        # release sans français (VO) prise en dernier recours, si rien de français
+max_gb_per_episode = 6.0      # au-delà, écartée du choix automatique (reste visible sur la page)
+max_gb_per_movie = 25.0
+
 [manual_search]
 # Page /recherche (onboarder, liste admin-outils + jeton) : recherche manuelle d'une saison ou d'un film par
-# identifiant TMDB chez C411 (via Prowlarr), plus Nyaa pour les animés ; à utiliser au lieu de la recherche
-# de Sonarr/Radarr pour un animé (des centaines de requêtes, 429 de C411, délai dépassé du proxy seedbox).
-max_queries_per_hour = 6
+# identifiant TMDB chez C411, titres de la fiche en secours. À utiliser au lieu de la recherche de
+# Sonarr/Radarr pour un animé (une requête par épisode et par titre connu).
 c411_indexer = "C411"
-nyaa_indexer = "Nyaa.si"
-nyaa_queries = 2
+text_queries = 2
 results_ttl_mins = 30
 
 [chat]

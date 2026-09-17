@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use super::series_search::{
-    acceptable, allowed_qualities, due, is_h264, lang_rank, send_release, tmdb_matches, Target,
-    Throttle,
+    acceptable, allowed_qualities, due, is_h264, lang_rank, send_release, size_ok, tmdb_matches,
+    Target, Throttle,
 };
 use super::{Report, Task};
 use crate::clients::{ArrClient, ProwlarrClient};
@@ -50,6 +50,8 @@ pub fn best_movie_release<'a>(
     items: &'a [(Value, Value)],
     tmdb_id: i64,
     allowed: &HashSet<i64>,
+    max_gb: f64,
+    allow_vo: bool,
 ) -> Option<(&'a Value, Value)> {
     items
         .iter()
@@ -59,13 +61,23 @@ pub fn best_movie_release<'a>(
             if !tmdb_matches(r, tmdb_id) {
                 return None;
             }
-            let lang = lang_rank(title)?;
+            let lang = lang_rank(title);
             let quality = info.get("quality").cloned().unwrap_or(Value::Null);
             let res = quality
                 .pointer("/quality/resolution")
                 .and_then(Value::as_i64)
                 .unwrap_or(0);
             let seeders = r.get("seeders").and_then(Value::as_i64).unwrap_or(0);
+            let size = r
+                .get("size")
+                .and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                })
+                .unwrap_or(0);
+            if !size_ok(size, 1, max_gb) || (lang == 0 && !allow_vo) {
+                return None;
+            }
             let release = json!({
                 "title": title,
                 "downloadUrl": r.get("downloadUrl"),
@@ -75,7 +87,7 @@ pub fn best_movie_release<'a>(
             acceptable(&release, res, seeders, allowed).then_some((
                 r,
                 release,
-                (lang, res, is_h264(title), seeders),
+                (lang, res, seeders >= 2, is_h264(title), seeders),
             ))
         })
         .max_by_key(|(_, _, rank)| *rank)
@@ -94,7 +106,7 @@ async fn process_movie(
     let id = movie.get("id").and_then(Value::as_i64).unwrap_or(0);
     let tmdb = movie.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
     let title = movie.get("title").and_then(Value::as_str).unwrap_or("?");
-    if !throttle.take().await {
+    if !throttle.take().await || !crate::budget::take(ctx, false).await? {
         return Ok(("pending".into(), String::new()));
     }
     let mut items = Vec::new();
@@ -105,9 +117,6 @@ async fn process_movie(
         let Some(t) = r.get("title").and_then(Value::as_str) else {
             continue;
         };
-        if lang_rank(t).is_none() {
-            continue;
-        }
         let parse = arr.parse(t).await?;
         let info = parse.get("parsedMovieInfo").cloned().unwrap_or_default();
         items.push((r, info));
@@ -117,7 +126,14 @@ async fn process_movie(
         .and_then(Value::as_i64)
         .unwrap_or(0);
     let allowed = allowed_qualities(&arr.quality_profile(profile_id).await?);
-    let Some((_, release)) = best_movie_release(&items, tmdb, &allowed) else {
+    let ix = &ctx.cfg.indexers;
+    let Some((_, release)) = best_movie_release(
+        &items,
+        tmdb,
+        &allowed,
+        ix.max_gb_per_movie,
+        ix.allow_no_french,
+    ) else {
         return Ok((
             "none".into(),
             format!(
@@ -338,11 +354,11 @@ mod tests {
             (r("Autre.Film.2014.MULTI.VFF.1080p", 12345, 99), q(7, 1080)),
         ];
         let allowed: HashSet<i64> = [7].into_iter().collect();
-        let (_, rel) = best_movie_release(&items, 83389, &allowed).unwrap();
+        let (_, rel) = best_movie_release(&items, 83389, &allowed, 25.0, true).unwrap();
         assert_eq!(
             rel["title"],
             "Souvenirs.De.Marnie.2014.MULTI.VFF.1080p.BluRay.x264"
         );
-        assert!(best_movie_release(&items, 99999, &allowed).is_none());
+        assert!(best_movie_release(&items, 99999, &allowed, 25.0, true).is_none());
     }
 }

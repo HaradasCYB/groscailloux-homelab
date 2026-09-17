@@ -31,20 +31,46 @@ pub struct Config {
     pub chat: Chat,
     #[serde(default)]
     pub manual_search: ManualSearch,
+    #[serde(default)]
+    pub indexers: Indexers,
+}
+
+/// Règles communes à tout ce qui interroge l'indexer (tâches et page `/recherche`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Indexers {
+    /// Requêtes C411 au plus par heure glissante, tous usages confondus (la limite de l'indexer est
+    /// vers 50/h, partagée avec les 4 Arrs ; Prowlarr coupe à 30/h).
+    pub c411_max_per_hour: usize,
+    /// Requêtes de cette réserve gardées pour la page `/recherche` : les tâches de fond s'arrêtent avant.
+    pub manual_reserve: usize,
+    /// Prendre une release sans français (VO) quand aucune release française n'est acceptable.
+    pub allow_no_french: bool,
+    /// Plafonds de taille du choix automatique (la page reste libre).
+    pub max_gb_per_episode: f64,
+    pub max_gb_per_movie: f64,
+}
+
+impl Default for Indexers {
+    fn default() -> Self {
+        Self {
+            c411_max_per_hour: 20,
+            manual_reserve: 6,
+            allow_no_french: true,
+            max_gb_per_episode: 6.0,
+            max_gb_per_movie: 25.0,
+        }
+    }
 }
 
 /// Page `/recherche` : recherche manuelle d'une saison ou d'un film par identifiant TMDB (voir `manual_search`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ManualSearch {
-    /// Requêtes C411 au plus par heure glissante pour la page (s'ajoutent à `series_search` et `movie_search` ;
-    /// la limite de Prowlarr est de 25/h).
-    pub max_queries_per_hour: usize,
-    /// Noms des indexers dans Prowlarr.
+    /// Nom de l'indexer dans Prowlarr.
     pub c411_indexer: String,
-    pub nyaa_indexer: String,
-    /// Requêtes Nyaa (texte) au plus par recherche d'animé, une par titre différent.
-    pub nyaa_queries: usize,
+    /// Recherches en texte libre (titres de la fiche) quand l'identifiant ne donne rien.
+    pub text_queries: usize,
     /// Résultats gardés en mémoire.
     pub results_ttl_mins: i64,
 }
@@ -52,10 +78,8 @@ pub struct ManualSearch {
 impl Default for ManualSearch {
     fn default() -> Self {
         Self {
-            max_queries_per_hour: 6,
             c411_indexer: "C411".into(),
-            nyaa_indexer: "Nyaa.si".into(),
-            nyaa_queries: 2,
+            text_queries: 2,
             results_ttl_mins: 30,
         }
     }

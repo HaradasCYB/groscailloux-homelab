@@ -1,7 +1,7 @@
 //! Recherche manuelle (page `/recherche` de homelabd) : une saison ou un film, **par identifiant TMDB** chez C411
-//! (via Prowlarr, une requête), plus Nyaa en texte pour un animé. Remplace la recherche de Sonarr/Radarr pour
-//! les animés : celle-ci interroge chaque indexeur avec chaque titre connu, épisode par épisode (le 2026-09-17,
-//! plusieurs minutes, délai dépassé du proxy de la seedbox et 429 de C411).
+//! (via Prowlarr, une requête), avec les titres de la fiche en secours. Remplace la recherche de Sonarr/Radarr
+//! pour les animés : celle-ci interroge chaque titre connu, épisode par épisode (le 2026-09-17, plusieurs
+//! minutes, délai dépassé du proxy de la seedbox et 429 de C411).
 //!
 //! Rien n'est filtré : toutes les releases sont montrées, triées comme le choix automatique (français, qualité,
 //! H.264, sources), avec leurs écarts signalés. « Télécharger » passe par `series_search::send_release`, le même
@@ -16,7 +16,6 @@ use serde_json::{json, Value};
 use crate::clients::ArrClient;
 use crate::context::TaskContext;
 use crate::matching::normalize;
-use crate::state::now;
 use crate::tasks::anime_library::in_root;
 use crate::tasks::series_search::{
     allowed_qualities, is_h264, lang_rank, send_release, tmdb_matches, Target,
@@ -46,7 +45,8 @@ pub struct Row {
     pub title: String,
     pub size: i64,
     pub seeders: i64,
-    pub lang: Option<u8>,
+    /// 4 VF, 3 MULTi, 2 FRENCH, 1 VOSTFR, 0 aucun marqueur français.
+    pub lang: u8,
     pub resolution: i64,
     pub h264: bool,
     pub quality: String,
@@ -176,28 +176,6 @@ pub async fn find(ctx: &TaskContext, query: &str) -> Vec<Found> {
     out
 }
 
-/// Requêtes C411 encore permises dans l'heure glissante.
-pub fn quota_left(times: &[i64], now: i64, max: usize) -> usize {
-    max.saturating_sub(times.iter().filter(|t| now - **t < 3600).count())
-}
-
-/// Consomme une requête du plafond horaire ; `false` s'il est atteint.
-async fn take_quota(ctx: &TaskContext) -> Result<bool> {
-    let max = ctx.cfg.manual_search.max_queries_per_hour;
-    let t = now();
-    ctx.state
-        .update(|s| {
-            s.manual_search_queries.retain(|q| t - *q < 3600);
-            if s.manual_search_queries.len() < max {
-                s.manual_search_queries.push(t);
-                true
-            } else {
-                false
-            }
-        })
-        .await
-}
-
 /// Écarts d'une release à la politique de la plateforme.
 pub fn flags_for(
     row: &Row,
@@ -207,8 +185,8 @@ pub fn flags_for(
 ) -> Vec<&'static str> {
     let mut f = Vec::new();
     match row.lang {
-        None => f.push("sans français"),
-        Some(1) => f.push("VOSTFR"),
+        0 => f.push("sans français"),
+        1 => f.push("VOSTFR"),
         _ => {}
     }
     if row.resolution > 1080 {
@@ -248,7 +226,7 @@ pub fn sort_rows(rows: &mut [Row]) {
         Reverse((
             r.flags.is_empty(),
             right_item,
-            r.lang.unwrap_or(0),
+            r.lang,
             r.full_season,
             r.resolution.min(1080),
             r.h264,
@@ -336,8 +314,8 @@ pub fn build_row(
     Some(row)
 }
 
-/// Titres pour Nyaa : titre de l'Arr puis titres alternatifs différents (normalisés), au plus `n`.
-pub fn nyaa_names(item: &Value, n: usize) -> Vec<String> {
+/// Titres pour la recherche en texte libre : titre de l'Arr puis titres alternatifs différents, au plus `n`.
+pub fn text_names(item: &Value, n: usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
     let mut push = |s: &str| {
@@ -392,9 +370,6 @@ pub async fn run(
         .and_then(Value::as_i64)
         .unwrap_or(0);
     let allowed = allowed_qualities(&arr.quality_profile(profile).await?);
-    let path = item.get("path").and_then(Value::as_str).unwrap_or("");
-    let anime = anime_roots(ctx).iter().any(|r| in_root(path, r))
-        || item.get("seriesType").and_then(Value::as_str) == Some("anime");
     let mut notes = Vec::new();
     let mut raw: Vec<(String, Value)> = Vec::new();
 
@@ -404,7 +379,7 @@ pub async fn run(
             notes.push("fiche sans identifiant TMDB : C411 non interrogé".into())
         }
         Some(id) => {
-            if take_quota(ctx).await? {
+            if crate::budget::take(ctx, true).await? {
                 match prow.search_by_tmdb(tmdb, season, id).await {
                     Ok(list) => {
                         let n = list.len();
@@ -425,30 +400,34 @@ pub async fn run(
                 }
             } else {
                 notes.push(format!(
-                    "plafond de {} recherches C411 par heure atteint : C411 non interrogé",
-                    cfg.max_queries_per_hour
+                    "plafond de {} requêtes C411 par heure atteint : réessayer plus tard",
+                    ctx.cfg.indexers.c411_max_per_hour
                 ));
             }
         }
     }
 
-    if anime {
-        match prow.indexer_id(&cfg.nyaa_indexer).await? {
-            None => notes.push(format!("{} absent de Prowlarr", cfg.nyaa_indexer)),
-            Some(id) => {
-                for name in nyaa_names(&item, cfg.nyaa_queries) {
-                    match prow.search(&name, id, 50).await {
-                        Ok(list) => {
-                            notes.push(format!(
-                                "{} « {name} » : {} release(s)",
-                                cfg.nyaa_indexer,
-                                list.len()
-                            ));
-                            raw.extend(list.into_iter().map(|r| (cfg.nyaa_indexer.clone(), r)));
-                        }
-                        Err(e) => {
-                            notes.push(format!("{} « {name} » : erreur ({e:#})", cfg.nyaa_indexer))
-                        }
+    // repli : rien par identifiant → titres de la fiche en texte libre (même indexer, même budget)
+    if raw.is_empty() {
+        if let Some(id) = prow.indexer_id(&cfg.c411_indexer).await? {
+            for name in text_names(&item, cfg.text_queries) {
+                if !crate::budget::take(ctx, true).await? {
+                    notes.push(
+                        "plafond horaire atteint : recherche en texte libre abandonnée".into(),
+                    );
+                    break;
+                }
+                match prow.search(&name, id, 100).await {
+                    Ok(list) => {
+                        notes.push(format!(
+                            "{} « {name} » : {} release(s)",
+                            cfg.c411_indexer,
+                            list.len()
+                        ));
+                        raw.extend(list.into_iter().map(|r| (cfg.c411_indexer.clone(), r)));
+                    }
+                    Err(e) => {
+                        notes.push(format!("{} « {name} » : erreur ({e:#})", cfg.c411_indexer))
                     }
                 }
             }
@@ -627,7 +606,7 @@ mod tests {
 
     #[test]
     fn magnet_only_releases_are_kept() {
-        let nyaa = json!({"title": "[Bohemia] Mushi-Shi Season 2 (BD 1080p)", "magnetUrl": "http://p/5/download?link=x",
+        let nyaa = json!({"title": "Mushi-Shi.S02.VOSTFR.1080p", "magnetUrl": "http://p/5/download?link=x",
                           "seeders": "20", "size": "13314398208"});
         let r = build_row(
             "Nyaa.si",
@@ -641,18 +620,7 @@ mod tests {
         assert_eq!(r.release["magnetUrl"], "http://p/5/download?link=x");
         assert!(r.release["downloadUrl"].is_null());
         assert_eq!((r.seeders, r.size), (20, 13_314_398_208));
-        assert_eq!(r.flags, vec!["sans français"]);
-    }
-
-    #[test]
-    fn hourly_quota() {
-        let now = 10_000;
-        assert_eq!(quota_left(&[], now, 6), 6);
-        assert_eq!(
-            quota_left(&[now - 10, now - 3599, now - 3600, now - 7200], now, 6),
-            4
-        );
-        assert_eq!(quota_left(&[now; 8], now, 6), 0);
+        assert_eq!(r.flags, vec!["VOSTFR"]);
     }
 
     #[test]
@@ -662,7 +630,7 @@ mod tests {
         assert!(title_hit(&v, "Zoku"));
         assert!(!title_hit(&v, "Bleach"));
         assert!(!title_hit(&v, "  "));
-        let names = nyaa_names(&v, 2);
+        let names = text_names(&v, 2);
         assert_eq!(names.len(), 2);
         assert_eq!(names[0], "Mushi-Shi");
     }
