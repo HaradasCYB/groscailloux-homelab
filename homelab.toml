@@ -103,7 +103,7 @@ max_actions_per_run = 5
 # de C411 et bloquaient l'indexeur jusqu'à 24 h. Release confiée à Sonarr (release/push) ; refus
 # d'identification ou indexeur bloqué → qBittorrent avec l'étiquette homelab:series=<id>.
 interval_secs = 600         # 10 min : une demande part dans les minutes qui suivent
-max_queries_per_run = 6     # requêtes C411 au plus par passage
+max_queries_per_run = 2     # requêtes C411 au plus par passage (12/h : quota C411 partagé avec les 4 Arrs, 429 vers 50/h)
 query_gap_secs = 15         # écart minimal entre deux requêtes C411
 retry_after_hours = 24      # saison sans candidat : nouvelle recherche le lendemain
 grabbed_retry_hours = 168   # saison prise mais encore manquante : après 7 jours
@@ -116,7 +116,7 @@ prowlarr_url_for_arrs = "http://prowlarr:9696"  # Prowlarr vu des conteneurs Son
 # Rattrapage des films suivis encore manquants 24 h après l'ajout, par identifiant TMDB chez C411
 # (la recherche de Radarr, qui marche par identifiant, reste la voie normale).
 interval_secs = 3600
-max_per_run = 3
+max_per_run = 1
 missing_hours = 24
 retry_after_hours = 72
 error_retry_hours = 1

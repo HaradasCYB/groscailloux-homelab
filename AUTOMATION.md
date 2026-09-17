@@ -110,8 +110,10 @@ réécrit pour les conteneurs (`prowlarr_url_for_arrs` = `http://prowlarr:9696` 
 injoignable), refus d'identification ou indexeur bloqué (`bypassable_rejection`), ou envoi accepté mais pas
 mis en file → `.torrent` récupéré par Prowlarr et ajouté au qBittorrent du même côté avec l'étiquette
 `homelab:series=<id>:season=<n>`, importé ensuite par `torrent_import`. Tout autre refus (liste noire,
-taille…) est respecté. **Rythme** : `max_queries_per_run` requêtes C411 (6), `query_gap_secs`
-(15 s) d'écart ; filet de sécurité : 60 requêtes/heure sur C411 dans Prowlarr.
+taille…) est respecté. **Rythme** : `max_queries_per_run` requêtes C411 (2 par passage, 12/h), `query_gap_secs`
+(15 s) d'écart ; filet de sécurité : 25 requêtes/heure sur C411 dans Prowlarr. La clé C411 est partagée par
+Prowlarr et les 4 Arrs (RSS ~16/h) : le 2026-09-17, le 429 est tombé vers 50 requêtes dans l'heure, pendant
+le rattrapage de l'arriéré (35 requêtes homelabd + RSS + une recherche Sonarr).
 Résumé : `grabbed=1 none=2 pending=13`.
 
 ### movie_search — 1 h
@@ -119,7 +121,7 @@ Rattrapage des films **suivis, sans fichier, sortis, ajoutés depuis plus de `mi
 d'attente** : la recherche de Radarr, qui interroge déjà par identifiant (*When Marnie Was There* retrouve
 « Souvenirs de Marnie »), reste la voie normale. Même mécanique que `series_search` : `{TmdbId:<id>}` (type
 `movie`), `tmdbId` vérifié, `parse` Radarr, garde-fous, `release/push`, sinon qBittorrent + `homelab:movie=<id>`.
-Au plus `max_per_run` films (3) par passage.
+Au plus `max_per_run` film (1) par passage.
 
 ### indexer_unblock — 10 min
 Après des échecs (429, délais), Sonarr et Radarr mettent un indexeur en pause, jusqu'à 24 h ; aucune API ne

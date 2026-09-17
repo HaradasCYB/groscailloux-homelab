@@ -342,7 +342,7 @@ impl Default for SeriesSearch {
     fn default() -> Self {
         Self {
             interval_secs: 600,
-            max_queries_per_run: 6,
+            max_queries_per_run: 2,
             query_gap_secs: 15,
             retry_after_hours: 24,
             grabbed_retry_hours: 168,
@@ -374,7 +374,7 @@ impl Default for MovieSearch {
     fn default() -> Self {
         Self {
             interval_secs: 3600,
-            max_per_run: 3,
+            max_per_run: 1,
             missing_hours: 24,
             retry_after_hours: 72,
             error_retry_hours: 1,
@@ -995,7 +995,7 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.torrent_import.interval_secs, 600);
         assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
-        assert_eq!(cfg.tasks.series_search.max_queries_per_run, 6);
+        assert_eq!(cfg.tasks.series_search.max_queries_per_run, 2);
         assert_eq!(cfg.accounts.max_premium, 25);
         assert_eq!(cfg.accounts.max_devices_per_user, 0);
         assert_eq!(cfg.accounts.max_playbacks_per_user, 2);

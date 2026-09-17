@@ -51,8 +51,9 @@ journalctl -u homelabd -f
   à la demande dans Jellyseerr : un animé = 3 à 4 requêtes C411 par épisode → **429** → pause de l'indexeur
   qui s'allonge jusqu'à 24 h (le 2026-09-17, niveau 9). `animeCategories=[5070]` et
   `animeStandardFormatSearch=true` restent dans les deux Sonarr pour le RSS. Films : Radarr cherche déjà par
-  identifiant ; `movie_search` rattrape ce qui manque après 24 h. Filet : C411 limité à 60 requêtes/heure
-  dans Prowlarr. Éviter les recherches interactives en rafale sur un animé.
+  identifiant ; `movie_search` rattrape ce qui manque après 24 h. Filet : C411 limité à 25 requêtes/heure
+  dans Prowlarr ; homelabd en envoie au plus 12/h pour les séries et 1/h pour les films : la clé est
+  partagée avec les 4 Arrs et le 429 est tombé vers 50 requêtes/heure le 2026-09-17. Éviter les recherches interactives en rafale sur un animé.
 - **Indexeur en pause** : `indexer_unblock` lève la pause (table `IndexerStatus`, application arrêtée ~20 s,
   base sauvegardée) une heure après le dernier échec ; au-delà de 3 fois en 24 h, mail seulement.
 - **Import d'un téléchargement que l'Arr n'a pas demandé** : `ManualImport` en `importMode: copy`
@@ -244,7 +245,7 @@ journalctl -u homelabd -f
   été rattaché à E48 par erreur, corrigé en réimportant chaque fichier vers son épisode).
 - Prowlarr n'a aucune application configurée : les indexers vivent dans Sonarr/Radarr et les
   publics passent par **Jackett** (+ FlareSolverr pour Cloudflare). Seule exception, depuis le 2026-09-16 :
-  **C411 est aussi déclaré dans Prowlarr** (même clé, 60 requêtes/heure), uniquement pour les recherches de
+  **C411 est aussi déclaré dans Prowlarr** (même clé, 25 requêtes/heure), uniquement pour les recherches de
   `series_search` et `movie_search` (par identifiant TMDB, texte libre en secours). La clé n'est pas lisible par l'API des Arrs (champ masqué) : elle
   vient de leur base. Ne pas y brancher d'application, sinon Prowlarr réécrirait les indexers des Arrs. Avant de retirer un service,
   vérifier qui l'appelle : `grep -r <nom>:<port>` dans les configs et les champs `baseUrl` des
