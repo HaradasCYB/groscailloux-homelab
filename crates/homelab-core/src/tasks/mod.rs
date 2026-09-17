@@ -8,6 +8,7 @@ pub mod cleanup;
 pub mod deletion_cleanup;
 pub mod disk_pressure;
 pub mod id_match_import;
+pub mod identity_check;
 pub mod indexer_unblock;
 pub mod monitor_sync;
 pub mod movie_search;
@@ -68,6 +69,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(movie_search::MovieSearch),
         Box::new(indexer_unblock::IndexerUnblock),
         Box::new(anime_library::AnimeLibrary),
+        Box::new(identity_check::IdentityCheck),
         Box::new(deletion_cleanup::DeletionCleanup),
         Box::new(trending::Trending),
         Box::new(playback_limit::PlaybackLimit),

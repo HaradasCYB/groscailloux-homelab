@@ -274,6 +274,7 @@ pub struct Tasks {
     pub movie_search: MovieSearch,
     pub indexer_unblock: IndexerUnblock,
     pub anime_library: AnimeLibrary,
+    pub identity_check: IdentityCheck,
     pub deletion_cleanup: DeletionCleanup,
     pub trending: Trending,
     pub playback_limit: PlaybackLimit,
@@ -484,6 +485,24 @@ impl Default for AnimeLibrary {
             seedbox_series_root: "/home/kakaouette/media/Anime".into(),
             seedbox_movies_root: "/home/kakaouette/media/Anime Movies".into(),
             only_tmdb: Vec::new(),
+        }
+    }
+}
+
+/// Contrôle des identifications de Jellyfin (voir `tasks::identity_check`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct IdentityCheck {
+    pub interval_secs: u64,
+    /// Corrections au plus par passage (chacune relance les métadonnées du titre).
+    pub max_fixes_per_run: usize,
+}
+
+impl Default for IdentityCheck {
+    fn default() -> Self {
+        Self {
+            interval_secs: 1800,
+            max_fixes_per_run: 3,
         }
     }
 }

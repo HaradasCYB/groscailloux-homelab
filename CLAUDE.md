@@ -141,6 +141,12 @@ journalctl -u homelabd -f
 - **NPM hôte 1 (Jellyfin)** : sa configuration avancée contient les réglages SyncPlay (tampons coupés,
   délais 3600 s ; avant le 2026-09-15 ils n'étaient que dans le fichier conf, pas en base) et la route du
   tchat. Toujours éditer base **et** fichier ensemble (sauvegarde `backups/npm-*-chat`).
+- **Identifications surveillées** : la tâche `identity_check` (30 min) compare l'identifiant de chaque fiche
+  Jellyfin à celui de Sonarr/Radarr, qui fait foi, et corrige seule (`RemoteSearch` + `Apply` + métadonnées,
+  3 titres au plus par passage, jamais pendant une lecture). Les nouveaux dossiers portent l'identifiant
+  (`seriesFolderFormat = {Series Title} [tvdbid-{TvdbId}]`, `movieFolderFormat` avec `[tmdbid-…]`) ; les
+  anciens n'ont pas été renommés. Le 2026-09-17, 6 titres étaient mal identifiés (dont *The Walking Dead* vu
+  comme *Dead City* et *Tomb Raider* comme *Lara Croft*).
 - **Titre mal identifié par Jellyfin** : un film au titre court ou ambigu peut être rattaché au mauvais TMDB
   (le 2026-09-15, *Midnight* 2021 → *Before Midnight* 2013) ; Jellyseerr, qui compare les ids TMDB, laisse alors la
   demande « en cours ». Corriger par `POST /Items/RemoteSearch/Movie` (ProviderIds Tmdb) puis

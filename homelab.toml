@@ -139,6 +139,13 @@ seedbox_series_root = "/home/kakaouette/media/Anime"
 seedbox_movies_root = "/home/kakaouette/media/Anime Movies"
 only_tmdb = []
 
+[tasks.identity_check]
+# Jellyfin identifie un dossier d'après son nom : trois séries sont parties sur un spin-off (Attaque des
+# Titans → Junior High, Slime → Slime Diaries, Walking Dead → Dead City). On compare chaque fiche Jellyfin à
+# l'identifiant de Sonarr/Radarr, qui fait foi, et on corrige (RemoteSearch + Apply + métadonnées).
+interval_secs = 1800
+max_fixes_per_run = 3
+
 [tasks.indexer_unblock]
 # Indexeurs mis en pause par Sonarr/Radarr (429, délais) : pause levée dans leur base (application
 # arrêtée ~20 s, base sauvegardée) si le dernier échec date d'au moins quiet_mins. Au-delà de

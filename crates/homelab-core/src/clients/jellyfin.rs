@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use reqwest::{Client, Method, RequestBuilder, Url};
 use serde_json::{json, Value};
@@ -70,6 +72,65 @@ impl JellyfinClient {
     }
 
     /// Chemins de tous les films et épisodes de la bibliothèque.
+    /// Séries et films de la médiathèque, avec leur chemin et leurs identifiants de référence.
+    pub async fn titles_with_ids(&self) -> Result<Vec<Value>> {
+        let resp = self
+            .req(Method::GET, "Items")
+            .query(&[
+                ("Recursive", "true"),
+                ("IncludeItemTypes", "Series,Movie"),
+                ("Fields", "Path,ProviderIds"),
+                ("EnableImages", "false"),
+                ("EnableUserData", "false"),
+            ])
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin Items").await?;
+        Ok(v.get("Items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Fiches proposées par les fournisseurs de métadonnées pour un élément (`Series` ou `Movie`).
+    pub async fn remote_search(&self, kind: &str, item_id: &str, ids: Value) -> Result<Vec<Value>> {
+        let resp = self
+            .req(Method::POST, &format!("Items/RemoteSearch/{kind}"))
+            .json(&json!({ "ItemId": item_id, "SearchInfo": { "ProviderIds": ids } }))
+            .timeout(Duration::from_secs(300))
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin RemoteSearch").await?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    /// Applique une fiche puis relance les métadonnées. L'application peut dépasser le délai côté client
+    /// alors que Jellyfin la termine : on ne traite pas ce cas comme un échec (le contrôle suivant tranche).
+    pub async fn apply_remote(&self, item_id: &str, candidate: &Value) -> Result<()> {
+        let sent = self
+            .req(
+                Method::POST,
+                &format!("Items/RemoteSearch/Apply/{item_id}?ReplaceAllImages=true"),
+            )
+            .json(candidate)
+            .timeout(Duration::from_secs(420))
+            .send()
+            .await;
+        if let Err(e) = sent {
+            if !e.is_timeout() {
+                return Err(e.into());
+            }
+        }
+        let resp = self
+            .req(
+                Method::POST,
+                &format!("Items/{item_id}/Refresh?Recursive=true&MetadataRefreshMode=FullRefresh&ImageRefreshMode=FullRefresh&ReplaceAllMetadata=true"),
+            )
+            .send()
+            .await?;
+        check(resp, "jellyfin Items/Refresh").await.map(|_| ())
+    }
+
     pub async fn item_paths(&self) -> Result<std::collections::HashSet<String>> {
         let resp = self
             .req(Method::GET, "Items")

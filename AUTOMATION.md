@@ -178,6 +178,15 @@ vers `/data/media/anime*`), `~/media/Anime` et `~/media/Anime Movies` sur la see
 - Nouvelles demandes : Jellyseerr range déjà les séries qu'il reconnaît comme animés (`activeAnimeDirectory`,
   `animeTags` des serveurs Sonarr) ; la tâche rattrape le reste et les films.
 
+### identity_check — 30 min
+Jellyfin identifie un dossier **d'après son nom** : un titre proche de celui d'un spin-off part sur la mauvaise
+fiche (*Attack on Titan* → *Junior High School*, *Slime* → *Slime Diaries*, *The Walking Dead* → *Dead City*).
+La tâche compare, pour chaque fiche des 4 Arrs, l'identifiant (TVDB pour les séries, TMDB pour les films) à
+celui de l'élément Jellyfin qui porte le même chemin (`map_path`), et corrige les écarts : `RemoteSearch` avec
+le bon identifiant, `Apply`, puis rafraîchissement complet des métadonnées. Au plus `max_fixes_per_run` (3) par
+passage, jamais un titre en cours de lecture, `dry_run` respecté. Un identifiant absent d'un côté ne conclut
+rien. Premier passage le 2026-09-17 : 6 titres corrigés sur 215.
+
 ### seedbox_refresh — 5 min (si `[seedbox] enabled`)
 Lit l'historique `downloadFolderImported` (eventType 3) des Radarr/Sonarr de la seedbox depuis le
 dernier id traité (`state.seedbox_history` ; la première passe initialise le curseur sans rejouer).

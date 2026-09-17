@@ -49,7 +49,9 @@ pub fn new_imports(records: &[Value], cursor: i64) -> Vec<(i64, String)> {
 }
 
 /// Paramètres `vfs/refresh` : le dossier et chacun de ses parents (un nouveau dossier de
-/// film n'est visible qu'une fois le parent `Movies` relu).
+/// film n'est visible qu'une fois le parent `Movies` relu), en **récursif** : sans cela, le dossier
+/// d'une série tout juste créée est listé vide et Jellyfin enregistre une série sans épisode
+/// (Game of Thrones, le 2026-09-17).
 pub fn refresh_params(dirs: &[String]) -> Value {
     let mut all: Vec<String> = Vec::new();
     for d in dirs {
@@ -67,6 +69,7 @@ pub fn refresh_params(dirs: &[String]) -> Value {
     }
     all.sort_by_key(|s| s.matches('/').count());
     let mut m = Map::new();
+    m.insert("recursive".to_string(), Value::String("true".into()));
     for (i, d) in all.iter().enumerate() {
         let key = if i == 0 {
             "dir".to_string()
