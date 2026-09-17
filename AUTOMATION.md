@@ -76,6 +76,11 @@ jugé (`state.torrent_import`, clé `vps:<hash>` / `seedbox:<hash>`), dans l'ord
    suivi, `auto` = déplacement, le torrent perd ses fichiers.
 Déjà importé ⇒ rejet de l'Arr ⇒ `nothing_importable`. Erreur (Arr injoignable…) ⇒ `retry`, `error`
 après `max_attempts`. Au plus `max_per_run` torrents coûteux par passage, les plus récents d'abord.
+Correspondance : d'abord parmi les **fiches déjà suivies** par l'Arr (elles portent leurs titres alternatifs :
+un torrent « Shingeki.no.Kyojin.S02 » retrouve la fiche « Attack on Titan »), et seulement ensuite la recherche
+TVDB/TMDB (qui ne renvoie pas ces titres). Fiche avec fichiers : les candidats de `manualimport` sont filtrés sur le
+**chemin du torrent** — avec l'id de la fiche, Sonarr renvoie aussi les fichiers déjà rangés (le 2026-09-16,
+les 25 épisodes de la saison 1 au lieu des 12 de la saison 2 : import « réussi » sans rien ajouter).
 Aucune modification des torrents. Jellyfin : LibraryMonitor (VPS) ou `seedbox_refresh` (seedbox).
 Le watcher `auto_import` ignore désormais les vidéos qui appartiennent à un torrent qBittorrent.
 Résumé : `files=3 arr_managed=67 already_linked=8 imported=2 no_match=1 pending=0`.
@@ -96,6 +101,17 @@ VOSTFR). Pack si la moitié de la saison manque, sinon épisodes ; tri langue, r
 seeders → `POST /api/v3/release` en **grab forcé** (`shouldOverride`, `seriesId`, `episodeIds`).
 L'import est débloqué ensuite par `id_match_import`. C411 ne renvoie pas d'id TVDB : le titre est le
 seul garde-fou possible. Résumé : `grabbed=1 none=2 pending=20`.
+- **Anime** : Sonarr interroge l'indexer épisode par épisode ; une recherche de saison entière dépasse le délai
+  du proxy de la seedbox (504 après 300 s). La tâche interroge donc `anime_episodes_per_run` épisodes par
+  passage (`GET release?episodeId=`, ~200 s chacun, délai 280 s). Une recherche en **erreur** est réessayée
+  après `error_retry_hours` (1 h), pas après les 72 h d'une saison sans candidat.
+- **Titre traduit, recherche de secours** : Sonarr n'interroge C411 qu'avec ses propres titres (« Shingeki no
+  Kyojin », « Attack on Titan ») alors que les releases françaises s'appellent « L'attaque des Titans ». Si sa
+  recherche ne donne aucun candidat, la tâche interroge C411 **en texte libre par Prowlarr** (indexer « C411 »
+  déclaré dans Prowlarr, même clé que dans Sonarr) avec les `prowlarr_queries` premiers noms de la série
+  (français, d'origine, alternatifs), passe chaque titre par `GET parse` de Sonarr (saison, pack, qualité), garde
+  les mêmes garde-fous, puis **pousse** la release retenue (`POST /api/v3/release/push`) : Sonarr la rattache à
+  la fiche par son parseur. Un refus (indexer bloqué, taille…) est journalisé avec sa raison.
 
 ### seedbox_refresh — 5 min (si `[seedbox] enabled`)
 Lit l'historique `downloadFolderImported` (eventType 3) des Radarr/Sonarr de la seedbox depuis le

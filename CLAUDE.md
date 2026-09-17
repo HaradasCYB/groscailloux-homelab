@@ -133,7 +133,10 @@ journalctl -u homelabd -f
   (le 2026-09-15, *Midnight* 2021 → *Before Midnight* 2013) ; Jellyseerr, qui compare les ids TMDB, laisse alors la
   demande « en cours ». Corriger par `POST /Items/RemoteSearch/Movie` (ProviderIds Tmdb) puis
   `/Items/RemoteSearch/Apply/{id}`, et lancer le job Jellyseerr `jellyfin-full-scan` (le scan « recently added »
-  ne revoit pas un titre ajouté la veille).
+  ne revoit pas un titre ajouté la veille). **Séries aussi** : le 2026-09-16, le dossier « Attack on Titan » a été
+  rattaché au spin-off *Junior High School* (TVDB 299882) alors que Sonarr avait la bonne fiche (267440) —
+  `POST /Items/RemoteSearch/Series` (ProviderIds Tvdb), `Apply` (peut dépasser 3 min, vérifier ensuite plutôt que
+  relancer) puis `Refresh` récursif en `FullRefresh` + `ReplaceAllMetadata` pour rattacher tous les épisodes.
 - **Historique Arr** : `GET history?movieId=` / `?seriesId=` n'existe pas, le filtre est ignoré et tout
   l'historique revient. Utiliser `history/movie?movieId=` et `history/series?seriesId=` (seul `downloadId`
   filtre vraiment `GET history`).
@@ -233,10 +236,17 @@ journalctl -u homelabd -f
   la saison : toujours choisir le candidat par **chemin exact**, jamais le premier (le 12/09, S17E41 a
   été rattaché à E48 par erreur, corrigé en réimportant chaque fichier vers son épisode).
 - Prowlarr n'a aucune application configurée : les indexers vivent dans Sonarr/Radarr et les
-  publics passent par **Jackett** (+ FlareSolverr pour Cloudflare). Avant de retirer un service,
+  publics passent par **Jackett** (+ FlareSolverr pour Cloudflare). Seule exception, depuis le 2026-09-16 :
+  **C411 est aussi déclaré dans Prowlarr** (même clé), uniquement pour la recherche en texte libre de
+  `unknown_series_grab` (titres traduits). La clé n'est pas lisible par l'API des Arrs (champ masqué) : elle
+  vient de leur base. Ne pas y brancher d'application, sinon Prowlarr réécrirait les indexers des Arrs. Avant de retirer un service,
   vérifier qui l'appelle : `grep -r <nom>:<port>` dans les configs et les champs `baseUrl` des
   indexers Arr (`GET /api/v3/indexer`) — le retrait de Jackett/FlareSolverr le 2026-09-10 a coupé
   les indexers publics pendant deux jours.
+- **Indexer bloqué par un Arr** : après des échecs (délais dépassés, 429), Sonarr met l'indexer en pause
+  jusqu'à **24 h** (« Indexer C411 is blocked till … due to failures ») ; ni `testall` ni un réenregistrement ne
+  lèvent le blocage, et aucune recherche ni `release/push` ne passe. En attendant : récupérer le torrent par
+  Prowlarr et l'ajouter au qBittorrent du bon côté, `torrent_import` fait l'import.
 - Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
   même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`).
   `DELETE /Items/<id>` **efface le disque** (c'est le bouton « Supprimer » de Jellyfin) : jamais pour

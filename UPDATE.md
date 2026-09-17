@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.1.1](#111--16092026--adapté-aux-téléviseurs)** | 16/09/2026 | **Adapté aux téléviseurs** |
+| **[1.2.0](#120--17092026--les-séries-aux-titres-traduits)** | 17/09/2026 | **Les séries aux titres traduits** |
+| [1.1.1](#111--16092026--adapté-aux-téléviseurs) | 16/09/2026 | Adapté aux téléviseurs |
 | [1.1.0](#110--16092026--la-lecture-saide-elle-même) | 16/09/2026 | La lecture s'aide elle-même |
 | [1.0.0](#100--15092026--fin-de-la-bêta--une-seule-plateforme-vps--seedbox) | 12 → 15/09/2026 | Fin de la bêta : une seule plateforme VPS + seedbox |
 | [0.9.0](#090--10--11092026--la-refonte--homelabd) | 10 → 11/09/2026 | La refonte : l'automatisation réécrite en Rust (homelabd) |
@@ -20,6 +21,22 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.2.0 — 17/09/2026 — Les séries aux titres traduits
+
+Les saisons 2 et 3 d'un animé demandé ne partaient jamais. En remontant la chaîne : la recherche de saison
+dépassait le délai de la seedbox, un échec bloquait la saison trois jours, et surtout C411 — le seul indexer en
+automatique — classe la série sous son titre français, que Sonarr ne cherche jamais.
+
+- **Recherche par titre traduit** : quand Sonarr ne trouve rien, la plateforme interroge C411 directement avec
+  les noms français et d'origine de la série, garde les mêmes règles (français, 1080p, sources), et confie la
+  release à Sonarr. Débloque aussi d'autres séries (une série policière culte, une série de zombies).
+- **Animés** : recherche épisode par épisode, au rythme que la seedbox supporte ; une erreur est retentée dans
+  l'heure au lieu de trois jours.
+- **Import des téléchargements manuels** : un torrent au titre japonais ou anglais retrouve la fiche existante
+  par ses titres alternatifs, et l'import ne prend plus que les fichiers du torrent (il réimportait en silence
+  une saison déjà présente).
+- Correction ponctuelle : une série rattachée par Jellyfin à son spin-off a été ré-identifiée.
 
 ## 1.1.1 — 16/09/2026 — Adapté aux téléviseurs
 
