@@ -358,12 +358,32 @@ async fn examine(
     } else {
         parsed.title.clone()
     };
-    let hits = arr.lookup(kind, &term).await?;
-    let picked = if movie {
-        pick_movie(&hits, &parsed)
+    // D'abord les fiches déjà suivies : elles portent leurs titres alternatifs (une release peut s'appeler
+    // « Shingeki no Kyojin » alors que la fiche s'appelle « Attack on Titan »), que la recherche TVDB, elle,
+    // ne renvoie pas. Sinon seulement, on interroge le catalogue.
+    let existing = if movie {
+        arr.movies().await.unwrap_or_default()
     } else {
-        pick_series(&hits, &parsed)
+        arr.series().await.unwrap_or_default()
     };
+    let picked = if movie {
+        pick_movie(&existing, &parsed)
+    } else {
+        pick_series(&existing, &parsed)
+    };
+    let (hits, picked) = match picked {
+        Some(m) => (existing, Some(m)),
+        None => {
+            let hits = arr.lookup(kind, &term).await?;
+            let picked = if movie {
+                pick_movie(&hits, &parsed)
+            } else {
+                pick_series(&hits, &parsed)
+            };
+            (hits, picked)
+        }
+    };
+    let _ = &hits;
     let Some(m) = picked else {
         return Ok(Outcome::costly(
             "no_match",
@@ -456,7 +476,12 @@ async fn examine(
         let candidates = arr
             .manual_import_folder(&t.content_path, id_param, id)
             .await?;
-        select_files(&candidates, movie, id, &hash)
+        select_files(
+            &from_torrent(&candidates, &t.content_path),
+            movie,
+            id,
+            &hash,
+        )
     };
     for s in &skipped {
         info!(task = "torrent_import", side = side.name, torrent = %t.name, file = %s, "file skipped");
@@ -483,6 +508,21 @@ async fn examine(
         files: n,
         costly: true,
     })
+}
+
+/// Avec l'id de la fiche, `manualimport` renvoie aussi les fichiers déjà rangés dans le dossier de la
+/// série (le 2026-09-16, les 25 épisodes de la saison 1 au lieu des 12 de la saison 2 qu'on venait de
+/// télécharger, et l'import ne faisait rien). On ne garde que ce qui vient du torrent.
+pub fn from_torrent(candidates: &[Value], content_path: &str) -> Vec<Value> {
+    candidates
+        .iter()
+        .filter(|c| {
+            c.get("path")
+                .and_then(Value::as_str)
+                .is_some_and(|p| p.starts_with(content_path))
+        })
+        .cloned()
+        .collect()
 }
 
 async fn wait_episodes(arr: &ArrClient, series_id: i64, max_secs: u64) -> Result<bool> {
@@ -814,5 +854,16 @@ mod tests {
         );
         assert!(host_path("/downloads", Path::new("/x"), "/elsewhere", "a.mkv").is_none());
         assert!(host_path("/downloads", Path::new("/x"), "/downloads2", "a.mkv").is_none());
+    }
+
+    #[test]
+    fn only_files_from_the_torrent_are_imported() {
+        let cands = vec![
+            json!({"path": "/downloads/Serie.S02/E01.mkv"}),
+            json!({"path": "/media/TV Shows/Serie/Saison 1/E01.mkv"}),
+        ];
+        let kept = from_torrent(&cands, "/downloads/Serie.S02");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0]["path"], "/downloads/Serie.S02/E01.mkv");
     }
 }

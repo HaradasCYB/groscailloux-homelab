@@ -243,6 +243,83 @@ async fn names_for(ctx: &TaskContext, series: &Value) -> Vec<String> {
     names
 }
 
+/// Recherche de secours : Sonarr n'interroge l'indexer qu'avec ses propres titres, donc une série dont les
+/// releases portent un titre traduit (« L'attaque des Titans » pour *Attack on Titan*) ne remonte jamais.
+/// On interroge alors l'indexer **en texte libre** par Prowlarr, avec les noms connus de la série, et on
+/// pousse la release retenue à Sonarr, qui la rattache lui-même (son parseur, lui, reconnaît le titre).
+async fn prowlarr_candidates(
+    ctx: &TaskContext,
+    arr: &ArrClient,
+    names: &[String],
+    todo: &SeasonTodo,
+) -> Result<Vec<Candidate>> {
+    let Some(prow) = &ctx.prowlarr else {
+        return Ok(Vec::new());
+    };
+    let cfg = &ctx.cfg.tasks.unknown_series_grab;
+    let Some(indexer_id) = prow.indexer_id(&cfg.indexer).await? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for name in names.iter().take(cfg.prowlarr_queries) {
+        for r in prow.search(name, indexer_id, 100).await? {
+            let (Some(title), Some(url)) = (
+                r.get("title").and_then(Value::as_str),
+                r.get("downloadUrl").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if !seen.insert(title.to_string()) {
+                continue;
+            }
+            let Some(lang) = lang_rank(title) else {
+                continue;
+            };
+            let parse = arr.parse(title).await?;
+            let Some(p) = parsed_series(&parse) else {
+                continue;
+            };
+            if !title_matches(&p.title, names) {
+                continue;
+            }
+            let info = parse.get("parsedEpisodeInfo").cloned().unwrap_or_default();
+            if info.get("seasonNumber").and_then(Value::as_i64) != Some(todo.season) {
+                continue;
+            }
+            out.push(Candidate {
+                title: title.to_string(),
+                season: todo.season,
+                episodes: info
+                    .get("episodeNumbers")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_i64).collect())
+                    .unwrap_or_default(),
+                full_season: info
+                    .get("fullSeason")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                lang_rank: lang,
+                resolution: info
+                    .pointer("/quality/quality/resolution")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                h264: !title.to_ascii_uppercase().contains("265")
+                    && !title.to_ascii_uppercase().contains("HEVC"),
+                seeders: r.get("seeders").and_then(Value::as_i64).unwrap_or(0),
+                release: serde_json::json!({
+                    "source": "prowlarr",
+                    "title": title,
+                    "downloadUrl": url,
+                    "publishDate": r.get("publishDate"),
+                    "quality": info.get("quality"),
+                }),
+            });
+        }
+    }
+    Ok(out)
+}
+
 async fn process_season(
     ctx: &TaskContext,
     arr: &ArrClient,
@@ -303,6 +380,24 @@ async fn process_season(
             None => {}
         }
     }
+    if cands.is_empty() {
+        match prowlarr_candidates(ctx, arr, &names, todo).await {
+            Ok(extra) if !extra.is_empty() => {
+                info!(
+                    task = "unknown_series_grab",
+                    series = title,
+                    season = todo.season,
+                    candidates = extra.len(),
+                    "candidats trouvés par titre traduit (Prowlarr)"
+                );
+                cands = extra;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                warn!(task = "unknown_series_grab", series = title, error = %e, "recherche Prowlarr en échec")
+            }
+        }
+    }
     let episodes = arr.episodes(todo.series_id).await?;
     let season_eps: Vec<&Value> = episodes
         .iter()
@@ -360,6 +455,45 @@ async fn process_season(
     if ctx.dry_run {
         info!(task = "unknown_series_grab", service = arr.name, series = title, season = todo.season, release = %c.title, episodes = ids.len(), "dry-run: would grab");
         return Ok(("dry_run".into(), c.title.clone()));
+    }
+    // release trouvée par Prowlarr : Sonarr ne l'a pas en mémoire, on la lui pousse (il la rattache seul).
+    if c.release.get("source").and_then(Value::as_str) == Some("prowlarr") {
+        let url = c
+            .release
+            .get("downloadUrl")
+            .and_then(Value::as_str)
+            .context("release sans lien de téléchargement")?;
+        let decision = arr
+            .push_release(
+                &c.title,
+                url,
+                c.release.get("publishDate").and_then(Value::as_str),
+                &cfg.indexer,
+            )
+            .await
+            .with_context(|| format!("push {}", c.title))?;
+        let rejected: Vec<String> = decision
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or(std::slice::from_ref(&decision))
+            .iter()
+            .filter(|d| d.get("approved").and_then(Value::as_bool) != Some(true))
+            .flat_map(|d| {
+                d.get("rejections")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .filter_map(|r| r.as_str().map(str::to_string))
+            .collect();
+        if !rejected.is_empty() {
+            return Ok((
+                "none".into(),
+                format!("{} refusé : {}", c.title, rejected.join(" ; ")),
+            ));
+        }
+        info!(task = "unknown_series_grab", service = arr.name, series = title, season = todo.season, release = %c.title, "poussé à Sonarr (titre traduit)");
+        return Ok(("grabbed".into(), c.title.clone()));
     }
     arr.grab_override(&c.release, todo.series_id, &ids, download_client)
         .await

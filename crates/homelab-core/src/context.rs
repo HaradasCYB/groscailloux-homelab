@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::sync::Mutex;
 
-use crate::clients::{ArrClient, JellyfinClient, JellyseerrClient, QbitClient};
+use crate::clients::{ArrClient, JellyfinClient, JellyseerrClient, ProwlarrClient, QbitClient};
 use crate::config::{Config, Secrets};
 use crate::state::StateStore;
 
@@ -23,6 +23,8 @@ pub struct TaskContext {
     pub qbit: QbitClient,
     pub jellyfin: JellyfinClient,
     pub jellyseerr: JellyseerrClient,
+    /// Recherche en texte libre chez un indexer (titres traduits) ; absent sans `PROWLARR_API_KEY`.
+    pub prowlarr: Option<ProwlarrClient>,
     /// Sérialise toute mutation de qBittorrent (stuck, disk pressure, ratio).
     pub qbit_lock: Arc<Mutex<()>>,
     /// Sérialise les onboardings (poller + web).
@@ -107,6 +109,10 @@ impl TaskContext {
                 secrets.jellyseerr_api_key.clone(),
                 http.clone(),
             )?,
+            prowlarr: match secrets.prowlarr_api_key.clone() {
+                Some(k) => Some(ProwlarrClient::new(&cfg.urls.prowlarr, k, http.clone())?),
+                None => None,
+            },
             cfg: Arc::new(cfg),
             secrets: Arc::new(secrets),
             http,

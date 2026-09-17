@@ -336,6 +336,25 @@ impl ArrClient {
         self.post("api/v3/release", &body).await
     }
 
+    /// Pousse une release trouvée ailleurs (Prowlarr, titre traduit) : Sonarr la parse, la rattache à la
+    /// série et la confie à son client de téléchargement. Renvoie la décision (`approved`, `rejections`).
+    pub async fn push_release(
+        &self,
+        title: &str,
+        download_url: &str,
+        publish_date: Option<&str>,
+        indexer: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "title": title,
+            "downloadUrl": download_url,
+            "protocol": "torrent",
+            "publishDate": publish_date.unwrap_or("2000-01-01T00:00:00Z"),
+            "indexer": indexer,
+        });
+        self.post("api/v3/release/push", &body).await
+    }
+
     pub async fn quality_profile(&self, id: i64) -> Result<Value> {
         self.get(&format!("api/v3/qualityprofile/{id}"), &[]).await
     }

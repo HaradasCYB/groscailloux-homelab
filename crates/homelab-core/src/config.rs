@@ -329,6 +329,8 @@ pub struct UnknownSeriesGrab {
     /// Anime : nombre d'épisodes interrogés par passage (Sonarr interroge l'indexer épisode par épisode ;
     /// une saison entière dépasse le délai du proxy de la seedbox).
     pub anime_episodes_per_run: usize,
+    /// Noms de la série interrogés en texte libre chez l'indexer (Prowlarr) quand Sonarr ne trouve rien.
+    pub prowlarr_queries: usize,
     /// Nom (préfixe, insensible à la casse) de l'indexer dont on accepte les releases.
     pub indexer: String,
 }
@@ -341,6 +343,7 @@ impl Default for UnknownSeriesGrab {
             retry_after_hours: 72,
             grabbed_retry_hours: 168,
             anime_episodes_per_run: 2,
+            prowlarr_queries: 2,
             error_retry_hours: 1,
             indexer: "C411".into(),
         }

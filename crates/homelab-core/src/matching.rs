@@ -84,12 +84,7 @@ pub fn pick_series(hits: &[Value], p: &Parsed) -> Option<Match> {
     let exact: Vec<&Value> = hits
         .iter()
         .filter(|h| usable(h))
-        .filter(|h| {
-            h.get("title")
-                .and_then(Value::as_str)
-                .map(|t| normalize(t) == want)
-                .unwrap_or(false)
-        })
+        .filter(|h| series_titles(h).iter().any(|t| normalize(t) == want))
         .collect();
     let chosen = if p.year > 0 {
         exact
@@ -125,6 +120,23 @@ fn fallback(hits: &[Value], p: &Parsed, ok: impl Fn(&Value) -> bool) -> Option<M
         hit: h.clone(),
         fuzzy: true,
     })
+}
+
+/// Titres d'une fiche série : le principal et les titres alternatifs (une release peut porter le titre
+/// d'origine — « Shingeki no Kyojin » pour *Attack on Titan* — ou une traduction).
+fn series_titles(h: &Value) -> Vec<String> {
+    let mut out: Vec<String> = h
+        .get("title")
+        .and_then(Value::as_str)
+        .map(|t| vec![t.to_string()])
+        .unwrap_or_default();
+    if let Some(alts) = h.get("alternateTitles").and_then(Value::as_array) {
+        out.extend(
+            alts.iter()
+                .filter_map(|a| a.get("title").and_then(Value::as_str).map(str::to_string)),
+        );
+    }
+    out
 }
 
 fn movie_titles(h: &Value) -> Vec<String> {
@@ -339,5 +351,24 @@ mod tests {
         assert!(pick_movie(&hits, &p).is_none());
         let p = Parsed { year: 2011, ..p };
         assert_eq!(pick_movie(&hits, &p).unwrap().hit["tmdbId"], 5);
+    }
+
+    #[test]
+    fn series_matched_by_alternate_title() {
+        // la release porte le titre d'origine, la fiche s'appelle autrement
+        let hits = vec![json!({
+            "title": "Attack on Titan", "tvdbId": 267440, "year": 2013,
+            "alternateTitles": [{"title": "Shingeki no Kyojin"}],
+            "seasons": [{"seasonNumber": 2}]
+        })];
+        let p = Parsed {
+            title: "Shingeki no Kyojin".into(),
+            year: 0,
+            season: 2,
+        };
+        assert_eq!(
+            pick_series(&hits, &p).map(|m| m.hit["tvdbId"].as_i64().unwrap()),
+            Some(267440)
+        );
     }
 }
