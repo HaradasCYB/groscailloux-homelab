@@ -139,6 +139,12 @@ déblocage est signalé par mail (`CHAT_ADMIN_EMAIL`). homelabd est cloisonné (
 Premier passage le 2026-09-17 : C411 (Sonarr seedbox, niveau 9, bloqué jusqu'à 21 h 33) et U2P, WorldTorrent,
 JK-nortorrent (Sonarr VPS) remis en service.
 
+### Indexer : RSS d'un côté, recherches de l'autre
+Les 4 Arrs gardent C411 en **RSS seulement** (avec `C411_RSS_API_KEY`) : ils ne lancent plus aucune recherche,
+donc ils ne peuvent plus déclencher la limite d'API (une recherche de saison d'animé = une requête par épisode).
+Les recherches passent par Prowlarr, avec l'autre clé, sous le budget commun ci-dessous. `indexer_unblock` passe
+toutes les 5 min et lève une pause 15 min après le dernier échec (10 fois par jour au plus).
+
 ### Budget de l'indexer (commun)
 `homelab_core::budget` : un seul compteur horaire glissant (`state.c411_queries`) pour `series_search`,
 `movie_search` et la page `/recherche`. `[indexers] c411_max_per_hour` (20) moins `manual_reserve` (6) pour les

@@ -37,6 +37,18 @@ journalctl -u homelabd -f
 - **qBittorrent.conf** : arrêter le conteneur avant d'éditer, sinon il écrase le fichier.
 - **Jamais de purge globale** de queue ou de torrents : toute suppression est ciblée et
   plafonnée (`max_actions_per_run`), c'est un invariant des tâches `stuck_handler`/`disk_pressure`.
+- **Aucune recherche depuis Sonarr/Radarr** : C411 y est en **RSS seulement** (`enableAutomaticSearch` et
+  `enableInteractiveSearch` à `false` sur les 4 Arrs, depuis le 2026-09-17). Un bouton « Search » sur une saison
+  d'animé interrogeait C411 épisode par épisode : 30 requêtes d'un coup, « API Request Limit reached, disabled
+  for 01:00:00 », et comme C411 est seul, Sonarr passait en « All indexers are unavailable ». Toutes les
+  recherches se font dans **`/recherche`** (budget horaire). L'avertissement « No indexers available with
+  Automatic Search enabled » est normal et voulu. **Deux clés C411** : `C411_RSS_API_KEY` pour le RSS des Arrs,
+  la clé historique pour les recherches (Prowlarr) — une rafale de recherche ne peut plus couper le RSS.
+- **Œuvres dérivées** : une release dont le titre contient `mini`, `specials`, `OVA`, `recap`, `abridged`,
+  `junior`… absent des titres de la fiche est écartée du choix automatique (`series_search::derivative`) ; le
+  repli en texte libre exige en plus que l'Arr rattache la release à **cette** fiche. Le 2026-09-17, le pack
+  *Smoking Behind the Supermarket with You (Mini Episodes)* (12 min/épisode) avait été pris et importé à la
+  place de la série officielle (24 min) : fichiers et torrent retirés, vraie saison 1 récupérée.
 - **Indexers** : **C411 est le seul indexer**, dans les 4 Arrs comme dans Prowlarr (2026-09-17 : les 34
   indexers publics passant par Jackett ont été retirés, Jackett et FlareSolverr arrêtés et sortis du compose ;
   ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes et remplissaient le

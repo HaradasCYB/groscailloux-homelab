@@ -526,10 +526,10 @@ pub struct IndexerUnblock {
 impl Default for IndexerUnblock {
     fn default() -> Self {
         Self {
-            interval_secs: 600,
-            quiet_mins: 60,
+            interval_secs: 300,
+            quiet_mins: 15,
             app_cooldown_mins: 60,
-            max_unblocks_per_day: 3,
+            max_unblocks_per_day: 10,
             ssh_host: "seedbox".into(),
             seedbox_apps_dir: "/home/kakaouette/.apps".into(),
         }

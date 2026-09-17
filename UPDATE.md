@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.7.0](#170--17092026--plus-de-confusion-avec-les-spin-offs)** | 17/09/2026 | **Plus de confusion avec les spin-offs** |
+| **[1.8.0](#180--17092026--lindexeur-ne-tombe-plus)** | 17/09/2026 | **L'indexeur ne tombe plus** |
+| [1.7.0](#170--17092026--plus-de-confusion-avec-les-spin-offs) | 17/09/2026 | Plus de confusion avec les spin-offs |
 | [1.6.0](#160--17092026--un-seul-indexeur-et-une-recherche-plus-souple) | 17/09/2026 | Un seul indexeur, et une recherche plus souple |
 | [1.5.0](#150--17092026--tout-le-monde-voit-tout-et-une-vraie-recherche-manuelle) | 17/09/2026 | Tout le monde voit tout, et une vraie recherche manuelle |
 | [1.4.0](#140--17092026--les-menus-anime-et-films-danimation) | 17/09/2026 | Les menus Anime et Films d'animation |
@@ -26,6 +27,20 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.8.0 — 17/09/2026 — L'indexeur ne tombe plus
+
+- **Fini les « aucun indexeur disponible »** : une recherche de saison lancée depuis l'application de
+  téléchargement interrogeait la source une fois par épisode et se faisait couper l'accès pendant une heure —
+  plus rien ne se téléchargeait pendant ce temps. Les applications ne lancent plus de recherche : elles gardent
+  le flux d'annonces, et toutes les recherches passent par la plateforme, qui tient un budget horaire.
+- **Deux accès à la source** : le flux d'annonces et les recherches utilisent désormais deux clés distinctes,
+  donc une recherche intensive ne peut plus interrompre les nouveautés.
+- **Reprise en quelques minutes** si l'accès est malgré tout coupé, au lieu d'une heure.
+- **Plus de mini-séries à la place de la série** : une version dont le nom trahit une œuvre dérivée
+  (mini-épisodes, spéciaux, OVA, parodie…) n'est plus choisie automatiquement. *Smoking Behind the Supermarket
+  with You* avait été téléchargé en mini-épisodes de 12 minutes ; la vraie saison (24 minutes par épisode) l'a
+  remplacée.
 
 ## 1.7.0 — 17/09/2026 — Plus de confusion avec les spin-offs
 

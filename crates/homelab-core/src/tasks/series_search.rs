@@ -83,6 +83,30 @@ pub fn title_matches(release_series_title: &str, names: &[String]) -> bool {
     !t.is_empty() && names.iter().any(|n| normalize(n) == t)
 }
 
+/// Mots qui trahissent une œuvre **dérivée** (mini-série, spéciaux, parodie…). Présents dans le titre de la
+/// release mais absents des titres de la fiche, ils veulent dire « ce n'est pas la série demandée » : le
+/// 2026-09-17, *Smoking Behind the Supermarket with You (Mini Episodes)* — 12 min par épisode — a été pris
+/// pour la série officielle (25 min).
+pub fn derivative(title: &str, names: &[String]) -> Option<&'static str> {
+    const WORDS: [&str; 10] = [
+        "mini", "specials", "special", "ova", "oad", "recap", "abridged", "junior", "shorts",
+        "chibi",
+    ];
+    let words: Vec<String> = title
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .map(|w| w.to_ascii_lowercase())
+        .collect();
+    let in_names = |w: &str| {
+        names.iter().any(|n| {
+            n.split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|x| x.eq_ignore_ascii_case(w))
+        })
+    };
+    WORDS
+        .into_iter()
+        .find(|w| words.iter().any(|x| x == w) && !in_names(w))
+}
+
 pub fn is_h264(title: &str) -> bool {
     let t = title.to_ascii_uppercase();
     !(t.contains("265") || t.contains("HEVC"))
@@ -559,6 +583,7 @@ async fn season_candidates(
 ) -> Result<(Vec<Candidate>, &'static str)> {
     let cfg = &ctx.cfg.tasks.series_search;
     let tmdb = series.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
+    let names = names_for(ctx, series).await;
     let mut out = Vec::new();
     if tmdb > 0 {
         if !throttle.take().await || !crate::budget::take(ctx, false).await? {
@@ -574,6 +599,10 @@ async fn season_candidates(
             let Some(title) = r.get("title").and_then(Value::as_str) else {
                 continue;
             };
+            if let Some(w) = derivative(title, &names) {
+                info!(task = "series_search", release = %title, word = w, "œuvre dérivée : écartée");
+                continue;
+            }
             let parse = arr.parse(title).await?;
             let info = parse.get("parsedEpisodeInfo").cloned().unwrap_or_default();
             if let Some(c) = series_candidate(&r, &info, todo.season) {
@@ -585,7 +614,6 @@ async fn season_candidates(
         }
     }
     // secours : série sans identifiant TMDB, ou identifiant absent des releases de l'indexer
-    let names = names_for(ctx, series).await;
     let mut seen: HashSet<String> = HashSet::new();
     for name in names.iter().take(cfg.text_queries) {
         if !throttle.take().await || !crate::budget::take(ctx, false).await? {
@@ -606,10 +634,22 @@ async fn season_candidates(
             {
                 continue;
             }
+            if let Some(w) = derivative(title, &names) {
+                info!(task = "series_search", release = %title, word = w, "œuvre dérivée : écartée");
+                continue;
+            }
             let parse = arr.parse(title).await?;
             match parsed_series(&parse) {
                 Some(p) if title_matches(&p.title, &names) => {}
                 _ => continue,
+            }
+            // la release doit être rattachée à CETTE fiche par l'Arr lui-même
+            if parse
+                .pointer("/series/id")
+                .and_then(Value::as_i64)
+                .is_some_and(|id| id != todo.series_id)
+            {
+                continue;
             }
             let info = parse.get("parsedEpisodeInfo").cloned().unwrap_or_default();
             if let Some(c) = series_candidate(&r, &info, todo.season) {
@@ -1015,6 +1055,50 @@ mod tests {
         assert!(!size_ok(134_000_000_000, 26, 4.0));
         assert!(!size_ok(30_000_000_000, 1, 25.0), "film de 28 Gio");
         assert!(size_ok(0, 1, 6.0), "taille inconnue : on ne bloque pas");
+    }
+
+    #[test]
+    fn spinoffs_and_mini_series_are_rejected() {
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let real = names(&["Smoking Behind the Supermarket with You"]);
+        assert_eq!(
+            derivative(
+                "Smoking.Behind.The.Supermarket.With.You.Mini.Episodes.S01.VOSTFR.1080p",
+                &real
+            ),
+            Some("mini")
+        );
+        assert_eq!(
+            derivative(
+                "Smoking.Behind.The.Supermarket.With.You.S01.VOSTFR.1080p",
+                &real
+            ),
+            None
+        );
+        assert_eq!(
+            derivative(
+                "L.Attaque.Des.Titans.Junior.High.School.S01.VF",
+                &names(&["L'Attaque des Titans"])
+            ),
+            Some("junior")
+        );
+        assert_eq!(
+            derivative("Bleach.S.Abridged.S01", &names(&["Bleach"])),
+            Some("abridged")
+        );
+        assert_eq!(
+            derivative("Show.S01.OVA.1080p", &names(&["Show"])),
+            Some("ova")
+        );
+        // le mot fait partie du vrai titre : on ne l'écarte pas
+        assert_eq!(
+            derivative("Mini.Serie.Culte.S01.VFF", &names(&["Mini Série Culte"])),
+            None
+        );
+        assert_eq!(
+            derivative("Junior.S01.VFF.1080p", &names(&["Junior"])),
+            None
+        );
     }
 
     #[test]

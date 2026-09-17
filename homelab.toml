@@ -150,10 +150,10 @@ max_fixes_per_run = 3
 # Indexeurs mis en pause par Sonarr/Radarr (429, délais) : pause levée dans leur base (application
 # arrêtée ~20 s, base sauvegardée) si le dernier échec date d'au moins quiet_mins. Au-delà de
 # max_unblocks_per_day déblocages en 24 h : mail à l'admin seulement.
-interval_secs = 600
-quiet_mins = 60             # fenêtre de limite de C411 : plus tôt, il se rebloquerait aussitôt
+interval_secs = 300
+quiet_mins = 15             # fenêtre de limite de C411 : plus tôt, il se rebloquerait aussitôt
 app_cooldown_mins = 60      # au plus un arrêt par application par heure
-max_unblocks_per_day = 3
+max_unblocks_per_day = 10
 ssh_host = "seedbox"
 seedbox_apps_dir = "/home/kakaouette/.apps"
 
