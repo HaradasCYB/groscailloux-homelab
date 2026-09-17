@@ -50,68 +50,92 @@ uniquement les fichiers dont l'épisode est identifié, les autres restent en ma
 dans les logs). Au plus 10 téléchargements par passage.
 
 ### torrent_import — 10 min
-Torrents ajoutés **à la main** dans qBittorrent (VPS, et seedbox si `[seedbox] qbit_url` est défini),
-pour qu'ils arrivent dans Jellyfin sans passer par Jellyseerr. Pour chaque torrent terminé pas encore
-jugé (`state.torrent_import`, clé `vps:<hash>` / `seedbox:<hash>`), dans l'ordre :
+Torrents ajoutés **à la main** dans qBittorrent (VPS, et seedbox si `[seedbox] qbit_url` est défini), ou par
+`series_search` / `movie_search` quand l'Arr refuse la release : ils arrivent dans Jellyfin sans passer par
+Jellyseerr. Pour chaque torrent terminé pas encore jugé (`state.torrent_import`, clé `vps:<hash>` /
+`seedbox:<hash>`), dans l'ordre :
 1. `GET /api/v3/history?downloadId=<HASH en majuscules>` sur le Radarr et le Sonarr du côté : un
    enregistrement ⇒ l'Arr gère ce téléchargement (`arr_managed`) ;
 2. `torrents/files` : aucune vidéo hors `sample` ⇒ `no_video` ; VPS : toutes les vidéos ont déjà
    plus d'un lien (importées) ⇒ `already_linked` ;
-3. série si le nom ou un fichier porte un marqueur d'épisode/saison (`S01E02`, `S01`, `Saison`…),
-   sinon film ; `parse` du nom (puis du premier fichier vidéo) → `lookup` → choix par
-   `matching` : titre identique après normalisation (titre original et alternatifs Radarr compris,
-   « Fusion (2003) » → *The Core*), année, saison ; à défaut premier résultat s'il commence par le
-   même mot (journalisé « approximate match ») ; rien ⇒ `no_match` ;
+3. **étiquette `homelab:series=<id>` ou `homelab:movie=<id>`** (posée par `series_search` / `movie_search`) :
+   la fiche est connue, pas d'analyse de nom. Sinon : série si le nom ou un fichier porte un marqueur
+   d'épisode/saison, sinon film ; `parse` du nom (puis du premier fichier vidéo) → choix d'abord parmi les
+   **fiches déjà suivies** (elles portent leurs titres alternatifs : « Shingeki.no.Kyojin.S02 » retrouve
+   « Attack on Titan »), puis `lookup` TVDB/TMDB ; `matching` : titre identique après normalisation, année,
+   saison ; à défaut premier résultat s'il commence par le même mot (« approximate match ») ; rien ⇒ `no_match` ;
 4. la fiche a des fichiers dans les Arrs de **l'autre machine** ⇒ `dup_other_side` (pas de doublon Jellyfin) ;
 5. fiche absente ⇒ ajout **non surveillé**, sans recherche (racine et profil du côté : `auto_import`
    pour le VPS, `[seedbox] radarr_root|sonarr_root|quality_profile_id`) ; série : attente de ses
    épisodes (`series_ready_secs`) ;
-6. fiche **avec fichiers** : `GET /api/v3/manualimport?folder=<content_path>&movieId|seriesId=…`
-   (**sans** `downloadId` : un téléchargement non suivi renverrait une liste vide), fichiers sans rejet
-   (`select_files`) ; fiche **vide** (son dossier n'existe pas : avec l'id, Radarr et Sonarr répondent
-   500) : `GET manualimport?folder=…` sans id, rejets d'identification ignorés (`Unknown Movie/Series`,
-   `matched … by ID`), film = la fiche choisie, épisodes = `parse` du nom de fichier → saison/numéros
-   (ou numéros absolus) → ids de `GET /api/v3/episode?seriesId=` (`map_episodes`) ; puis
-   `ManualImport` en **`importMode: copy`** (= hardlink). Jamais `auto` : pour un téléchargement non
-   suivi, `auto` = déplacement, le torrent perd ses fichiers.
-Déjà importé ⇒ rejet de l'Arr ⇒ `nothing_importable`. Erreur (Arr injoignable…) ⇒ `retry`, `error`
-après `max_attempts`. Au plus `max_per_run` torrents coûteux par passage, les plus récents d'abord.
-Correspondance : d'abord parmi les **fiches déjà suivies** par l'Arr (elles portent leurs titres alternatifs :
-un torrent « Shingeki.no.Kyojin.S02 » retrouve la fiche « Attack on Titan »), et seulement ensuite la recherche
-TVDB/TMDB (qui ne renvoie pas ces titres). Fiche avec fichiers : les candidats de `manualimport` sont filtrés sur le
-**chemin du torrent** — avec l'id de la fiche, Sonarr renvoie aussi les fichiers déjà rangés (le 2026-09-16,
-les 25 épisodes de la saison 1 au lieu des 12 de la saison 2 : import « réussi » sans rien ajouter).
-Aucune modification des torrents. Jellyfin : LibraryMonitor (VPS) ou `seedbox_refresh` (seedbox).
-Le watcher `auto_import` ignore désormais les vidéos qui appartiennent à un torrent qBittorrent.
+6. `GET /api/v3/manualimport?folder=<content_path>` **sans id de fiche** (avec l'id, Sonarr liste les fichiers
+   déjà rangés de la série et aucun du torrent ; pour une fiche vide il répond 500) et sans `downloadId`
+   (liste vide pour un téléchargement non suivi), candidats filtrés sur le **chemin du torrent**, rejets
+   d'identification ignorés (`Unknown Movie/Series`, `matched … by ID`). Épisodes : **ceux de l'Arr quand il a
+   reconnu cette fiche** (il connaît saisons et numérotation absolue), sinon `parse` du nom de fichier →
+   `map_episodes`. **Jamais de remplacement** : un fichier dont un épisode (ou le film) a déjà un fichier est
+   écarté (« déjà présent »). Le 2026-09-17, « The.Final.Season.E01 », sans saison, a été lu S01E01 et la
+   saison 1 d'une série écrasée (réparée en réimportant ses fichiers d'origine). Puis `ManualImport` en
+   **`importMode: copy`** (= hardlink). Jamais `auto` : pour un téléchargement non suivi, `auto` = déplacement.
+Rien d'importable ⇒ `nothing_importable`. Erreur (Arr injoignable…) ⇒ `retry`, `error` après `max_attempts`.
+Au plus `max_per_run` torrents coûteux par passage, les plus récents d'abord. Aucune modification des
+torrents. Jellyfin : LibraryMonitor (VPS) ou `seedbox_refresh` (seedbox). Le watcher `auto_import` ignore les
+vidéos qui appartiennent à un torrent qBittorrent.
 Résumé : `files=3 arr_managed=67 already_linked=8 imported=2 no_match=1 pending=0`.
 
-### unknown_series_grab — 3 h
-Sonarr rejette « Unknown Series » les releases au titre traduit (« New York Police Judiciaire » pour
-*Law & Order*) : jamais prises en automatique, même sur C411. Pour chaque Sonarr (VPS, seedbox) :
-`GET wanted/missing` → saisons avec épisodes diffusés manquants, hors file d'attente, pas cherchées
-récemment (`state.unknown_series` : sans candidat → 72 h, prise → 7 j) et **absentes de l'autre
-machine** ; ordre global : **séries ajoutées le plus récemment d'abord** (une demande passe devant
-l'arriéré), puis diffusion la plus récente ; **8 recherches par passage**, une seule saison d'anime
-(recherche épisode par épisode, limite d'API C411), arrêt après 8 min (le planificateur coupe à 10) → `GET release?seriesId&seasonNumber` → releases de `indexer` (C411)
-dont le **seul** rejet est « Unknown Series » → garde-fous : titre parsé **identique** (normalisé)
-au titre FR ou original (Jellyseerr `tv/{tmdbId}?language=fr`), au titre Sonarr ou à un titre
-alternatif (une série voisine est refusée) ; bonne saison ; épisodes tous manquants ; qualité
-autorisée par le profil et ≤ 1080p ; au moins 1 seeder ; marqueur FR (VFF > MULTi > FRENCH >
-VOSTFR). Pack si la moitié de la saison manque, sinon épisodes ; tri langue, résolution, H.264,
-seeders → `POST /api/v3/release` en **grab forcé** (`shouldOverride`, `seriesId`, `episodeIds`).
-L'import est débloqué ensuite par `id_match_import`. C411 ne renvoie pas d'id TVDB : le titre est le
-seul garde-fou possible. Résumé : `grabbed=1 none=2 pending=20`.
-- **Anime** : Sonarr interroge l'indexer épisode par épisode ; une recherche de saison entière dépasse le délai
-  du proxy de la seedbox (504 après 300 s). La tâche interroge donc `anime_episodes_per_run` épisodes par
-  passage (`GET release?episodeId=`, ~200 s chacun, délai 280 s). Une recherche en **erreur** est réessayée
-  après `error_retry_hours` (1 h), pas après les 72 h d'une saison sans candidat.
-- **Titre traduit, recherche de secours** : Sonarr n'interroge C411 qu'avec ses propres titres (« Shingeki no
-  Kyojin », « Attack on Titan ») alors que les releases françaises s'appellent « L'attaque des Titans ». Si sa
-  recherche ne donne aucun candidat, la tâche interroge C411 **en texte libre par Prowlarr** (indexer « C411 »
-  déclaré dans Prowlarr, même clé que dans Sonarr) avec les `prowlarr_queries` premiers noms de la série
-  (français, d'origine, alternatifs), passe chaque titre par `GET parse` de Sonarr (saison, pack, qualité), garde
-  les mêmes garde-fous, puis **pousse** la release retenue (`POST /api/v3/release/push`) : Sonarr la rattache à
-  la fiche par son parseur. Un refus (indexer bloqué, taille…) est journalisé avec sa raison.
+### series_search — 10 min (remplace unknown_series_grab)
+Les séries se cherchent **par identifiant TMDB**, par homelabd, plus par Sonarr. Pourquoi : Sonarr interroge
+C411 avec ses propres titres (« Shingeki no Kyojin », « Attack on Titan ») alors que C411 range la série sous
+« L'Attaque des Titans » ; et pour un animé il envoie 3 à 4 requêtes par épisode (~90 pour une saison), ce qui
+déclenche le **429** de C411 et une pause de l'indexeur qui s'allonge jusqu'à 24 h. Mesuré le 2026-09-17 sur
+la saison 4 : `{TmdbId:1429}{Season:4}` → 5 releases, toutes justes ; « Attack on Titan » → 1 ; identifiant IMDb
+→ 100 releases sans rapport (C411 l'ignore). **Jellyseerr est en `preventSearch`** sur les deux Sonarr : une
+demande crée la fiche et les saisons suivies, sans recherche. Sonarr garde le RSS, l'import et le suivi.
+
+Pour chaque Sonarr : `GET wanted/missing` → saisons avec épisodes diffusés manquants, hors file d'attente, pas
+cherchées récemment (`state.unknown_series` : sans candidat → `retry_after_hours` 24 h, pack pris → 7 j,
+épisode seul pris → 2 h, erreur → 1 h) et **absentes de l'autre machine** ; séries ajoutées le plus récemment d'abord. Par saison, via Prowlarr
+(indexer « C411 » déclaré dans Prowlarr, même clé) : `search?type=tvsearch&query={TmdbId:<tmdbId>}{Season:<n>}`
+→ releases dont l'attribut **`tmdbId` est celui de la fiche** (le nom ne compte pas) → `GET parse` de Sonarr
+(saison, pack, épisodes, qualité) → garde-fous : marqueur FR (VFF > MULTi > FRENCH > VOSTFR), qualité autorisée
+par le profil et ≤ 1080p, au moins une source, épisodes manquants. Pack si la moitié de la saison manque,
+sinon épisodes ; tri langue, résolution, H.264, sources. Rien par identifiant (série sans `tmdbId`, releases
+sans attribut) : `text_queries` noms essayés en texte libre (Jellyseerr FR et original, Sonarr, alternatifs),
+titre parsé identique exigé, release d'un autre identifiant écartée.
+**Envoi** — Arr du **VPS** : `POST /api/v3/release/push` (Sonarr suit, importe, renomme) avec le lien Prowlarr
+réécrit pour les conteneurs (`prowlarr_url_for_arrs` = `http://prowlarr:9696` : le lien renvoyé par Prowlarr,
+`http://localhost:9696/…`, désigne le conteneur lui-même, et Sonarr accepte l'envoi puis échoue en silence
+« Connection refused », vu le 2026-09-17), puis vérification que la saison (ou le film) apparaît dans sa file
+**par identifiants** (le titre de la file est le nom interne du torrent). Arr de la **seedbox** (Prowlarr du VPS
+injoignable), refus d'identification ou indexeur bloqué (`bypassable_rejection`), ou envoi accepté mais pas
+mis en file → `.torrent` récupéré par Prowlarr et ajouté au qBittorrent du même côté avec l'étiquette
+`homelab:series=<id>:season=<n>`, importé ensuite par `torrent_import`. Tout autre refus (liste noire,
+taille…) est respecté. **Rythme** : `max_queries_per_run` requêtes C411 (6), `query_gap_secs`
+(15 s) d'écart ; filet de sécurité : 60 requêtes/heure sur C411 dans Prowlarr.
+Résumé : `grabbed=1 none=2 pending=13`.
+
+### movie_search — 1 h
+Rattrapage des films **suivis, sans fichier, sortis, ajoutés depuis plus de `missing_hours` (24 h), hors file
+d'attente** : la recherche de Radarr, qui interroge déjà par identifiant (*When Marnie Was There* retrouve
+« Souvenirs de Marnie »), reste la voie normale. Même mécanique que `series_search` : `{TmdbId:<id>}` (type
+`movie`), `tmdbId` vérifié, `parse` Radarr, garde-fous, `release/push`, sinon qBittorrent + `homelab:movie=<id>`.
+Au plus `max_per_run` films (3) par passage.
+
+### indexer_unblock — 10 min
+Après des échecs (429, délais), Sonarr et Radarr mettent un indexeur en pause, jusqu'à 24 h ; aucune API ne
+lève la pause (`indexerstatus` → 404). Lecture seule de la table `IndexerStatus` des 4 Arrs (VPS : `rusqlite`
+sur `sonarr|radarr/config/*.db` ; seedbox : `ssh seedbox` + `sqlite3 -readonly` sur
+`<seedbox_apps_dir>/<app>/<app>.db`). Un indexeur en pause dont le **dernier échec date d'au moins
+`quiet_mins`** (60 : fenêtre de limite de C411 ; plus tôt il se rebloquerait) est remis en service :
+application arrêtée (`docker compose stop` / `app-<app> stop`), base copiée (`backups/arr-db-<app>-<date>.db`
+ou `<app>.db.homelab-<date>` sur la seedbox, mode 600, gardées 7 jours), `UPDATE IndexerStatus SET
+DisabledTill = NULL, EscalationLevel = 0, …`, application relancée et vérifiée (`system/status`). Au plus un
+arrêt par application par `app_cooldown_mins` (60), même après un échec. Un indexeur débloqué
+`max_unblocks_per_day` fois (3) en 24 h n'est plus touché : mail à l'admin (site mort, Cloudflare…). Chaque
+déblocage est signalé par mail (`CHAT_ADMIN_EMAIL`). homelabd est cloisonné (`ProtectSystem=strict`) :
+`backups/`, `sonarr/config` et `radarr/config` sont dans `ReadWritePaths` de `systemd/homelabd.service`.
+Premier passage le 2026-09-17 : C411 (Sonarr seedbox, niveau 9, bloqué jusqu'à 21 h 33) et U2P, WorldTorrent,
+JK-nortorrent (Sonarr VPS) remis en service.
 
 ### seedbox_refresh — 5 min (si `[seedbox] enabled`)
 Lit l'historique `downloadFolderImported` (eventType 3) des Radarr/Sonarr de la seedbox depuis le

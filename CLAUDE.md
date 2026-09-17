@@ -44,10 +44,17 @@ journalctl -u homelabd -f
   (`tracker_ratio.unlimited`, décision torrent de `deletion_cleanup`). Jusqu'au 2026-09-14, 24 torrents
   `c411.tw` héritaient de la limite globale de qBittorrent (ratio 1 / 7 j puis **arrêt**) : 53 torrents C411
   étaient arrêtés, relancés ce jour-là.
-- **C411** : `animeCategories=[5070]` et `animeStandardFormatSearch=true` dans les deux Sonarr, sinon
-  une série de type « anime » n'interroge jamais C411 (et, C411 étant le seul indexer en auto, rien ne part).
-  Son API limite le débit : un **429** met C411 en pause **1 h** dans l'Arr (« API Request Limit reached »).
-  Éviter les rafales de recherches interactives (une recherche anime = une requête par épisode).
+- **Recherche des séries = homelabd, par identifiant TMDB** (tâche `series_search`), plus par Sonarr :
+  Jellyseerr est en **`preventSearch`** sur les deux Sonarr. C411 renvoie les releases d'une série par
+  `{TmdbId}{Season}` quel que soit leur nom (japonais, anglais, français) et **ignore l'identifiant IMDb**
+  (100 releases sans rapport). Sonarr garde le RSS, l'import et le suivi. Ne pas remettre la recherche
+  à la demande dans Jellyseerr : un animé = 3 à 4 requêtes C411 par épisode → **429** → pause de l'indexeur
+  qui s'allonge jusqu'à 24 h (le 2026-09-17, niveau 9). `animeCategories=[5070]` et
+  `animeStandardFormatSearch=true` restent dans les deux Sonarr pour le RSS. Films : Radarr cherche déjà par
+  identifiant ; `movie_search` rattrape ce qui manque après 24 h. Filet : C411 limité à 60 requêtes/heure
+  dans Prowlarr. Éviter les recherches interactives en rafale sur un animé.
+- **Indexeur en pause** : `indexer_unblock` lève la pause (table `IndexerStatus`, application arrêtée ~20 s,
+  base sauvegardée) une heure après le dernier échec ; au-delà de 3 fois en 24 h, mail seulement.
 - **Import d'un téléchargement que l'Arr n'a pas demandé** : `ManualImport` en `importMode: copy`
   (hardlink), jamais `auto` (= déplacement, le torrent perd ses fichiers) ; `GET manualimport` sans
   `downloadId` (liste vide sinon). C'est ce que fait `torrent_import`.
@@ -237,16 +244,24 @@ journalctl -u homelabd -f
   été rattaché à E48 par erreur, corrigé en réimportant chaque fichier vers son épisode).
 - Prowlarr n'a aucune application configurée : les indexers vivent dans Sonarr/Radarr et les
   publics passent par **Jackett** (+ FlareSolverr pour Cloudflare). Seule exception, depuis le 2026-09-16 :
-  **C411 est aussi déclaré dans Prowlarr** (même clé), uniquement pour la recherche en texte libre de
-  `unknown_series_grab` (titres traduits). La clé n'est pas lisible par l'API des Arrs (champ masqué) : elle
+  **C411 est aussi déclaré dans Prowlarr** (même clé, 60 requêtes/heure), uniquement pour les recherches de
+  `series_search` et `movie_search` (par identifiant TMDB, texte libre en secours). La clé n'est pas lisible par l'API des Arrs (champ masqué) : elle
   vient de leur base. Ne pas y brancher d'application, sinon Prowlarr réécrirait les indexers des Arrs. Avant de retirer un service,
   vérifier qui l'appelle : `grep -r <nom>:<port>` dans les configs et les champs `baseUrl` des
   indexers Arr (`GET /api/v3/indexer`) — le retrait de Jackett/FlareSolverr le 2026-09-10 a coupé
   les indexers publics pendant deux jours.
 - **Indexer bloqué par un Arr** : après des échecs (délais dépassés, 429), Sonarr met l'indexer en pause
   jusqu'à **24 h** (« Indexer C411 is blocked till … due to failures ») ; ni `testall` ni un réenregistrement ne
-  lèvent le blocage, et aucune recherche ni `release/push` ne passe. En attendant : récupérer le torrent par
-  Prowlarr et l'ajouter au qBittorrent du bon côté, `torrent_import` fait l'import.
+  lèvent le blocage (pas d'API : `indexerstatus` → 404), et aucune recherche ni `release/push` ne passe.
+  L'état est dans la table `IndexerStatus` ; `indexer_unblock` s'en charge. Pendant la pause, `series_search`
+  passe par qBittorrent (étiquette `homelab:`).
+- **`torrent_import` ne remplace jamais un fichier** : épisode (ou film) déjà présent ⇒ fichier écarté, et la
+  correspondance d'épisodes de l'Arr prime sur l'analyse du nom. Le 2026-09-17, « The.Final.Season.E01 » (sans
+  saison) a été lu S01E01 et la saison 1 d'une série écrasée ; réparé en réimportant les fichiers d'origine
+  (toujours présents dans le dossier du torrent, hardlink) avec la correspondance de Sonarr, et vérifié saison
+  par saison. Vérifier l'historique (`episodeFileDeleted`, raison `Upgrade`) après tout import manuel.
+- **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans
+  `ReadWritePaths` de `systemd/homelabd.service` (sinon « Read-only file system », vu le 2026-09-17).
 - Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
   même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`).
   `DELETE /Items/<id>` **efface le disque** (c'est le bouton « Supprimer » de Jellyfin) : jamais pour

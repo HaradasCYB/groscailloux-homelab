@@ -17,7 +17,8 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/opt/homelab/state /opt/homelab/library /opt/homelab/jellyfin/cache/transcodes /opt/homelab/jellyfin/config/log
+# backups + bases Sonarr/Radarr : indexer_unblock (sauvegarde puis remise à zéro de IndexerStatus)
+ReadWritePaths=/opt/homelab/state /opt/homelab/library /opt/homelab/jellyfin/cache/transcodes /opt/homelab/jellyfin/config/log /opt/homelab/backups /opt/homelab/sonarr/config /opt/homelab/radarr/config
 
 [Install]
 WantedBy=multi-user.target

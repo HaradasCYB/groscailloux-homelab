@@ -30,9 +30,21 @@ pub struct State {
     /// torrent_import : décision par torrent, clé `côté:hash` (`vps:…`, `seedbox:…`).
     #[serde(default)]
     pub torrent_import: BTreeMap<String, TorrentImportRecord>,
-    /// unknown_series_grab : dernière recherche par saison, clé `arr:série:saison`.
+    /// series_search (ex-unknown_series_grab, nom de champ gardé pour l'historique) : dernière recherche par
+    /// saison, clé `arr:série:saison`.
     #[serde(default)]
     pub unknown_series: BTreeMap<String, SeasonSearchRecord>,
+    /// movie_search : dernière recherche par film, clé `arr:film`.
+    #[serde(default)]
+    pub movie_search: BTreeMap<String, SeasonSearchRecord>,
+    /// indexer_unblock : déblocages effectués, clé `application:id indexeur` → dates (secondes).
+    #[serde(default)]
+    pub indexer_unblocks: BTreeMap<String, Vec<i64>>,
+    /// indexer_unblock : dernier arrêt/redémarrage par application, et dernière alerte par indexeur.
+    #[serde(default)]
+    pub indexer_app_restarts: BTreeMap<String, i64>,
+    #[serde(default)]
+    pub indexer_alerts: BTreeMap<String, i64>,
     /// Comptes suspendus : permissions Jellyseerr à restaurer, clé = id Jellyfin.
     #[serde(default)]
     pub accounts: BTreeMap<String, AccountRecord>,

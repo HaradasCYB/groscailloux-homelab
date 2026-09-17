@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.2.0](#120--17092026--les-séries-aux-titres-traduits)** | 17/09/2026 | **Les séries aux titres traduits** |
+| **[1.3.0](#130--17092026--recherche-par-identifiant-et-indexeurs-toujours-disponibles)** | 17/09/2026 | **Recherche par identifiant et indexeurs toujours disponibles** |
+| [1.2.0](#120--17092026--les-séries-aux-titres-traduits) | 17/09/2026 | Les séries aux titres traduits |
 | [1.1.1](#111--16092026--adapté-aux-téléviseurs) | 16/09/2026 | Adapté aux téléviseurs |
 | [1.1.0](#110--16092026--la-lecture-saide-elle-même) | 16/09/2026 | La lecture s'aide elle-même |
 | [1.0.0](#100--15092026--fin-de-la-bêta--une-seule-plateforme-vps--seedbox) | 12 → 15/09/2026 | Fin de la bêta : une seule plateforme VPS + seedbox |
@@ -21,6 +22,24 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.3.0 — 17/09/2026 — Recherche par identifiant et indexeurs toujours disponibles
+
+La saison 4 d'un animé demandé ne partait toujours pas. Deux causes qui s'entretenaient : Sonarr cherchait la
+série sous ses noms anglais et japonais alors que l'indexeur la classe sous son nom français, et pour un animé
+il envoyait des dizaines de requêtes d'un coup, jusqu'à se faire bloquer l'indexeur pour 24 h.
+
+- **Les séries se cherchent par identifiant**, plus par leur nom : une demande part dans les dix minutes, avec
+  une seule requête par saison, que la série s'appelle *Shingeki no Kyojin*, *Attack on Titan* ou *L'Attaque
+  des Titans*. Les mêmes règles s'appliquent (français d'abord, 1080p maximum).
+- **Films** : la recherche de Radarr fonctionnait déjà par identifiant ; un film encore manquant 24 h après sa
+  demande est maintenant recherché une seconde fois de la même façon.
+- **Indexeurs toujours disponibles** : un indexeur mis en pause par Sonarr ou Radarr est remis en service
+  automatiquement une heure après son dernier échec (l'application concernée redémarre en une vingtaine de
+  secondes), et l'admin est prévenu par mail. Quatre indexeurs bloqués ont été débloqués au premier passage.
+- **Imports plus sûrs** : un import ne remplace plus jamais un épisode déjà présent, et le rattachement des
+  épisodes suit celui de Sonarr. Un import de ce matin avait écrasé la saison 1 d'une série avec des
+  épisodes de sa saison 4 : elle a été restaurée à partir de ses fichiers d'origine.
 
 ## 1.2.0 — 17/09/2026 — Les séries aux titres traduits
 

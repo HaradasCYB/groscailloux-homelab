@@ -12,7 +12,7 @@
 //! Jellyfin : le LibraryMonitor voit les imports du VPS ; `seedbox_refresh` ceux de la seedbox.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::time::Duration;
@@ -22,13 +22,12 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
-use super::id_match_import::select_files;
 use super::{Report, Task};
 use crate::classify::{classify, is_video, MediaKind};
 use crate::clients::{ArrClient, Torrent, TorrentFile};
 use crate::config::Config;
 use crate::context::{Side, TaskContext};
-use crate::matching::{parsed_movie, parsed_series, pick_movie, pick_series};
+use crate::matching::{parsed_movie, parsed_series, pick_movie, pick_series, Match};
 use crate::state::{now, TorrentImportRecord};
 
 pub struct TorrentImport;
@@ -58,6 +57,21 @@ impl Outcome {
             ..Self::cheap(outcome, detail)
         }
     }
+}
+
+/// Étiquette qBittorrent posée par `series_search` / `movie_search` : `homelab:series=<id>:season=<n>` ou
+/// `homelab:movie=<id>` → (film ?, id de la fiche). Les étiquettes sont séparées par des virgules.
+pub fn homelab_target(tags: &str) -> Option<(bool, i64)> {
+    tags.split(',').map(str::trim).find_map(|t| {
+        let rest = t.strip_prefix("homelab:")?;
+        let (kind, tail) = rest.split_once('=')?;
+        let id: i64 = tail.split(':').next()?.parse().ok()?;
+        match kind {
+            "series" => Some((false, id)),
+            "movie" => Some((true, id)),
+            _ => None,
+        }
+    })
 }
 
 pub fn state_key(side: &str, hash: &str) -> String {
@@ -158,14 +172,16 @@ pub fn map_episodes(parse: &Value, episodes: &[Value]) -> Vec<i64> {
     vec![]
 }
 
-/// Fichiers importables pour une fiche encore vide : aperçu sans id, fiche et épisodes fournis
-/// par nous ; les rejets d'identification sont ignorés, les autres (sample…) excluent le fichier.
+/// Fichiers importables dans une fiche : aperçu sans id, fiche fournie par nous ; les rejets
+/// d'identification sont ignorés, les autres (sample…) excluent le fichier. `has_file` : épisodes (ou le
+/// film) qui ont déjà un fichier — jamais remplacés.
 pub fn fresh_files(
     candidates: &[Value],
     movie: bool,
     id: i64,
     download_id: &str,
     episodes_by_path: &HashMap<String, Vec<i64>>,
+    has_file: &HashSet<i64>,
 ) -> (Vec<Value>, Vec<String>) {
     let (mut files, mut skipped) = (Vec::new(), Vec::new());
     for c in candidates {
@@ -198,9 +214,38 @@ pub fn fresh_files(
             "downloadId": download_id,
         });
         if movie {
+            // jamais de remplacement d'un film déjà présent
+            if has_file.contains(&id) {
+                skipped.push(format!("{rel}: film déjà présent, pas de remplacement"));
+                continue;
+            }
             f["movieId"] = json!(id);
         } else {
-            let eps = episodes_by_path.get(path).cloned().unwrap_or_default();
+            // 1. la correspondance de l'Arr quand il a reconnu **cette** fiche : il connaît les saisons et la
+            //    numérotation absolue. Notre analyse du nom ne sert que s'il ne l'a pas reconnue : le
+            //    2026-09-17, « The.Final.Season.E01 » (sans saison) a été lu S01E01 et la saison 1 écrasée.
+            let arr_eps: Vec<i64> = if c.pointer("/series/id").and_then(Value::as_i64) == Some(id) {
+                c.get("episodes")
+                    .and_then(Value::as_array)
+                    .map(|e| {
+                        e.iter()
+                            .filter_map(|x| x.get("id").and_then(Value::as_i64))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let eps = if arr_eps.is_empty() {
+                episodes_by_path.get(path).cloned().unwrap_or_default()
+            } else {
+                arr_eps
+            };
+            // 2. jamais de remplacement : un épisode qui a déjà un fichier n'est pas touché
+            if eps.iter().any(|e| has_file.contains(e)) {
+                skipped.push(format!("{rel}: épisode déjà présent, pas de remplacement"));
+                continue;
+            }
             if eps.is_empty() {
                 skipped.push(format!("{rel}: épisode non identifié"));
                 continue;
@@ -320,75 +365,85 @@ async fn examine(
     }
 
     // série si le nom ou l'un des fichiers porte un marqueur d'épisode ou de saison
-    let movie = classify(&t.name) == MediaKind::Movie
-        && videos.iter().all(|f| classify(&f.name) == MediaKind::Movie);
-    let (arr, kind, ext_param, id_param, root) = if movie {
-        (side.radarr, "movie", "tmdbId", "movieId", &side.radarr_root)
-    } else {
-        (
-            side.sonarr,
-            "series",
-            "tvdbId",
-            "seriesId",
-            &side.sonarr_root,
-        )
-    };
-    // nom du torrent, puis celui du premier fichier vidéo (« Star Wars Rebels (2014) » ne se
-    // parse pas, « Star.Wars.Rebels.S01E01.mkv » si)
-    let mut parsed = None;
-    for label in parse_labels(&t.name, &videos) {
-        let parse = arr.parse(&label).await?;
-        parsed = if movie {
-            parsed_movie(&parse)
-        } else {
-            parsed_series(&parse)
-        };
-        if parsed.is_some() {
-            break;
-        }
-    }
-    let Some(parsed) = parsed else {
-        return Ok(Outcome::costly(
-            "no_match",
-            "titre non reconnu par le parse",
-        ));
-    };
-    let term = if movie && parsed.year > 0 {
-        format!("{} {}", parsed.title, parsed.year)
-    } else {
-        parsed.title.clone()
-    };
-    // D'abord les fiches déjà suivies : elles portent leurs titres alternatifs (une release peut s'appeler
-    // « Shingeki no Kyojin » alors que la fiche s'appelle « Attack on Titan »), que la recherche TVDB, elle,
-    // ne renvoie pas. Sinon seulement, on interroge le catalogue.
-    let existing = if movie {
-        arr.movies().await.unwrap_or_default()
-    } else {
-        arr.series().await.unwrap_or_default()
-    };
-    let picked = if movie {
-        pick_movie(&existing, &parsed)
-    } else {
-        pick_series(&existing, &parsed)
-    };
-    let (hits, picked) = match picked {
-        Some(m) => (existing, Some(m)),
+    // étiquette posée par series_search / movie_search : la fiche est connue, aucun nom à analyser
+    let target = homelab_target(&t.tags);
+    let movie = match target {
+        Some((m, _)) => m,
         None => {
-            let hits = arr.lookup(kind, &term).await?;
-            let picked = if movie {
-                pick_movie(&hits, &parsed)
-            } else {
-                pick_series(&hits, &parsed)
-            };
-            (hits, picked)
+            classify(&t.name) == MediaKind::Movie
+                && videos.iter().all(|f| classify(&f.name) == MediaKind::Movie)
         }
     };
-    let _ = &hits;
-    let Some(m) = picked else {
-        return Ok(Outcome::costly(
-            "no_match",
-            format!("aucune fiche pour « {term} »"),
-        ));
+    let (arr, kind, ext_param, root) = if movie {
+        (side.radarr, "movie", "tmdbId", &side.radarr_root)
+    } else {
+        (side.sonarr, "series", "tvdbId", &side.sonarr_root)
+    };
+    let m = if let Some((_, id)) = target {
+        let hit = arr
+            .get(&format!("api/v3/{kind}/{id}"), &[])
+            .await
+            .with_context(|| format!("fiche {kind} {id} de l'étiquette introuvable"))?;
+        Match { hit, fuzzy: false }
+    } else {
+        // nom du torrent, puis celui du premier fichier vidéo (« Star Wars Rebels (2014) » ne se
+        // parse pas, « Star.Wars.Rebels.S01E01.mkv » si)
+        let mut parsed = None;
+        for label in parse_labels(&t.name, &videos) {
+            let parse = arr.parse(&label).await?;
+            parsed = if movie {
+                parsed_movie(&parse)
+            } else {
+                parsed_series(&parse)
+            };
+            if parsed.is_some() {
+                break;
+            }
+        }
+        let Some(parsed) = parsed else {
+            return Ok(Outcome::costly(
+                "no_match",
+                "titre non reconnu par le parse",
+            ));
+        };
+        let term = if movie && parsed.year > 0 {
+            format!("{} {}", parsed.title, parsed.year)
+        } else {
+            parsed.title.clone()
+        };
+        // D'abord les fiches déjà suivies : elles portent leurs titres alternatifs (une release peut s'appeler
+        // « Shingeki no Kyojin » alors que la fiche s'appelle « Attack on Titan »), que la recherche TVDB, elle,
+        // ne renvoie pas. Sinon seulement, on interroge le catalogue.
+        let existing = if movie {
+            arr.movies().await.unwrap_or_default()
+        } else {
+            arr.series().await.unwrap_or_default()
+        };
+        let picked = if movie {
+            pick_movie(&existing, &parsed)
+        } else {
+            pick_series(&existing, &parsed)
+        };
+        let (hits, picked) = match picked {
+            Some(m) => (existing, Some(m)),
+            None => {
+                let hits = arr.lookup(kind, &term).await?;
+                let picked = if movie {
+                    pick_movie(&hits, &parsed)
+                } else {
+                    pick_series(&hits, &parsed)
+                };
+                (hits, picked)
+            }
+        };
+        let _ = &hits;
+        let Some(m) = picked else {
+            return Ok(Outcome::costly(
+                "no_match",
+                format!("aucune fiche pour « {term} »"),
+            ));
+        };
+        m
     };
     let ext_id = m.hit.get(ext_param).and_then(Value::as_i64).unwrap_or(0);
     let title = format!(
@@ -422,12 +477,10 @@ async fn examine(
         info!(task = "torrent_import", side = side.name, torrent = %t.name, %title, fuzzy = m.fuzzy, "dry-run: would {what}");
         return Ok(Outcome::costly("dry_run", format!("{what} → {title}")));
     }
-    // dossier de la fiche absent tant qu'elle n'a aucun fichier : `manualimport` avec l'id y
-    // cherche les fichiers existants et répond 500 ; on passe alors par l'import sans id
-    let fresh = existing
+    let existing_has_file = existing
         .as_ref()
-        .map(|i| !has_files(movie, i))
-        .unwrap_or(true);
+        .map(|i| has_files(movie, i))
+        .unwrap_or(false);
     let id = match existing {
         Some(item) => item
             .get("id")
@@ -457,32 +510,35 @@ async fn examine(
         }
     };
 
-    let (files, skipped) = if fresh {
-        let candidates = arr.manual_import(&t.content_path).await?;
-        let mut by_path: HashMap<String, Vec<i64>> = HashMap::new();
-        if !movie {
-            let episodes = arr.episodes(id).await?;
-            for c in &candidates {
-                let Some(path) = c.get("path").and_then(Value::as_str) else {
-                    continue;
-                };
-                let base = path.rsplit('/').next().unwrap_or(path);
-                let parse = arr.parse(base).await?;
-                by_path.insert(path.to_string(), map_episodes(&parse, &episodes));
-            }
+    // Dossier du torrent listé **sans** l'id de la fiche : avec l'id, Sonarr liste les fichiers déjà rangés de
+    // la série et aucun du torrent (le 2026-09-17, 59 fichiers de la fiche et 0 des 28 épisodes de la saison 4),
+    // et pour une fiche vide il répond 500. Les épisodes sont ensuite rattachés à **cette** fiche par le nom de
+    // chaque fichier : l'identification de la série par Sonarr (titre japonais, anglais, français) ne compte pas.
+    let candidates = from_torrent(&arr.manual_import(&t.content_path).await?, &t.content_path);
+    let mut by_path: HashMap<String, Vec<i64>> = HashMap::new();
+    let mut has_file: HashSet<i64> = HashSet::new();
+    if movie {
+        if existing_has_file {
+            has_file.insert(id);
         }
-        fresh_files(&candidates, movie, id, &hash, &by_path)
     } else {
-        let candidates = arr
-            .manual_import_folder(&t.content_path, id_param, id)
-            .await?;
-        select_files(
-            &from_torrent(&candidates, &t.content_path),
-            movie,
-            id,
-            &hash,
-        )
-    };
+        let episodes = arr.episodes(id).await?;
+        has_file.extend(
+            episodes
+                .iter()
+                .filter(|e| e.get("hasFile").and_then(Value::as_bool) == Some(true))
+                .filter_map(|e| e.get("id").and_then(Value::as_i64)),
+        );
+        for c in &candidates {
+            let Some(path) = c.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            let base = path.rsplit('/').next().unwrap_or(path);
+            let parse = arr.parse(base).await?;
+            by_path.insert(path.to_string(), map_episodes(&parse, &episodes));
+        }
+    }
+    let (files, skipped) = fresh_files(&candidates, movie, id, &hash, &by_path, &has_file);
     for s in &skipped {
         info!(task = "torrent_import", side = side.name, torrent = %t.name, file = %s, "file skipped");
     }
@@ -769,7 +825,7 @@ mod tests {
             json!({"path": "/d/a.mkv", "rejections": [{"reason": "Unknown Movie"}], "quality": {}}),
             json!({"path": "/d/s.mkv", "rejections": [{"reason": "Sample"}, {"reason": "Unknown Movie"}]}),
         ];
-        let (files, skipped) = fresh_files(&cands, true, 68, "H", &HashMap::new());
+        let (files, skipped) = fresh_files(&cands, true, 68, "H", &HashMap::new(), &HashSet::new());
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["movieId"], 68);
         assert_eq!(skipped, vec!["/d/s.mkv: Sample".to_string()]);
@@ -780,7 +836,7 @@ mod tests {
         ];
         let mut by = HashMap::new();
         by.insert("/d/e1.mkv".to_string(), vec![10, 11]);
-        let (files, skipped) = fresh_files(&series, false, 5, "H", &by);
+        let (files, skipped) = fresh_files(&series, false, 5, "H", &by, &HashSet::new());
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["episodeIds"], json!([10, 11]));
         assert_eq!(files[0]["releaseType"], "multiEpisode");
@@ -865,5 +921,55 @@ mod tests {
         let kept = from_torrent(&cands, "/downloads/Serie.S02");
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0]["path"], "/downloads/Serie.S02/E01.mkv");
+    }
+
+    #[test]
+    fn homelab_tags_name_the_target_fiche() {
+        assert_eq!(
+            homelab_target("homelab:series=50:season=4"),
+            Some((false, 50))
+        );
+        assert_eq!(homelab_target("autre, homelab:movie=66"), Some((true, 66)));
+        assert_eq!(homelab_target("C411,radarr"), None);
+        assert_eq!(homelab_target("homelab:series=abc"), None);
+        assert_eq!(homelab_target(""), None);
+    }
+
+    #[test]
+    fn falls_back_to_the_arr_episodes_only_for_the_same_series() {
+        let row = |series: i64| {
+            json!({"path": "/dl/T/E27.mkv", "relativePath": "E27.mkv", "rejections": [],
+                   "series": {"id": series}, "episodes": [{"id": 9027}]})
+        };
+        let empty: HashMap<String, Vec<i64>> = HashMap::new();
+        let (files, skipped) = fresh_files(&[row(50)], false, 50, "H", &empty, &HashSet::new());
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["episodeIds"], json!([9027]));
+        assert!(skipped.is_empty());
+        // l'Arr a reconnu une autre série : on n'importe pas ses épisodes dans notre fiche
+        let (files, skipped) = fresh_files(&[row(77)], false, 50, "H", &empty, &HashSet::new());
+        assert!(files.is_empty() && skipped.len() == 1);
+    }
+
+    #[test]
+    fn never_overwrites_and_prefers_the_arr_mapping() {
+        // l'Arr a reconnu la série et rattache E01 à la saison 4 ; notre analyse du nom disait S01E01
+        let row = json!({"path": "/dl/Final.Season/E01.mkv", "rejections": [],
+                         "series": {"id": 50}, "episodes": [{"id": 4001}]});
+        let mut by = HashMap::new();
+        by.insert("/dl/Final.Season/E01.mkv".to_string(), vec![1001]);
+        let s1_present: HashSet<i64> = [1001].into_iter().collect();
+        let (files, _) = fresh_files(std::slice::from_ref(&row), false, 50, "H", &by, &s1_present);
+        assert_eq!(files[0]["episodeIds"], json!([4001]));
+        // l'Arr ne l'a pas reconnue et notre analyse vise un épisode qui a déjà un fichier : rien
+        let unknown = json!({"path": "/dl/Final.Season/E01.mkv", "rejections": []});
+        let (files, skipped) = fresh_files(&[unknown], false, 50, "H", &by, &s1_present);
+        assert!(files.is_empty());
+        assert!(skipped[0].contains("déjà présent"));
+        // film déjà présent : pas de remplacement
+        let m = json!({"path": "/dl/film.mkv", "rejections": []});
+        let present: HashSet<i64> = [68].into_iter().collect();
+        let (files, _) = fresh_files(&[m], true, 68, "H", &HashMap::new(), &present);
+        assert!(files.is_empty());
     }
 }

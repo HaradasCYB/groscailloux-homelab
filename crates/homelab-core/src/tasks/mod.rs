@@ -7,17 +7,19 @@ pub mod cleanup;
 pub mod deletion_cleanup;
 pub mod disk_pressure;
 pub mod id_match_import;
+pub mod indexer_unblock;
 pub mod monitor_sync;
+pub mod movie_search;
 pub mod onboard;
 pub mod playback_limit;
 pub mod seedbox_refresh;
+pub mod series_search;
 pub mod stack_health;
 pub mod stuck_handler;
 pub mod tba_bypass;
 pub mod torrent_import;
 pub mod tracker_ratio;
 pub mod trending;
-pub mod unknown_series_grab;
 pub mod user_poller;
 pub mod vpn;
 
@@ -61,7 +63,9 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(tba_bypass::TbaBypass),
         Box::new(id_match_import::IdMatchImport),
         Box::new(torrent_import::TorrentImport),
-        Box::new(unknown_series_grab::UnknownSeriesGrab),
+        Box::new(series_search::SeriesSearch),
+        Box::new(movie_search::MovieSearch),
+        Box::new(indexer_unblock::IndexerUnblock),
         Box::new(deletion_cleanup::DeletionCleanup),
         Box::new(trending::Trending),
         Box::new(playback_limit::PlaybackLimit),

@@ -53,6 +53,9 @@ pub struct Torrent {
     /// Secondes passées en seed.
     #[serde(default)]
     pub seeding_time: i64,
+    /// Étiquettes séparées par des virgules (`homelab:series=50:season=4` posé par series_search).
+    #[serde(default)]
+    pub tags: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -192,6 +195,38 @@ impl QbitClient {
             )
             .await?;
         check(resp, "qbit setShareLimits").await.map(|_| ())
+    }
+
+    /// Ajoute un `.torrent` (contenu brut), démarré, avec des étiquettes. `save_path` vide = dossier par défaut.
+    pub async fn add_torrent(&self, torrent: Vec<u8>, save_path: &str, tags: &str) -> Result<()> {
+        let (save, tags) = (save_path.to_string(), tags.to_string());
+        let resp = self
+            .send(
+                move |r| {
+                    let part = reqwest::multipart::Part::bytes(torrent.clone())
+                        .file_name("release.torrent")
+                        .mime_str("application/x-bittorrent")
+                        .expect("type MIME valide");
+                    let mut form = reqwest::multipart::Form::new()
+                        .part("torrents", part)
+                        .text("tags", tags.clone())
+                        .text("paused", "false")
+                        .text("stopped", "false");
+                    if !save.is_empty() {
+                        form = form.text("savepath", save.clone());
+                    }
+                    r.multipart(form)
+                },
+                Method::POST,
+                "api/v2/torrents/add",
+            )
+            .await?;
+        let resp = check(resp, "qbit torrents/add").await?;
+        let body = resp.text().await.unwrap_or_default();
+        if body.trim().eq_ignore_ascii_case("fails.") {
+            bail!("qBittorrent a refusé le torrent (déjà présent ou invalide)");
+        }
+        Ok(())
     }
 
     pub async fn delete(&self, hashes: &[String], delete_files: bool) -> Result<()> {

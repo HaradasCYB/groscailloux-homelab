@@ -135,6 +135,7 @@ mod tests {
             category: String::new(),
             ratio: 0.0,
             seeding_time: 0,
+            tags: String::new(),
         };
         let ts = vec![
             mk("a", "stoppedUP", 30),

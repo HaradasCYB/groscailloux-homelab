@@ -213,7 +213,9 @@ pub struct Tasks {
     pub seedbox_refresh: Interval300,
     pub id_match_import: Interval300,
     pub torrent_import: TorrentImport,
-    pub unknown_series_grab: UnknownSeriesGrab,
+    pub series_search: SeriesSearch,
+    pub movie_search: MovieSearch,
+    pub indexer_unblock: IndexerUnblock,
     pub deletion_cleanup: DeletionCleanup,
     pub trending: Trending,
     pub playback_limit: PlaybackLimit,
@@ -313,39 +315,100 @@ impl Default for DeletionCleanup {
     }
 }
 
-/// Grab des releases rejetées « Unknown Series » (titres traduits), sur un seul indexer.
+/// Recherche des saisons manquantes par identifiant TMDB chez un seul indexer (C411), via Prowlarr.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct UnknownSeriesGrab {
+pub struct SeriesSearch {
     pub interval_secs: u64,
-    /// Recherches de saison au plus par passage, tous Sonarr confondus.
-    pub max_searches_per_run: usize,
+    /// Requêtes envoyées à l'indexer au plus par passage (identifiant et texte libre confondus).
+    pub max_queries_per_run: usize,
+    /// Écart minimal entre deux requêtes à l'indexer (limite d'API de C411).
+    pub query_gap_secs: u64,
     /// Nouvelle recherche d'une saison sans candidat après N heures.
     pub retry_after_hours: i64,
     /// Nouvelle recherche d'une saison déjà prise après N heures (si elle manque encore).
     pub grabbed_retry_hours: i64,
-    /// Nouvelle tentative après une erreur (indexer indisponible, recherche trop longue).
+    /// Nouvelle tentative après une erreur (indexer indisponible, délai dépassé).
     pub error_retry_hours: i64,
-    /// Anime : nombre d'épisodes interrogés par passage (Sonarr interroge l'indexer épisode par épisode ;
-    /// une saison entière dépasse le délai du proxy de la seedbox).
-    pub anime_episodes_per_run: usize,
-    /// Noms de la série interrogés en texte libre chez l'indexer (Prowlarr) quand Sonarr ne trouve rien.
-    pub prowlarr_queries: usize,
-    /// Nom (préfixe, insensible à la casse) de l'indexer dont on accepte les releases.
+    /// Nom (préfixe, insensible à la casse) de l'indexer interrogé, dans Prowlarr.
+    pub indexer: String,
+    /// Noms de la série essayés en texte libre quand la recherche par identifiant ne donne rien.
+    pub text_queries: usize,
+    /// Adresse de Prowlarr vue depuis les conteneurs Sonarr/Radarr du VPS (lien de téléchargement envoyé).
+    pub prowlarr_url_for_arrs: String,
+}
+
+impl Default for SeriesSearch {
+    fn default() -> Self {
+        Self {
+            interval_secs: 600,
+            max_queries_per_run: 6,
+            query_gap_secs: 15,
+            retry_after_hours: 24,
+            grabbed_retry_hours: 168,
+            error_retry_hours: 1,
+            indexer: "C411".into(),
+            text_queries: 2,
+            prowlarr_url_for_arrs: "http://prowlarr:9696".into(),
+        }
+    }
+}
+
+/// Rattrapage des films suivis et manquants par identifiant TMDB (la recherche de Radarr reste la voie normale).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct MovieSearch {
+    pub interval_secs: u64,
+    /// Films cherchés au plus par passage.
+    pub max_per_run: usize,
+    /// Un film n'est rattrapé que s'il manque depuis au moins N heures après son ajout.
+    pub missing_hours: i64,
+    /// Nouvelle recherche d'un film sans candidat après N heures.
+    pub retry_after_hours: i64,
+    pub error_retry_hours: i64,
+    pub query_gap_secs: u64,
     pub indexer: String,
 }
 
-impl Default for UnknownSeriesGrab {
+impl Default for MovieSearch {
     fn default() -> Self {
         Self {
-            interval_secs: 10800,
-            max_searches_per_run: 8,
+            interval_secs: 3600,
+            max_per_run: 3,
+            missing_hours: 24,
             retry_after_hours: 72,
-            grabbed_retry_hours: 168,
-            anime_episodes_per_run: 2,
-            prowlarr_queries: 2,
             error_retry_hours: 1,
+            query_gap_secs: 15,
             indexer: "C411".into(),
+        }
+    }
+}
+
+/// Remise en service des indexeurs mis en pause par Sonarr/Radarr après des échecs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct IndexerUnblock {
+    pub interval_secs: u64,
+    /// Un indexeur n'est débloqué que si son dernier échec date d'au moins N minutes (fenêtre de C411 : 1 h).
+    pub quiet_mins: i64,
+    /// Au plus un arrêt/redémarrage par application pendant cette durée.
+    pub app_cooldown_mins: i64,
+    /// Au-delà de N déblocages en 24 h pour un même indexeur, on ne débloque plus : alerte seulement.
+    pub max_unblocks_per_day: u32,
+    /// Hôte `ssh` de la seedbox (clé d'admin) et dossier de ses applications (`<dossier>/sonarr/sonarr.db`).
+    pub ssh_host: String,
+    pub seedbox_apps_dir: String,
+}
+
+impl Default for IndexerUnblock {
+    fn default() -> Self {
+        Self {
+            interval_secs: 600,
+            quiet_mins: 60,
+            app_cooldown_mins: 60,
+            max_unblocks_per_day: 3,
+            ssh_host: "seedbox".into(),
+            seedbox_apps_dir: "/home/kakaouette/.apps".into(),
         }
     }
 }
@@ -932,7 +995,7 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.torrent_import.interval_secs, 600);
         assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
-        assert_eq!(cfg.tasks.unknown_series_grab.max_searches_per_run, 8);
+        assert_eq!(cfg.tasks.series_search.max_queries_per_run, 6);
         assert_eq!(cfg.accounts.max_premium, 25);
         assert_eq!(cfg.accounts.max_devices_per_user, 0);
         assert_eq!(cfg.accounts.max_playbacks_per_user, 2);

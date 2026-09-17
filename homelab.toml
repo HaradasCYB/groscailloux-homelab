@@ -96,18 +96,43 @@ interval_secs = 20
 grace_secs = 30
 max_actions_per_run = 5
 
-[tasks.unknown_series_grab]
-# Releases C411 rejetées par Sonarr pour la seule raison « Unknown Series » (titre traduit) :
-# grab forcé si le titre correspond exactement au titre FR/original de la série (Jellyseerr).
-interval_secs = 10800       # 3 h
-max_searches_per_run = 8    # recherches de saison par passage (1 requête C411 chacune ; anime : 1 saison max, une requête par épisode)
-anime_episodes_per_run = 2  # anime : épisodes interrogés par passage (recherche épisode par épisode ; une saison
-                            # entière dépasse le délai du proxy seedbox, 504 après 300 s)
-prowlarr_queries = 2        # noms interrogés en texte libre (Prowlarr) si Sonarr ne trouve rien (titre traduit)
-retry_after_hours = 72      # saison sans candidat : nouvelle recherche après 3 jours
+[tasks.series_search]
+# Saisons suivies et manquantes cherchées PAR IDENTIFIANT TMDB chez C411, via Prowlarr : les releases
+# de la série quel que soit leur nom (japonais, anglais, français), une requête par saison. Jellyseerr
+# ne demande plus de recherche à Sonarr (preventSearch) : ses rafales par épisode déclenchaient le 429
+# de C411 et bloquaient l'indexeur jusqu'à 24 h. Release confiée à Sonarr (release/push) ; refus
+# d'identification ou indexeur bloqué → qBittorrent avec l'étiquette homelab:series=<id>.
+interval_secs = 600         # 10 min : une demande part dans les minutes qui suivent
+max_queries_per_run = 6     # requêtes C411 au plus par passage
+query_gap_secs = 15         # écart minimal entre deux requêtes C411
+retry_after_hours = 24      # saison sans candidat : nouvelle recherche le lendemain
 grabbed_retry_hours = 168   # saison prise mais encore manquante : après 7 jours
-error_retry_hours = 1       # erreur (indexer indisponible, recherche trop longue) : nouvelle tentative dans l'heure
+error_retry_hours = 1       # erreur (indexeur indisponible, délai dépassé) : nouvelle tentative dans l'heure
+indexer = "C411"            # nom de l'indexeur dans Prowlarr
+text_queries = 2            # rien par identifiant : noms de la série essayés en texte libre
+prowlarr_url_for_arrs = "http://prowlarr:9696"  # Prowlarr vu des conteneurs Sonarr/Radarr (lien de téléchargement)
+
+[tasks.movie_search]
+# Rattrapage des films suivis encore manquants 24 h après l'ajout, par identifiant TMDB chez C411
+# (la recherche de Radarr, qui marche par identifiant, reste la voie normale).
+interval_secs = 3600
+max_per_run = 3
+missing_hours = 24
+retry_after_hours = 72
+error_retry_hours = 1
+query_gap_secs = 15
 indexer = "C411"
+
+[tasks.indexer_unblock]
+# Indexeurs mis en pause par Sonarr/Radarr (429, délais) : pause levée dans leur base (application
+# arrêtée ~20 s, base sauvegardée) si le dernier échec date d'au moins quiet_mins. Au-delà de
+# max_unblocks_per_day déblocages en 24 h : mail à l'admin seulement.
+interval_secs = 600
+quiet_mins = 60             # fenêtre de limite de C411 : plus tôt, il se rebloquerait aussitôt
+app_cooldown_mins = 60      # au plus un arrêt par application par heure
+max_unblocks_per_day = 3
+ssh_host = "seedbox"
+seedbox_apps_dir = "/home/kakaouette/.apps"
 
 [tasks.seedbox_refresh]
 # Nouveaux imports des Arrs seedbox → rafraîchit le cache rclone et signale les fichiers à Jellyfin.

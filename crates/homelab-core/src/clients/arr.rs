@@ -224,29 +224,6 @@ impl ArrClient {
         Ok(v.get("totalRecords").and_then(Value::as_i64).unwrap_or(0))
     }
 
-    /// Aperçu d'import manuel d'un fichier ou dossier quelconque, rattaché à une fiche.
-    /// Sans `downloadId` : pour un téléchargement que l'Arr ne suit pas, il renverrait une liste vide.
-    pub async fn manual_import_folder(
-        &self,
-        folder: &str,
-        id_param: &str,
-        id: i64,
-    ) -> Result<Vec<Value>> {
-        let id = id.to_string();
-        let resp = self
-            .req(Method::GET, "api/v3/manualimport")
-            .query(&[
-                ("folder", folder),
-                (id_param, id.as_str()),
-                ("filterExistingFiles", "false"),
-            ])
-            .timeout(std::time::Duration::from_secs(300))
-            .send()
-            .await?;
-        let v = json(resp, &format!("{} GET manualimport", self.name)).await?;
-        Ok(v.as_array().cloned().unwrap_or_default())
-    }
-
     /// Fiche existante par identifiant externe (`movie`/`tmdbId` ou `series`/`tvdbId`).
     pub async fn find_by(&self, kind: &str, id_param: &str, id: i64) -> Result<Option<Value>> {
         let v = self
