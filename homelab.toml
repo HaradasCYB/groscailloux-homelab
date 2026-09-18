@@ -251,6 +251,13 @@ jellyseerr_auto_approve = true
 # valider ni les refuser : vue d'ensemble demandée par l'admin le 2026-09-17.
 jellyseerr_view_requests = true
 
+# Saut du lecteur Jellyfin (bouton d'avance rapide ET flèches gauche/droite : les deux passent par
+# `skipForwardLength`). Jellyfin met 30 s en avant par défaut, ce qui fait rater une réplique à chaque
+# clic ; 10 s des deux côtés. Posé à la création d'un compte ; les 16 comptes existants ont été
+# convertis le 2026-09-18 (sauvegarde backups/jellyfin-skip-20260918-155125/).
+skip_forward_ms = 10000
+skip_back_ms = 10000
+
 [indexers]
 # C411 est le SEUL indexer, dans les 4 Arrs comme dans Prowlarr (les indexers publics et Jackett ont été
 # retirés le 2026-09-17 : ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes

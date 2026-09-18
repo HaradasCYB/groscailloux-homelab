@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.13.0](#1130--18092026--version-originale-privilégiée-pour-les-animés)** | 18/09/2026 | **Version originale privilégiée pour les animés** |
+| **[1.13.1](#1131--18092026--avance-rapide-de-10-secondes)** | 18/09/2026 | **Avance rapide de 10 secondes** |
+| [1.13.0](#1130--18092026--version-originale-privilégiée-pour-les-animés) | 18/09/2026 | Version originale privilégiée pour les animés |
 | [1.12.0](#1120--18092026--les-saisons-dannimé-se-complètent-seules) | 18/09/2026 | Les saisons d'animé se complètent seules |
 | [1.11.0](#1110--18092026--tout-passe-par-la-seedbox) | 18/09/2026 | Tout passe par la seedbox |
 | [1.10.0](#1100--18092026--les-animés-sans-accroc) | 18/09/2026 | Les animés sans accroc |
@@ -32,6 +33,13 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.13.1 — 18/09/2026 — Avance rapide de 10 secondes
+
+- **L'avance rapide saute maintenant 10 secondes au lieu de 30.** Que ce soit par le bouton du lecteur ou par
+  les flèches gauche/droite du clavier, et dans les deux sens. Trente secondes faisaient systématiquement rater
+  une réplique quand on revenait en arrière d'un pas de trop. Appliqué à tous les comptes, et posé d'office sur
+  les nouveaux. Si l'application était déjà ouverte, il faut la recharger pour que le changement prenne.
 
 ## 1.13.0 — 18/09/2026 — Version originale privilégiée pour les animés
 

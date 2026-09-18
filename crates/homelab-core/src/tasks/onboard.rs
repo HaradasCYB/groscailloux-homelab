@@ -216,6 +216,14 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
     if let Err(e) = ctx.jellyfin.set_view_order(&jf_id, &libraries).await {
         warn!(task = "onboard", username = %req.username, error = %e, "library order not applied");
     }
+    let skip = &ctx.cfg.accounts;
+    if let Err(e) = ctx
+        .jellyfin
+        .set_skip_lengths(&jf_id, skip.skip_forward_ms, skip.skip_back_ms)
+        .await
+    {
+        warn!(task = "onboard", username = %req.username, error = %e, "skip lengths not applied");
+    }
     result.jellyfin_id = jf_id.clone();
 
     let imported = ctx.jellyseerr.import_from_jellyfin(&[&jf_id]).await?;

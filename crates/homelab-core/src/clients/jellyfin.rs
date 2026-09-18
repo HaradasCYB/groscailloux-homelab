@@ -387,6 +387,28 @@ impl JellyfinClient {
             .map(|_| ())
     }
 
+    /// Durée d'un saut avant/arrière dans le lecteur, en millisecondes (`DisplayPreferences` du compte,
+    /// client `emby`). Le bouton d'avance rapide **et** les flèches gauche/droite passent tous deux par ce
+    /// réglage (`playbackManager.fastForward(skipForwardLength())`), et Jellyfin le met à 30 s par défaut.
+    pub async fn set_skip_lengths(
+        &self,
+        user_id: &str,
+        forward_ms: i64,
+        back_ms: i64,
+    ) -> Result<()> {
+        let path = format!("DisplayPreferences/usersettings?userId={user_id}&client=emby");
+        let resp = self.req(Method::GET, &path).send().await?;
+        let mut prefs = json(resp, "jellyfin DisplayPreferences").await?;
+        let custom = prefs
+            .get_mut("CustomPrefs")
+            .and_then(Value::as_object_mut)
+            .context("DisplayPreferences sans CustomPrefs")?;
+        custom.insert("skipForwardLength".into(), json!(forward_ms.to_string()));
+        custom.insert("skipBackLength".into(), json!(back_ms.to_string()));
+        let resp = self.req(Method::POST, &path).json(&prefs).send().await?;
+        check(resp, "jellyfin DisplayPreferences").await.map(|_| ())
+    }
+
     /// Signale des fichiers nouveaux : Jellyfin ne scanne que leurs dossiers, pas la bibliothèque.
     pub async fn media_updated(&self, paths: &[String]) -> Result<()> {
         let updates: Vec<Value> = paths

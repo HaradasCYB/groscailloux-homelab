@@ -172,6 +172,15 @@ journalctl -u homelabd -f
   connexion (403 « maximum number of sessions », affiché comme une erreur d'identifiants ou sans message) et
   l'appli **iOS crée une nouvelle session à chaque ouverture** : le 2026-09-15, 5 sessions fantômes d'un iPhone
   bloquaient la TV et la voiture d'un membre, Quick Connect compris.
+- **Saut du lecteur Jellyfin** : `skipForwardLength` / `skipBackLength` à **10 s** (`[accounts] skip_forward_ms`
+  et `skip_back_ms`, posés à la création d'un compte par `jellyfin::set_skip_lengths`). Jellyfin met **30 s en
+  avant** par défaut. Le bouton d'avance rapide **et** les flèches gauche/droite passent par le même réglage
+  (`playbackManager.fastForward(skipForwardLength())` dans `playback-video.*.chunk.js`) : il n'y a donc qu'une
+  valeur à changer. C'est un `DisplayPreferences` **par compte** (`usersettings`, client `emby`), pas un réglage
+  serveur : les 16 comptes existants ont été convertis le 2026-09-18 (sauvegarde
+  `backups/jellyfin-skip-20260918-155125/`), et un compte créé ensuite le reçoit à l'onboarding. Une appli déjà
+  ouverte garde l'ancienne valeur en cache jusqu'au rechargement. Ni les raccourcis de Jellyfin Enhanced
+  (lettres et chiffres seulement) ni nos scripts injectés ne touchent aux flèches.
 - **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
   la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).

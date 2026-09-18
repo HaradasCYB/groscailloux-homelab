@@ -178,6 +178,10 @@ pub struct Accounts {
     pub jellyseerr_auto_approve: bool,
     /// Voir toutes les demandes dans Jellyseerr et l'onglet Demandes de Jellyfin (bit 16384, lecture seule).
     pub jellyseerr_view_requests: bool,
+    /// Saut du lecteur Jellyfin, en millisecondes : bouton d'avance rapide **et** flèches gauche/droite.
+    /// Jellyfin met 30 s en avant par défaut, ce qui fait rater une réplique à chaque clic.
+    pub skip_forward_ms: i64,
+    pub skip_back_ms: i64,
 }
 
 impl Default for Accounts {
@@ -190,6 +194,8 @@ impl Default for Accounts {
             protected: vec!["Haradas".into(), "LeGrosCailloux".into()],
             jellyseerr_auto_approve: true,
             jellyseerr_view_requests: true,
+            skip_forward_ms: 10_000,
+            skip_back_ms: 10_000,
         }
     }
 }
@@ -1184,6 +1190,9 @@ jellyseerr = "http://js"
         assert!(!cfg.downloads.may_grab("radarr"));
         assert_eq!(cfg.accounts.max_premium, 25);
         assert_eq!(cfg.accounts.max_devices_per_user, 0);
+        // saut du lecteur : 10 s des deux côtés (Jellyfin met 30 s en avant par défaut)
+        assert_eq!(cfg.accounts.skip_forward_ms, 10_000);
+        assert_eq!(cfg.accounts.skip_back_ms, 10_000);
         assert_eq!(cfg.accounts.max_playbacks_per_user, 2);
         assert_eq!(cfg.tasks.playback_limit.grace_secs, 30);
         assert!(!cfg.accounts.new_accounts_premium);
