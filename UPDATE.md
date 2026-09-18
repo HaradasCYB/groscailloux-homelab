@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.12.0](#1120--18092026--les-saisons-dannimé-se-complètent-seules)** | 18/09/2026 | **Les saisons d'animé se complètent seules** |
+| **[1.13.0](#1130--18092026--version-originale-privilégiée-pour-les-animés)** | 18/09/2026 | **Version originale privilégiée pour les animés** |
+| [1.12.0](#1120--18092026--les-saisons-dannimé-se-complètent-seules) | 18/09/2026 | Les saisons d'animé se complètent seules |
 | [1.11.0](#1110--18092026--tout-passe-par-la-seedbox) | 18/09/2026 | Tout passe par la seedbox |
 | [1.10.0](#1100--18092026--les-animés-sans-accroc) | 18/09/2026 | Les animés sans accroc |
 | [1.9.0](#190--18092026--une-saison-complète-du-premier-coup) | 18/09/2026 | Une saison complète du premier coup |
@@ -31,6 +32,19 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.13.0 — 18/09/2026 — Version originale privilégiée pour les animés
+
+- **Pour les animés, la priorité change** : d'abord les versions **MULTi** (qui contiennent à la fois la piste
+  japonaise et la française), puis la **VOSTFR**. Le doublage seul ne passe qu'ensuite. Les séries et les films
+  ne changent pas : le français reste prioritaire. La règle s'applique partout, y compris aux récupérations
+  automatiques.
+- **Un type de nommage qui bloquait tout est enfin compris** : certaines publications numérotent leurs
+  épisodes d'une façon que le gestionnaire ne sait pas lire, et refusait alors le lot entier — le titre restait
+  « en cours » indéfiniment alors que les fichiers étaient déjà là. C'est le cas qui bloquait *Erased*,
+  maintenant disponible en entier.
+- **Plus rien ne se perd en silence** : les téléchargements terminés que rien n'a pu ranger apparaissent
+  désormais dans la page d'état, avec la raison.
 
 ## 1.12.0 — 18/09/2026 — Les saisons d'animé se complètent seules
 

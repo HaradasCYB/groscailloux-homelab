@@ -82,7 +82,10 @@ fn episode_list(eps: &[i64]) -> String {
     out.join(", ")
 }
 
-/// Torrents finis dont aucune fiche n'a voulu (décision `no_match`), les plus récents d'abord.
+/// Torrents finis que rien n'a rattachés : aucune fiche n'en a voulu (`no_match`) ou aucun fichier
+/// n'était importable (`nothing_importable` — nommage que ni Sonarr ni nous ne savons lire). Les deux
+/// états sont **définitifs** : sans cet affichage, les octets restent sur la seedbox sans que personne
+/// le sache (Erased, le 2026-09-18 : 2,11 Gio téléchargés, 0 importé, demande bloquée « en cours »).
 pub fn unmatched(
     records: &BTreeMap<String, homelab_core::state::TorrentImportRecord>,
     now: i64,
@@ -90,14 +93,19 @@ pub fn unmatched(
 ) -> Vec<String> {
     let mut v: Vec<(i64, String)> = records
         .iter()
-        .filter(|(_, r)| r.outcome == "no_match")
+        .filter(|(_, r)| matches!(r.outcome.as_str(), "no_match" | "nothing_importable"))
         .map(|(k, r)| {
             let side = k.split_once(':').map(|(s, _)| s).unwrap_or("?");
             (
                 r.at,
                 format!(
-                    "{side} · {} (depuis {})",
-                    r.name.chars().take(70).collect::<String>(),
+                    "{side} · {} — {} (depuis {})",
+                    r.name.chars().take(60).collect::<String>(),
+                    if r.outcome == "nothing_importable" {
+                        "rien d'importable"
+                    } else {
+                        "aucune fiche"
+                    },
                     ago(now, r.at)
                 ),
             )

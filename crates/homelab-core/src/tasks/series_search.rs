@@ -48,25 +48,79 @@ pub struct Candidate {
     pub size: i64,
 }
 
-/// Rang de langue d'après le titre : VF 4 > MULTi 3 > FRENCH 2 > VOSTFR 1 > **VO 0** (aucun marqueur
-/// français). Une release de rang 0 n'est prise qu'en dernier recours (voir `choose`).
-pub fn lang_rank(title: &str) -> u8 {
+/// Marqueurs de langue présents dans le titre d'une release. Une même release peut en porter
+/// plusieurs (« MULTI.VFF ») : c'est le classement qui tranche, pas la lecture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Langs {
+    /// VFF, TRUEFRENCH, VFQ… : doublage français.
+    pub vf: bool,
+    /// Plusieurs pistes audio.
+    pub multi: bool,
+    /// FRENCH sans précision.
+    pub french: bool,
+    /// Version originale sous-titrée en français.
+    pub vostfr: bool,
+}
+
+pub fn langs_of(title: &str) -> Langs {
     let words: Vec<String> = title
         .split(|c: char| !c.is_ascii_alphanumeric())
         .map(str::to_ascii_uppercase)
         .collect();
     let has = |w: &[&str]| words.iter().any(|x| w.contains(&x.as_str()));
-    if has(&["VFF", "TRUEFRENCH", "VFQ", "VFI", "VF2", "VFB"]) {
+    Langs {
+        vf: has(&["VFF", "TRUEFRENCH", "VFQ", "VFI", "VF2", "VFB"]),
+        multi: has(&["MULTI"]),
+        french: has(&["FRENCH"]),
+        vostfr: has(&["VOSTFR", "SUBFRENCH"]),
+    }
+}
+
+/// Rang de langue d'après le titre. Une release de rang 0 (aucun marqueur français) n'est prise qu'en
+/// dernier recours (voir `choose`).
+///
+/// **Séries et films** : VF 4 > MULTi 3 > FRENCH 2 > VOSTFR 1 > VO 0. Un « MULTI.VFF » porte les deux
+/// marqueurs et compte comme VF, comme avant.
+///
+/// **Animés** (2026-09-18, demandé par l'utilisateur) : **MULTi 4 > VOSTFR 3 > VF 2 > FRENCH 1 > VO 0**.
+/// Un MULTi porte les deux pistes audio, donc il sert tout le monde ; la VOSTFR garde l'audio japonais,
+/// que la plupart des spectateurs d'animés préfèrent au doublage. Un « MULTI.VFF » compte donc ici
+/// comme MULTi.
+pub fn lang_rank_for(title: &str, anime: bool) -> u8 {
+    let l = langs_of(title);
+    if anime {
+        if l.multi {
+            4
+        } else if l.vostfr {
+            3
+        } else if l.vf {
+            2
+        } else if l.french {
+            1
+        } else {
+            0
+        }
+    } else if l.vf {
         4
-    } else if has(&["MULTI"]) {
+    } else if l.multi {
         3
-    } else if has(&["FRENCH"]) {
+    } else if l.french {
         2
-    } else if has(&["VOSTFR", "SUBFRENCH"]) {
+    } else if l.vostfr {
         1
     } else {
         0
     }
+}
+
+/// Classement hors animé (séries et films).
+pub fn lang_rank(title: &str) -> u8 {
+    lang_rank_for(title, false)
+}
+
+/// La fiche est-elle un animé ? (`seriesType` de Sonarr.)
+pub fn is_anime(series: &Value) -> bool {
+    series.get("seriesType").and_then(Value::as_str) == Some("anime")
 }
 
 /// Taille acceptable pour le choix automatique : `max_gb` par épisode (ou par film). Une saison
@@ -143,6 +197,22 @@ pub fn uncovered(cands: &[Candidate], missing: &HashSet<i64>) -> BTreeSet<i64> {
 pub fn claimed_episode(path: &str) -> Option<i64> {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| regex::Regex::new(r"(?i)s\d{1,3}e(\d{1,3})").expect("regex valide"));
+    let base = path.rsplit('/').next().unwrap_or(path);
+    re.captures(base)?.get(1)?.as_str().parse().ok()
+}
+
+/// Numéro d'épisode d'un fichier de pack nommé **à la manière des fansubs** : `Erased S01 - 06 VOSTFR
+/// [1080p][X265].mkv`. Sonarr lit `S01` comme un marqueur de saison entière et **ne voit jamais le
+/// « - 06 »** : il refuse alors chaque fichier (« Single episode file contains all episodes in seasons »)
+/// et le pack entier reste sur le carreau (Erased, le 2026-09-18 : 2,11 Gio téléchargés, 0 importé).
+///
+/// Forme exigée : le marqueur de saison, un tiret entouré d'espaces, puis 1 à 3 chiffres. Volontairement
+/// rigide pour ne jamais attraper `1080p`, `x265`, `10BITS`, une année ou un suffixe de groupe.
+pub fn fansub_episode(path: &str) -> Option<i64> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"(?i)\bs\d{1,3}\s+-\s+(\d{1,3})(?:\s|$)").expect("regex valide")
+    });
     let base = path.rsplit('/').next().unwrap_or(path);
     re.captures(base)?.get(1)?.as_str().parse().ok()
 }
@@ -227,7 +297,13 @@ pub struct CourPack {
 /// mapper sur la saison cible. Ce dernier point écarte « Thousand-Year Blood War **S01** », que le scene
 /// mapping TVDB traduit déjà en saison 17 (50/50 épisodes, mesuré le 2026-09-18) : le prendre par ce
 /// chemin lui inventerait un décalage et le placerait de travers.
-pub fn cour_pack(result: &Value, parse: &Value, series_id: i64, season: i64) -> Option<CourPack> {
+pub fn cour_pack(
+    result: &Value,
+    parse: &Value,
+    series_id: i64,
+    season: i64,
+    anime: bool,
+) -> Option<CourPack> {
     if parse.pointer("/series/id").and_then(Value::as_i64) != Some(series_id) {
         return None;
     }
@@ -253,7 +329,7 @@ pub fn cour_pack(result: &Value, parse: &Value, series_id: i64, season: i64) -> 
     let title = result.get("title").and_then(Value::as_str)?.to_string();
     let url = result.get("downloadUrl").and_then(Value::as_str)?;
     Some(CourPack {
-        lang_rank: lang_rank(&title),
+        lang_rank: lang_rank_for(&title, anime),
         seeders: result.get("seeders").and_then(Value::as_i64).unwrap_or(0),
         size: result
             .get("size")
@@ -274,7 +350,12 @@ pub fn cour_pack(result: &Value, parse: &Value, series_id: i64, season: i64) -> 
 }
 
 /// Candidat d'après un résultat Prowlarr et l'analyse (`parsedEpisodeInfo`) de son titre par Sonarr.
-pub fn series_candidate(result: &Value, info: &Value, season: i64) -> Option<Candidate> {
+pub fn series_candidate(
+    result: &Value,
+    info: &Value,
+    season: i64,
+    anime: bool,
+) -> Option<Candidate> {
     let title = result.get("title").and_then(Value::as_str)?.to_string();
     let url = result.get("downloadUrl").and_then(Value::as_str)?;
     if info.get("seasonNumber").and_then(Value::as_i64) != Some(season) {
@@ -282,7 +363,7 @@ pub fn series_candidate(result: &Value, info: &Value, season: i64) -> Option<Can
     }
     let quality = info.get("quality").cloned().unwrap_or(Value::Null);
     Some(Candidate {
-        lang_rank: lang_rank(&title),
+        lang_rank: lang_rank_for(&title, anime),
         season,
         episodes: info
             .get("episodeNumbers")
@@ -903,6 +984,7 @@ async fn season_candidates(
 ) -> Result<(Vec<Candidate>, Vec<CourPack>, &'static str)> {
     let cfg = &ctx.cfg.tasks.series_search;
     let tmdb = series.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
+    let anime = is_anime(series);
     let names = names_for(ctx, series).await;
     let mut out = Vec::new();
     let mut packs: Vec<CourPack> = Vec::new();
@@ -927,11 +1009,11 @@ async fn season_candidates(
                 continue;
             }
             let parse = arr.parse(title).await?;
-            if let Some(p) = cour_pack(&r, &parse, todo.series_id, todo.season) {
+            if let Some(p) = cour_pack(&r, &parse, todo.series_id, todo.season, anime) {
                 packs.push(p);
             }
             let info = parse.get("parsedEpisodeInfo").cloned().unwrap_or_default();
-            if let Some(c) = series_candidate(&r, &info, todo.season) {
+            if let Some(c) = series_candidate(&r, &info, todo.season, anime) {
                 out.push(c);
             }
         }
@@ -994,7 +1076,7 @@ async fn season_candidates(
             // (30984). C'est donc `parse./series/id` — la table d'alias de l'Arr — qui fait foi, et
             // la sécurité vient ensuite de la lecture du `.torrent` et de `offset_mapping`, jamais de
             // l'identifiant. Le chemin normal, lui, garde le refus par identifiant intact.
-            if let Some(p) = cour_pack(&r, &parse, todo.series_id, todo.season) {
+            if let Some(p) = cour_pack(&r, &parse, todo.series_id, todo.season, anime) {
                 packs.push(p);
             }
             // une release portant l'identifiant d'une autre œuvre est écartée d'office
@@ -1014,7 +1096,7 @@ async fn season_candidates(
                 continue;
             }
             let info = parse.get("parsedEpisodeInfo").cloned().unwrap_or_default();
-            if let Some(c) = series_candidate(&r, &info, todo.season) {
+            if let Some(c) = series_candidate(&r, &info, todo.season, anime) {
                 out.push(c);
             }
         }
@@ -1550,14 +1632,14 @@ mod tests {
             170,
         );
         // le cas réel : notre fiche, saison lue 3, pack complet, mappé sur la saison 3
-        assert!(cour_pack(&r, &parse_of(Some(60), 3, true, &[3]), 60, 17).is_some());
+        assert!(cour_pack(&r, &parse_of(Some(60), 3, true, &[3]), 60, 17, true).is_some());
         // une autre fiche, ou aucune : on ne sait rien
-        assert!(cour_pack(&r, &parse_of(Some(61), 3, true, &[3]), 60, 17).is_none());
-        assert!(cour_pack(&r, &parse_of(None, 3, true, &[3]), 60, 17).is_none());
+        assert!(cour_pack(&r, &parse_of(Some(61), 3, true, &[3]), 60, 17, true).is_none());
+        assert!(cour_pack(&r, &parse_of(None, 3, true, &[3]), 60, 17, true).is_none());
         // déjà la bonne saison : le chemin normal s'en occupe
-        assert!(cour_pack(&r, &parse_of(Some(60), 17, true, &[17]), 60, 17).is_none());
+        assert!(cour_pack(&r, &parse_of(Some(60), 17, true, &[17]), 60, 17, true).is_none());
         // pas un pack complet
-        assert!(cour_pack(&r, &parse_of(Some(60), 3, false, &[3]), 60, 17).is_none());
+        assert!(cour_pack(&r, &parse_of(Some(60), 3, false, &[3]), 60, 17, true).is_none());
     }
 
     #[test]
@@ -1569,7 +1651,14 @@ mod tests {
             30984,
             154,
         );
-        assert!(cour_pack(&r, &parse_of(Some(60), 1, true, &[17, 17, 17]), 60, 17).is_none());
+        assert!(cour_pack(
+            &r,
+            &parse_of(Some(60), 1, true, &[17, 17, 17]),
+            60,
+            17,
+            true
+        )
+        .is_none());
     }
 
     #[test]
@@ -1687,7 +1776,7 @@ mod tests {
         // qBittorrent refuse « déjà présent » et rien ne s'importe (Bleach S17, le 2026-09-18).
         let mut r = result("Bleach.S17E09.MULTI.VFF.1080p.BluRay.x265-KAF", 30984, 12);
         r["infoHash"] = json!("3AEED2C5F1CD7F684F1702BC11190D937A7B5E0E");
-        let c = series_candidate(&r, &info(17, false, &[9], 9, 1080), 17).unwrap();
+        let c = series_candidate(&r, &info(17, false, &[9], 9, 1080), 17, false).unwrap();
         assert_eq!(
             c.release.get("infoHash").and_then(Value::as_str),
             Some("3AEED2C5F1CD7F684F1702BC11190D937A7B5E0E")
@@ -1697,6 +1786,7 @@ mod tests {
             &result("Bleach.S17E10.MULTI.VFF.1080p", 30984, 3),
             &info(17, false, &[10], 9, 1080),
             17,
+            false,
         )
         .unwrap();
         assert!(c2
@@ -1718,6 +1808,7 @@ mod tests {
                 &result(title, 30984, seeders),
                 &info(1, false, &[1], 9, 1080),
                 1,
+                false,
             )
             .unwrap()
         };
@@ -1751,6 +1842,7 @@ mod tests {
                     &result(&format!("Bleach.S17E{e:02}.MULTI.VFF.1080p"), 30984, 10),
                     &info(17, false, &[e], 9, 1080),
                     17,
+                    true,
                 )
             })
             .collect();
@@ -1766,6 +1858,7 @@ mod tests {
             &result("Bleach.S17.MULTI.VFF.1080p", 30984, 50),
             &info(17, true, &[], 9, 1080),
             17,
+            false,
         )
         .unwrap();
         assert!(uncovered(&[pack], &missing).is_empty());
@@ -1783,8 +1876,48 @@ mod tests {
             ),
             &info(3, true, &[], 9, 1080),
             17,
+            false
         )
         .is_none());
+    }
+
+    #[test]
+    fn fansub_numbering_is_read_where_sonarr_sees_nothing() {
+        // Cas Erased : Sonarr lit « S01 » comme une saison entière et ignore le « - 06 ».
+        assert_eq!(
+            fansub_episode("Erased S01 - 06 VOSTFR [1080p][X265][10BITS][SR-71].mkv"),
+            Some(6)
+        );
+        assert_eq!(
+            fansub_episode("/dl/P/Erased S01 - 12 VOSTFR [1080p][X265].mkv"),
+            Some(12)
+        );
+        // rien à attraper : ni la résolution, ni le codec, ni l'année, ni le groupe
+        for n in [
+            "Erased.S01E06.VOSTFR.1080p.x265-SR71.mkv",
+            "Erased 2016 - 1080p - x265.mkv",
+            "Erased S01 -06 VOSTFR.mkv",
+            "BONUS/Creditless OP. Re Re.mkv",
+        ] {
+            assert_eq!(fansub_episode(n), None, "{n}");
+        }
+    }
+
+    #[test]
+    fn anime_prefers_multi_then_vostfr() {
+        // Demandé le 2026-09-18 : pour un animé, MULTi (les deux pistes) puis VOSTFR (audio japonais)
+        // passent devant le doublage seul.
+        let r = |t: &str| lang_rank_for(t, true);
+        assert_eq!(r("Bleach.S17E01.MULTI.VFF.1080p.BluRay.x265-KAF"), 4);
+        assert_eq!(r("Erased.S01.VOSTFR.1080p.BluRay.x265-SR71"), 3);
+        assert_eq!(r("Anime.S01.VFF.1080p"), 2);
+        assert_eq!(r("Anime.S01.FRENCH.1080p"), 1);
+        assert_eq!(r("Shingeki.no.Kyojin.S04.1080p.WEB.x264"), 0);
+        // la VOSTFR bat le doublage pour un animé, l'inverse pour une série classique
+        assert!(r("A.S01.VOSTFR.1080p") > r("A.S01.VFF.1080p"));
+        assert!(lang_rank("A.S01.VOSTFR.1080p") < lang_rank("A.S01.VFF.1080p"));
+        // « MULTI.VFF » reste du VF pour une série classique (comportement d'origine)
+        assert_eq!(lang_rank("L.Attaque.Des.Titans.S04.MULTI.VFF.1080p"), 4);
     }
 
     #[test]
@@ -1823,13 +1956,13 @@ mod tests {
             1429,
             65,
         );
-        let c = series_candidate(&r, &info(4, true, &[], 9, 1080), 4).unwrap();
+        let c = series_candidate(&r, &info(4, true, &[], 9, 1080), 4, false).unwrap();
         assert!(c.full_season && c.h264 && c.lang_rank == 4 && c.resolution == 1080);
-        assert!(series_candidate(&r, &info(3, true, &[], 9, 1080), 4).is_none());
+        assert!(series_candidate(&r, &info(3, true, &[], 9, 1080), 4, false).is_none());
         // VO : gardée avec le rang 0 (prise seulement en dernier recours par `choose`)
         let vo = result("Shingeki.no.Kyojin.S04.1080p.WEB", 1429, 65);
         assert_eq!(
-            series_candidate(&vo, &info(4, true, &[], 9, 1080), 4)
+            series_candidate(&vo, &info(4, true, &[], 9, 1080), 4, false)
                 .unwrap()
                 .lang_rank,
             0
@@ -1839,7 +1972,13 @@ mod tests {
     #[test]
     fn chooses_best_pack_within_limits() {
         let mk = |t: &str, res: i64, qid: i64, seeders: i64| {
-            series_candidate(&result(t, 1, seeders), &info(4, true, &[], qid, res), 4).unwrap()
+            series_candidate(
+                &result(t, 1, seeders),
+                &info(4, true, &[], qid, res),
+                4,
+                false,
+            )
+            .unwrap()
         };
         let cands = vec![
             mk("A.S04.VFF.720p.HDTV.x264", 720, 4, 11),
@@ -1870,7 +2009,7 @@ mod tests {
         let big = json!({"title": "A.S04.VFF.1080p.BluRay.x264", "downloadUrl": "http://p/dl", "tmdbId": 1,
                          "seeders": 1, "size": 134_000_000_000i64});
         let mk = |v: Value, res: i64, qid: i64| {
-            series_candidate(&v, &info(4, true, &[], qid, res), 4).unwrap()
+            series_candidate(&v, &info(4, true, &[], qid, res), 4, false).unwrap()
         };
         let vo = json!({"title": "A.S04.1080p.BluRay.x265", "downloadUrl": "http://p/dl", "tmdbId": 1,
                         "seeders": 39, "size": 27_800_000_000i64});
@@ -1902,7 +2041,7 @@ mod tests {
     #[test]
     fn a_whole_season_is_taken_in_one_pass() {
         let mk = |t: &str, ep: i64| {
-            series_candidate(&result(t, 1, 20), &info(1, false, &[ep], 9, 1080), 1).unwrap()
+            series_candidate(&result(t, 1, 20), &info(1, false, &[ep], 9, 1080), 1, false).unwrap()
         };
         let cands: Vec<Candidate> = (1..=11)
             .map(|e| mk(&format!("Show.S01E{e:02}.VOSTFR.1080p.x264"), e))
@@ -1989,7 +2128,13 @@ mod tests {
     #[test]
     fn one_seeder_loses_to_a_healthy_release() {
         let mk = |t: &str, seeders: i64, qid: i64| {
-            series_candidate(&result(t, 1, seeders), &info(4, true, &[], qid, 1080), 4).unwrap()
+            series_candidate(
+                &result(t, 1, seeders),
+                &info(4, true, &[], qid, 1080),
+                4,
+                false,
+            )
+            .unwrap()
         };
         let cands = vec![
             mk("A.S04.VFF.1080p.x264", 1, 9),
@@ -2008,7 +2153,7 @@ mod tests {
     #[test]
     fn single_episodes_must_be_missing() {
         let mk = |t: &str, ep: i64| {
-            series_candidate(&result(t, 1, 4), &info(2, false, &[ep], 9, 1080), 2).unwrap()
+            series_candidate(&result(t, 1, 4), &info(2, false, &[ep], 9, 1080), 2, false).unwrap()
         };
         let cands = vec![mk("A.S02E03.VFF.1080p", 3), mk("A.S02E04.VFF.1080p", 4)];
         let missing: HashSet<i64> = [4].into_iter().collect();

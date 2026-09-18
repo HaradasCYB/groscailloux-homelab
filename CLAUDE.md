@@ -256,6 +256,23 @@ journalctl -u homelabd -f
   transcodages de la semaine venaient tous de sources h264 alors que le HEVC est 53 % de la médiathèque.
   Pénaliser le x265 revenait à refuser la seule version française disponible (cas courant des animés sur C411).
   Le nom « FR-friendly H.264 » des profils est resté, il ne décrit plus le codec.
+- **Langue des ANIMÉS** (2026-09-18, demandé par l'utilisateur) : **MULTi 4 > VOSTFR 3 > VF 2 > FRENCH 1 >
+  VO 0** (`lang_rank_for(title, anime)`, `seriesType == "anime"`). Un MULTi porte les deux pistes audio ; la
+  VOSTFR garde l'audio japonais. Un « MULTI.VFF » compte comme MULTi pour un animé, comme VF pour le reste
+  (comportement d'origine préservé). Même ordre côté Sonarr : le profil **« Anime - MULTi/VOSTFR »** (VPS 7,
+  seedbox 8) a été réparé — il rejetait tout HEVC 10 bits et tout doublage français (`minFormatScore = 0` avec
+  `HEVC 10-bit -10000` et `FRENCH -500`) — puis aligné (MULTi 3000, VOSTFR 2000, VFF 1000, FRENCH 500, sans
+  marqueur français −2000, codecs à 0, `minFormatScore = -9999`, mêmes qualités ≤ 1080p que FR-friendly). Les
+  **26 fiches animées** (20 seedbox + 6 VPS) y sont passées, sans perte (429 et 119 fichiers avant comme après).
+  Sauvegarde `backups/arr-anime-profile-20260918-142927/`.
+- **Nommage des fansubs** : `Erased S01 - 06 VOSTFR [1080p][X265].mkv` — Sonarr lit `S01` comme une **saison
+  entière**, ne voit jamais le « - 06 », refuse chaque fichier (« Single episode file contains all episodes in
+  seasons ») **et**, si on ignore ce rejet, propose les 12 épisodes pour le premier fichier. Le 2026-09-18, les
+  2,11 Gio d'Erased sont restés complets et non importés, en état **définitif** (`nothing_importable`), invisibles.
+  Corrigé : `series_search::fansub_episode` lit ce numéro, le rejet passe dans `is_identification_rejection`, et
+  dès qu'un fichier est lu ainsi le torrent bascule en `EpisodeSource::OursOnly` — **sinon Sonarr gagne et un
+  seul fichier est rattaché aux 12 épisodes** (vu en production avant le correctif). `no_match` **et**
+  `nothing_importable` remontent maintenant dans « Rien ne bouge » sur `/status.html`.
 - **Langue** : `lang_rank` classe VF 4 > MULTi 3 > FRENCH 2 > VOSTFR 1 > **VO 0** ; une release sans français
   n'est prise qu'en dernier recours (`[indexers] allow_no_french`), quand aucune française n'est acceptable.
   Plafonds de taille du choix automatique : `max_gb_per_episode` (6) et `max_gb_per_movie` (25) — sinon un pack

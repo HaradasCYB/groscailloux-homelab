@@ -198,6 +198,10 @@ pub fn is_identification_rejection(reason: &str) -> bool {
         "unable to identify",
         "was matched to",
         "grab history",
+        // « Single episode file contains all episodes in seasons » : Sonarr lit « Erased S01 - 06 » comme
+        // une saison entière et ne voit pas le numéro. C'est une plainte sur le NOM, pas sur le fichier ;
+        // nous fournissons les épisodes. Sans mappage de notre côté, le fichier est écarté juste après.
+        "contains all episodes",
     ]
     .iter()
     .any(|k| r.contains(k))
@@ -740,7 +744,41 @@ async fn examine(
                 };
                 let base = path.rsplit('/').next().unwrap_or(path);
                 let parse = arr.parse(base).await?;
-                by_path.insert(path.to_string(), map_episodes(&parse, &episodes));
+                let mut eps = map_episodes(&parse, &episodes);
+                // Sonarr n'a rien su lire : dernier recours, la numérotation des fansubs
+                // (« Erased S01 - 06 ») dans la saison qu'il a reconnue.
+                if eps.is_empty() {
+                    if let (Some(season), Some(n)) = (
+                        parse
+                            .pointer("/parsedEpisodeInfo/seasonNumber")
+                            .and_then(Value::as_i64),
+                        crate::tasks::series_search::fansub_episode(base),
+                    ) {
+                        eps = episodes
+                            .iter()
+                            .filter(|e| {
+                                e.get("seasonNumber").and_then(Value::as_i64) == Some(season)
+                                    && e.get("episodeNumber").and_then(Value::as_i64) == Some(n)
+                            })
+                            .filter_map(|e| e.get("id").and_then(Value::as_i64))
+                            .collect();
+                        if !eps.is_empty() {
+                            info!(
+                                task = "torrent_import",
+                                side = side.name,
+                                file = base,
+                                season,
+                                episode = n,
+                                "numérotation fansub lue"
+                            );
+                            // Sonarr, lui, croit que CHAQUE fichier contient toute la saison et
+                            // proposerait les 12 épisodes pour le premier : notre lecture doit primer
+                            // sur la sienne pour tout ce torrent.
+                            source = EpisodeSource::OursOnly;
+                        }
+                    }
+                }
+                by_path.insert(path.to_string(), eps);
             }
         }
     }
