@@ -59,18 +59,92 @@ impl Outcome {
     }
 }
 
-/// Étiquette qBittorrent posée par `series_search` / `movie_search` : `homelab:series=<id>:season=<n>` ou
-/// `homelab:movie=<id>` → (film ?, id de la fiche). Les étiquettes sont séparées par des virgules.
-pub fn homelab_target(tags: &str) -> Option<(bool, i64)> {
+/// Cible désignée par une étiquette qBittorrent `homelab:` (posée par `series_search` / `movie_search`).
+/// Les étiquettes sont séparées par des virgules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TagTarget {
+    Movie {
+        id: i64,
+    },
+    Series {
+        id: i64,
+    },
+    /// Pack d'un cours d'animé publié sous son propre titre : l'Arr lit la **mauvaise saison** dans les
+    /// noms de fichiers (« S03E01 » = saison 3 de Bleach). L'épisode visé vaut `numéro lu + offset`,
+    /// dans `season`, et doit tomber dans `from..=to` — somme de contrôle décidée à la prise.
+    CourPack {
+        id: i64,
+        season: i64,
+        offset: i64,
+        from: i64,
+        to: i64,
+    },
+    /// Étiquette `homelab:` reconnue mais illisible. **Jamais** traitée comme une étiquette ordinaire :
+    /// retomber sur l'analyse de nom importerait le pack dans la saison que Sonarr croit lire.
+    Broken(String),
+}
+
+impl TagTarget {
+    pub fn id(&self) -> Option<i64> {
+        match self {
+            TagTarget::Movie { id } | TagTarget::Series { id } => Some(*id),
+            TagTarget::CourPack { id, .. } => Some(*id),
+            TagTarget::Broken(_) => None,
+        }
+    }
+    pub fn is_movie(&self) -> bool {
+        matches!(self, TagTarget::Movie { .. })
+    }
+}
+
+/// `homelab:series=<id>:season=<n>[:offset=<k>:eps=<from>-<to>]` ou `homelab:movie=<id>`.
+/// Une étiquette sans `offset` garde le comportement d'origine ; une étiquette à décalage incomplète
+/// donne `Broken` (on refuse plutôt que de deviner).
+pub fn homelab_target(tags: &str) -> Option<TagTarget> {
     tags.split(',').map(str::trim).find_map(|t| {
         let rest = t.strip_prefix("homelab:")?;
         let (kind, tail) = rest.split_once('=')?;
-        let id: i64 = tail.split(':').next()?.parse().ok()?;
-        match kind {
-            "series" => Some((false, id)),
-            "movie" => Some((true, id)),
-            _ => None,
+        let mut parts = tail.split(':');
+        let id: i64 = parts.next()?.parse().ok()?;
+        let movie = match kind {
+            "series" => false,
+            "movie" => true,
+            _ => return None,
+        };
+        let (mut season, mut offset, mut eps) = (None, None, None);
+        for p in parts {
+            match p.split_once('=') {
+                Some(("season", v)) => season = v.parse::<i64>().ok(),
+                Some(("offset", v)) => offset = v.parse::<i64>().ok(),
+                Some(("eps", v)) => {
+                    eps = v
+                        .split_once('-')
+                        .and_then(|(a, b)| Some((a.parse::<i64>().ok()?, b.parse::<i64>().ok()?)))
+                }
+                _ => {}
+            }
         }
+        // une étiquette qui annonce un décalage doit être lisible ENTIÈREMENT
+        if t.contains(":offset=") {
+            let (Some(season), Some(offset), Some((from, to))) = (season, offset, eps) else {
+                return Some(TagTarget::Broken(t.to_string()));
+            };
+            if movie || from > to {
+                return Some(TagTarget::Broken(t.to_string()));
+            }
+            return Some(TagTarget::CourPack {
+                id,
+                season,
+                offset,
+                from,
+                to,
+            });
+        }
+        Some(if movie {
+            TagTarget::Movie { id }
+        } else {
+            TagTarget::Series { id }
+        })
     })
 }
 
@@ -172,6 +246,94 @@ pub fn map_episodes(parse: &Value, episodes: &[Value]) -> Vec<i64> {
     vec![]
 }
 
+/// D'où viennent les épisodes d'un fichier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EpisodeSource {
+    /// Défaut : la correspondance de l'Arr quand il a reconnu cette fiche, sinon la nôtre.
+    ArrFirst,
+    /// Pack d'un cours : **seule** la nôtre compte. L'Arr reconnaît bien la série mais lit la mauvaise
+    /// saison dans les noms de fichiers ; le croire écraserait une vraie saison.
+    OursOnly,
+}
+
+/// Rejet de `manualimport` qui ne parle que de la saison que l'Arr a cru lire. Sur le chemin d'un pack de
+/// cours, l'Arr voit « S03E01 » et la saison 3 est pourvue : il répond « not an upgrade ». Notre
+/// correspondance explicite prime. Un extrait, une qualité hors profil ou un fichier illisible restent bloquants.
+pub fn is_wrong_season_rejection(reason: &str) -> bool {
+    let r = reason.to_ascii_lowercase();
+    [
+        "not an upgrade",
+        "existing file",
+        "already imported",
+        "matches existing",
+    ]
+    .iter()
+    .any(|k| r.contains(k))
+}
+
+/// Épisode visé par chaque fichier d'un pack décalé. `Err(raison)` au moindre écart : **tout** le pack est
+/// refusé, jamais à moitié — un demi-pack laisse un trou et casse la contiguïté sur laquelle tout repose.
+#[allow(clippy::too_many_arguments)]
+pub fn cour_pack_episodes(
+    paths: &[String],
+    episodes: &[Value],
+    season: i64,
+    offset: i64,
+    from: i64,
+    to: i64,
+    has_file: &HashSet<i64>,
+) -> Result<HashMap<String, Vec<i64>>, String> {
+    let want = (to - from + 1) as usize;
+    if paths.len() != want {
+        return Err(format!(
+            "{} fichier(s) pour {want} épisode(s) visés",
+            paths.len()
+        ));
+    }
+    let mut nums: Vec<(i64, &String)> = Vec::with_capacity(paths.len());
+    for p in paths {
+        let base = p.rsplit('/').next().unwrap_or(p);
+        let n = crate::tasks::series_search::claimed_episode(base)
+            .ok_or_else(|| format!("fichier sans numéro d'épisode : {base}"))?;
+        nums.push((n, p));
+    }
+    let mut seen: Vec<i64> = nums.iter().map(|(n, _)| *n).collect();
+    seen.sort_unstable();
+    seen.dedup();
+    if seen.len() != nums.len() {
+        return Err("deux fichiers portent le même numéro".into());
+    }
+    let (lo, hi) = (seen[0], seen[seen.len() - 1]);
+    if hi - lo + 1 != seen.len() as i64 {
+        return Err("les numéros des fichiers ne se suivent pas".into());
+    }
+    if lo + offset != from || hi + offset != to {
+        return Err(format!(
+            "décalage incohérent : {lo}..{hi} + {offset} ≠ {from}..{to}"
+        ));
+    }
+    let mut out: HashMap<String, Vec<i64>> = HashMap::new();
+    for (n, p) in nums {
+        let target = n + offset;
+        let ids: Vec<i64> = episodes
+            .iter()
+            .filter(|e| {
+                e.get("seasonNumber").and_then(Value::as_i64) == Some(season)
+                    && e.get("episodeNumber").and_then(Value::as_i64) == Some(target)
+            })
+            .filter_map(|e| e.get("id").and_then(Value::as_i64))
+            .collect();
+        let [id] = ids[..] else {
+            return Err(format!("S{season:02}E{target:02} inconnu de la fiche"));
+        };
+        if has_file.contains(&id) {
+            return Err(format!("S{season:02}E{target:02} a déjà un fichier"));
+        }
+        out.entry(p.clone()).or_default().push(id);
+    }
+    Ok(out)
+}
+
 /// Fichiers importables dans une fiche : aperçu sans id, fiche fournie par nous ; les rejets
 /// d'identification sont ignorés, les autres (sample…) excluent le fichier. `has_file` : épisodes (ou le
 /// film) qui ont déjà un fichier — jamais remplacés.
@@ -182,6 +344,7 @@ pub fn fresh_files(
     download_id: &str,
     episodes_by_path: &HashMap<String, Vec<i64>>,
     has_file: &HashSet<i64>,
+    source: EpisodeSource,
 ) -> (Vec<Value>, Vec<String>) {
     let (mut files, mut skipped) = (Vec::new(), Vec::new());
     for c in candidates {
@@ -198,6 +361,9 @@ pub fn fresh_files(
                 r.iter()
                     .filter_map(|x| x.get("reason").and_then(Value::as_str))
                     .filter(|r| !is_identification_rejection(r))
+                    // pack de cours : l'Arr voit la saison qu'il a cru lire, déjà pourvue, et répond
+                    // « not an upgrade ». Notre correspondance explicite prime sur ce seul motif.
+                    .filter(|r| source != EpisodeSource::OursOnly || !is_wrong_season_rejection(r))
                     .collect()
             })
             .unwrap_or_default();
@@ -224,7 +390,9 @@ pub fn fresh_files(
             // 1. la correspondance de l'Arr quand il a reconnu **cette** fiche : il connaît les saisons et la
             //    numérotation absolue. Notre analyse du nom ne sert que s'il ne l'a pas reconnue : le
             //    2026-09-17, « The.Final.Season.E01 » (sans saison) a été lu S01E01 et la saison 1 écrasée.
-            let arr_eps: Vec<i64> = if c.pointer("/series/id").and_then(Value::as_i64) == Some(id) {
+            let arr_eps: Vec<i64> = if source == EpisodeSource::OursOnly {
+                Vec::new()
+            } else if c.pointer("/series/id").and_then(Value::as_i64) == Some(id) {
                 c.get("episodes")
                     .and_then(Value::as_array)
                     .map(|e| {
@@ -367,8 +535,8 @@ async fn examine(
     // série si le nom ou l'un des fichiers porte un marqueur d'épisode ou de saison
     // étiquette posée par series_search / movie_search : la fiche est connue, aucun nom à analyser
     let target = homelab_target(&t.tags);
-    let movie = match target {
-        Some((m, _)) => m,
+    let movie = match &target {
+        Some(t) => t.is_movie(),
         None => {
             classify(&t.name) == MediaKind::Movie
                 && videos.iter().all(|f| classify(&f.name) == MediaKind::Movie)
@@ -379,7 +547,13 @@ async fn examine(
     } else {
         (side.sonarr, "series", "tvdbId", &side.sonarr_root)
     };
-    let m = if let Some((_, id)) = target {
+    if let Some(TagTarget::Broken(tag)) = &target {
+        return Ok(Outcome::cheap(
+            "error",
+            format!("étiquette homelab illisible : {tag}"),
+        ));
+    }
+    let m = if let Some(id) = target.as_ref().and_then(TagTarget::id) {
         let hit = arr
             .get(&format!("api/v3/{kind}/{id}"), &[])
             .await
@@ -517,6 +691,7 @@ async fn examine(
     let candidates = from_torrent(&arr.manual_import(&t.content_path).await?, &t.content_path);
     let mut by_path: HashMap<String, Vec<i64>> = HashMap::new();
     let mut has_file: HashSet<i64> = HashSet::new();
+    let mut source = EpisodeSource::ArrFirst;
     if movie {
         if existing_has_file {
             has_file.insert(id);
@@ -529,16 +704,47 @@ async fn examine(
                 .filter(|e| e.get("hasFile").and_then(Value::as_bool) == Some(true))
                 .filter_map(|e| e.get("id").and_then(Value::as_i64)),
         );
-        for c in &candidates {
-            let Some(path) = c.get("path").and_then(Value::as_str) else {
-                continue;
-            };
-            let base = path.rsplit('/').next().unwrap_or(path);
-            let parse = arr.parse(base).await?;
-            by_path.insert(path.to_string(), map_episodes(&parse, &episodes));
+        // pack d'un cours : la correspondance a été décidée à la prise et voyage dans l'étiquette.
+        // On ne demande son avis ni à l'Arr ni à notre analyse de nom : tous deux liraient la saison
+        // annoncée par les fichiers (« S03E01 » = saison 3 de Bleach).
+        if let Some(TagTarget::CourPack {
+            season,
+            offset,
+            from,
+            to,
+            ..
+        }) = target
+        {
+            let paths: Vec<String> = candidates
+                .iter()
+                .filter_map(|c| c.get("path").and_then(Value::as_str).map(str::to_string))
+                .collect();
+            match cour_pack_episodes(&paths, &episodes, season, offset, from, to, &has_file) {
+                Ok(m) => {
+                    info!(task = "torrent_import", side = side.name, torrent = %t.name,
+                          season, offset, from, to, files = m.len(),
+                          "pack d'un cours : correspondance explicite appliquée");
+                    by_path = m;
+                    source = EpisodeSource::OursOnly;
+                }
+                Err(why) => {
+                    warn!(task = "torrent_import", side = side.name, torrent = %t.name, %why,
+                          "pack d'un cours refusé : rien n'est importé");
+                    return Ok(Outcome::costly("nothing_importable", why));
+                }
+            }
+        } else {
+            for c in &candidates {
+                let Some(path) = c.get("path").and_then(Value::as_str) else {
+                    continue;
+                };
+                let base = path.rsplit('/').next().unwrap_or(path);
+                let parse = arr.parse(base).await?;
+                by_path.insert(path.to_string(), map_episodes(&parse, &episodes));
+            }
         }
     }
-    let (files, skipped) = fresh_files(&candidates, movie, id, &hash, &by_path, &has_file);
+    let (files, skipped) = fresh_files(&candidates, movie, id, &hash, &by_path, &has_file, source);
     for s in &skipped {
         info!(task = "torrent_import", side = side.name, torrent = %t.name, file = %s, "file skipped");
     }
@@ -825,7 +1031,15 @@ mod tests {
             json!({"path": "/d/a.mkv", "rejections": [{"reason": "Unknown Movie"}], "quality": {}}),
             json!({"path": "/d/s.mkv", "rejections": [{"reason": "Sample"}, {"reason": "Unknown Movie"}]}),
         ];
-        let (files, skipped) = fresh_files(&cands, true, 68, "H", &HashMap::new(), &HashSet::new());
+        let (files, skipped) = fresh_files(
+            &cands,
+            true,
+            68,
+            "H",
+            &HashMap::new(),
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["movieId"], 68);
         assert_eq!(skipped, vec!["/d/s.mkv: Sample".to_string()]);
@@ -836,7 +1050,15 @@ mod tests {
         ];
         let mut by = HashMap::new();
         by.insert("/d/e1.mkv".to_string(), vec![10, 11]);
-        let (files, skipped) = fresh_files(&series, false, 5, "H", &by, &HashSet::new());
+        let (files, skipped) = fresh_files(
+            &series,
+            false,
+            5,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["episodeIds"], json!([10, 11]));
         assert_eq!(files[0]["releaseType"], "multiEpisode");
@@ -925,14 +1147,163 @@ mod tests {
 
     #[test]
     fn homelab_tags_name_the_target_fiche() {
+        // non-régression : les étiquettes d'avant le décalage se lisent comme avant
         assert_eq!(
             homelab_target("homelab:series=50:season=4"),
-            Some((false, 50))
+            Some(TagTarget::Series { id: 50 })
         );
-        assert_eq!(homelab_target("autre, homelab:movie=66"), Some((true, 66)));
+        assert_eq!(
+            homelab_target("autre, homelab:movie=66"),
+            Some(TagTarget::Movie { id: 66 })
+        );
         assert_eq!(homelab_target("C411,radarr"), None);
         assert_eq!(homelab_target("homelab:series=abc"), None);
         assert_eq!(homelab_target(""), None);
+    }
+
+    #[test]
+    fn an_offset_tag_carries_the_whole_mapping() {
+        assert_eq!(
+            homelab_target("homelab:series=60:season=17:offset=26:eps=27-40"),
+            Some(TagTarget::CourPack {
+                id: 60,
+                season: 17,
+                offset: 26,
+                from: 27,
+                to: 40
+            })
+        );
+        // une étiquette à décalage incomplète ou absurde n'est JAMAIS traitée comme ordinaire :
+        // retomber sur l'analyse de nom importerait le pack dans la saison que Sonarr croit lire.
+        for bad in [
+            "homelab:series=60:season=17:offset=abc:eps=27-40",
+            "homelab:series=60:season=17:offset=26",
+            "homelab:series=60:offset=26:eps=27-40",
+            "homelab:series=60:season=17:offset=26:eps=40-27",
+            "homelab:movie=60:season=17:offset=26:eps=27-40",
+        ] {
+            assert!(
+                matches!(homelab_target(bad), Some(TagTarget::Broken(_))),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cour_pack_maps_each_file_to_its_episode() {
+        // 14 fichiers S03E01..14 → S17E27..40 de la fiche
+        let episodes: Vec<Value> = (1..=50)
+            .map(|n| json!({"id": 9000 + n, "seasonNumber": 17, "episodeNumber": n}))
+            .collect();
+        let paths: Vec<String> = (1..=14)
+            .map(|n| format!("/dl/P/BLEACH.TYBW.S03E{n:02}.mkv"))
+            .collect();
+        let m = cour_pack_episodes(&paths, &episodes, 17, 26, 27, 40, &HashSet::new()).unwrap();
+        assert_eq!(m.len(), 14);
+        assert_eq!(m["/dl/P/BLEACH.TYBW.S03E01.mkv"], vec![9027]);
+        assert_eq!(m["/dl/P/BLEACH.TYBW.S03E14.mkv"], vec![9040]);
+    }
+
+    #[test]
+    fn a_cour_pack_is_refused_whole_never_by_half() {
+        let episodes: Vec<Value> = (1..=50)
+            .map(|n| json!({"id": 9000 + n, "seasonNumber": 17, "episodeNumber": n}))
+            .collect();
+        let ok: Vec<String> = (1..=14).map(|n| format!("/dl/P/S03E{n:02}.mkv")).collect();
+        let e = |r: Result<HashMap<String, Vec<i64>>, String>| r.unwrap_err();
+
+        // un épisode visé a déjà un fichier : TOUT le pack est refusé
+        let have: HashSet<i64> = [9033].into_iter().collect();
+        assert!(e(cour_pack_episodes(&ok, &episodes, 17, 26, 27, 40, &have)).contains("déjà"));
+        // il manque un fichier
+        assert!(e(cour_pack_episodes(
+            &ok[..13],
+            &episodes,
+            17,
+            26,
+            27,
+            40,
+            &HashSet::new()
+        ))
+        .contains("13 fichier"));
+        // un fichier sans numéro
+        let mut odd = ok[..13].to_vec();
+        odd.push("/dl/P/bonus.mkv".into());
+        assert!(e(cour_pack_episodes(
+            &odd,
+            &episodes,
+            17,
+            26,
+            27,
+            40,
+            &HashSet::new()
+        ))
+        .contains("sans numéro"));
+        // décalage incohérent avec la plage annoncée
+        assert!(e(cour_pack_episodes(
+            &ok,
+            &episodes,
+            17,
+            10,
+            27,
+            40,
+            &HashSet::new()
+        ))
+        .contains("décalage incohérent"));
+        // épisode absent de la fiche
+        let short: Vec<Value> = episodes.iter().take(30).cloned().collect();
+        assert!(e(cour_pack_episodes(
+            &ok,
+            &short,
+            17,
+            26,
+            27,
+            40,
+            &HashSet::new()
+        ))
+        .contains("inconnu de la fiche"));
+    }
+
+    #[test]
+    fn our_mapping_wins_over_the_arr_for_a_cour_pack() {
+        // L'Arr reconnaît bien la fiche (series.id == 60) mais pointe la saison 3, et rejette le
+        // fichier en « Not an upgrade ». Sur ce chemin, seule notre correspondance compte.
+        let cands = vec![json!({
+            "path": "/dl/P/S03E01.mkv", "relativePath": "S03E01.mkv",
+            "rejections": [{"reason": "Not an upgrade for existing episode file(s)"}],
+            "series": {"id": 60}, "episodes": [{"id": 3001}]
+        })];
+        let by: HashMap<String, Vec<i64>> = [("/dl/P/S03E01.mkv".to_string(), vec![9027])]
+            .into_iter()
+            .collect();
+
+        let (ours, _) = fresh_files(
+            &cands,
+            false,
+            60,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::OursOnly,
+        );
+        assert_eq!(ours.len(), 1, "le rejet de saison ne bloque pas ce chemin");
+        assert_eq!(
+            ours[0]["episodeIds"],
+            json!([9027]),
+            "notre épisode, pas 3001"
+        );
+
+        // chemin normal inchangé : le rejet bloque, et l'Arr fait foi
+        let (normal, skipped) = fresh_files(
+            &cands,
+            false,
+            60,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert!(normal.is_empty() && !skipped.is_empty());
     }
 
     #[test]
@@ -942,12 +1313,28 @@ mod tests {
                    "series": {"id": series}, "episodes": [{"id": 9027}]})
         };
         let empty: HashMap<String, Vec<i64>> = HashMap::new();
-        let (files, skipped) = fresh_files(&[row(50)], false, 50, "H", &empty, &HashSet::new());
+        let (files, skipped) = fresh_files(
+            &[row(50)],
+            false,
+            50,
+            "H",
+            &empty,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["episodeIds"], json!([9027]));
         assert!(skipped.is_empty());
         // l'Arr a reconnu une autre série : on n'importe pas ses épisodes dans notre fiche
-        let (files, skipped) = fresh_files(&[row(77)], false, 50, "H", &empty, &HashSet::new());
+        let (files, skipped) = fresh_files(
+            &[row(77)],
+            false,
+            50,
+            "H",
+            &empty,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
         assert!(files.is_empty() && skipped.len() == 1);
     }
 
@@ -959,17 +1346,41 @@ mod tests {
         let mut by = HashMap::new();
         by.insert("/dl/Final.Season/E01.mkv".to_string(), vec![1001]);
         let s1_present: HashSet<i64> = [1001].into_iter().collect();
-        let (files, _) = fresh_files(std::slice::from_ref(&row), false, 50, "H", &by, &s1_present);
+        let (files, _) = fresh_files(
+            std::slice::from_ref(&row),
+            false,
+            50,
+            "H",
+            &by,
+            &s1_present,
+            EpisodeSource::ArrFirst,
+        );
         assert_eq!(files[0]["episodeIds"], json!([4001]));
         // l'Arr ne l'a pas reconnue et notre analyse vise un épisode qui a déjà un fichier : rien
         let unknown = json!({"path": "/dl/Final.Season/E01.mkv", "rejections": []});
-        let (files, skipped) = fresh_files(&[unknown], false, 50, "H", &by, &s1_present);
+        let (files, skipped) = fresh_files(
+            &[unknown],
+            false,
+            50,
+            "H",
+            &by,
+            &s1_present,
+            EpisodeSource::ArrFirst,
+        );
         assert!(files.is_empty());
         assert!(skipped[0].contains("déjà présent"));
         // film déjà présent : pas de remplacement
         let m = json!({"path": "/dl/film.mkv", "rejections": []});
         let present: HashSet<i64> = [68].into_iter().collect();
-        let (files, _) = fresh_files(&[m], true, 68, "H", &HashMap::new(), &present);
+        let (files, _) = fresh_files(
+            &[m],
+            true,
+            68,
+            "H",
+            &HashMap::new(),
+            &present,
+            EpisodeSource::ArrFirst,
+        );
         assert!(files.is_empty());
     }
 }

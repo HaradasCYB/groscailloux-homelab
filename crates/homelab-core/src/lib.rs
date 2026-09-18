@@ -20,6 +20,7 @@ pub mod matching;
 pub mod secret;
 pub mod state;
 pub mod tasks;
+pub mod torrent_file;
 
 pub use config::{Config, Secrets};
 pub use context::TaskContext;

@@ -113,6 +113,15 @@ qui évite d'écraser deux vraies saisons ; ce qui reste introuvable est enregis
 `state.unknown_series`) et listé sur `/status.html` sous « Saisons sans release », pour une reprise à la main
 depuis `/recherche`.
 
+**Pack d'un cours** (2026-09-18) : si le trou persiste et que la fiche est un **animé**, `cour_pack` retient
+les releases que l'Arr rattache à cette fiche mais à une autre saison ; `torrent_file::files` lit la liste de
+leurs fichiers dans le `.torrent` (téléchargé chez Prowlarr, aucune annonce au tracker) et `offset_mapping`
+n'accepte que la certitude : trou d'un seul tenant, autant de fichiers vidéo que d'épisodes manquants,
+numérotés en suite, aucun épisode déjà pourvu. Le décalage part dans l'étiquette
+`homelab:series=<id>:season=<n>:offset=<k>:eps=<from>-<to>`, que `torrent_import` applique seul
+(`EpisodeSource::OursOnly` : ni les épisodes de Sonarr ni `map_episodes`, tous deux lisant la mauvaise saison).
+Le pack n'est jamais confié à l'Arr. Réglages : `cour_packs`, `cour_max_files`.
+
 **Le VPS ne cherche plus** (2026-09-18) : `[downloads] auto_sides = ["seedbox"]` retire les Arrs du VPS de la
 boucle, et leur indexer C411 est en `enableRss = false`. Le VPS n'entame plus aucun téléchargement.
 **Envoi** — Arr du **VPS** : `POST /api/v3/release/push` (Sonarr suit, importe, renomme) avec le lien Prowlarr

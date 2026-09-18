@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.11.0](#1110--18092026--tout-passe-par-la-seedbox)** | 18/09/2026 | **Tout passe par la seedbox** |
+| **[1.12.0](#1120--18092026--les-saisons-dannimé-se-complètent-seules)** | 18/09/2026 | **Les saisons d'animé se complètent seules** |
+| [1.11.0](#1110--18092026--tout-passe-par-la-seedbox) | 18/09/2026 | Tout passe par la seedbox |
 | [1.10.0](#1100--18092026--les-animés-sans-accroc) | 18/09/2026 | Les animés sans accroc |
 | [1.9.0](#190--18092026--une-saison-complète-du-premier-coup) | 18/09/2026 | Une saison complète du premier coup |
 | [1.8.0](#180--17092026--lindexeur-ne-tombe-plus) | 17/09/2026 | L'indexeur ne tombe plus |
@@ -30,6 +31,17 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.12.0 — 18/09/2026 — Les saisons d'animé se complètent seules
+
+- **Les épisodes qui « n'existaient pas » arrivent enfin.** Beaucoup d'animés sont diffusés en plusieurs
+  parties, publiées chacune sous son propre nom. Résultat : une saison restait incomplète pour toujours, sans
+  que rien ne le signale — Bleach s'arrêtait à 34 épisodes sur 48. La plateforme reconnaît maintenant ces
+  parties toute seule et les range au bon endroit. Bleach est passée à **48 épisodes sur 48**.
+- **Sans jamais prendre de risque.** Avant d'engager quoi que ce soit, le contenu de la publication est
+  vérifié : il doit combler exactement les épisodes manquants, ni plus ni moins, et aucun épisode déjà
+  présent n'est remplacé. Au moindre doute, rien n'est fait et le cas reste affiché dans la page d'état.
+  Cela ne s'applique qu'aux animés.
 
 ## 1.11.0 — 18/09/2026 — Tout passe par la seedbox
 

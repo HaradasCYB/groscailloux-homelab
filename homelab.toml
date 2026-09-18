@@ -120,6 +120,13 @@ error_retry_hours = 1       # erreur (indexeur indisponible, délai dépassé) :
 indexer = "C411"            # nom de l'indexeur dans Prowlarr
 text_queries = 2            # rien par identifiant : noms de la série essayés en texte libre
 prowlarr_url_for_arrs = "http://prowlarr:9696"  # Prowlarr vu des conteneurs Sonarr/Radarr (lien de téléchargement)
+# Cours d'animés publiés sous leur propre titre (« Thousand-Year Blood War S03 » = S17E27-40 de Bleach) :
+# la recherche par identifiant ne les renvoie pas et Sonarr les rattache à la MAUVAISE saison. On lit la
+# liste des fichiers dans le .torrent (aucune annonce au tracker) et on n'agit que si tout concorde :
+# trou contigu, autant de fichiers vidéo que d'épisodes manquants, numérotés en suite, aucun épisode
+# déjà pourvu. Animés seulement. La correspondance voyage dans l'étiquette qBittorrent (`offset=`).
+cour_packs = true
+cour_max_files = 30         # au-delà, ce n'est plus un cours
 
 [tasks.movie_search]
 # Rattrapage des films suivis encore manquants 24 h après l'ajout, par identifiant TMDB chez C411

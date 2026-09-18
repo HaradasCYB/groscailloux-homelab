@@ -73,6 +73,23 @@ journalctl -u homelabd -f
   compare les épisodes manquants aux candidats ; s'il en reste, le repli en texte libre est lancé **en plus** de
   l'identifiant (`how = "tmdb+texte"`), et ce qui reste introuvable est écrit dans l'état (`uncovered`) puis affiché
   sur `/status.html` (« Saisons sans release »). Sans ça la recherche repartait tous les jours pour rien, en silence.
+- **Les cours d'un animé sont récupérés seuls** (2026-09-18, v1.12.0) : quand la recherche laisse un trou dans
+  une saison d'**animé**, `series_search` repère les packs que l'Arr rattache à **cette** fiche mais à une autre
+  saison (`cour_pack`), télécharge leur `.torrent` par Prowlarr (lecture seule, **aucune annonce au tracker**),
+  en lit la liste des fichiers (`homelab_core::torrent_file`, décodeur bencode maison) et n'agit que si
+  `offset_mapping` est certain : trou d'un seul tenant, autant de fichiers vidéo que d'épisodes manquants,
+  numérotés en suite continue, aucun épisode déjà pourvu. La correspondance voyage dans l'étiquette
+  qBittorrent `homelab:series=<id>:season=<n>:offset=<k>:eps=<from>-<to>` ; `torrent_import` l'applique en
+  court-circuitant **et** les épisodes proposés par Sonarr **et** `map_episodes` (`EpisodeSource::OursOnly`),
+  les deux lisant la saison annoncée par les fichiers. Un pack de cours n'est **jamais** proposé à l'Arr
+  (`goes_straight_to_qbittorrent`) : il l'accepterait comme la saison qu'il croit lire. Trois pièges traités :
+  l'indexer donne aux packs l'identifiant TMDB **du cours** (313552) et non de la série (30984) — le refus par
+  identifiant est donc contourné **pour ce seul chemin**, la sécurité venant de la table d'alias de l'Arr et de
+  la lecture du `.torrent` ; le titre du cours est un titre alternatif qui arrivait après le titre principal et
+  que `text_queries` (2) n'atteignait jamais (`gap_names` le fait passer devant) ; et le pack **S01** est déjà
+  mappé correctement par le scene mapping TVDB (50/50 en saison 17), donc `cour_pack` l'écarte. Interrupteur
+  `[tasks.series_search] cour_packs`. Le 2026-09-18, Bleach S17 est passée de 34 à **48/48** épisodes diffusés,
+  sans qu'aucune autre saison ne bouge.
 - **Les cours d'un animé sont publiés sous leur propre titre** : `BLEACH.Thousand-Year.Blood.War.S01/S02/S03` (packs
   H264 MULTi VFF) couvrent Bleach S17. Sonarr n'en rattache correctement que **S01** (→ saison 17) ; **S02 → saison 2
   et S03 → saison 3 de Bleach**. Les prendre automatiquement écraserait deux vraies saisons : le garde-fou d'égalité

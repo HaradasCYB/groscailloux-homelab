@@ -450,6 +450,10 @@ pub struct SeriesSearch {
     pub episode_retry_mins: i64,
     /// Adresse de Prowlarr vue depuis les conteneurs Sonarr/Radarr du VPS (lien de téléchargement envoyé).
     pub prowlarr_url_for_arrs: String,
+    /// Récupérer les cours d'animés publiés sous leur propre titre (interrupteur : coupe tout le chemin).
+    pub cour_packs: bool,
+    /// Au-delà de ce nombre de fichiers vidéo, ce n'est plus un cours : on n'y touche pas.
+    pub cour_max_files: usize,
 }
 
 impl Default for SeriesSearch {
@@ -468,6 +472,8 @@ impl Default for SeriesSearch {
             new_request_hours: 1,
             episode_retry_mins: 5,
             prowlarr_url_for_arrs: "http://prowlarr:9696".into(),
+            cour_packs: true,
+            cour_max_files: 30,
         }
     }
 }

@@ -135,6 +135,144 @@ pub fn uncovered(cands: &[Candidate], missing: &HashSet<i64>) -> BTreeSet<i64> {
     left
 }
 
+/// Numéro d'épisode annoncé par le nom d'un fichier de pack : `...S03E07...` → 7.
+///
+/// Volontairement strict : uniquement la forme `SxxEyy`. Un pack de cours numérote toujours ses fichiers
+/// ainsi ; tout le reste (numéro absolu, nom libre) est déjà rattaché correctement par Sonarr et n'a pas
+/// besoin de cette mécanique — mieux vaut refuser que deviner.
+pub fn claimed_episode(path: &str) -> Option<i64> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"(?i)s\d{1,3}e(\d{1,3})").expect("regex valide"));
+    let base = path.rsplit('/').next().unwrap_or(path);
+    re.captures(base)?.get(1)?.as_str().parse().ok()
+}
+
+/// Correspondance « fichier du pack → épisode de la saison cible », quand elle est **certaine**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mapping {
+    /// À ajouter au numéro annoncé par le fichier pour obtenir l'épisode de la saison cible.
+    pub offset: i64,
+    pub first: i64,
+    pub last: i64,
+    pub files: usize,
+}
+
+/// Un cours d'animé publié sous son propre titre (« Thousand-Year Blood War S03 ») couvre-t-il **exactement**
+/// le trou de la saison ? `None` = on ne touche à rien, c'est le cas par défaut.
+///
+/// Toutes les conditions sont obligatoires : le trou doit être d'un seul tenant, le pack doit contenir
+/// autant de fichiers vidéo que d'épisodes manquants, ces fichiers doivent être numérotés en suite continue,
+/// et aucun épisode visé ne doit déjà avoir un fichier. Au moindre écart on refuse : se tromper ici
+/// écraserait une vraie saison (Sonarr lit « S03E01 » comme la saison 3 de Bleach).
+pub fn offset_mapping(
+    video_paths: &[String],
+    missing: &BTreeSet<i64>,
+    have_file: &BTreeSet<i64>,
+) -> Option<Mapping> {
+    let (first, last) = (*missing.iter().next()?, *missing.iter().next_back()?);
+    // 1. trou d'un seul tenant
+    if last - first + 1 != missing.len() as i64 {
+        return None;
+    }
+    // 2. chaque fichier doit annoncer un numéro
+    let mut nums: Vec<i64> = Vec::with_capacity(video_paths.len());
+    for p in video_paths {
+        nums.push(claimed_episode(p)?);
+    }
+    // 3. suite continue, sans doublon
+    nums.sort_unstable();
+    nums.dedup();
+    if nums.len() != video_paths.len() {
+        return None;
+    }
+    let lo = *nums.first()?;
+    if nums.last()? - lo + 1 != nums.len() as i64 {
+        return None;
+    }
+    // 4. le pack couvre exactement le trou
+    if nums.len() != missing.len() {
+        return None;
+    }
+    // 5. jamais de remplacement
+    if (first..=last).any(|e| have_file.contains(&e)) {
+        return None;
+    }
+    // 6. décalage vers l'avant seulement
+    let offset = first - lo;
+    if offset < 0 {
+        return None;
+    }
+    Some(Mapping {
+        offset,
+        first,
+        last,
+        files: video_paths.len(),
+    })
+}
+
+/// Pack d'un cours : la même série d'après l'Arr, mais rangé sous une autre saison.
+#[derive(Debug, Clone)]
+pub struct CourPack {
+    pub release: Value,
+    pub title: String,
+    pub seeders: i64,
+    pub size: i64,
+    pub lang_rank: u8,
+}
+
+/// Cette release est-elle le pack d'un cours de **notre** saison, publié sous son propre titre ?
+///
+/// Conditions toutes obligatoires : l'Arr rattache la release à **cette** fiche, il en lit une **autre**
+/// saison, c'est un pack complet, et — le point qui manque à l'intuition — il ne sait **pas déjà** la
+/// mapper sur la saison cible. Ce dernier point écarte « Thousand-Year Blood War **S01** », que le scene
+/// mapping TVDB traduit déjà en saison 17 (50/50 épisodes, mesuré le 2026-09-18) : le prendre par ce
+/// chemin lui inventerait un décalage et le placerait de travers.
+pub fn cour_pack(result: &Value, parse: &Value, series_id: i64, season: i64) -> Option<CourPack> {
+    if parse.pointer("/series/id").and_then(Value::as_i64) != Some(series_id) {
+        return None;
+    }
+    let info = parse.get("parsedEpisodeInfo")?;
+    let read = info.get("seasonNumber").and_then(Value::as_i64)?;
+    if read == season || read <= 0 {
+        return None;
+    }
+    if info.get("fullSeason").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    // l'Arr sait déjà viser la bonne saison : ce n'est pas notre affaire
+    if parse
+        .get("episodes")
+        .and_then(Value::as_array)
+        .is_some_and(|e| {
+            e.iter()
+                .any(|x| x.get("seasonNumber").and_then(Value::as_i64) == Some(season))
+        })
+    {
+        return None;
+    }
+    let title = result.get("title").and_then(Value::as_str)?.to_string();
+    let url = result.get("downloadUrl").and_then(Value::as_str)?;
+    Some(CourPack {
+        lang_rank: lang_rank(&title),
+        seeders: result.get("seeders").and_then(Value::as_i64).unwrap_or(0),
+        size: result
+            .get("size")
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
+            .unwrap_or(0),
+        release: json!({
+            "title": title,
+            "downloadUrl": url,
+            "publishDate": result.get("publishDate"),
+            "quality": info.get("quality").cloned().unwrap_or(Value::Null),
+            "infoHash": result.get("infoHash"),
+        }),
+        title,
+    })
+}
+
 /// Candidat d'après un résultat Prowlarr et l'analyse (`parsedEpisodeInfo`) de son titre par Sonarr.
 pub fn series_candidate(result: &Value, info: &Value, season: i64) -> Option<Candidate> {
     let title = result.get("title").and_then(Value::as_str)?.to_string();
@@ -512,8 +650,28 @@ fn side_name(arr: &ArrClient) -> &'static str {
 /// Ce qu'on télécharge : une saison d'une série, ou un film (fiche de l'Arr).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Target {
-    Season { series_id: i64, season: i64 },
-    Movie { movie_id: i64 },
+    Season {
+        series_id: i64,
+        season: i64,
+    },
+    /// Pack d'un cours d'animé publié sous son propre titre : les fichiers sont numérotés à partir de 1,
+    /// l'épisode visé vaut `numéro + offset` dans `season`, et doit tomber dans `from..=to`.
+    CourPack {
+        series_id: i64,
+        season: i64,
+        offset: i64,
+        from: i64,
+        to: i64,
+    },
+    Movie {
+        movie_id: i64,
+    },
+}
+
+/// Une cible que l'Arr identifierait de travers ne lui est **jamais** proposée : il accepterait le pack
+/// comme la saison qu'il croit lire, l'importerait seul et écraserait une vraie saison.
+pub fn goes_straight_to_qbittorrent(t: &Target) -> bool {
+    matches!(t, Target::CourPack { .. })
 }
 
 impl Target {
@@ -523,6 +681,15 @@ impl Target {
             Target::Season { series_id, season } => {
                 format!("homelab:series={series_id}:season={season}")
             }
+            Target::CourPack {
+                series_id,
+                season,
+                offset,
+                from,
+                to,
+            } => format!(
+                "homelab:series={series_id}:season={season}:offset={offset}:eps={from}-{to}"
+            ),
             Target::Movie { movie_id } => format!("homelab:movie={movie_id}"),
         }
     }
@@ -532,7 +699,10 @@ impl Target {
     pub fn in_queue(&self, record: &Value) -> bool {
         let id = |k: &str| record.get(k).and_then(Value::as_i64);
         match self {
-            Target::Season { series_id, season } => {
+            Target::Season { series_id, season }
+            | Target::CourPack {
+                series_id, season, ..
+            } => {
                 id("seriesId") == Some(*series_id)
                     && (id("seasonNumber").or_else(|| {
                         record
@@ -583,6 +753,16 @@ pub async fn send_release(
         tag,
         info_hash,
     };
+    if goes_straight_to_qbittorrent(&target) {
+        return to_qbittorrent(
+            ctx,
+            prow,
+            arr,
+            &grab,
+            "pack d'un cours : import avec décalage",
+        )
+        .await;
+    }
     if arr.name.ends_with("seedbox") {
         return to_qbittorrent(
             ctx,
@@ -684,6 +864,34 @@ async fn names_for(ctx: &TaskContext, series: &Value) -> Vec<String> {
     names
 }
 
+/// Noms à essayer en priorité quand il reste un trou dans la saison : ceux qui **ajoutent** quelque chose
+/// au titre principal passent devant.
+///
+/// Un cours d'animé est publié sous son propre nom (« Bleach Thousand-Year Blood War »), que Sonarr connaît
+/// comme titre alternatif — mais il arrivait après « Bleach » et « BLEACH », donc `text_queries` (2) ne
+/// l'atteignait jamais et le pack restait introuvable (mesuré le 2026-09-18).
+pub fn gap_names(names: &[String]) -> Vec<String> {
+    let Some(main) = names.first().map(|n| normalize(n)) else {
+        return Vec::new();
+    };
+    let mut extra: Vec<String> = Vec::new();
+    let mut rest: Vec<String> = Vec::new();
+    for n in names {
+        let k = normalize(n);
+        if k == main {
+            continue;
+        }
+        // « bleach thousand year blood war » commence par « bleach » : c'est un sous-titre de cours
+        if k.starts_with(&main) && k.len() > main.len() + 1 {
+            extra.push(n.clone());
+        } else {
+            rest.push(n.clone());
+        }
+    }
+    extra.extend(rest);
+    extra
+}
+
 /// Candidats d'une saison : par identifiant TMDB, puis (rien trouvé) en texte libre avec les noms connus.
 async fn season_candidates(
     ctx: &TaskContext,
@@ -692,19 +900,20 @@ async fn season_candidates(
     series: &Value,
     todo: &SeasonTodo,
     throttle: &mut Throttle,
-) -> Result<(Vec<Candidate>, &'static str)> {
+) -> Result<(Vec<Candidate>, Vec<CourPack>, &'static str)> {
     let cfg = &ctx.cfg.tasks.series_search;
     let tmdb = series.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
     let names = names_for(ctx, series).await;
     let mut out = Vec::new();
+    let mut packs: Vec<CourPack> = Vec::new();
     if tmdb > 0 {
         if !throttle.take().await {
-            return Ok((out, "budget"));
+            return Ok((out, packs, "budget"));
         }
         let Some(found) =
             crate::indexer::search_tmdb(ctx, prow, tmdb, Some(todo.season), false).await?
         else {
-            return Ok((out, "budget"));
+            return Ok((out, packs, "budget"));
         };
         for r in found {
             if !tmdb_matches(&r, tmdb) {
@@ -718,6 +927,9 @@ async fn season_candidates(
                 continue;
             }
             let parse = arr.parse(title).await?;
+            if let Some(p) = cour_pack(&r, &parse, todo.series_id, todo.season) {
+                packs.push(p);
+            }
             let info = parse.get("parsedEpisodeInfo").cloned().unwrap_or_default();
             if let Some(c) = series_candidate(&r, &info, todo.season) {
                 out.push(c);
@@ -727,7 +939,7 @@ async fn season_candidates(
         // on complète en texte libre (les cours d'un animé sont souvent nommés autrement)
         let left = uncovered(&out, &todo.missing_numbers);
         if !out.is_empty() && left.is_empty() {
-            return Ok((out, "tmdb"));
+            return Ok((out, packs, "tmdb"));
         }
         if !out.is_empty() {
             info!(
@@ -744,7 +956,17 @@ async fn season_candidates(
     // identifiant sont ignorées, le garde-fou de saison reste le même.
     let by_id = out.len();
     let mut seen: HashSet<String> = out.iter().map(|c| c.title.clone()).collect();
-    for name in names.iter().take(cfg.text_queries) {
+    // il reste un trou : les sous-titres de cours passent devant (voir `gap_names`)
+    let order: Vec<String> = if by_id > 0 {
+        let mut v = gap_names(&names);
+        v.extend(names.iter().cloned());
+        let mut once = HashSet::new();
+        v.retain(|n| once.insert(normalize(n)));
+        v
+    } else {
+        names.clone()
+    };
+    for name in order.iter().take(cfg.text_queries) {
         if !throttle.take().await {
             break;
         }
@@ -758,19 +980,27 @@ async fn season_candidates(
             if !seen.insert(title.to_string()) {
                 continue;
             }
-            // une release portant l'identifiant d'une autre œuvre est écartée d'office
-            if tmdb > 0
-                && r.get("tmdbId")
-                    .and_then(Value::as_i64)
-                    .is_some_and(|t| t > 0 && t != tmdb)
-            {
-                continue;
-            }
             if let Some(w) = derivative(title, &names) {
                 info!(task = "series_search", release = %title, word = w, "œuvre dérivée : écartée");
                 continue;
             }
+            let other_work = tmdb > 0
+                && r.get("tmdbId")
+                    .and_then(Value::as_i64)
+                    .is_some_and(|t| t > 0 && t != tmdb);
             let parse = arr.parse(title).await?;
+            // Pack d'un cours : il porte le titre du cours (« BLEACH Thousand-Year Blood War »), et
+            // l'indexer lui donne l'identifiant TMDB **du cours** (313552), pas celui de la série
+            // (30984). C'est donc `parse./series/id` — la table d'alias de l'Arr — qui fait foi, et
+            // la sécurité vient ensuite de la lecture du `.torrent` et de `offset_mapping`, jamais de
+            // l'identifiant. Le chemin normal, lui, garde le refus par identifiant intact.
+            if let Some(p) = cour_pack(&r, &parse, todo.series_id, todo.season) {
+                packs.push(p);
+            }
+            // une release portant l'identifiant d'une autre œuvre est écartée d'office
+            if other_work {
+                continue;
+            }
             match parsed_series(&parse) {
                 Some(p) if title_matches(&p.title, &names) => {}
                 _ => continue,
@@ -789,7 +1019,7 @@ async fn season_candidates(
             }
         }
     }
-    Ok((out, if by_id > 0 { "tmdb+texte" } else { "texte" }))
+    Ok((out, packs, if by_id > 0 { "tmdb+texte" } else { "texte" }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -811,6 +1041,102 @@ impl SeasonOutcome {
     }
 }
 
+/// Tente le pack d'un cours pour combler `gap`. `Ok(None)` = rien de sûr, on continue normalement.
+///
+/// Le `.torrent` est téléchargé (lecture seule chez Prowlarr, aucune annonce au tracker) pour lire la liste
+/// de ses fichiers : c'est la seule façon de savoir ce qu'il contient avant de l'engager.
+async fn try_cour_pack(
+    ctx: &TaskContext,
+    prow: &ProwlarrClient,
+    arr: &ArrClient,
+    series: &Value,
+    todo: &SeasonTodo,
+    packs: &[CourPack],
+    gap: &BTreeSet<i64>,
+) -> Result<Option<SeasonOutcome>> {
+    let cfg = &ctx.cfg.tasks.series_search;
+    let title = series.get("title").and_then(Value::as_str).unwrap_or("?");
+    let have_file: BTreeSet<i64> = arr
+        .episodes(todo.series_id)
+        .await?
+        .iter()
+        .filter(|e| e.get("hasFile").and_then(Value::as_bool) == Some(true))
+        .filter_map(|e| {
+            e.get("seasonNumber").and_then(Value::as_i64).and_then(|s| {
+                (s == todo.season)
+                    .then(|| e.get("episodeNumber").and_then(Value::as_i64))
+                    .flatten()
+            })
+        })
+        .collect();
+    // le mieux partagé d'abord ; à égalité, le français
+    let mut order: Vec<&CourPack> = packs.iter().collect();
+    order.sort_by_key(|p| std::cmp::Reverse((p.lang_rank, p.seeders)));
+    let gap_list: Vec<i64> = gap.iter().copied().collect();
+    for p in order {
+        let Some(url) = p.release.get("downloadUrl").and_then(Value::as_str) else {
+            continue;
+        };
+        let raw = match prow.download(url).await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(task = "series_search", release = %p.title, error = %e, "pack : .torrent illisible");
+                continue;
+            }
+        };
+        let entries = match crate::torrent_file::files(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(task = "series_search", release = %p.title, error = %e, "pack : bencode illisible");
+                continue;
+            }
+        };
+        let vids: Vec<String> = crate::torrent_file::video_paths(&entries)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        if vids.len() > cfg.cour_max_files {
+            continue;
+        }
+        let Some(m) = offset_mapping(&vids, gap, &have_file) else {
+            info!(task = "series_search", service = arr.name, series = title, release = %p.title,
+                  fichiers = vids.len(), manquants = gap.len(),
+                  "pack d'un cours écarté : la correspondance n'est pas certaine");
+            continue;
+        };
+        let detail = format!(
+            "{} ({} fichiers, décalage {} → S{:02}E{:02}-E{:02})",
+            p.title, m.files, m.offset, todo.season, m.first, m.last
+        );
+        if ctx.dry_run {
+            info!(task = "series_search", service = arr.name, series = title, %detail,
+                  "essai à blanc : pack d'un cours retenu");
+            return Ok(Some(SeasonOutcome::new("dry_run", detail, gap_list)));
+        }
+        let target = Target::CourPack {
+            series_id: todo.series_id,
+            season: todo.season,
+            offset: m.offset,
+            from: m.first,
+            to: m.last,
+        };
+        let (outcome, why) =
+            send_release(ctx, prow, arr, &p.title, &p.release, &cfg.indexer, target).await?;
+        info!(task = "series_search", service = arr.name, series = title, season = todo.season,
+              %outcome, %detail, "pack d'un cours confié");
+        return Ok(Some(SeasonOutcome::new(
+            &outcome,
+            format!("{detail} — {why}"),
+            if outcome == "grabbed" {
+                Vec::new()
+            } else {
+                gap_list
+            },
+        )));
+    }
+    Ok(None)
+}
+
 async fn process_season(
     ctx: &TaskContext,
     prow: &ProwlarrClient,
@@ -821,14 +1147,23 @@ async fn process_season(
 ) -> Result<SeasonOutcome> {
     let cfg = &ctx.cfg.tasks.series_search;
     let title = series.get("title").and_then(Value::as_str).unwrap_or("?");
-    let (cands, how) = season_candidates(ctx, prow, arr, series, todo, throttle).await?;
+    let (cands, packs, how) = season_candidates(ctx, prow, arr, series, todo, throttle).await?;
     if how == "budget" {
         return Ok(SeasonOutcome::new("pending", String::new(), Vec::new()));
     }
     // ce que l'indexer n'a pas du tout : remonté tel quel sur /status.html
-    let left: Vec<i64> = uncovered(&cands, &todo.missing_numbers)
-        .into_iter()
-        .collect();
+    let gap = uncovered(&cands, &todo.missing_numbers);
+    let left: Vec<i64> = gap.iter().copied().collect();
+    // Un cours publié sous son propre titre peut combler exactement ce trou. Animés seulement, et
+    // uniquement si TOUT concorde (voir `offset_mapping`) : sinon on ne touche à rien.
+    if cfg.cour_packs
+        && !gap.is_empty()
+        && series.get("seriesType").and_then(Value::as_str) == Some("anime")
+    {
+        if let Some(r) = try_cour_pack(ctx, prow, arr, series, todo, &packs, &gap).await? {
+            return Ok(r);
+        }
+    }
     let profile_id = series
         .get("qualityProfileId")
         .and_then(Value::as_i64)
@@ -1170,6 +1505,180 @@ mod tests {
     fn info(season: i64, full: bool, eps: &[i64], qid: i64, res: i64) -> Value {
         json!({"seasonNumber": season, "fullSeason": full, "episodeNumbers": eps,
                "quality": {"quality": {"id": qid, "resolution": res}}})
+    }
+
+    fn paths(prefix: &str, from: i64, to: i64) -> Vec<String> {
+        (from..=to)
+            .map(|n| format!("{prefix}.S03E{n:02}.MULTi.1080p.WEB.H264-TFA.mkv"))
+            .collect()
+    }
+
+    fn parse_of(series: Option<i64>, season: i64, full: bool, mapped: &[i64]) -> Value {
+        json!({
+            "series": series.map(|id| json!({"id": id})),
+            "parsedEpisodeInfo": {"seasonNumber": season, "fullSeason": full,
+                                  "quality": {"quality": {"id": 9, "resolution": 1080}}},
+            "episodes": mapped.iter().map(|s| json!({"seasonNumber": s})).collect::<Vec<_>>(),
+        })
+    }
+
+    #[test]
+    fn cour_subtitles_are_tried_first_when_a_hole_remains() {
+        // Ordre réel de la fiche Bleach : le titre du cours arrivait après « Bleach » et « BLEACH »,
+        // donc les 2 requêtes texte ne l'atteignaient jamais.
+        let names: Vec<String> = [
+            "Bleach",
+            "BLEACH",
+            "Bleach - Thousand-Year Blood War",
+            "Bleach Sennen Kessen-hen",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let first = gap_names(&names);
+        assert_eq!(first[0], "Bleach - Thousand-Year Blood War");
+        assert!(!first.iter().any(|n| normalize(n) == normalize("Bleach")));
+        // un nom sans rapport reste disponible, mais derrière
+        assert!(first.contains(&"Bleach Sennen Kessen-hen".to_string()));
+    }
+
+    #[test]
+    fn a_cour_pack_is_only_taken_when_the_arr_names_our_fiche() {
+        let r = result(
+            "BLEACH.Thousand-Year.Blood.War.S03.MULTI.VFF.1080p.H264-TFA",
+            30984,
+            170,
+        );
+        // le cas réel : notre fiche, saison lue 3, pack complet, mappé sur la saison 3
+        assert!(cour_pack(&r, &parse_of(Some(60), 3, true, &[3]), 60, 17).is_some());
+        // une autre fiche, ou aucune : on ne sait rien
+        assert!(cour_pack(&r, &parse_of(Some(61), 3, true, &[3]), 60, 17).is_none());
+        assert!(cour_pack(&r, &parse_of(None, 3, true, &[3]), 60, 17).is_none());
+        // déjà la bonne saison : le chemin normal s'en occupe
+        assert!(cour_pack(&r, &parse_of(Some(60), 17, true, &[17]), 60, 17).is_none());
+        // pas un pack complet
+        assert!(cour_pack(&r, &parse_of(Some(60), 3, false, &[3]), 60, 17).is_none());
+    }
+
+    #[test]
+    fn a_pack_the_arr_already_maps_onto_our_season_is_left_alone() {
+        // « Thousand-Year Blood War S01 » : saison lue 1, mais le scene mapping TVDB le traduit déjà en
+        // saison 17 (50/50 épisodes, mesuré le 2026-09-18). Lui inventer un décalage le placerait de travers.
+        let r = result(
+            "BLEACH.Thousand-Year.Blood.War.S01.MULTI.VFF.1080p.H264-TFA",
+            30984,
+            154,
+        );
+        assert!(cour_pack(&r, &parse_of(Some(60), 1, true, &[17, 17, 17]), 60, 17).is_none());
+    }
+
+    #[test]
+    fn a_cour_pack_is_never_offered_to_the_arr() {
+        // l'Arr l'accepterait comme la saison qu'il croit lire et écraserait une vraie saison
+        assert!(goes_straight_to_qbittorrent(&Target::CourPack {
+            series_id: 60,
+            season: 17,
+            offset: 26,
+            from: 27,
+            to: 40
+        }));
+        assert!(!goes_straight_to_qbittorrent(&Target::Season {
+            series_id: 60,
+            season: 17
+        }));
+        assert!(!goes_straight_to_qbittorrent(&Target::Movie {
+            movie_id: 1
+        }));
+    }
+
+    #[test]
+    fn the_offset_tag_carries_the_mapping() {
+        assert_eq!(
+            Target::CourPack {
+                series_id: 60,
+                season: 17,
+                offset: 26,
+                from: 27,
+                to: 40
+            }
+            .tag(),
+            "homelab:series=60:season=17:offset=26:eps=27-40"
+        );
+    }
+
+    #[test]
+    fn a_cour_pack_that_fits_the_hole_exactly_is_mapped() {
+        // Cas réel du 2026-09-18 : Bleach S17 manque 27-40 ; le pack « Thousand-Year Blood War S03 »
+        // contient 14 fichiers numérotés S03E01 à S03E14. Décalage = 27 - 1 = 26.
+        let missing: BTreeSet<i64> = (27..=40).collect();
+        let m = offset_mapping(&paths("BLEACH.TYBW", 1, 14), &missing, &BTreeSet::new()).unwrap();
+        assert_eq!(m.offset, 26);
+        assert_eq!((m.first, m.last, m.files), (27, 40, 14));
+        // le 7e fichier (S03E07) vise bien l'épisode 33
+        assert_eq!(claimed_episode("X.S03E07.mkv").unwrap() + m.offset, 33);
+    }
+
+    #[test]
+    fn anything_less_than_certain_is_refused() {
+        let full: BTreeSet<i64> = (27..=40).collect();
+        let none = BTreeSet::new();
+
+        // 1. trou à deux morceaux : on ne sait pas où commence le pack
+        let holed: BTreeSet<i64> = (27..=33).chain(35..=41).collect();
+        assert!(
+            offset_mapping(&paths("X", 1, 14), &holed, &none).is_none(),
+            "trou non contigu"
+        );
+
+        // 2. un fichier sans numéro lisible
+        let mut odd = paths("X", 1, 13);
+        odd.push("X.bonus.mkv".to_string());
+        assert!(
+            offset_mapping(&odd, &full, &none).is_none(),
+            "numéro illisible"
+        );
+
+        // 3. numéros à trou dans le pack
+        let mut gap = paths("X", 1, 13);
+        gap.push("X.S03E15.mkv".to_string());
+        assert!(
+            offset_mapping(&gap, &full, &none).is_none(),
+            "suite discontinue"
+        );
+
+        // 4. le pack ne couvre pas exactement le trou (13 fichiers pour 14 épisodes)
+        assert!(
+            offset_mapping(&paths("X", 1, 13), &full, &none).is_none(),
+            "compte différent"
+        );
+
+        // 5. un épisode visé a déjà un fichier : jamais de remplacement
+        let have: BTreeSet<i64> = [33].into_iter().collect();
+        assert!(
+            offset_mapping(&paths("X", 1, 14), &full, &have).is_none(),
+            "déjà pourvu"
+        );
+
+        // 6. décalage négatif (le pack prétend être plus loin que le trou)
+        let early: BTreeSet<i64> = (1..=14).collect();
+        assert!(
+            offset_mapping(&paths("X", 27, 40), &early, &none).is_none(),
+            "décalage négatif"
+        );
+
+        // rien ne manque
+        assert!(
+            offset_mapping(&paths("X", 1, 14), &none, &none).is_none(),
+            "aucun manquant"
+        );
+    }
+
+    #[test]
+    fn a_pack_already_on_the_right_season_maps_to_itself() {
+        // Sonarr saurait déjà le faire, mais le décalage 0 ne doit pas être refusé pour autant.
+        let missing: BTreeSet<i64> = (1..=12).collect();
+        let m = offset_mapping(&paths("X", 1, 12), &missing, &BTreeSet::new()).unwrap();
+        assert_eq!(m.offset, 0);
     }
 
     #[test]
