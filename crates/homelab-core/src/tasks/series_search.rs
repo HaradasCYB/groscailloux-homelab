@@ -223,6 +223,11 @@ pub fn acceptable(release: &Value, resolution: i64, seeders: i64, allowed: &Hash
 /// Les releases trop grosses (`max_gb` par épisode) sont écartées ; une release sans français n'est
 /// prise que si `allow_vo` et qu'aucune release française n'est acceptable ; à langue et qualité
 /// égales, une release à une seule source passe derrière les autres.
+///
+/// **Le codec ne départage rien** (mesuré le 2026-09-18) : h264 et HEVC transcodent à la même vitesse
+/// sur ce serveur (1,85× tous les deux, le coût est l'encodage x264 et pas le décodage), et les clients
+/// des membres lisent le HEVC en direct. Écarter le x265 revenait à refuser la seule version française
+/// disponible, ce qui est le cas courant des animés sur C411.
 pub fn choose<'a>(
     cands: &'a [Candidate],
     season: i64,
@@ -253,7 +258,7 @@ pub fn choose<'a>(
         cands
             .iter()
             .filter(|c| ok(c) && (vo || c.lang_rank > 0))
-            .max_by_key(|c| (c.lang_rank, c.resolution, c.seeders >= 2, c.h264, c.seeders))
+            .max_by_key(|c| (c.lang_rank, c.resolution, c.seeders >= 2, c.seeders))
     };
     best(false).or_else(|| if allow_vo { best(true) } else { None })
 }
@@ -1110,6 +1115,39 @@ mod tests {
     fn info(season: i64, full: bool, eps: &[i64], qid: i64, res: i64) -> Value {
         json!({"seasonNumber": season, "fullSeason": full, "episodeNumbers": eps,
                "quality": {"quality": {"id": qid, "resolution": res}}})
+    }
+
+    #[test]
+    fn codec_no_longer_decides() {
+        // Mesuré le 2026-09-18 : h264 et HEVC transcodent à la même vitesse sur ce serveur, et les
+        // clients lisent le HEVC en direct. À langue et qualité égales, seules les sources comptent.
+        let missing: HashSet<i64> = [1].into_iter().collect();
+        let allowed: HashSet<i64> = [9].into_iter().collect();
+        let mk = |title: &str, seeders: i64| {
+            series_candidate(
+                &result(title, 30984, seeders),
+                &info(1, false, &[1], 9, 1080),
+                1,
+            )
+            .unwrap()
+        };
+        let cands = vec![
+            mk("Show.S01E01.MULTI.VFF.1080p.x265-A", 120),
+            mk("Show.S01E01.MULTI.VFF.1080p.x264-B", 30),
+        ];
+        let pick = choose(&cands, 1, false, &missing, &allowed, 6.0, true).unwrap();
+        assert!(
+            pick.title.ends_with("x265-A"),
+            "le x265 mieux partagé doit gagner, pas le x264 : {}",
+            pick.title
+        );
+        // le français reste prioritaire sur tout, codec compris
+        let cands = vec![
+            mk("Show.S01E01.VOSTFR.1080p.x264-B", 999),
+            mk("Show.S01E01.MULTI.VFF.1080p.x265-A", 5),
+        ];
+        let pick = choose(&cands, 1, false, &missing, &allowed, 6.0, true).unwrap();
+        assert!(pick.title.contains("VFF"), "{}", pick.title);
     }
 
     #[test]

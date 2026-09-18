@@ -249,6 +249,10 @@ c411_max_per_hour = 40        # PAR CLÉ (deux clés = 80/h) ; Prowlarr coupe à
 cooldown_after_429_mins = 15  # clé qui prend un 429 : mise de côté, tout continue sur l'autre
 manual_reserve = 10           # requêtes gardées pour la page /recherche
 allow_no_french = true        # release sans français (VO) prise en dernier recours, si rien de français
+# Le CODEC ne départage rien (2026-09-18) : h264 et HEVC transcodent à la même vitesse sur ce serveur
+# (1,85× les deux), les clients lisent le HEVC en direct, et 53 % de la médiathèque est déjà en HEVC.
+# Écarter le x265 revenait à refuser la seule version française des animés. Formats HEVC/H.264/AV1 à 0
+# dans les 4 profils FR-friendly.
 max_gb_per_episode = 6.0      # au-delà, écartée du choix automatique (reste visible sur la page)
 max_gb_per_movie = 25.0
 

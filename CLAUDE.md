@@ -96,7 +96,18 @@ journalctl -u homelabd -f
   journal d'erreurs — sauvegarde `backups/indexers-20260917-204443/`). Un seul compteur horaire pour tout ce
   qui l'interroge : `[indexers] c411_max_per_hour` (20), dont `manual_reserve` (6) gardées pour `/recherche`
   (les tâches s'arrêtent à 14/h) ; Prowlarr coupe à 30/h, C411 vers 50/h. **Profils** FR-friendly : 1080p max (jamais 2160p), `minFormatScore=-9999`, FR d'abord,
-  VO/VOSTFR en dernier recours. **Jellyfin** : pas de GPU, préférer x264 à HEVC.
+  VO/VOSTFR en dernier recours.
+- **Le codec source n'est PAS un critère de charge** (mesuré le 2026-09-18, à corriger dans les têtes) : avec les
+  réglages réels de Jellyfin (`superfast`, 4 threads, pas de GPU), un transcodage 1080p tourne à **1,85×
+  que la source soit h264 ou HEVC** — le coût est dans l'**encodage x264**, pas dans le décodage (décodage seul :
+  h264 6,25×, HEVC 6,74×). L'ancienne note « HEVC 0,72× → préférer x264 » était fausse. Sur 7 jours, les 19
+  transcodages venaient **tous de sources h264**, aucun d'une source HEVC, alors que le HEVC est 53 % des 1 494
+  épisodes : les clients des membres lisent le HEVC en direct. Garder `h264` comme départage en fin de tri
+  (`choose`) ne coûte rien, mais **ne jamais écarter une release parce qu'elle est en x265**, surtout quand c'est
+  la seule en français (cas courant des animés sur C411).
+- **La vraie limite : UN SEUL transcodage 1080p à la fois** (mesuré le 2026-09-18) : 1 flux 1,42× ; **2 flux
+  0,82×/0,85×** ; 3 flux 0,60×/0,69× — dès deux transcodages simultanés on passe sous le temps réel et ça
+  saccade pour tout le monde. D'où l'intérêt de la lecture directe (98 %) et de `gc-quality-helper.js`.
 - **C411 annonce sur deux domaines** : `c411.org` **et** `tk.c411.tw`. Toute règle par tracker doit viser les deux
   (`tracker_ratio.unlimited`, décision torrent de `deletion_cleanup`). Jusqu'au 2026-09-14, 24 torrents
   `c411.tw` héritaient de la limite globale de qBittorrent (ratio 1 / 7 j puis **arrêt**) : 53 torrents C411
@@ -221,6 +232,13 @@ journalctl -u homelabd -f
   `Library/Media/Updated`, ni un redémarrage ; vu le 2026-09-17, analyse de 65 à 315 s) : ranger en masse
   **avant 13 h**, ou attendre l'analyse de 05 h. Après une réidentification, vérifier les `ProviderIds` contre
   l'Arr : le 2026-09-17, *L'Attaque des Titans* est repartie sur son spin-off et *Slime* sur *Slime Diaries*.
+- **Codec : HEVC et H.264 sont à égalité** (2026-09-18). Retiré du classement de `choose` et de
+  `best_movie_release`, et les formats personnalisés `HEVC 10-bit`, `HEVC 8-bit`, `H.264` et `AV1` sont à **0**
+  dans les 4 profils FR-friendly (sauvegarde `backups/arr-codec-neutral-20260918-104404/`). Motif : mesures du
+  jour — h264 et HEVC transcodent tous deux à 1,85×, le coût est l'encodage x264 et pas le décodage, et les 19
+  transcodages de la semaine venaient tous de sources h264 alors que le HEVC est 53 % de la médiathèque.
+  Pénaliser le x265 revenait à refuser la seule version française disponible (cas courant des animés sur C411).
+  Le nom « FR-friendly H.264 » des profils est resté, il ne décrit plus le codec.
 - **Langue** : `lang_rank` classe VF 4 > MULTi 3 > FRENCH 2 > VOSTFR 1 > **VO 0** ; une release sans français
   n'est prise qu'en dernier recours (`[indexers] allow_no_french`), quand aucune française n'est acceptable.
   Plafonds de taille du choix automatique : `max_gb_per_episode` (6) et `max_gb_per_movie` (25) — sinon un pack

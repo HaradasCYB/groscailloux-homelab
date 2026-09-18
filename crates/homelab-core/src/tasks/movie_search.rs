@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use super::series_search::{
-    acceptable, allowed_qualities, due, is_h264, lang_rank, send_release, size_ok, tmdb_matches,
-    Target, Throttle,
+    acceptable, allowed_qualities, due, lang_rank, send_release, size_ok, tmdb_matches, Target,
+    Throttle,
 };
 use super::{Report, Task};
 use crate::clients::{ArrClient, ProwlarrClient};
@@ -45,7 +45,8 @@ pub fn wanted(movie: &Value, queued: &HashSet<i64>, now_secs: i64, missing_hours
 }
 
 /// Meilleure release d'un film : identifiant TMDB, français, qualité acceptable ; tri langue, résolution,
-/// H.264, sources. `items` : (résultat Prowlarr, `parsedMovieInfo` Radarr).
+/// sources. Le codec ne compte pas (voir `series_search::choose`). `items` : (résultat Prowlarr,
+/// `parsedMovieInfo` Radarr).
 pub fn best_movie_release<'a>(
     items: &'a [(Value, Value)],
     tmdb_id: i64,
@@ -87,7 +88,8 @@ pub fn best_movie_release<'a>(
             acceptable(&release, res, seeders, allowed).then_some((
                 r,
                 release,
-                (lang, res, seeders >= 2, is_h264(title), seeders),
+                // le codec ne départage rien : voir series_search::choose (mesures du 2026-09-18)
+                (lang, res, seeders >= 2, seeders),
             ))
         })
         .max_by_key(|(_, _, rank)| *rank)

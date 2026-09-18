@@ -50,6 +50,11 @@ disponibilité), qui a mis au jour trois défauts.
   partie, jamais sous celui de la série. La page de recherche manuelle fait de même et signale les versions
   qui portent une autre numérotation de saison, sans jamais les prendre automatiquement.
 - **Dossiers de saison rétablis** : les séries créées par une demande rangeaient tous leurs épisodes à plat.
+- **Le format vidéo ne bloque plus une recherche** : les versions en HEVC (x265) étaient écartées au profit du
+  H.264. Mesures faites sur le serveur : les deux demandent exactement le même travail, et les appareils des
+  membres lisent le HEVC directement — plus de la moitié de la médiathèque est déjà dans ce format. Les
+  écarter revenait à refuser la seule version française disponible, ce qui arrive souvent pour les animés.
+  Seules la langue, la qualité d'image et le nombre de sources comptent désormais.
 
 ## 1.10.0 — 18/09/2026 — Les animés sans accroc
 
