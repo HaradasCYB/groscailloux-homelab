@@ -59,6 +59,10 @@ disponibilité), qui a mis au jour trois défauts.
   conservés un temps pour honorer les règles du tracker. Résultat, redemander ce titre ne donnait plus rien du
   tout. Ces fichiers sont maintenant réutilisés tels quels : le titre revient en quelques minutes, sans
   retéléchargement.
+- **Une saison entière arrive en un seul passage** : la recherche s'arrêtait à 20 épisodes par tour et
+  attendait un quart d'heure avant de reprendre — près d'une heure pour une saison d'animé de 50 épisodes,
+  alors que la recherche elle-même ne coûte qu'une seule interrogation. Elle prend maintenant tous les
+  épisodes manquants d'un coup, et reprend au bout de 5 minutes s'il en reste.
 
 ## 1.10.0 — 18/09/2026 — Les animés sans accroc
 

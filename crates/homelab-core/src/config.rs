@@ -463,10 +463,10 @@ impl Default for SeriesSearch {
             error_retry_hours: 1,
             indexer: "C411".into(),
             text_queries: 2,
-            max_grabs_per_season: 20,
+            max_grabs_per_season: 60,
             max_new_per_run: 3,
             new_request_hours: 1,
-            episode_retry_mins: 15,
+            episode_retry_mins: 5,
             prowlarr_url_for_arrs: "http://prowlarr:9696".into(),
         }
     }
@@ -1168,7 +1168,7 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
         assert_eq!(cfg.tasks.series_search.max_queries_per_run, 6);
-        assert_eq!(cfg.tasks.series_search.max_grabs_per_season, 20);
+        assert_eq!(cfg.tasks.series_search.max_grabs_per_season, 60);
         assert_eq!(cfg.indexers.c411_max_per_hour, 40);
         // par défaut, seule la seedbox récupère du neuf (2026-09-18)
         assert_eq!(cfg.downloads.auto_sides, vec!["seedbox".to_string()]);

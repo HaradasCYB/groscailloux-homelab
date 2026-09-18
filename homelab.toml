@@ -107,10 +107,13 @@ max_actions_per_run = 5
 interval_secs = 600         # 10 min : une demande part dans les minutes qui suivent
 max_queries_per_run = 6     # requêtes au plus par passage (36/h au pire, sous le plafond par clé)
 query_gap_secs = 5          # écart minimal entre deux requêtes
-max_grabs_per_season = 20   # saison sans pack : tous les épisodes manquants pris dans le même passage
+max_grabs_per_season = 60   # saison sans pack : TOUS les épisodes manquants dans le même passage (une
+                            # saison d'animé en fait 50 ; à 20 il fallait 3 passages, soit ~50 min pour
+                            # Bleach S17 le 2026-09-18, alors que la recherche ne coûte qu'UNE requête)
 max_new_per_run = 3         # requêtes en plus pour les demandes de moins d'une heure (elles passent devant)
 new_request_hours = 1
-episode_retry_mins = 15     # puis reprise 15 min après (le temps de l'import), au lieu de 2 h
+episode_retry_mins = 5      # reprise 5 min après (le temps de l'import) : il reste des épisodes à prendre,
+                            # rien ne sert d'attendre — aucune requête d'indexeur n'est gaspillée
 retry_after_hours = 24      # saison sans candidat : nouvelle recherche le lendemain
 grabbed_retry_hours = 168   # saison prise mais encore manquante : après 7 jours
 error_retry_hours = 1       # erreur (indexeur indisponible, délai dépassé) : nouvelle tentative dans l'heure
