@@ -264,7 +264,10 @@ journalctl -u homelabd -f
   `HEVC 10-bit -10000` et `FRENCH -500`) — puis aligné (MULTi 3000, VOSTFR 2000, VFF 1000, FRENCH 500, sans
   marqueur français −2000, codecs à 0, `minFormatScore = -9999`, mêmes qualités ≤ 1080p que FR-friendly). Les
   **26 fiches animées** (20 seedbox + 6 VPS) y sont passées, sans perte (429 et 119 fichiers avant comme après).
-  Sauvegarde `backups/arr-anime-profile-20260918-142927/`.
+  Sauvegarde `backups/arr-anime-profile-20260918-142927/`. **Ne pas oublier `activeAnimeProfileId` dans
+  Jellyseerr** (VPS 7, seedbox 8, sauvegarde `backups/jellyseerr-sonarr-20260918/before-anime-profile.json`) :
+  basculer les fiches existantes ne suffit pas, les **nouvelles demandes** arrivaient encore sur FR-friendly
+  (Frieren, le 2026-09-18). Jellyseerr a un profil séparé pour les animés, repéré par `animeTags`.
 - **Nommage des fansubs** : `Erased S01 - 06 VOSTFR [1080p][X265].mkv` — Sonarr lit `S01` comme une **saison
   entière**, ne voit jamais le « - 06 », refuse chaque fichier (« Single episode file contains all episodes in
   seasons ») **et**, si on ignore ce rejet, propose les 12 épisodes pour le premier fichier. Le 2026-09-18, les
