@@ -23,6 +23,33 @@ pub struct PageData<'a> {
     pub vps_disk_pct: Option<u8>,
     pub seedbox: Option<SeedboxQuota>,
     pub mount_ok: Option<bool>,
+    /// Ce qui n'avance pas : torrents terminés que personne ne rattache (`no_match` de `torrent_import`).
+    pub stuck_torrents: &'a [String],
+}
+
+/// Torrents finis dont aucune fiche n'a voulu (décision `no_match`), les plus récents d'abord.
+pub fn unmatched(
+    records: &BTreeMap<String, homelab_core::state::TorrentImportRecord>,
+    now: i64,
+    max: usize,
+) -> Vec<String> {
+    let mut v: Vec<(i64, String)> = records
+        .iter()
+        .filter(|(_, r)| r.outcome == "no_match")
+        .map(|(k, r)| {
+            let side = k.split_once(':').map(|(s, _)| s).unwrap_or("?");
+            (
+                r.at,
+                format!(
+                    "{side} · {} (depuis {})",
+                    r.name.chars().take(70).collect::<String>(),
+                    ago(now, r.at)
+                ),
+            )
+        })
+        .collect();
+    v.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    v.into_iter().take(max).map(|(_, s)| s).collect()
 }
 
 fn label(task: &str) -> &'static str {
@@ -165,13 +192,26 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
 </style></head><body>
 <header><h1>Automatisation homelabd</h1><div>{headline} {mount}</div></header>
 <div class="gs">{vps}{sb}</div>
-<table>{rows}</table>
+<table>{rows}</table>{stuck}
 </body></html>"#,
         vps = gauge(
             "Disque VPS",
             d.vps_disk_pct,
             "médias, téléchargements, état des services"
         ),
+        stuck = if d.stuck_torrents.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"<h1 style="margin:14px 0 6px">Rien ne bouge ({n})</h1><table>{rows}</table>"#,
+                n = d.stuck_torrents.len(),
+                rows = d
+                    .stuck_torrents
+                    .iter()
+                    .map(|t| format!("<tr><td class=\"s\">{t}</td></tr>"))
+                    .collect::<String>()
+            )
+        },
     )
 }
 
@@ -215,6 +255,7 @@ mod tests {
             runs: &runs,
             tasks: &tasks,
             vps_disk_pct: Some(74),
+            stuck_torrents: &[],
             seedbox: Some(SeedboxQuota {
                 used_kb: 1_429_000_000,
                 quota_kb: 3_725_000_000,
@@ -227,6 +268,31 @@ mod tests {
         assert!(html.contains("&lt;b&gt;boom&lt;/b&gt;"));
         assert!(!html.contains("<b>boom</b>"));
         assert!(html.contains("38 %"), "quota 1429/3725 Go ≈ 38 %");
+        // section « rien ne bouge » : uniquement les torrents que personne n'a rattachés
+        let mut recs = BTreeMap::new();
+        recs.insert(
+            "seedbox:abc123def".to_string(),
+            homelab_core::state::TorrentImportRecord {
+                at: 900,
+                name: "Un.Anime.S01.VOSTFR.1080p".into(),
+                outcome: "no_match".into(),
+                detail: String::new(),
+                ..Default::default()
+            },
+        );
+        recs.insert(
+            "vps:xyz".to_string(),
+            homelab_core::state::TorrentImportRecord {
+                at: 950,
+                name: "Un.Film.2024".into(),
+                outcome: "imported".into(),
+                detail: String::new(),
+                ..Default::default()
+            },
+        );
+        let stuck = unmatched(&recs, 1000, 15);
+        assert_eq!(stuck.len(), 1, "seul le no_match");
+        assert!(stuck[0].contains("seedbox") && stuck[0].contains("Un.Anime"));
         assert!(html.contains("jamais"));
         assert!(html.contains("74 %"));
     }
@@ -241,6 +307,7 @@ mod tests {
             vps_disk_pct: None,
             seedbox: None,
             mount_ok: None,
+            stuck_torrents: &[],
         });
         assert!(html.contains("quota non disponible"));
     }

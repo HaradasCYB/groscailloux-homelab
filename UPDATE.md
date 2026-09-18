@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.9.0](#190--18092026--une-saison-complète-du-premier-coup)** | 18/09/2026 | **Une saison complète du premier coup** |
+| **[1.10.0](#1100--18092026--les-animés-sans-accroc)** | 18/09/2026 | **Les animés sans accroc** |
+| [1.9.0](#190--18092026--une-saison-complète-du-premier-coup) | 18/09/2026 | Une saison complète du premier coup |
 | [1.8.0](#180--17092026--lindexeur-ne-tombe-plus) | 17/09/2026 | L'indexeur ne tombe plus |
 | [1.7.0](#170--17092026--plus-de-confusion-avec-les-spin-offs) | 17/09/2026 | Plus de confusion avec les spin-offs |
 | [1.6.0](#160--17092026--un-seul-indexeur-et-une-recherche-plus-souple) | 17/09/2026 | Un seul indexeur, et une recherche plus souple |
@@ -28,6 +29,25 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.10.0 — 18/09/2026 — Les animés sans accroc
+
+Audit complet des quatre applications de téléchargement, croisé avec le guide du tracker.
+
+- **Les épisodes sans titre définitif s'importent enfin** : un animé qui vient de sortir n'a souvent pas encore
+  de titre d'épisode, ce qui bloquait son import. C'était la cause d'une bonne partie des erreurs.
+- **Numérotation japonaise comprise** : les séries d'animation sont déclarées comme telles, donc les versions
+  numérotées à la japonaise (« 367 » plutôt que « saison 18, épisode 7 ») se rangent au bon endroit. 23 séries
+  corrigées, sans toucher aux fichiers.
+- **Les sous-titres ne sont plus perdus** : les fichiers de sous-titres livrés à côté de la vidéo (VOSTFR)
+  étaient supprimés à l'import ; ils sont maintenant conservés.
+- **Préférence française partout** : sur le serveur principal, presque toutes les fiches étaient restées sur un
+  profil sans aucune règle de langue. Elles suivent désormais les mêmes règles que le reste (français d'abord,
+  H.264, 1080p maximum).
+- **Nouveautés repérées plus vite** : le flux d'annonces est relu toutes les 15 minutes, et un téléchargement
+  terminé est rangé dans les 2 minutes au lieu de 10.
+- **Filet de sécurité** : une corbeille est désormais active sur le serveur principal (14 jours), et la page
+  d'administration liste les téléchargements terminés que personne ne réclame.
 
 ## 1.9.0 — 18/09/2026 — Une saison complète du premier coup
 

@@ -112,7 +112,7 @@ pub struct SeasonSearchRecord {
     pub detail: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TorrentImportRecord {
     pub at: i64,
     pub name: String,

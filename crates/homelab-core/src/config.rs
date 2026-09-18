@@ -407,6 +407,10 @@ pub struct SeriesSearch {
     pub text_queries: usize,
     /// Épisodes envoyés au plus pour une saison sans pack, dans le même passage.
     pub max_grabs_per_season: usize,
+    /// Requêtes en plus (au-delà de `max_queries_per_run`) réservées aux demandes fraîches.
+    pub max_new_per_run: usize,
+    /// Une fiche ajoutée depuis moins de N heures est une demande fraîche.
+    pub new_request_hours: i64,
     /// Délai (minutes) avant de reprendre une saison dont on vient de prendre des épisodes.
     pub episode_retry_mins: i64,
     /// Adresse de Prowlarr vue depuis les conteneurs Sonarr/Radarr du VPS (lien de téléchargement envoyé).
@@ -425,6 +429,8 @@ impl Default for SeriesSearch {
             indexer: "C411".into(),
             text_queries: 2,
             max_grabs_per_season: 20,
+            max_new_per_run: 3,
+            new_request_hours: 1,
             episode_retry_mins: 15,
             prowlarr_url_for_arrs: "http://prowlarr:9696".into(),
         }
@@ -560,7 +566,7 @@ pub struct TorrentImport {
 impl Default for TorrentImport {
     fn default() -> Self {
         Self {
-            interval_secs: 600,
+            interval_secs: 120,
             max_per_run: 10,
             max_attempts: 3,
             series_ready_secs: 90,
@@ -1123,7 +1129,7 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.stuck_handler.stall_secs, 28800);
         assert_eq!(cfg.tasks.tracker_ratio.public_time_min, 20160);
         assert!(cfg.task_enabled("tba_bypass"));
-        assert_eq!(cfg.tasks.torrent_import.interval_secs, 600);
+        assert_eq!(cfg.tasks.torrent_import.interval_secs, 120);
         assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
         assert_eq!(cfg.tasks.series_search.max_queries_per_run, 6);

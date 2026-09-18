@@ -333,6 +333,13 @@ pub fn push_rejections(decision: &Value) -> Vec<String> {
         .collect()
 }
 
+/// Fiche ajoutée il y a moins de `hours` : c'est une demande fraîche, elle passe devant.
+pub fn is_fresh(added: &str, now: i64, hours: i64) -> bool {
+    chrono::DateTime::parse_from_rfc3339(added)
+        .map(|d| now - d.timestamp() < hours * 3600)
+        .unwrap_or(false)
+}
+
 /// Ordre de traitement : séries ajoutées le plus récemment d'abord (une nouvelle demande passe devant
 /// l'arriéré), puis diffusion la plus récente. `entries` : (date d'ajout, dernière diffusion manquante).
 pub fn pick_order(entries: &[(String, String)]) -> Vec<usize> {
@@ -964,7 +971,13 @@ impl Task for SeriesSearch {
                 (added, t.latest_air.clone())
             })
             .collect();
-        let mut throttle = Throttle::new(cfg.max_queries_per_run, cfg.query_gap_secs);
+        // une demande de moins d'une heure passe devant (tri) et ouvre des requêtes en plus
+        let fresh = entries
+            .iter()
+            .filter(|(added, _)| is_fresh(added, now(), cfg.new_request_hours))
+            .count();
+        let budget = cfg.max_queries_per_run + fresh.min(cfg.max_new_per_run);
+        let mut throttle = Throttle::new(budget, cfg.query_gap_secs);
         for idx in pick_order(&entries) {
             if throttle.remaining() == 0 {
                 *counts.entry("pending".into()).or_default() += 1;
@@ -1254,6 +1267,16 @@ mod tests {
                 .title,
             "A.S02E04.VFF.1080p"
         );
+    }
+
+    #[test]
+    fn fresh_requests_open_extra_queries() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-18T12:00:00Z")
+            .unwrap()
+            .timestamp();
+        assert!(is_fresh("2026-09-18T11:30:00Z", now, 1));
+        assert!(!is_fresh("2026-09-18T10:00:00Z", now, 1));
+        assert!(!is_fresh("", now, 1));
     }
 
     #[test]

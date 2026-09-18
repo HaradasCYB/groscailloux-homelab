@@ -45,6 +45,17 @@ journalctl -u homelabd -f
   `[indexers] c411_max_per_hour` = 40 **par clé** (80/h au total), `manual_reserve` 10 pour `/recherche`. Une
   clé qui répond 429 est mise de côté `cooldown_after_429_mins` (15) et la requête repart **aussitôt sur
   l'autre** : tant qu'une clé répond, rien ne s'arrête. La clé RSS des Arrs est la deuxième (`C411_RSS_API_KEY`).
+- **Réglages des 4 Arrs (audit du 2026-09-18)** : `episodeTitleRequired = never` (les animés tout juste sortis
+  ont un titre « TBA » : c'était la cause du rejet que `tba_bypass` contournait — tâche désormais dans
+  `tasks.disabled`, gardée comme filet) ; `importExtraFiles = true` avec `srt,ass,ssa,sub,idx` (les
+  sous-titres externes des VOSTFR étaient **jetés**) ; `animeEpisodeFormat` avec `{absolute:000}` ;
+  `rssSyncInterval = 15` (le tracker sert le RSS avec un cache 5 min et ETag) ; corbeille configurée aussi sur
+  le VPS (`/data/media/*/.recycle`, purge 14 j par `cleanup`). Toutes les fiches du VPS sont passées sur le
+  profil **FR-friendly H.264** (elles étaient sur « HD - 720p/1080p », sans aucun format personnalisé).
+  Sauvegarde : `backups/arr-settings-20260918-072920/`.
+- **Type « anime » obligatoire** : une série rangée dans Anime est mise en `seriesType = anime` par
+  `anime_library` (au déplacement et en rattrapage), sinon Sonarr ne comprend pas la numérotation absolue
+  (« Bleach - 367 ») et les imports tombent à côté. 23 séries corrigées le 2026-09-18, sans perte de fichier.
 - **Aucune recherche depuis Sonarr/Radarr** : C411 y est en **RSS seulement** (`enableAutomaticSearch` et
   `enableInteractiveSearch` à `false` sur les 4 Arrs, depuis le 2026-09-17). Un bouton « Search » sur une saison
   d'animé interrogeait C411 épisode par épisode : 30 requêtes d'un coup, « API Request Limit reached, disabled

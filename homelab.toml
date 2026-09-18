@@ -25,7 +25,7 @@ rate_limit_secs = 30
 
 [tasks]
 # Tâches non planifiées par le daemon (restent lançables via `homelabctl run`).
-disabled = []
+disabled = ["tba_bypass"]  # inutile depuis episodeTitleRequired = never ; gardée comme filet
 
 [tasks.stack_health]
 # Première passe juste après le boot, puis toutes les 5 min : relance ce qui est arrêté,
@@ -58,7 +58,7 @@ interval_secs = 300
 # Torrents ajoutés à la main dans qBittorrent (VPS + seedbox), terminés et inconnus des Arrs :
 # fiche ajoutée NON surveillée si besoin, puis import manuel en hardlink (importMode copy).
 # Rien si la fiche a déjà des fichiers sur l'autre machine (doublon Jellyfin).
-interval_secs = 600
+interval_secs = 120
 max_per_run = 10            # torrents examinés (parse/recherche/import) par passage
 max_attempts = 3            # erreurs avant abandon (état : homelabctl status / state/homelabd.json)
 series_ready_secs = 90      # attente des épisodes d'une série tout juste ajoutée
@@ -108,6 +108,8 @@ interval_secs = 600         # 10 min : une demande part dans les minutes qui sui
 max_queries_per_run = 6     # requêtes au plus par passage (36/h au pire, sous le plafond par clé)
 query_gap_secs = 5          # écart minimal entre deux requêtes
 max_grabs_per_season = 20   # saison sans pack : tous les épisodes manquants pris dans le même passage
+max_new_per_run = 3         # requêtes en plus pour les demandes de moins d'une heure (elles passent devant)
+new_request_hours = 1
 episode_retry_mins = 15     # puis reprise 15 min après (le temps de l'import), au lieu de 2 h
 retry_after_hours = 24      # saison sans candidat : nouvelle recherche le lendemain
 grabbed_retry_hours = 168   # saison prise mais encore manquante : après 7 jours

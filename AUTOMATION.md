@@ -158,6 +158,9 @@ tâches de fond, la réserve restant à la page. Avant le 2026-09-17, chacun ava
 sans voir les autres.
 
 ### anime_library — 30 min
+Pose aussi `seriesType = anime` sur toute série rangée dans Anime (numérotation absolue), et rattrape celles
+qui étaient restées en « standard » (`RescanSeries` derrière, contrôle des fichiers).
+
 Range l'**animation japonaise** dans deux bibliothèques Jellyfin dédiées : « Anime » (séries : `/media/anime` +
 `/seedbox/media/Anime`) et « Films d'animation » (films : `/media/anime-films` + `/seedbox/media/Anime Movies`).
 Dossiers racines des Arrs : `/anime` et `/anime-films` sur le VPS (liens de `sonarr|radarr/config/custom-cont-init.d/symlinks.sh`
@@ -329,6 +332,10 @@ sur les comptes actifs, dans `defaultPermissions`, et à chaque activation (`acc
 `[accounts] jellyseerr_view_requests`) : sans lui, Jellyseerr ne renvoie que les demandes du membre. Ce droit est
 en lecture seule — ni validation ni refus. Le plugin garde 30 min en cache le lien compte Jellyfin ↔ compte
 Jellyseerr : un changement de droits met ce temps à se voir.
+
+## Page /status : « Rien ne bouge »
+Les torrents terminés qu'aucune fiche n'a voulus (`no_match` de `torrent_import`, 15 au plus, les plus récents
+d'abord) sont listés sous le tableau des tâches : sans ça, un téléchargement fini restait invisible.
 
 ## Watcher auto_import (continu)
 

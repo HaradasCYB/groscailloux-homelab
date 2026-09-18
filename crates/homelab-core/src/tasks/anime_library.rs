@@ -108,6 +108,8 @@ struct Item {
     title: String,
     path: String,
     tags: Vec<i64>,
+    /// Séries : `standard`, `anime` ou `daily`.
+    series_type: Option<String>,
 }
 
 fn items(list: &[Value]) -> Vec<Item> {
@@ -127,6 +129,10 @@ fn items(list: &[Value]) -> Vec<Item> {
                     .and_then(Value::as_array)
                     .map(|a| a.iter().filter_map(Value::as_i64).collect())
                     .unwrap_or_default(),
+                series_type: v
+                    .get("seriesType")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
             })
         })
         .collect()
@@ -251,24 +257,39 @@ async fn wait_moves(arr: &ArrClient) {
     );
 }
 
-/// Déplace une fiche : tag `anime` + nouveau dossier racine, fichiers compris.
+/// Déplace une fiche : tag `anime` + nouveau dossier racine, fichiers compris. Une série passe aussi en
+/// type « anime » : sans ça, Sonarr ne comprend pas la numérotation absolue (« Bleach - 367 ») et les
+/// imports tombent à côté.
 async fn move_item(arr: &ArrClient, movies: bool, id: i64, tag: i64, root: &str) -> Result<()> {
     let (path, ids) = if movies {
         ("api/v3/movie/editor", "movieIds")
     } else {
         ("api/v3/series/editor", "seriesIds")
     };
+    let mut body = json!({
+        ids: [id],
+        "tags": [tag],
+        "applyTags": "add",
+        "rootFolderPath": root,
+        "moveFiles": true,
+    });
+    if !movies {
+        body["seriesType"] = json!("anime");
+    }
+    arr.put(path, &body).await?;
+    Ok(())
+}
+
+/// Une série déjà rangée dans Anime mais restée en type « standard » : on corrige, puis on relit ses
+/// fichiers (le changement de type change l'analyse des noms).
+async fn fix_series_type(arr: &ArrClient, id: i64) -> Result<()> {
     arr.put(
-        path,
-        &json!({
-            ids: [id],
-            "tags": [tag],
-            "applyTags": "add",
-            "rootFolderPath": root,
-            "moveFiles": true,
-        }),
+        "api/v3/series/editor",
+        &json!({ "seriesIds": [id], "seriesType": "anime" }),
     )
     .await?;
+    arr.command(json!({ "name": "RescanSeries", "seriesId": id }))
+        .await?;
     Ok(())
 }
 
@@ -376,7 +397,19 @@ impl Task for AnimeLibrary {
                     },
                 };
                 match decide(class, &labels, in_anime) {
-                    Decision::Keep => {}
+                    Decision::Keep => {
+                        // déjà rangée : reste le type, indispensable à la numérotation absolue
+                        if in_anime && !place.movies && it.series_type.as_deref() != Some("anime") {
+                            if ctx.dry_run {
+                                info!(task = "anime_library", service = arr.name, title = %it.title, "dry-run: would set seriesType=anime");
+                            } else if let Err(e) = fix_series_type(arr, it.id).await {
+                                warn!(task = "anime_library", service = arr.name, title = %it.title, error = %e, "seriesType not set");
+                            } else {
+                                info!(task = "anime_library", service = arr.name, title = %it.title, "seriesType=anime posé");
+                            }
+                            *counts.entry("type_corrige").or_default() += 1;
+                        }
+                    }
                     Decision::Unknown => {
                         *counts.entry("inconnu").or_default() += 1;
                         info!(task = "anime_library", service = arr.name, title = %it.title, tmdb = it.tmdb, "unknown: left in place");
