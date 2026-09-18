@@ -55,6 +55,10 @@ disponibilité), qui a mis au jour trois défauts.
   membres lisent le HEVC directement — plus de la moitié de la médiathèque est déjà dans ce format. Les
   écarter revenait à refuser la seule version française disponible, ce qui arrive souvent pour les animés.
   Seules la langue, la qualité d'image et le nombre de sources comptent désormais.
+- **Redemander un titre supprimé fonctionne, et va vite** : les fichiers de partage d'un titre supprimé sont
+  conservés un temps pour honorer les règles du tracker. Résultat, redemander ce titre ne donnait plus rien du
+  tout. Ces fichiers sont maintenant réutilisés tels quels : le titre revient en quelques minutes, sans
+  retéléchargement.
 
 ## 1.10.0 — 18/09/2026 — Les animés sans accroc
 

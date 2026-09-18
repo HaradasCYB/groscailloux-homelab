@@ -84,6 +84,8 @@ pub fn best_movie_release<'a>(
                 "downloadUrl": r.get("downloadUrl"),
                 "publishDate": r.get("publishDate"),
                 "quality": quality,
+                // sert à retrouver un torrent déjà présent dans qBittorrent (titre re-demandé)
+                "infoHash": r.get("infoHash"),
             });
             acceptable(&release, res, seeders, allowed).then_some((
                 r,

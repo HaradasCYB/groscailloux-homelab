@@ -244,6 +244,13 @@ journalctl -u homelabd -f
   Plafonds de taille du choix automatique : `max_gb_per_episode` (6) et `max_gb_per_movie` (25) — sinon un pack
   de 134 Go à une seule source peut gagner contre un 27,8 Go bien partagé. Un refus « blocked till … » compte
   comme une **erreur** (nouvelle tentative dans l'heure), plus comme « aucun candidat » (24 h).
+- **Titre supprimé puis redemandé : le torrent est réutilisé, pas retéléchargé** (2026-09-18). `deletion_cleanup`
+  garde les torrents en partage (C411 : ratio 1 ou 7 j) alors que les fichiers médias, eux, sont supprimés.
+  Redemandé, `torrents/add` répondait « Fails. » (déjà présent) et **rien ne s'importait** : Bleach S17, 0/20
+  épisodes pris. `series_search` cherche maintenant l'`infoHash` de la release (fourni par Prowlarr) parmi les
+  torrents du qBittorrent concerné ; s'il est là et complet, il le **réétiquette** vers la nouvelle fiche
+  (`qbit::retag`) et efface son enregistrement `torrent_import` (sinon `is_candidate` le saute, il est marqué
+  `imported`). L'import repart en lien physique en quelques minutes, sans un octet réseau.
 - **Suppression d'une demande dans Jellyseerr** : `deletion_cleanup` supprime la fiche Arr **et ses fichiers**,
   retire les torrents devenus inutiles, puis la fiche média. **Seuls les médias « en attente » (2) ou « en
   cours » (3) sans demande** sont concernés : un scan Jellyfin crée une fiche média pour tout ce qui est déjà

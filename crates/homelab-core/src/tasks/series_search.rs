@@ -173,6 +173,8 @@ pub fn series_candidate(result: &Value, info: &Value, season: i64) -> Option<Can
             "downloadUrl": url,
             "publishDate": result.get("publishDate"),
             "quality": quality,
+            // sert à retrouver un torrent déjà présent dans qBittorrent (titre re-demandé)
+            "infoHash": result.get("infoHash"),
         }),
         title,
     })
@@ -431,22 +433,76 @@ pub fn url_for_arrs(url: &str, host_base: &str, arr_base: &str) -> String {
     }
 }
 
+/// Torrent déjà présent dans ce qBittorrent, complet, portant cet `infoHash`.
+///
+/// Cas courant depuis que `deletion_cleanup` garde les torrents en partage : le titre est supprimé de
+/// Jellyfin (fiche, demande et **fichiers** effacés) mais ses torrents restent pour tenir le ratio C411.
+/// Redemandé, `qbit.add_torrent` répond « Fails. » (déjà présent) et plus rien n'avançait — le
+/// 2026-09-18 sur Bleach S17, 0/20 épisodes pris. Les données sont pourtant intactes : on rattache le
+/// torrent à la nouvelle fiche et `torrent_import` l'importe **sans rien retélécharger**.
+async fn already_there(qbit: &QbitClient, info_hash: &str) -> Option<crate::clients::Torrent> {
+    if info_hash.is_empty() {
+        return None;
+    }
+    qbit.torrents()
+        .await
+        .ok()?
+        .into_iter()
+        .find(|t| t.hash.eq_ignore_ascii_case(info_hash) && t.progress >= 1.0)
+}
+
+/// Ce qu'il faut pour confier une release à qBittorrent.
+struct Grab<'a> {
+    /// Lien de téléchargement Prowlarr.
+    url: &'a str,
+    /// Titre de la release (journaux, détail).
+    title: &'a str,
+    /// Étiquette `homelab:` lue par `torrent_import`.
+    tag: &'a str,
+    /// Empreinte du torrent : sert à retrouver celui qui serait déjà là.
+    info_hash: &'a str,
+}
+
 async fn to_qbittorrent(
     ctx: &TaskContext,
     prow: &ProwlarrClient,
     arr: &ArrClient,
-    url: &str,
-    c_title: &str,
-    tag: &str,
+    g: &Grab<'_>,
     why: &str,
 ) -> Result<(String, String)> {
+    let (url, c_title, tag, info_hash) = (g.url, g.title, g.tag, g.info_hash);
     let qbit = qbit_for(ctx, arr).context("aucun qBittorrent pour ce côté")?;
+    if let Some(t) = already_there(qbit, info_hash).await {
+        qbit.retag(&t.hash, &t.tags, tag).await?;
+        // le torrent avait été importé sous l'ancienne fiche : sans ça `torrent_import` le laisse
+        if !ctx.dry_run {
+            let key = super::torrent_import::state_key(side_name(arr), &t.hash);
+            ctx.state
+                .update(|s| s.torrent_import.remove(&key))
+                .await
+                .ok();
+        }
+        info!(task = "series_search", service = arr.name, release = %c_title, hash = %t.hash, "torrent déjà présent : rattaché à la nouvelle fiche");
+        return Ok((
+            "grabbed".into(),
+            format!("{c_title} (déjà dans qBittorrent, rattaché à la nouvelle fiche)"),
+        ));
+    }
     let torrent = prow.download(url).await?;
     qbit.add_torrent(torrent, "", tag).await?;
     Ok((
         "grabbed".into(),
         format!("{c_title} (ajouté à qBittorrent, {} : {why})", arr.name),
     ))
+}
+
+/// `sonarr-seedbox` → `seedbox` (clé d'état de `torrent_import`).
+fn side_name(arr: &ArrClient) -> &'static str {
+    if arr.name.ends_with("seedbox") {
+        "seedbox"
+    } else {
+        "vps"
+    }
 }
 
 /// Confie la release. Arr du VPS : `release/push` avec un lien qu'il peut joindre, puis vérification qu'il
@@ -517,14 +573,22 @@ pub async fn send_release(
         .get("downloadUrl")
         .and_then(Value::as_str)
         .context("release sans lien de téléchargement")?;
+    let info_hash = release
+        .get("infoHash")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let grab = Grab {
+        url,
+        title: c_title,
+        tag,
+        info_hash,
+    };
     if arr.name.ends_with("seedbox") {
         return to_qbittorrent(
             ctx,
             prow,
             arr,
-            url,
-            c_title,
-            tag,
+            &grab,
             "Prowlarr injoignable depuis la seedbox",
         )
         .await;
@@ -555,7 +619,7 @@ pub async fn send_release(
                 format!("{c_title} refusé : {}", rejected.join(" ; ")),
             ));
         }
-        return to_qbittorrent(ctx, prow, arr, url, c_title, tag, &rejected.join(" ; ")).await;
+        return to_qbittorrent(ctx, prow, arr, &grab, &rejected.join(" ; ")).await;
     }
     // accepté : il doit apparaître dans la file de l'Arr
     for _ in 0..10 {
@@ -572,16 +636,7 @@ pub async fn send_release(
             ));
         }
     }
-    to_qbittorrent(
-        ctx,
-        prow,
-        arr,
-        url,
-        c_title,
-        tag,
-        "accepté mais pas mis en file",
-    )
-    .await
+    to_qbittorrent(ctx, prow, arr, &grab, "accepté mais pas mis en file").await
 }
 
 struct SeasonTodo {
@@ -1115,6 +1170,32 @@ mod tests {
     fn info(season: i64, full: bool, eps: &[i64], qid: i64, res: i64) -> Value {
         json!({"seasonNumber": season, "fullSeason": full, "episodeNumbers": eps,
                "quality": {"quality": {"id": qid, "resolution": res}}})
+    }
+
+    #[test]
+    fn the_info_hash_travels_with_the_release() {
+        // Sans lui, un titre supprimé puis redemandé se heurte au torrent gardé en partage :
+        // qBittorrent refuse « déjà présent » et rien ne s'importe (Bleach S17, le 2026-09-18).
+        let mut r = result("Bleach.S17E09.MULTI.VFF.1080p.BluRay.x265-KAF", 30984, 12);
+        r["infoHash"] = json!("3AEED2C5F1CD7F684F1702BC11190D937A7B5E0E");
+        let c = series_candidate(&r, &info(17, false, &[9], 9, 1080), 17).unwrap();
+        assert_eq!(
+            c.release.get("infoHash").and_then(Value::as_str),
+            Some("3AEED2C5F1CD7F684F1702BC11190D937A7B5E0E")
+        );
+        // release sans infoHash : le champ est présent mais nul, jamais d'erreur
+        let c2 = series_candidate(
+            &result("Bleach.S17E10.MULTI.VFF.1080p", 30984, 3),
+            &info(17, false, &[10], 9, 1080),
+            17,
+        )
+        .unwrap();
+        assert!(c2
+            .release
+            .get("infoHash")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .is_empty());
     }
 
     #[test]

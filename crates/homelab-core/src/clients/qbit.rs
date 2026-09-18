@@ -254,6 +254,39 @@ impl QbitClient {
         Ok(())
     }
 
+    /// Remplace les étiquettes d'un torrent déjà présent (les anciennes `homelab:` d'abord retirées).
+    /// Sert quand un titre supprimé est redemandé : le torrent est encore là, complet, et il suffit de
+    /// le rattacher à la nouvelle fiche pour que `torrent_import` l'importe sans rien retélécharger.
+    pub async fn retag(&self, hash: &str, old_tags: &str, new_tag: &str) -> Result<()> {
+        let stale: Vec<&str> = old_tags
+            .split(',')
+            .map(str::trim)
+            .filter(|t| t.starts_with("homelab:") && *t != new_tag)
+            .collect();
+        if !stale.is_empty() {
+            let form = [
+                ("hashes".to_string(), hash.to_string()),
+                ("tags".to_string(), stale.join(",")),
+            ];
+            let resp = self
+                .send(
+                    |r| r.form(&form),
+                    Method::POST,
+                    "api/v2/torrents/removeTags",
+                )
+                .await?;
+            check(resp, "qbit torrents/removeTags").await?;
+        }
+        let form = [
+            ("hashes".to_string(), hash.to_string()),
+            ("tags".to_string(), new_tag.to_string()),
+        ];
+        let resp = self
+            .send(|r| r.form(&form), Method::POST, "api/v2/torrents/addTags")
+            .await?;
+        check(resp, "qbit torrents/addTags").await.map(|_| ())
+    }
+
     pub async fn delete(&self, hashes: &[String], delete_files: bool) -> Result<()> {
         let form = [
             ("hashes", hashes.join("|")),
