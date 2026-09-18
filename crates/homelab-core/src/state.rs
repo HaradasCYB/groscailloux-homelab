@@ -110,6 +110,13 @@ pub struct SeasonSearchRecord {
     pub outcome: String,
     #[serde(default)]
     pub detail: String,
+    /// Titre de la série, pour l'afficher sur `/status.html` sans réinterroger l'Arr.
+    #[serde(default)]
+    pub title: String,
+    /// Épisodes manquants qu'aucune release ne couvre, au dernier passage. Une saison qui en garde
+    /// est un blocage durable : l'indexer n'a rien, la recherche repartira pour rien.
+    #[serde(default)]
+    pub uncovered: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

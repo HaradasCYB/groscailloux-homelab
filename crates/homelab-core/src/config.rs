@@ -33,6 +33,41 @@ pub struct Config {
     pub manual_search: ManualSearch,
     #[serde(default)]
     pub indexers: Indexers,
+    #[serde(default)]
+    pub downloads: Downloads,
+}
+
+/// Où les tâches ont le droit de lancer de **nouveaux** téléchargements.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Downloads {
+    /// Machines autorisées à récupérer du neuf : `vps`, `seedbox`. Une machine absente garde ses
+    /// fiches, ses fichiers et ses imports, mais aucune tâche ne lui fera prendre une release.
+    pub auto_sides: Vec<String>,
+}
+
+impl Default for Downloads {
+    fn default() -> Self {
+        Self {
+            auto_sides: vec!["seedbox".into()],
+        }
+    }
+}
+
+impl Downloads {
+    /// Nom d'un Arr (`sonarr`, `radarr-seedbox`…) → la machine qui le porte.
+    pub fn side_of(arr: &str) -> &'static str {
+        if arr.ends_with("seedbox") {
+            "seedbox"
+        } else {
+            "vps"
+        }
+    }
+
+    /// Cet Arr a-t-il le droit de prendre une nouvelle release ?
+    pub fn may_grab(&self, arr: &str) -> bool {
+        self.auto_sides.iter().any(|s| s == Self::side_of(arr))
+    }
 }
 
 /// Règles communes à tout ce qui interroge l'indexer (tâches et page `/recherche`).
@@ -1135,6 +1170,12 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.series_search.max_queries_per_run, 6);
         assert_eq!(cfg.tasks.series_search.max_grabs_per_season, 20);
         assert_eq!(cfg.indexers.c411_max_per_hour, 40);
+        // par défaut, seule la seedbox récupère du neuf (2026-09-18)
+        assert_eq!(cfg.downloads.auto_sides, vec!["seedbox".to_string()]);
+        assert!(cfg.downloads.may_grab("sonarr-seedbox"));
+        assert!(cfg.downloads.may_grab("radarr-seedbox"));
+        assert!(!cfg.downloads.may_grab("sonarr"));
+        assert!(!cfg.downloads.may_grab("radarr"));
         assert_eq!(cfg.accounts.max_premium, 25);
         assert_eq!(cfg.accounts.max_devices_per_user, 0);
         assert_eq!(cfg.accounts.max_playbacks_per_user, 2);

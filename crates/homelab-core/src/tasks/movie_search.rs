@@ -181,8 +181,10 @@ impl Task for MovieSearch {
         let Some(prow) = &ctx.prowlarr else {
             return Ok(Report::new("prowlarr non configuré (PROWLARR_API_KEY)", 0));
         };
+        // une machine hors de `[downloads] auto_sides` ne prend plus rien de neuf
         let radarrs: Vec<&ArrClient> = std::iter::once(&ctx.radarr)
             .chain(ctx.seedbox_radarr.as_ref())
+            .filter(|a| ctx.cfg.downloads.may_grab(a.name))
             .collect();
         let records = ctx.state.read(|s| s.movie_search.clone()).await;
         let t = now();
@@ -254,6 +256,8 @@ impl Task for MovieSearch {
                     at: now(),
                     outcome,
                     detail,
+                    title: title.to_string(),
+                    uncovered: Vec::new(),
                 };
                 let k = format!("{}:{id}", arr.name);
                 ctx.state

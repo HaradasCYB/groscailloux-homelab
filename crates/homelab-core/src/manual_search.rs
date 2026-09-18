@@ -397,8 +397,11 @@ pub async fn run(
         }
     }
 
-    // repli : rien par identifiant → titres de la fiche en texte libre (même indexer, même budget)
-    if raw.is_empty() {
+    // Texte libre en plus de l'identifiant pour une SAISON : C411 range souvent un cours d'animé sous
+    // son propre titre, que la recherche par identifiant ne renvoie pas (Bleach S17 le 2026-09-18 :
+    // E27–40 seulement sous « Thousand-Year Blood War »). Ces releases sortent marquées « autre saison »
+    // quand l'Arr ne les rattache pas à la saison demandée : à l'admin de trancher, jamais automatique.
+    if raw.is_empty() || season.is_some() {
         for name in text_names(&item, cfg.text_queries) {
             match crate::indexer::search_text(ctx, prow, &name, 100, true).await {
                 Ok(Some(list)) => {

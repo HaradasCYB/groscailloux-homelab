@@ -25,6 +25,61 @@ pub struct PageData<'a> {
     pub mount_ok: Option<bool>,
     /// Ce qui n'avance pas : torrents terminés que personne ne rattache (`no_match` de `torrent_import`).
     pub stuck_torrents: &'a [String],
+    /// Saisons suivies dont l'indexer ne propose **rien** pour certains épisodes : la recherche
+    /// repartira tous les jours sans jamais rien trouver, il faut la main d'un admin (`/recherche`).
+    pub blocked_seasons: &'a [String],
+}
+
+/// Saisons dont le dernier passage a laissé des épisodes sans aucune release, les plus récentes
+/// d'abord. Clé d'état : `<arr>:<série>:<saison>`.
+pub fn blocked_seasons(
+    records: &BTreeMap<String, homelab_core::state::SeasonSearchRecord>,
+    now: i64,
+    max: usize,
+) -> Vec<String> {
+    let mut v: Vec<(i64, String)> = records
+        .iter()
+        .filter(|(_, r)| !r.uncovered.is_empty())
+        .map(|(k, r)| {
+            let mut it = k.split(':');
+            let side = it.next().unwrap_or("?");
+            let season = k.rsplit(':').next().unwrap_or("?");
+            let title = if r.title.is_empty() { k } else { &r.title };
+            (
+                r.at,
+                format!(
+                    "{side} · {title} S{season} — {n} épisode(s) introuvable(s) : {list} (vu {ago})",
+                    n = r.uncovered.len(),
+                    list = episode_list(&r.uncovered),
+                    ago = ago(now, r.at)
+                ),
+            )
+        })
+        .collect();
+    v.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    v.into_iter().take(max).map(|(_, s)| s).collect()
+}
+
+/// `[1,2,3,7]` → `1-3, 7` (une saison entière tiendrait sinon sur trois lignes).
+fn episode_list(eps: &[i64]) -> String {
+    let mut v = eps.to_vec();
+    v.sort_unstable();
+    v.dedup();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < v.len() {
+        let start = i;
+        while i + 1 < v.len() && v[i + 1] == v[i] + 1 {
+            i += 1;
+        }
+        out.push(if i > start {
+            format!("{}-{}", v[start], v[i])
+        } else {
+            v[start].to_string()
+        });
+        i += 1;
+    }
+    out.join(", ")
 }
 
 /// Torrents finis dont aucune fiche n'a voulu (décision `no_match`), les plus récents d'abord.
@@ -192,7 +247,7 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
 </style></head><body>
 <header><h1>Automatisation homelabd</h1><div>{headline} {mount}</div></header>
 <div class="gs">{vps}{sb}</div>
-<table>{rows}</table>{stuck}
+<table>{rows}</table>{stuck}{blocked}
 </body></html>"#,
         vps = gauge(
             "Disque VPS",
@@ -207,6 +262,19 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
                 n = d.stuck_torrents.len(),
                 rows = d
                     .stuck_torrents
+                    .iter()
+                    .map(|t| format!("<tr><td class=\"s\">{t}</td></tr>"))
+                    .collect::<String>()
+            )
+        },
+        blocked = if d.blocked_seasons.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"<h1 style="margin:14px 0 6px">Saisons sans release ({n})</h1><table>{rows}</table>"#,
+                n = d.blocked_seasons.len(),
+                rows = d
+                    .blocked_seasons
                     .iter()
                     .map(|t| format!("<tr><td class=\"s\">{t}</td></tr>"))
                     .collect::<String>()
@@ -256,6 +324,7 @@ mod tests {
             tasks: &tasks,
             vps_disk_pct: Some(74),
             stuck_torrents: &[],
+            blocked_seasons: &[],
             seedbox: Some(SeedboxQuota {
                 used_kb: 1_429_000_000,
                 quota_kb: 3_725_000_000,
@@ -298,6 +367,40 @@ mod tests {
     }
 
     #[test]
+    fn episode_ranges_stay_short() {
+        assert_eq!(episode_list(&[27, 28, 29, 30, 40]), "27-30, 40");
+        assert_eq!(episode_list(&[5]), "5");
+        assert_eq!(episode_list(&[3, 1, 2]), "1-3");
+    }
+
+    #[test]
+    fn only_seasons_the_indexer_cannot_serve_are_listed() {
+        use homelab_core::state::SeasonSearchRecord;
+        let rec = |outcome: &str, title: &str, uncovered: Vec<i64>| SeasonSearchRecord {
+            at: 900,
+            outcome: outcome.into(),
+            detail: String::new(),
+            title: title.into(),
+            uncovered,
+        };
+        let mut recs = BTreeMap::new();
+        recs.insert(
+            "sonarr-seedbox:58:17".to_string(),
+            rec("grabbed_episode", "Bleach", (27..=40).collect()),
+        );
+        // saison servie entièrement : rien à signaler
+        recs.insert(
+            "sonarr-seedbox:12:1".to_string(),
+            rec("grabbed", "Autre", Vec::new()),
+        );
+        let out = blocked_seasons(&recs, 1000, 15);
+        assert_eq!(out.len(), 1, "seule la saison à trous");
+        assert!(out[0].contains("Bleach S17"), "{}", out[0]);
+        assert!(out[0].contains("14 épisode(s)"), "{}", out[0]);
+        assert!(out[0].contains("27-40"), "{}", out[0]);
+    }
+
+    #[test]
     fn missing_quota_is_explicit() {
         let runs = BTreeMap::new();
         let html = render(&PageData {
@@ -308,6 +411,7 @@ mod tests {
             seedbox: None,
             mount_ok: None,
             stuck_torrents: &[],
+            blocked_seasons: &[],
         });
         assert!(html.contains("quota non disponible"));
     }

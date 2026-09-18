@@ -102,6 +102,19 @@ par le profil et ≤ 1080p, au moins une source, épisodes manquants. Pack si la
 sinon épisodes ; tri langue, résolution, H.264, sources. Rien par identifiant (série sans `tmdbId`, releases
 sans attribut) : `text_queries` noms essayés en texte libre (Jellyseerr FR et original, Sonarr, alternatifs),
 titre parsé identique exigé, release d'un autre identifiant écartée.
+
+**Identifiant incomplet → texte libre en plus** (2026-09-18) : `uncovered()` compare les épisodes manquants aux
+épisodes couverts par les candidats. S'il en reste, les noms de la série sont essayés **en complément** de
+l'identifiant (`how = "tmdb+texte"`), avec les mêmes garde-fous. Vu sur Bleach S17 : `{TmdbId:30984}{Season:17}`
+renvoie 41 releases qui couvrent E01–26 et E41–48, mais **jamais E27–40** — ce cours n'est publié que sous
+`BLEACH.Thousand-Year.Blood.War.S03`. Attention, Sonarr n'analyse correctement que le premier cours : `S01` →
+saison 17, mais `S02` → saison 2 et `S03` → saison 3 de Bleach. Le garde-fou d'égalité de saison les refuse, ce
+qui évite d'écraser deux vraies saisons ; ce qui reste introuvable est enregistré (`uncovered` dans
+`state.unknown_series`) et listé sur `/status.html` sous « Saisons sans release », pour une reprise à la main
+depuis `/recherche`.
+
+**Le VPS ne cherche plus** (2026-09-18) : `[downloads] auto_sides = ["seedbox"]` retire les Arrs du VPS de la
+boucle, et leur indexer C411 est en `enableRss = false`. Le VPS n'entame plus aucun téléchargement.
 **Envoi** — Arr du **VPS** : `POST /api/v3/release/push` (Sonarr suit, importe, renomme) avec le lien Prowlarr
 réécrit pour les conteneurs (`prowlarr_url_for_arrs` = `http://prowlarr:9696` : le lien renvoyé par Prowlarr,
 `http://localhost:9696/…`, désigne le conteneur lui-même, et Sonarr accepte l'envoi puis échoue en silence

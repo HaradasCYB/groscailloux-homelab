@@ -15,7 +15,7 @@
 //! pour importer dans cette fiche sans analyser de nom. Rien par identifiant : un essai en texte libre avec
 //! les noms connus de la série (titre vérifié). Requêtes plafonnées et espacées (limite de C411).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -115,6 +115,24 @@ pub fn is_h264(title: &str) -> bool {
 /// La release porte-t-elle l'identifiant TMDB de l'œuvre cherchée ? (C411 renvoie `tmdbId` sur chacune.)
 pub fn tmdb_matches(release: &Value, tmdb_id: i64) -> bool {
     tmdb_id > 0 && release.get("tmdbId").and_then(Value::as_i64) == Some(tmdb_id)
+}
+
+/// Épisodes manquants qu'aucun candidat ne couvre. Un pack de saison les couvre tous.
+///
+/// Sert à décider si la recherche par identifiant suffit : C411 peut très bien renvoyer 41 releases
+/// pour une saison et n'en couvrir que les deux tiers (Bleach S17 le 2026-09-18 : E01–26 et E41–48
+/// par identifiant, E27–40 seulement sous le titre du cours « Thousand-Year Blood War »).
+pub fn uncovered(cands: &[Candidate], missing: &HashSet<i64>) -> BTreeSet<i64> {
+    if cands.iter().any(|c| c.full_season) {
+        return BTreeSet::new();
+    }
+    let mut left: BTreeSet<i64> = missing.iter().copied().collect();
+    for c in cands {
+        for e in &c.episodes {
+            left.remove(e);
+        }
+    }
+    left
 }
 
 /// Candidat d'après un résultat Prowlarr et l'analyse (`parsedEpisodeInfo`) de son titre par Sonarr.
@@ -645,12 +663,27 @@ async fn season_candidates(
                 out.push(c);
             }
         }
-        if !out.is_empty() {
+        // l'identifiant suffit seulement s'il couvre TOUS les épisodes manquants ; s'il en laisse,
+        // on complète en texte libre (les cours d'un animé sont souvent nommés autrement)
+        let left = uncovered(&out, &todo.missing_numbers);
+        if !out.is_empty() && left.is_empty() {
             return Ok((out, "tmdb"));
         }
+        if !out.is_empty() {
+            info!(
+                task = "series_search",
+                series_id = todo.series_id,
+                season = todo.season,
+                releases = out.len(),
+                sans_candidat = left.len(),
+                "identifiant incomplet : complément en texte libre"
+            );
+        }
     }
-    // secours : série sans identifiant TMDB, ou identifiant absent des releases de l'indexer
-    let mut seen: HashSet<String> = HashSet::new();
+    // complément (ou secours) : titres de la fiche en texte libre. Les releases déjà vues par
+    // identifiant sont ignorées, le garde-fou de saison reste le même.
+    let by_id = out.len();
+    let mut seen: HashSet<String> = out.iter().map(|c| c.title.clone()).collect();
     for name in names.iter().take(cfg.text_queries) {
         if !throttle.take().await {
             break;
@@ -696,10 +729,28 @@ async fn season_candidates(
             }
         }
     }
-    Ok((out, "texte"))
+    Ok((out, if by_id > 0 { "tmdb+texte" } else { "texte" }))
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Résultat d'un passage sur une saison : décision, détail lisible, et les épisodes manquants
+/// qu'aucune release ne couvre (affichés sur `/status.html`).
+struct SeasonOutcome {
+    outcome: String,
+    detail: String,
+    uncovered: Vec<i64>,
+}
+
+impl SeasonOutcome {
+    fn new(outcome: &str, detail: String, uncovered: Vec<i64>) -> Self {
+        Self {
+            outcome: outcome.into(),
+            detail,
+            uncovered,
+        }
+    }
+}
+
 async fn process_season(
     ctx: &TaskContext,
     prow: &ProwlarrClient,
@@ -707,13 +758,17 @@ async fn process_season(
     series: &Value,
     todo: &SeasonTodo,
     throttle: &mut Throttle,
-) -> Result<(String, String)> {
+) -> Result<SeasonOutcome> {
     let cfg = &ctx.cfg.tasks.series_search;
     let title = series.get("title").and_then(Value::as_str).unwrap_or("?");
     let (cands, how) = season_candidates(ctx, prow, arr, series, todo, throttle).await?;
     if how == "budget" {
-        return Ok(("pending".into(), String::new()));
+        return Ok(SeasonOutcome::new("pending", String::new(), Vec::new()));
     }
+    // ce que l'indexer n'a pas du tout : remonté tel quel sur /status.html
+    let left: Vec<i64> = uncovered(&cands, &todo.missing_numbers)
+        .into_iter()
+        .collect();
     let profile_id = series
         .get("qualityProfileId")
         .and_then(Value::as_i64)
@@ -758,9 +813,10 @@ async fn process_season(
                 how,
                 "dry-run: would grab every missing episode"
             );
-            return Ok((
-                "dry_run".into(),
+            return Ok(SeasonOutcome::new(
+                "dry_run",
                 format!("{} épisode(s) : {}", singles.len(), list.join(" ; ")),
+                left,
             ));
         }
         let target = Target::Season {
@@ -793,25 +849,31 @@ async fn process_season(
             how,
             "saison prise épisode par épisode"
         );
-        return Ok((
-            if ok > 0 { "grabbed_episode" } else { "error" }.into(),
+        return Ok(SeasonOutcome::new(
+            if ok > 0 { "grabbed_episode" } else { "error" },
             format!("{ok}/{} épisode(s) pris ({last})", singles.len()),
+            left,
         ));
     }
     let chosen = pack.or_else(|| pick(false));
     let Some(c) = chosen else {
-        return Ok((
-            "none".into(),
+        return Ok(SeasonOutcome::new(
+            "none",
             format!(
                 "{} candidat(s) {} (recherche {how}), aucun acceptable",
                 cands.len(),
                 cfg.indexer
             ),
+            left,
         ));
     };
     if ctx.dry_run {
         info!(task = "series_search", service = arr.name, series = title, season = todo.season, release = %c.title, how, "dry-run: would send");
-        return Ok(("dry_run".into(), format!("{} (recherche {how})", c.title)));
+        return Ok(SeasonOutcome::new(
+            "dry_run",
+            format!("{} (recherche {how})", c.title),
+            left,
+        ));
     }
     let target = Target::Season {
         series_id: todo.series_id,
@@ -823,7 +885,7 @@ async fn process_season(
         outcome = "grabbed_episode".into();
     }
     info!(task = "series_search", service = arr.name, series = title, season = todo.season, release = %c.title, how, %outcome, %detail, "season sent");
-    Ok((outcome, detail))
+    Ok(SeasonOutcome::new(&outcome, detail, left))
 }
 
 async fn plan_seasons(ctx: &TaskContext, arr: &ArrClient) -> Result<Vec<SeasonTodo>> {
@@ -914,7 +976,12 @@ impl Task for SeriesSearch {
         }
         let mut arrs: Vec<Ctx> = Vec::new();
         let mut all: Vec<(usize, SeasonTodo)> = Vec::new();
-        for arr in ctx.all_sonarr() {
+        // une machine hors de `[downloads] auto_sides` ne prend plus rien de neuf
+        for arr in ctx
+            .all_sonarr()
+            .into_iter()
+            .filter(|a| ctx.cfg.downloads.may_grab(a.name))
+        {
             let prepared = async {
                 let todo = plan_seasons(ctx, arr).await?;
                 let series: HashMap<i64, Value> = arr
@@ -988,15 +1055,22 @@ impl Task for SeriesSearch {
             let Some(ser) = c.series.get(&s.series_id) else {
                 continue;
             };
-            let (outcome, detail) = match process_season(ctx, prow, c.arr, ser, s, &mut throttle)
-                .await
-            {
+            let res = match process_season(ctx, prow, c.arr, ser, s, &mut throttle).await {
                 Ok(r) => r,
                 Err(e) => {
                     warn!(task = "series_search", service = c.arr.name, series_id = s.series_id, season = s.season, error = %e, "season failed");
-                    ("error".into(), format!("{e:#}").chars().take(200).collect())
+                    SeasonOutcome::new(
+                        "error",
+                        format!("{e:#}").chars().take(200).collect(),
+                        Vec::new(),
+                    )
                 }
             };
+            let SeasonOutcome {
+                outcome,
+                detail,
+                uncovered,
+            } = res;
             *counts.entry(outcome.clone()).or_default() += 1;
             if outcome == "pending" {
                 continue;
@@ -1008,6 +1082,8 @@ impl Task for SeriesSearch {
                     at: now(),
                     outcome,
                     detail,
+                    title: sname.to_string(),
+                    uncovered,
                 };
                 let k = key(c.arr, s.series_id, s.season);
                 ctx.state
@@ -1034,6 +1110,53 @@ mod tests {
     fn info(season: i64, full: bool, eps: &[i64], qid: i64, res: i64) -> Value {
         json!({"seasonNumber": season, "fullSeason": full, "episodeNumbers": eps,
                "quality": {"quality": {"id": qid, "resolution": res}}})
+    }
+
+    #[test]
+    fn identifier_search_that_leaves_holes_is_not_enough() {
+        // Bleach S17 le 2026-09-18 : C411 par identifiant couvre E01-26 et E41-48, jamais E27-40.
+        let missing: HashSet<i64> = (1..=48).collect();
+        let cands: Vec<Candidate> = (1..=26)
+            .chain(41..=48)
+            .filter_map(|e| {
+                series_candidate(
+                    &result(&format!("Bleach.S17E{e:02}.MULTI.VFF.1080p"), 30984, 10),
+                    &info(17, false, &[e], 9, 1080),
+                    17,
+                )
+            })
+            .collect();
+        assert_eq!(cands.len(), 34);
+        let left: Vec<i64> = uncovered(&cands, &missing).into_iter().collect();
+        assert_eq!(left, (27..=40).collect::<Vec<i64>>(), "le trou est vu");
+    }
+
+    #[test]
+    fn a_season_pack_covers_everything() {
+        let missing: HashSet<i64> = (1..=48).collect();
+        let pack = series_candidate(
+            &result("Bleach.S17.MULTI.VFF.1080p", 30984, 50),
+            &info(17, true, &[], 9, 1080),
+            17,
+        )
+        .unwrap();
+        assert!(uncovered(&[pack], &missing).is_empty());
+    }
+
+    #[test]
+    fn a_cour_pack_on_another_season_is_never_a_candidate() {
+        // « Thousand-Year Blood War S03 » : Sonarr l'analyse en saison 3 de Bleach. La prendre pour
+        // la saison 17 écraserait une vraie saison — le garde-fou de saison la refuse.
+        assert!(series_candidate(
+            &result(
+                "BLEACH.Thousand-Year.Blood.War.S03.MULTI.VFF.1080p.H264-TFA",
+                30984,
+                163
+            ),
+            &info(3, true, &[], 9, 1080),
+            17,
+        )
+        .is_none());
     }
 
     #[test]
@@ -1296,6 +1419,8 @@ mod tests {
             at,
             outcome: outcome.into(),
             detail: String::new(),
+            title: String::new(),
+            uncovered: Vec::new(),
         };
         assert!(due(None, 1000, 24, 168, 1, 15));
         assert!(!due(Some(&r("none", 0)), 23 * 3600, 24, 168, 1, 15));

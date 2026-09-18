@@ -56,6 +56,28 @@ journalctl -u homelabd -f
 - **Type « anime » obligatoire** : une série rangée dans Anime est mise en `seriesType = anime` par
   `anime_library` (au déplacement et en rattrapage), sinon Sonarr ne comprend pas la numérotation absolue
   (« Bleach - 367 ») et les imports tombent à côté. 23 séries corrigées le 2026-09-18, sans perte de fichier.
+- **Tout ce qui est neuf passe par la SEEDBOX** (2026-09-18) : `[downloads] auto_sides = ["seedbox"]` — `series_search`
+  et `movie_search` ignorent les Arrs du VPS — **et** `enableRss = false` sur l'indexer C411 de Sonarr et Radarr du
+  VPS (sauvegarde `backups/vps-rss-off-20260918-093803/`). Le VPS garde ses fiches, ses fichiers, `torrent_import` et
+  `deletion_cleanup` ; il ne prend simplement plus aucune release. Remettre `"vps"` dans `auto_sides` **ne suffit
+  pas** : il faut aussi rallumer le RSS côté Arr. Jellyseerr envoie déjà tout sur la seedbox (`isDefault` sur les
+  serveurs id 1).
+- **Les numéros de profil diffèrent d'une machine à l'autre** : VPS `6` = FR-friendly H.264, `7` = Anime - JAP/VOSTFR ;
+  seedbox `7` = FR-friendly H.264, `8` = Anime - JAP/VOSTFR. Le 2026-09-18, les 24 séries et 46 films du VPS avaient
+  été basculés sur le `7` du VPS en croyant viser FR-friendly : ils se sont retrouvés sur le profil japonais (VOSTFR
+  +3000, JAP Audio +2500, **FRENCH −500**, `minFormatScore` 0 au lieu de −9999), donc prêts à préférer la VOSTFR et à
+  refuser une release française. Remis sur le `6` le jour même, sans perte (352 épisodes, 46 films ; `upgradeAllowed`
+  est à `false`, rien n'est retéléchargé). **Toujours vérifier le NOM du profil, jamais son numéro.**
+- **Une recherche par identifiant peut ne couvrir qu'une partie d'une saison** : Bleach S17 le 2026-09-18, C411 par
+  `{TmdbId}{Season}` renvoie 41 releases couvrant E01–26 et E41–48, **jamais E27–40**. `series_search::uncovered`
+  compare les épisodes manquants aux candidats ; s'il en reste, le repli en texte libre est lancé **en plus** de
+  l'identifiant (`how = "tmdb+texte"`), et ce qui reste introuvable est écrit dans l'état (`uncovered`) puis affiché
+  sur `/status.html` (« Saisons sans release »). Sans ça la recherche repartait tous les jours pour rien, en silence.
+- **Les cours d'un animé sont publiés sous leur propre titre** : `BLEACH.Thousand-Year.Blood.War.S01/S02/S03` (packs
+  H264 MULTi VFF) couvrent Bleach S17. Sonarr n'en rattache correctement que **S01** (→ saison 17) ; **S02 → saison 2
+  et S03 → saison 3 de Bleach**. Les prendre automatiquement écraserait deux vraies saisons : le garde-fou d'égalité
+  de saison de `series_candidate` les refuse, et il ne faut pas le retirer. Ces releases sont montrées sur
+  `/recherche` marquées « autre saison », à l'admin de trancher.
 - **Aucune recherche depuis Sonarr/Radarr** : C411 y est en **RSS seulement** (`enableAutomaticSearch` et
   `enableInteractiveSearch` à `false` sur les 4 Arrs, depuis le 2026-09-17). Un bouton « Search » sur une saison
   d'animé interrogeait C411 épisode par épisode : 30 requêtes d'un coup, « API Request Limit reached, disabled
@@ -216,6 +238,10 @@ journalctl -u homelabd -f
   `[manual_search] max_queries_per_hour`) et chez Nyaa pour les animés (liens **magnet** : ajoutés au qBittorrent
   du côté concerné avec l'étiquette `homelab:`). Toutes les releases sont montrées et marquées (VOSTFR, hors
   profil, autre saison…), le choix reste à l'admin.
+- **Dossiers de saison** : `enableSeasonFolders` était à `false` sur les deux Sonarr de Jellyseerr — toute fiche créée
+  par une demande rangeait ses épisodes à plat (28 séries sur 77 le 2026-09-18, dont Bleach et ses 366 épisodes).
+  Remis à `true` (sauvegarde `backups/jellyseerr-sonarr-20260918/`) ; les tâches homelabd créaient déjà avec
+  `seasonFolder: true`. Les fiches déjà à plat le restent tant qu'on ne les renomme pas.
 - **Vue d'ensemble des membres** : onglets Demandes et Calendrier de Jellyfin Enhanced ouverts à tous
   (`DownloadsFilterByUserRequests` et `CalendarFilterByLibraryAccess` à `false`, `SonarrInstances`/`RadarrInstances`
   = VPS **et** seedbox) et droit Jellyseerr « voir les demandes » (bit 16384) sur les comptes actifs, dans

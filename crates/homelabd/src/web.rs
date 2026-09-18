@@ -181,6 +181,7 @@ async fn status_html(
     }
     let runs = st.ctx.state.read(|s| s.task_runs.clone()).await;
     let imports = st.ctx.state.read(|s| s.torrent_import.clone()).await;
+    let seasons = st.ctx.state.read(|s| s.unknown_series.clone()).await;
     let cfg = st.ctx.cfg.clone();
     if cfg.seedbox.enabled {
         // le cache de répertoires rclone (1 h) masquerait le quota réécrit toutes les 15 min
@@ -226,6 +227,7 @@ async fn status_html(
         seedbox: quota,
         mount_ok: mounted,
         stuck_torrents: &status_page::unmatched(&imports, homelab_core::state::now(), 15),
+        blocked_seasons: &status_page::blocked_seasons(&seasons, homelab_core::state::now(), 15),
     });
     (StatusCode::OK, Html(html))
 }

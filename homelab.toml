@@ -252,6 +252,13 @@ allow_no_french = true        # release sans français (VO) prise en dernier rec
 max_gb_per_episode = 6.0      # au-delà, écartée du choix automatique (reste visible sur la page)
 max_gb_per_movie = 25.0
 
+[downloads]
+# Tout ce qui est neuf passe par la SEEDBOX (2026-09-18). Le VPS garde ses fiches, ses fichiers et ses
+# imports manuels, mais aucune tâche ne lui fait plus prendre de release, et son indexer C411 est en
+# RSS coupé (`enableRss = false` sur Sonarr et Radarr du VPS, sauvegarde backups/vps-rss-off-20260918-093803).
+# Remettre "vps" ici ne suffit donc pas : il faudrait aussi réactiver le RSS côté Arr.
+auto_sides = ["seedbox"]
+
 [manual_search]
 # Page /recherche (onboarder, liste admin-outils + jeton) : recherche manuelle d'une saison ou d'un film par
 # identifiant TMDB chez C411, titres de la fiche en secours. À utiliser au lieu de la recherche de

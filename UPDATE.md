@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.10.0](#1100--18092026--les-animés-sans-accroc)** | 18/09/2026 | **Les animés sans accroc** |
+| **[1.11.0](#1110--18092026--tout-passe-par-la-seedbox)** | 18/09/2026 | **Tout passe par la seedbox** |
+| [1.10.0](#1100--18092026--les-animés-sans-accroc) | 18/09/2026 | Les animés sans accroc |
 | [1.9.0](#190--18092026--une-saison-complète-du-premier-coup) | 18/09/2026 | Une saison complète du premier coup |
 | [1.8.0](#180--17092026--lindexeur-ne-tombe-plus) | 17/09/2026 | L'indexeur ne tombe plus |
 | [1.7.0](#170--17092026--plus-de-confusion-avec-les-spin-offs) | 17/09/2026 | Plus de confusion avec les spin-offs |
@@ -29,6 +30,26 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.11.0 — 18/09/2026 — Tout passe par la seedbox
+
+Test en conditions réelles d'une demande d'animé à 50 épisodes (18 minutes entre la demande et la
+disponibilité), qui a mis au jour trois défauts.
+
+- **Le serveur principal ne télécharge plus rien tout seul** : tout ce qui est neuf est récupéré par la
+  seedbox, qui est faite pour ça. Le serveur principal continue de servir ce qu'il a déjà.
+- **Correction d'une erreur de la version précédente** : les fiches du serveur principal avaient été mises sur
+  un profil de qualité qui **préférait la version japonaise sous-titrée à la version française**, et pouvait
+  refuser une version française. Toutes les fiches (24 séries, 46 films) sont revenues sur le profil français.
+  Aucun fichier n'a été retéléchargé ni remplacé.
+- **Les saisons que l'indexeur ne peut pas servir sont enfin visibles** : quand il manque des épisodes
+  qu'aucune version ne couvre, la recherche repartait tous les jours pour rien, en silence. Ces saisons
+  apparaissent maintenant dans la page d'état, avec la liste des épisodes concernés.
+- **Recherche élargie** : quand la recherche par identifiant ne couvre qu'une partie d'une saison, les titres
+  de la série sont aussi essayés — un animé diffusé en plusieurs parties est souvent publié sous le nom de la
+  partie, jamais sous celui de la série. La page de recherche manuelle fait de même et signale les versions
+  qui portent une autre numérotation de saison, sans jamais les prendre automatiquement.
+- **Dossiers de saison rétablis** : les séries créées par une demande rangeaient tous leurs épisodes à plat.
 
 ## 1.10.0 — 18/09/2026 — Les animés sans accroc
 
