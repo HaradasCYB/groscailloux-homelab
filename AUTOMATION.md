@@ -83,6 +83,16 @@ torrents. Jellyfin : LibraryMonitor (VPS) ou `seedbox_refresh` (seedbox). Le wat
 vidéos qui appartiennent à un torrent qBittorrent.
 Résumé : `files=3 arr_managed=67 already_linked=8 imported=2 no_match=1 pending=0`.
 
+### hls_loop_watch — 5 min
+Boucle HLS = un client qui redemande sans fin le même segment d'un flux transcodé, ce que le membre voit comme
+« ça charge » (le 13/09/2026, une TV webOS a redemandé deux segments ~950 fois en 6 min, tous servis en 200 avec
+des tailles différentes : le segment était régénéré sous elle). Jellyfin ne journalise que « non-keyframe breaks » ;
+NPM voit chaque requête. La tâche relit les `tail_bytes` derniers octets de `npm_access_log` (horodatages **UTC**),
+garde les requêtes `/videos/<id>/hls1/…/<n>.(ts|mp4|m4s)` de la fenêtre `window_secs`, et compte par (client, média,
+segment) en fenêtre glissante ; `≥ threshold` ⇒ `warn!` + mail admin, une seule fois par (client, média) tant que la
+boucle dure. Le résumé porte aussi les relances HLS du jour (« non-keyframe breaks » dans le journal Jellyfin) et
+les 5xx sur segments — les repères de l'audit lecture du 2026-09-18. Rien n'est modifié.
+
 ### series_search — 10 min (remplace unknown_series_grab)
 Les séries se cherchent **par identifiant TMDB**, par homelabd, plus par Sonarr. Pourquoi : Sonarr interroge
 C411 avec ses propres titres (« Shingeki no Kyojin », « Attack on Titan ») alors que C411 range la série sous

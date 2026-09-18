@@ -147,6 +147,32 @@ journalctl -u homelabd -f
 - **Arrêter un service volontairement** : l'ajouter à `tasks.stack_health.ignore` dans
   `homelab.toml` (+ restart homelabd) ou désactiver la tâche, sinon `stack_health` le relance
   dans les 5 min. `guacamole` est en `restart: "no"` exprès (course au boot avec guacdb).
+- **Audit lecture du 2026-09-18** (v1.14.0) — les trois causes mesurées et ce qui a été fait :
+  1. **Trickplay tournait 6 h chaque matin sans jamais finir** (« Cancelled after 360 minutes » à 11:30, 256 items
+     sur ~1 840) et Intro Skipper jusqu'à 3 h : **506–521 Mbit/s entrants de 05 h à 08 h**, ~1,2 To/matin à
+     travers un cache rclone de 20 Go → cache vidé chaque matin, tout repartait sur le réseau le soir. Trickplay
+     passé **hebdomadaire (dimanche 05:30, butée 6 h)**, Intro Skipper à 05:30 (`ProcessThreads 2`,
+     `MaxParallelism 1`, `ScanCommercial false`), images de chapitre 06:30 en `P480` (extraction désactivée par
+     bibliothèque : tâche vide), `LibraryScanFanoutConcurrency 2`. Fenêtre en semaine : tout est fini à 08:30.
+  2. **rclone** (`systemd/homelab-seedbox-mount.service`) : cache **120G** avec `--vfs-cache-min-free-space 80G`
+     (rclone évince seul avant `disk_pressure hard_pct 95`), `--vfs-cache-max-age 168h`, `--vfs-read-chunk-size
+     4M` (un chunk est livré entier : 8M = 0,67 s au premier Mio), `--sftp-connections 32`. `--vfs-read-ahead`
+     reste absent (palier B, à mesurer) : le refus historique visait le doublement de chunk du mode
+     `streams = 0`, pas cette option. **Le lien seedbox est > 500 Mbit/s entrant** (mesuré), pas ~190.
+  3. **Jellyfin** : tmpfs 2 Go compté dans `mem_limit 4g` → `ThrottleDelaySeconds 180`, `SegmentKeepSeconds 300`
+     (retour arrière 5 min sans relance ffmpeg ; 720 après la sortie du tmpfs, palier B) ; **`cpus: 4` retiré**
+     (deux transcodages passaient à 0,82× ; `cpu_shares` arbitre) ; healthcheck explicite `start_period 180s`
+     (l'image en a un à 0 : une migration de base au boot était redémarrée par `stack_health` après ~3,5 min).
+  `cpu_shares` posés sur npm (2048), gluetun/jellyseerr/guacdb/guacd/guacamole (512), duckdns (256) ; homarr
+  `cpus: 1`. HoverTrailer et Media Bar jouent des bandes-annonces **YouTube** (zéro CPU serveur) : seul
+  `EnableThemeVideoFallback` touchait Jellyfin, mis à `false`. **Plafond à l'acquisition** : 110 Mo/min sur les
+  qualités 1080p des 4 Arrs (`qualitydefinition`, ≈ 14,7 Mbit/s), `[indexers] max_gb_per_movie 15`,
+  `max_gb_per_episode 3` ; pas de plafond par utilisateur (il forcerait des transcodages). Observabilité :
+  Telegraf lit l'API RC rclone (`rclone_vfs`, `rclone_core`) et la tâche **`hls_loop_watch`** lit le journal
+  NPM (UTC) pour signaler un client qui redemande le même segment ≥ 20 fois en 5 min (mail admin). Les
+  changements qui coupent la lecture (restart du montage, recréation des conteneurs) s'appliquent **hors pic**
+  par timer transitoire (`backups/playback-audit-*/apply-offpeak.sh`). Port 8096 et `PublishedServerUrl` gardés :
+  compteur `iptables -nvL DOCKER | grep dpt:8096` à 0, à relire après 7 jours avant de fermer.
 - **Lecture Jellyfin** : aucune tâche lourde (trickplay, analyse de segments, scan complet,
   extraction) entre 13 h et 05 h ; trickplay jamais pendant les scans (il lit tout le fichier, par le
   lien seedbox pour ses titres). `cpu_shares` : jellyfin 2048, fond 512 — le garder sur tout nouveau service de fond.

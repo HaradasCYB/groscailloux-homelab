@@ -13,9 +13,11 @@ ExecStartPre=/bin/mkdir -p /opt/homelab/cache/rclone
 ExecStart=/usr/local/bin/rclone mount seedbox:media /mnt/seedbox/media \
   --config /opt/homelab/rclone/rclone.conf \
   --allow-other --umask 022 \
-  --vfs-cache-mode full --vfs-cache-max-size 20G --vfs-cache-max-age 72h \
+  --vfs-cache-mode full --vfs-cache-max-size 120G --vfs-cache-max-age 168h \
+  --vfs-cache-min-free-space 80G \
   --cache-dir /opt/homelab/cache/rclone \
-  --vfs-read-chunk-size 8M --vfs-read-chunk-streams 4 --buffer-size 32M \
+  --vfs-read-chunk-size 4M --vfs-read-chunk-streams 4 --buffer-size 32M \
+  --sftp-connections 32 \
   --dir-cache-time 1h --attr-timeout 1h \
   --rc --rc-addr 127.0.0.1:5572 --rc-no-auth \
   --log-level INFO

@@ -94,8 +94,8 @@ impl Default for Indexers {
             cooldown_after_429_mins: 15,
             manual_reserve: 10,
             allow_no_french: true,
-            max_gb_per_episode: 6.0,
-            max_gb_per_movie: 25.0,
+            max_gb_per_episode: 3.0,
+            max_gb_per_movie: 15.0,
         }
     }
 }
@@ -306,6 +306,8 @@ pub struct Tasks {
     pub tracker_ratio: TrackerRatio,
     pub stuck_handler: StuckHandler,
     pub disk_pressure: DiskPressure,
+    #[serde(default)]
+    pub hls_loop_watch: HlsLoopWatch,
     pub tba_bypass: Interval300,
     pub monitor_sync: Interval600,
     pub user_poller: UserPoller,
@@ -763,6 +765,32 @@ impl Default for StuckHandler {
     }
 }
 
+/// Boucles HLS : un client qui redemande sans fin le même segment d'un flux transcodé (journal NPM).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct HlsLoopWatch {
+    pub interval_secs: u64,
+    /// Journal d'accès NPM de l'hôte Jellyfin (horodatages UTC).
+    pub npm_access_log: PathBuf,
+    /// Octets relus en fin de journal à chaque passage.
+    pub tail_bytes: u64,
+    /// Fenêtre glissante (secondes) et nombre de demandes d'un même segment qui font une boucle.
+    pub window_secs: i64,
+    pub threshold: usize,
+}
+
+impl Default for HlsLoopWatch {
+    fn default() -> Self {
+        Self {
+            interval_secs: 300,
+            npm_access_log: "/opt/homelab/npm/data/logs/proxy-host-1_access.log".into(),
+            tail_bytes: 4 * 1024 * 1024,
+            window_secs: 300,
+            threshold: 20,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct DiskPressure {
@@ -1178,10 +1206,15 @@ jellyseerr = "http://js"
         assert!(cfg.task_enabled("tba_bypass"));
         assert_eq!(cfg.tasks.torrent_import.interval_secs, 120);
         assert_eq!(cfg.tasks.torrent_import.max_per_run, 10);
+        assert_eq!(cfg.tasks.hls_loop_watch.threshold, 20);
+        assert_eq!(cfg.tasks.hls_loop_watch.window_secs, 300);
         assert_eq!(cfg.seedbox.quality_profile_id, 7);
         assert_eq!(cfg.tasks.series_search.max_queries_per_run, 6);
         assert_eq!(cfg.tasks.series_search.max_grabs_per_season, 60);
         assert_eq!(cfg.indexers.c411_max_per_hour, 40);
+        // plafond à l'acquisition (audit lecture 2026-09-18) : ~17 Mbit/s
+        assert_eq!(cfg.indexers.max_gb_per_episode, 3.0);
+        assert_eq!(cfg.indexers.max_gb_per_movie, 15.0);
         // par défaut, seule la seedbox récupère du neuf (2026-09-18)
         assert_eq!(cfg.downloads.auto_sides, vec!["seedbox".to_string()]);
         assert!(cfg.downloads.may_grab("sonarr-seedbox"));

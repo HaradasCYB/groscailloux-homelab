@@ -7,6 +7,7 @@ pub mod backup;
 pub mod cleanup;
 pub mod deletion_cleanup;
 pub mod disk_pressure;
+pub mod hls_loop_watch;
 pub mod id_match_import;
 pub mod identity_check;
 pub mod indexer_unblock;
@@ -62,6 +63,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(tracker_ratio::TrackerRatio),
         Box::new(stuck_handler::StuckHandler),
         Box::new(disk_pressure::DiskPressure),
+        Box::new(hls_loop_watch::HlsLoopWatch),
         Box::new(tba_bypass::TbaBypass),
         Box::new(id_match_import::IdMatchImport),
         Box::new(torrent_import::TorrentImport),

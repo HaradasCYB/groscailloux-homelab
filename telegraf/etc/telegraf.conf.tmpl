@@ -43,3 +43,45 @@
   endpoint = "unix:///var/run/docker.sock"
 
 [[inputs.net]]
+
+# --- Audit lecture 2026-09-18 : métriques du montage rclone (API RC locale, POST obligatoire) ---
+# rclone_vfs : occupation du cache VFS ; rclone_core : octets tirés de la seedbox (dérivée = débit).
+# Taux de « miss » = derivative(rclone_core.bytes) / derivative(docker_container_net.tx_bytes[jellyfin]).
+[[inputs.http]]
+  urls = ["http://127.0.0.1:5572/vfs/stats"]
+  method = "POST"
+  body = "{}"
+  headers = { "Content-Type" = "application/json" }
+  name_override = "rclone_vfs"
+  data_format = "json_v2"
+  [[inputs.http.json_v2]]
+    [[inputs.http.json_v2.field]]
+      path = "diskCache.bytesUsed"
+      rename = "cache_bytes_used"
+      type = "int"
+    [[inputs.http.json_v2.field]]
+      path = "diskCache.files"
+      rename = "cache_files"
+      type = "int"
+    [[inputs.http.json_v2.field]]
+      path = "diskCache.erroredFiles"
+      rename = "cache_errored_files"
+      type = "int"
+
+[[inputs.http]]
+  urls = ["http://127.0.0.1:5572/core/stats"]
+  method = "POST"
+  body = "{}"
+  headers = { "Content-Type" = "application/json" }
+  name_override = "rclone_core"
+  data_format = "json_v2"
+  [[inputs.http.json_v2]]
+    [[inputs.http.json_v2.field]]
+      path = "bytes"
+      type = "int"
+    [[inputs.http.json_v2.field]]
+      path = "speed"
+      type = "float"
+    [[inputs.http.json_v2.field]]
+      path = "transfers"
+      type = "int"

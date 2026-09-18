@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.13.1](#1131--18092026--avance-rapide-de-10-secondes)** | 18/09/2026 | **Avance rapide de 10 secondes** |
+| **[1.14.0](#1140--18092026--lecture--le-cache-tient-la-nuit)** | 18/09/2026 | **Lecture : le cache tient la nuit** |
+| [1.13.1](#1131--18092026--avance-rapide-de-10-secondes) | 18/09/2026 | Avance rapide de 10 secondes |
 | [1.13.0](#1130--18092026--version-originale-privilégiée-pour-les-animés) | 18/09/2026 | Version originale privilégiée pour les animés |
 | [1.12.0](#1120--18092026--les-saisons-dannimé-se-complètent-seules) | 18/09/2026 | Les saisons d'animé se complètent seules |
 | [1.11.0](#1110--18092026--tout-passe-par-la-seedbox) | 18/09/2026 | Tout passe par la seedbox |
@@ -33,6 +34,28 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.14.0 — 18/09/2026 — Lecture : le cache tient la nuit
+
+Audit complet de la chaîne de lecture (14 jours de mesures). 84 % des lectures sont déjà en lecture directe ;
+le problème était ailleurs.
+
+- **Ce qui a été regardé la veille reste prêt le lendemain.** Une tâche de fond (les vignettes de défilement)
+  tournait six heures chaque matin sans jamais finir et rapatriait plus d'un téraoctet, ce qui vidait la
+  mémoire tampon des médias distants : chaque soir, tout repartait de zéro. Elle ne tourne plus que le dimanche,
+  et la mémoire tampon passe de 20 à 120 Go, avec une garde qui la fait reculer avant que le disque manque.
+- **Démarrage et sauts plus vifs sur les médias distants** : blocs de lecture plus petits (premier morceau
+  attendu ~0,35 s au lieu de 0,67 s).
+- **Le retour arrière ne relance plus l'encodage** avant cinq minutes (deux auparavant), et le serveur garde
+  trois minutes d'avance au lieu d'une et demie quand une connexion faiblit.
+- **Deux encodages simultanés tiennent le temps réel** : le plafond de quatre cœurs sur six est levé.
+- **Plafond à l'acquisition** : les prochaines prises restent sous ~15 Mbit/s en 1080p, sans toucher à
+  l'existant ni imposer de limite par membre.
+- **Alerte automatique** quand un lecteur tourne en boucle sur un flux (mail à l'admin), et mesures du cache
+  distant dans Grafana.
+
+Les changements qui coupent brièvement la lecture (redémarrage du montage distant et de quelques services)
+s'appliquent automatiquement à 04:30, hors des heures de visionnage.
 
 ## 1.13.1 — 18/09/2026 — Avance rapide de 10 secondes
 

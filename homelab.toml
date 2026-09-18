@@ -81,6 +81,17 @@ vps_paths = [
   ["/anime", "/opt/homelab/library/media/anime", "/media/anime"],
 ]
 
+[tasks.hls_loop_watch]
+# Boucles HLS (audit lecture du 2026-09-18) : un client qui redemande sans fin le même segment d'un flux
+# transcodé — ce que le membre voit comme « ça charge ». Le 13/09, une TV webOS a redemandé 2 segments
+# ~950 fois en 6 min. Lu dans le journal d'accès NPM (UTC) ; au-delà du seuil : avertissement + mail admin,
+# une fois par (client, média). Relève aussi les relances HLS du jour (« non-keyframe breaks ») et les 5xx.
+interval_secs = 300
+npm_access_log = "/opt/homelab/npm/data/logs/proxy-host-1_access.log"
+tail_bytes = 4194304        # 4 Mio relus en fin de journal
+window_secs = 300
+threshold = 20              # demandes d'un même segment dans la fenêtre
+
 [tasks.trending]
 # Rangée « Tendances cette semaine » de l'accueil Jellyfin : titres les plus regardés (spectateurs
 # distincts, puis heures), épisodes regroupés par série, depuis Playback Reporting.
@@ -270,8 +281,12 @@ allow_no_french = true        # release sans français (VO) prise en dernier rec
 # (1,85× les deux), les clients lisent le HEVC en direct, et 53 % de la médiathèque est déjà en HEVC.
 # Écarter le x265 revenait à refuser la seule version française des animés. Formats HEVC/H.264/AV1 à 0
 # dans les 4 profils FR-friendly.
-max_gb_per_episode = 6.0      # au-delà, écartée du choix automatique (reste visible sur la page)
-max_gb_per_movie = 25.0
+# Plafond à l'acquisition (audit lecture du 2026-09-18) : sans GPU ni ABR, un fichier > ~15 Mbit/s saccade
+# chez un membre à connexion moyenne, et 128 fichiers > 15 Mbit/s (remux 4K jusqu'à 103 Mbit/s) étaient déjà
+# entrés. 3 Go par épisode de 24 min ≈ 17 Mbit/s ; 15 Go par film de 2 h ≈ 17 Mbit/s. Même plafond côté Arrs :
+# 110 Mo/min sur les qualités 1080p (qualitydefinition). L'existant n'est pas touché.
+max_gb_per_episode = 3.0      # au-delà, écartée du choix automatique (reste visible sur la page)
+max_gb_per_movie = 15.0
 
 [downloads]
 # Tout ce qui est neuf passe par la SEEDBOX (2026-09-18). Le VPS garde ses fiches, ses fichiers et ses
