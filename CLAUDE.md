@@ -231,7 +231,16 @@ journalctl -u homelabd -f
   bandeaux (annonce, message privé, aide à la qualité) se ferment à la touche **Retour** (keyCode 461 webOS,
   10009 Tizen) **et** s'effacent seuls au bout de 12 s : sans pointeur, la croix est inatteignable. Mesuré le
   2026-09-16 sur un téléviseur simulé (processeur bridé 6x) : nos scripts coûtent ~2 points de processeur sur
-  l'accueil et rien de mesurable en lecture — la lenteur vient du client webOS lui-même. **Jamais de `window.confirm/alert/prompt`** dans
+  l'accueil et rien de mesurable en lecture — la lenteur vient du client webOS lui-même. **Disposition TV**
+  (`layout-tv`, appli webOS = client web du serveur) : jellyfin-web laisse l'en-tête **défiler hors écran** dès qu'une
+  carte a le focus (page décalée de ~600 px, `.skinHeader` en `position: relative`) — au pointeur Magic Remote,
+  Rechercher/Tchat/Notifications/Profil sont inaccessibles ; et à 1080p les cinq onglets chevauchaient la cloche
+  NotifySync et le bouton Aléatoire de Jellyfin Enhanced. Depuis le 2026-09-19 le calque épingle l'en-tête et
+  resserre onglets et boutons sur `.layout-tv` (sondes `backups/cast-tests-20260919/tv_*.js` : agent webOS 1080p,
+  boîtes et chevauchements mesurés, navigation ↑ vérifiée). Les pages « Demandes » et fiches d'un **admin** déclenchent
+  des rafales Jellyfin Enhanced (`arr/series-slugs` par carte, réservé aux admins : 249 requêtes/min vues depuis la
+  TV) ; `JellyseerrShowNetworkDiscovery` coupé le 2026-09-19 (928 réponses 503/jour : il exige une clé TMDB dans le
+  plugin, absente). **Jamais de `window.confirm/alert/prompt`** dans
   les scripts injectés : la WebView de l'appli iPhone et Jellyfin Desktop les ignorent (réponse « non » sans rien
   afficher) — le bouton Supprimer du tchat était inerte pour cette raison ; confirmer dans la page.
 - **Saccades en cours de lecture** : Jellyfin choisit **une seule qualité par session** (pas d'ABR). En « Auto »,

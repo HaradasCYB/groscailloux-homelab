@@ -50,6 +50,9 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 - **Homarr affiche enfin les téléchargements de la seedbox** : le widget ne recevait que 10 torrents par client, tous
   déjà terminés, donc masqués. Limite relevée.
 - Sur la page d'état, une saison notée « sans release » disparaît de la liste une fois complétée.
+- **Téléviseurs (LG, Samsung) : les boutons du haut restent accessibles.** L'en-tête (Rechercher, Tchat, Notifications,
+  Profil) défilait hors de l'écran dès que l'on parcourait les rangées, et les onglets chevauchaient la cloche des
+  notifications. L'en-tête est maintenant fixé en haut de l'écran sur TV et les onglets resserrés.
 
 ## 1.14.3 — 19/09/2026 — AirPlay lance vraiment la lecture
 

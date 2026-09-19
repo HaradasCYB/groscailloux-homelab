@@ -104,3 +104,11 @@
 /* En-tête : dégradé sans flou (le flou coûte cher sur les TV et les vieux PC) */
 .skinHeader { background: var(--headerColorGradient) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 .layout-tv * { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+
+/* Téléviseurs (disposition TV, 2026-09-19) : jellyfin-web laisse l'en-tête défiler hors écran dès qu'une carte a le
+   focus (page décalée de ~600 px) — au pointeur de la télécommande, Rechercher/Tchat/Notifications/Profil étaient
+   introuvables. Épinglé en haut. Et à 1080p les cinq onglets (Accueil, Favoris, Découvrir, Demandes, Calendrier)
+   chevauchaient la cloche et le bouton Aléatoire : onglets et boutons resserrés (mesuré : plus aucun chevauchement). */
+.layout-tv .skinHeader { position: fixed !important; top: 0; left: 0; right: 0; z-index: 1000; }
+.layout-tv .headerTabs .emby-tab-button { padding-left: .75em !important; padding-right: .75em !important; margin: 0 .15em !important; }
+.layout-tv .headerRight .headerButton { margin-left: .1em !important; margin-right: .1em !important; }
