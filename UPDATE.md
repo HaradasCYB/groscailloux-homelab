@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.14.3](#1143--19092026--airplay-lance-vraiment-la-lecture)** | 19/09/2026 | **AirPlay lance vraiment la lecture** |
+| **[1.14.4](#1144--19092026--films-demandés-sous-5-minutes)** | 19/09/2026 | **Films demandés sous 5 minutes** |
+| [1.14.3](#1143--19092026--airplay-lance-vraiment-la-lecture) | 19/09/2026 | AirPlay lance vraiment la lecture |
 | [1.14.2](#1142--19092026--airplay-dans-le-menu-lire-sur) | 19/09/2026 | AirPlay dans le menu « Lire sur » |
 | [1.14.1](#1141--19092026--lire-sur-retrouve-vos-appareils) | 19/09/2026 | « Lire sur » retrouve vos appareils |
 | [1.14.0](#1140--18092026--lecture--le-cache-tient-la-nuit) | 18/09/2026 | Lecture : le cache tient la nuit |
@@ -37,6 +38,18 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.14.4 — 19/09/2026 — Films demandés sous 5 minutes
+
+- **Un film demandé est cherché dans les 5 minutes**, comme une série. Depuis le 17/09, Radarr ne cherche plus
+  lui-même (pour ménager l'indexeur) et le flux RSS ne ramène que les nouveautés : un film ancien (*Matrix*)
+  attendait le rattrapage du lendemain. La recherche par identifiant passe maintenant toutes les 5 minutes.
+- **qBittorrent du VPS de nouveau joignable** : la mise à jour de nuit du 19/09 l'avait laissé attaché à l'ancien
+  conteneur VPN (tuile Homarr rouge, imports côté VPS en pause pendant 11 h). Recréé, port VPN reposé, et la
+  procédure documentée pour que ça ne se reproduise pas.
+- **Homarr affiche enfin les téléchargements de la seedbox** : le widget ne recevait que 10 torrents par client, tous
+  déjà terminés, donc masqués. Limite relevée.
+- Sur la page d'état, une saison notée « sans release » disparaît de la liste une fois complétée.
 
 ## 1.14.3 — 19/09/2026 — AirPlay lance vraiment la lecture
 

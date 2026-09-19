@@ -1410,6 +1410,20 @@ async fn plan_seasons(ctx: &TaskContext, arr: &ArrClient) -> Result<Vec<SeasonTo
         })
         .collect();
     let records = ctx.state.read(|s| s.unknown_series.clone()).await;
+    // une saison notée « épisodes introuvables » et qui n'a plus rien de manquant (importée entre-temps,
+    // par un pack de cours ou à la main) sort de la liste « Saisons sans release » de /status.html
+    let stale = stale_uncovered(&records, arr.name, &by.keys().copied().collect());
+    if !stale.is_empty() && !ctx.dry_run {
+        ctx.state
+            .update(|st| {
+                for k in &stale {
+                    if let Some(r) = st.unknown_series.get_mut(k) {
+                        r.uncovered.clear();
+                    }
+                }
+            })
+            .await?;
+    }
     let t = now();
     Ok(by
         .into_values()
@@ -1429,6 +1443,25 @@ async fn plan_seasons(ctx: &TaskContext, arr: &ArrClient) -> Result<Vec<SeasonTo
 
 fn key(arr: &ArrClient, series: i64, season: i64) -> String {
     format!("{}:{series}:{season}", arr.name)
+}
+
+/// Clés des enregistrements de cet Arr qui gardent des épisodes « introuvables » alors que la saison n'a
+/// plus aucun épisode manquant (`present` = saisons ayant encore un manque).
+pub fn stale_uncovered(
+    records: &BTreeMap<String, SeasonSearchRecord>,
+    arr_name: &str,
+    present: &HashSet<(i64, i64)>,
+) -> Vec<String> {
+    records
+        .iter()
+        .filter(|(_, r)| !r.uncovered.is_empty())
+        .filter_map(|(k, _)| {
+            let rest = k.strip_prefix(arr_name)?.strip_prefix(':')?;
+            let (series, season) = rest.split_once(':')?;
+            let id = (series.parse().ok()?, season.parse().ok()?);
+            (!present.contains(&id)).then(|| k.clone())
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -1578,6 +1611,27 @@ impl Task for SeriesSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_uncovered_only_for_complete_seasons_of_this_arr() {
+        let rec = |unc: Vec<i64>| SeasonSearchRecord {
+            at: 0,
+            outcome: "none".into(),
+            detail: String::new(),
+            title: "Bleach".into(),
+            uncovered: unc,
+        };
+        let mut records = BTreeMap::new();
+        records.insert("sonarr-seedbox:5:17".to_string(), rec(vec![27, 28])); // complète depuis
+        records.insert("sonarr-seedbox:5:16".to_string(), rec(vec![3])); // manque encore
+        records.insert("sonarr-seedbox:9:1".to_string(), rec(vec![])); // rien à effacer
+        records.insert("sonarr:5:17".to_string(), rec(vec![27])); // autre Arr, pas concerné
+        let present: HashSet<(i64, i64)> = [(5, 16)].into_iter().collect();
+        assert_eq!(
+            stale_uncovered(&records, "sonarr-seedbox", &present),
+            vec!["sonarr-seedbox:5:17".to_string()]
+        );
+    }
 
     fn result(title: &str, tmdb: i64, seeders: i64) -> Value {
         json!({"title": title, "downloadUrl": "http://p/dl", "tmdbId": tmdb, "seeders": seeders,

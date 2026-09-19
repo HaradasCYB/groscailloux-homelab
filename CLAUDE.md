@@ -73,6 +73,8 @@ journalctl -u homelabd -f
   compare les épisodes manquants aux candidats ; s'il en reste, le repli en texte libre est lancé **en plus** de
   l'identifiant (`how = "tmdb+texte"`), et ce qui reste introuvable est écrit dans l'état (`uncovered`) puis affiché
   sur `/status.html` (« Saisons sans release »). Sans ça la recherche repartait tous les jours pour rien, en silence.
+  Une saison notée « introuvable » puis **complétée** (pack de cours, import manuel) sort de la liste au passage
+  suivant de `series_search` (`stale_uncovered`, 2026-09-19 : Bleach S17 27-40 restait affichée à 48/48).
 - **Les cours d'un animé sont récupérés seuls** (2026-09-18, v1.12.0) : quand la recherche laisse un trou dans
   une saison d'**animé**, `series_search` repère les packs que l'Arr rattache à **cette** fiche mais à une autre
   saison (`cour_pack`), télécharge leur `.torrent` par Prowlarr (lecture seule, **aucune annonce au tracker**),
