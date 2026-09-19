@@ -148,12 +148,13 @@ Prowlarr et les 4 Arrs (RSS ~16/h) : le 2026-09-17, le 429 est tombé vers 50 re
 le rattrapage de l'arriéré (35 requêtes homelabd + RSS + une recherche Sonarr).
 Résumé : `grabbed=1 none=2 pending=13`.
 
-### movie_search — 1 h
-Rattrapage des films **suivis, sans fichier, sortis, ajoutés depuis plus de `missing_hours` (0 : dès le passage suivant, Radarr n'ayant plus de recherche depuis le 2026-09-17), hors file
-d'attente** : la recherche de Radarr, qui interroge déjà par identifiant (*When Marnie Was There* retrouve
-« Souvenirs de Marnie »), reste la voie normale. Même mécanique que `series_search` : `{TmdbId:<id>}` (type
-`movie`), `tmdbId` vérifié, `parse` Radarr, garde-fous, `release/push`, sinon qBittorrent + `homelab:movie=<id>`.
-Au plus `max_per_run` film (1) par passage.
+### movie_search — 5 min
+Recherche des films **suivis, sans fichier, sortis, hors file d'attente**, dès le passage qui suit la demande
+(`missing_hours` 0, passage toutes les 5 min) : depuis le 2026-09-17, Radarr n'a plus aucune recherche (C411 en
+RSS seulement) et le RSS ne ramène que les nouveautés — un film ancien ne peut venir que d'ici. Même mécanique que
+`series_search` : `{TmdbId:<id>}` (type `movie`), `tmdbId` vérifié, `parse` Radarr, garde-fous, `release/push`,
+sinon qBittorrent + `homelab:movie=<id>`. Au plus `max_per_run` films (3) par passage ; un échec (indexeur en
+panne) est retenté après `error_retry_hours` (1), « aucune release » après `retry_after_hours` (72).
 
 ### indexer_unblock — 10 min
 Après des échecs (429, délais), Sonarr et Radarr mettent un indexeur en pause, jusqu'à 24 h ; aucune API ne

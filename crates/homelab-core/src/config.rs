@@ -505,7 +505,7 @@ pub struct MovieSearch {
 impl Default for MovieSearch {
     fn default() -> Self {
         Self {
-            interval_secs: 900,
+            interval_secs: 300,
             max_per_run: 3,
             missing_hours: 0,
             retry_after_hours: 72,

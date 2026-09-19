@@ -135,7 +135,7 @@ journalctl -u homelabd -f
   (100 releases sans rapport). Sonarr garde le RSS, l'import et le suivi. Ne pas remettre la recherche
   à la demande dans Jellyseerr : un animé = 3 à 4 requêtes C411 par épisode → **429** → pause de l'indexeur
   qui s'allonge jusqu'à 24 h (le 2026-09-17, niveau 9). `animeCategories=[5070]` et
-  `animeStandardFormatSearch=true` restent dans les deux Sonarr pour le RSS. Films : `movie_search` cherche **dès le passage suivant** (`missing_hours = 0`, 15 min au plus) — Radarr
+  `animeStandardFormatSearch=true` restent dans les deux Sonarr pour le RSS. Films : `movie_search` cherche **dès le passage suivant** (`missing_hours = 0`, passage toutes les 5 min) — Radarr
   n'a plus de recherche depuis le 2026-09-17 et le RSS ne ramène que les nouveautés (Matrix a attendu 4 h le
   2026-09-19 avec l'ancien délai de 24 h). Filet : C411 limité à 25 requêtes/heure
   dans Prowlarr ; homelabd en envoie au plus 12/h pour les séries et 1/h pour les films : la clé est
