@@ -511,4 +511,8 @@ journalctl -u homelabd -f
 - **Homarr** : modifier la base Homarr **arrêté** et après sauvegarde ; titres de section ≤ 20 caractères
   (sinon le tableau ne se charge plus) ; secrets d'intégration chiffrés AES-256-CBC avec
   `SECRET_ENCRYPTION_KEY` ; pings des outils protégés par NPM en URL interne (`http://sonarr:8989/ping`…).
+  **Widget « Téléchargements »** : `limitPerIntegration` est appliqué **côté serveur, avant** le filtre « masquer
+  les terminés » du client — avec 10 et 315 torrents finis sur la seedbox, les 10 envoyés étaient tous terminés
+  et le widget restait vide malgré des téléchargements en cours (2026-09-19). Passé à 500 (options de l'item
+  `83gkiwxp5m1hwbu9iymgj53g`, sauvegarde `backups/homarr-db-20260919-165303-downloads-limit.sqlite`).
 - L'UI d'onboarding est sur l'hôte (8766) ; NPM doit cibler `172.18.0.1:8766`, pas un conteneur.
