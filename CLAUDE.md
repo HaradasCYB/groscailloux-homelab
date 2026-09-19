@@ -201,6 +201,16 @@ journalctl -u homelabd -f
   connexion (403 « maximum number of sessions », affiché comme une erreur d'identifiants ou sans message) et
   l'appli **iOS crée une nouvelle session à chaque ouverture** : le 2026-09-15, 5 sessions fantômes d'un iPhone
   bloquaient la TV et la voiture d'un membre, Quick Connect compris.
+- **Langue d'affichage** : jellyfin-web la garde **dans l'appareil** (localStorage `<userId>-language` et
+  `<userId>-datetimelocale`, `userSettings.language()` lit avec `enableOnServer = false`) — la copie dans les
+  `DisplayPreferences` du serveur **n'est jamais lue** (vérifié le 2026-09-19 : posée à `fr` côté serveur, l'appli
+  restait en anglais). Sans clé, c'est la langue de l'appareil : un membre sous Windows en anglais voyait « Home »,
+  « Favorites », « Ends at 11:09 PM », alors que « Découvrir/Demandes/Calendrier » (renommés par notre CSS) et les
+  titres des rangées (Home Screen Sections) restaient en français. Script **public** `branding/jellyfin/gc-lang.js`
+  (« Groscailloux Langue ») : pose `fr` pour les comptes connus de l'appareil (`jellyfin_credentials`) avant le
+  démarrage de l'appli, et à la première connexion pose la clé puis recharge une fois (garde `sessionStorage`).
+  Une clé `language` déjà présente = choix du membre, rien n'est touché. Test : `backups/cast-tests-20260919/
+  lang_test.js` (navigateur en-US, 6 cas, `NO_INJECT=1` après déploiement).
 - **Saut du lecteur Jellyfin** : `skipForwardLength` / `skipBackLength` à **10 s** (`[accounts] skip_forward_ms`
   et `skip_back_ms`, posés à la création d'un compte par `jellyfin::set_skip_lengths`). Jellyfin met **30 s en
   avant** par défaut. Le bouton d'avance rapide **et** les flèches gauche/droite passent par le même réglage

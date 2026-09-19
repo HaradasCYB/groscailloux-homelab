@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.15.0](#1150--19092026--une-interface-pensée-pour-la-télé)** | 19/09/2026 | **Une interface pensée pour la télé** |
+| **[1.15.1](#1151--19092026--en-français-sur-tous-les-appareils)** | 19/09/2026 | **En français sur tous les appareils** |
+| [1.15.0](#1150--19092026--une-interface-pensée-pour-la-télé) | 19/09/2026 | Une interface pensée pour la télé |
 | [1.14.4](#1144--19092026--films-demandés-sous-5-minutes) | 19/09/2026 | Films demandés sous 5 minutes |
 | [1.14.3](#1143--19092026--airplay-lance-vraiment-la-lecture) | 19/09/2026 | AirPlay lance vraiment la lecture |
 | [1.14.2](#1142--19092026--airplay-dans-le-menu-lire-sur) | 19/09/2026 | AirPlay dans le menu « Lire sur » |
@@ -39,6 +40,13 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.15.1 — 19/09/2026 — En français sur tous les appareils
+
+- **L'interface est en français même sur un appareil réglé en anglais.** Jellyfin prenait la langue de l'appareil
+  tant que le membre n'avait pas choisi la sienne dans ses réglages : un PC en anglais affichait « Home »,
+  « Favorites », « Ends at 11:09 PM ». Le français est maintenant posé d'office à la première ouverture (la page se
+  recharge une fois à la première connexion sur un appareil). Un membre qui a choisi lui-même une autre langue la garde.
 
 ## 1.15.0 — 19/09/2026 — Une interface pensée pour la télé
 

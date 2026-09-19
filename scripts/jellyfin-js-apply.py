@@ -20,6 +20,7 @@ PLUGIN = "f5a34f7b2e8a4e6aa7223a216a81b374"  # JavaScript Injector
 # de la page, avant la connexion et avant Media Bar ; les autres dans private.js, après connexion.
 SCRIPTS = {
     "Groscailloux TV": ("branding/jellyfin/gc-tv.js", False),
+    "Groscailloux Langue": ("branding/jellyfin/gc-lang.js", False),
     "Groscailloux Tchat": ("branding/jellyfin/gc-chat-loader.js", True),
     "Groscailloux Lire sur": ("branding/jellyfin/gc-cast-filter.js", True),
     "Groscailloux Qualité": ("branding/jellyfin/gc-quality-helper.js", True),
