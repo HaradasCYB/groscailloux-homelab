@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.14.2](#1142--19092026--airplay-dans-le-menu-lire-sur)** | 19/09/2026 | **AirPlay dans le menu « Lire sur »** |
+| **[1.14.3](#1143--19092026--airplay-lance-vraiment-la-lecture)** | 19/09/2026 | **AirPlay lance vraiment la lecture** |
+| [1.14.2](#1142--19092026--airplay-dans-le-menu-lire-sur) | 19/09/2026 | AirPlay dans le menu « Lire sur » |
 | [1.14.1](#1141--19092026--lire-sur-retrouve-vos-appareils) | 19/09/2026 | « Lire sur » retrouve vos appareils |
 | [1.14.0](#1140--18092026--lecture--le-cache-tient-la-nuit) | 18/09/2026 | Lecture : le cache tient la nuit |
 | [1.13.1](#1131--18092026--avance-rapide-de-10-secondes) | 18/09/2026 | Avance rapide de 10 secondes |
@@ -36,6 +37,14 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.14.3 — 19/09/2026 — AirPlay lance vraiment la lecture
+
+- **L'entrée AirPlay du menu « Lire sur » fait maintenant tout le travail.** Sur iPhone, iPad et Mac, un appui
+  ferme le menu, lance le titre affiché et ouvre le sélecteur d'écran d'Apple dès que la vidéo est prête ; si une
+  lecture est déjà en cours, le sélecteur s'ouvre directement. Le rappel « touchez l'icône AirPlay du lecteur »
+  n'apparaît plus qu'en dernier recours, si l'appareil refuse d'ouvrir le sélecteur tout seul. La première version
+  laissait le menu ouvert et se contentait d'afficher ce rappel.
 
 ## 1.14.2 — 19/09/2026 — AirPlay dans le menu « Lire sur »
 

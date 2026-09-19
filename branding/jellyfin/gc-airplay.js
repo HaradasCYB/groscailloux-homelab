@@ -1,20 +1,26 @@
 // « Jouer sur » : Google Cast n'existe que dans Chrome et l'appli Android. Partout ailleurs, jellyfin-web
-// affiche quand même une note « (Google Cast non pris en charge) » sous le titre, seule chose visible quand
-// aucun autre appareil du compte n'est connecté — prise pour une panne (2026-09-19). Vérifié en test : ce
-// n'est pas une entrée de menu mais un `<p class="actionSheetText">`, la liste étant vide.
+// affiche quand même une note « (Google Cast non pris en charge) » sous le titre — un `<p class="actionSheetText">`,
+// pas une entrée, la liste étant vide — seule chose visible quand aucun autre appareil du compte n'est
+// connecté, et prise pour une panne (2026-09-19).
 // Quand cette note est là (vérifié à l'exécution, pas d'après l'appareil) :
-//   - iPhone, iPad, Mac : elle est remplacée par une entrée « AirPlay ». Une vidéo en cours → le sélecteur
-//     AirPlay d'Apple s'ouvre (il exige une vidéo ET un geste, d'où l'appel dans le clic) ; sinon → on lance
-//     la lecture du titre affiché si un bouton Lire est visible, et on rappelle où est l'icône AirPlay.
+//   - iPhone, iPad, Mac : elle devient une entrée « AirPlay ».
+//       · vidéo en cours → le sélecteur AirPlay d'Apple s'ouvre dans le geste (il exige une vidéo ET un geste) ;
+//       · sinon → lecture du titre affiché, puis, dès que le lecteur a sa vidéo, tentative d'ouvrir le
+//         sélecteur tant que l'activation du geste dure (WebKit la garde quelques secondes) ; si Apple refuse,
+//         un rappel discret pointe l'icône AirPlay du lecteur. Le rappel n'est plus affiché d'office.
 //   - ailleurs (Firefox, Jellyfin Desktop…) : la note est retirée.
 //   - liste vide : une note explique qu'aucun autre appareil du compte n'est connecté.
+// Fermeture : jellyfin-web 10.11 ferme un dialogue par « retour » (history.state.usr.dialogs[]) ; si ça ne
+// suffit pas (WebView de l'appli iPhone, 2026-09-19), on rejoue popstate, puis on retire le dialogue.
+// Ce qui s'est passé est envoyé au journal client de Jellyfin (ClientLog) pour diagnostiquer un vrai iPhone.
 // Les vraies cibles (Cast fonctionnel, TV et Desktop du compte) ne sont jamais touchées.
 // Déposé dans JavaScript Injector (« Groscailloux AirPlay ») par scripts/jellyfin-js-apply.py.
 // Jamais de window.confirm/alert/prompt : ignorés par la WebView iPhone et Jellyfin Desktop.
 (function (root) {
   'use strict';
 
-  var HIDE_MS = 12000;
+  var HIDE_MS = 7000;
+  var VIDEO_WAIT_MS = 8000;
   var EMPTY_NOTE = 'Aucun autre appareil connecté avec ce compte.';
 
   function isApple(nav) {
@@ -37,25 +43,37 @@
   root.__gcAirPlay = { isApple: isApple, castUnsupported: castUnsupported, EMPTY_NOTE: EMPTY_NOTE };
   if (typeof window === 'undefined' || root !== window) return; // tests
 
+  /* --- journal : ce qui s'est passé, lisible côté serveur (jellyfin/config/log/upload_*.log) --- */
+  var steps = [];
+  function step(s) { steps.push(Math.round(performance.now()) + 'ms ' + s); window.__gcAirPlaySteps = steps.slice(); }
+  function report(tag) {
+    try {
+      var api = window.ApiClient;
+      if (!api || typeof api.getUrl !== 'function' || typeof api.accessToken !== 'function') return;
+      var body = 'gc-airplay ' + tag + ' | ' + navigator.userAgent + '\n' + steps.join('\n') + '\n';
+      fetch(api.getUrl('ClientLog/Document'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain', 'X-Emby-Token': api.accessToken() },
+        body: body
+      }).catch(function () {});
+    } catch (e) { /* le journal n'est jamais bloquant */ }
+  }
+
   function banner(title, sub) {
     var old = document.querySelector('.gc-ap');
     if (old) old.remove();
     var el = document.createElement('div');
     el.className = 'gc-ap';
     el.setAttribute('role', 'status');
-    el.style.cssText = 'position:fixed;left:50%;bottom:11vh;transform:translateX(-50%);z-index:100001;max-width:92vw;' +
-      'background:#111;color:#fff;padding:12px 16px;border-radius:12px;font:15px/1.4 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+    el.style.cssText = 'position:fixed;left:50%;top:max(12px,env(safe-area-inset-top));transform:translateX(-50%);z-index:100001;max-width:92vw;' +
+      'background:rgba(17,17,17,.96);color:#fff;padding:10px 14px;border-radius:12px;font:14px/1.35 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5)';
     var h = document.createElement('div'); h.style.fontWeight = '600'; h.textContent = title;
-    var s = document.createElement('div'); s.style.cssText = 'opacity:.85;margin-top:4px'; s.textContent = sub;
+    var s = document.createElement('div'); s.style.cssText = 'opacity:.85;margin-top:3px'; s.textContent = sub;
     el.appendChild(h); el.appendChild(s);
     document.body.appendChild(el);
     setTimeout(function () { if (el.parentNode) el.remove(); }, HIDE_MS);
   }
 
-  /* jellyfin-web ouvre chaque dialogue avec une entrée d'historique — `history.state.usr.dialogs[]` en
-     10.11 (routeur), `history.state.dialogId` avant — et le ferme sur « retour » : c'est la seule fermeture
-     fiable (mesuré le 2026-09-19 : clic synthétique sur le fond et Escape n'ont aucun effet). Sans entrée
-     d'historique, on retombe sur le fond et le bouton de fermeture, sans jamais toucher à l'historique. */
   function dialogInHistory() {
     var st = null;
     try { st = window.history && window.history.state; } catch (e) { return false; }
@@ -64,35 +82,101 @@
     return !!(st.usr && Array.isArray(st.usr.dialogs) && st.usr.dialogs.length);
   }
 
-  function closeSheet(sheet) {
-    if (dialogInHistory()) { window.history.back(); return; }
-    var backdrop = document.querySelector('.dialogBackdropOpened') || document.querySelector('.dialogBackdrop');
-    if (backdrop) backdrop.click();
+  /* retire le dialogue nous-mêmes quand le retour n'a pas suffi : dialogue, fond, verrou de défilement */
+  function forceRemove(sheet) {
     var dlg = sheet.closest('.dialogContainer') || sheet;
-    var btn = dlg.querySelector('.btnCloseDialog');
-    if (btn) btn.click();
+    var bd = document.querySelector('.dialogBackdropOpened') || document.querySelector('.dialogBackdrop');
+    if (bd && bd.parentNode) bd.parentNode.removeChild(bd);
+    if (dlg.parentNode) dlg.parentNode.removeChild(dlg);
+    document.body.classList.remove('noScroll', 'dialogOpen', 'dialog-open');
+    document.documentElement.classList.remove('noScroll');
   }
 
-  function playFromPage() {
-    var sel = ['.btnPlay', '.detailButton-play', 'button[data-action="resume"]', 'button[data-action="play"]', '.btnPlayAll'];
+  function closeSheet(sheet, done) {
+    var open = function () { return document.body.contains(sheet); };
+    if (dialogInHistory()) { step('close: history.back'); window.history.back(); } else { step('close: no history entry'); }
+    setTimeout(function () {
+      if (!open()) { step('close: closed'); return done(); }
+      step('close: popstate');
+      try { window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state })); } catch (e) { /* ignore */ }
+      setTimeout(function () {
+        if (!open()) { step('close: closed after popstate'); return done(); }
+        step('close: forced');
+        forceRemove(sheet);
+        done();
+      }, 250);
+    }, 250);
+  }
+
+  function visible(el) { return !!(el && el.offsetParent !== null); }
+
+  /* bouton Lire du titre affiché : bandeau d'accueil (.btnPlay) ou fiche du média ; jamais les boutons
+     des vignettes, présents mais inopérants tant qu'on ne les survole pas */
+  function playButton() {
+    var sel = ['.btnPlay', '.detailButton-play', '.mainDetailButtons button[data-action="resume"]',
+               '.mainDetailButtons button[data-action="play"]', '.detailPagePrimaryContainer button[data-action="play"]', '.btnPlayAll'];
     for (var i = 0; i < sel.length; i++) {
-      var b = document.querySelector(sel[i]);
-      if (b && b.offsetParent !== null) { b.click(); return true; }
+      var all = document.querySelectorAll(sel[i]);
+      for (var j = 0; j < all.length; j++) if (visible(all[j]) && !all[j].closest('.card')) return all[j];
     }
-    return false;
+    return null;
+  }
+
+  function tryPicker(v, where) {
+    try { v.webkitShowPlaybackTargetPicker(); step('picker: shown (' + where + ')'); return true; }
+    catch (e) { step('picker: refused (' + where + ') ' + (e && e.message || e)); window.__gcAirPlayError = String(e && e.message || e); return false; }
+  }
+
+  function whenVideo(cb) {
+    var v = currentVideo();
+    if (v) return cb(v);
+    var mo = new MutationObserver(function () {
+      var v2 = currentVideo();
+      if (v2) { mo.disconnect(); clearTimeout(t); cb(v2); }
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    var t = setTimeout(function () { mo.disconnect(); cb(null); }, VIDEO_WAIT_MS);
   }
 
   function onAirPlay(sheet) {
+    steps = []; step('tap');
     var v = currentVideo();
-    closeSheet(sheet);
     if (v) {
-      try { v.webkitShowPlaybackTargetPicker(); window.__gcAirPlayShown = 'picker'; return; } catch (e) { window.__gcAirPlayError = String(e && e.message || e); }
+      // dans le geste, avant tout : Apple l'exige
+      var ok = tryPicker(v, 'live');
+      closeSheet(sheet, function () {
+        window.__gcAirPlayShown = ok ? 'picker' : 'hint';
+        if (!ok) banner('AirPlay', 'Touche l’icône AirPlay dans le lecteur pour choisir l’écran.');
+        report(ok ? 'ok' : 'picker-refused');
+      });
+      return;
     }
-    var started = playFromPage();
-    banner('AirPlay',
-      started ? 'La lecture démarre : touche l’icône AirPlay dans le lecteur pour choisir l’écran.'
-              : 'Lance la lecture, puis touche l’icône AirPlay dans le lecteur pour choisir l’écran.');
-    window.__gcAirPlayShown = started ? 'started' : 'hint';
+    var btn = playButton();
+    step(btn ? 'play: button ' + String(btn.className || btn.tagName).slice(0, 40) : 'play: no button');
+    closeSheet(sheet, function () {
+      if (!btn) {
+        window.__gcAirPlayShown = 'hint';
+        banner('AirPlay', 'Lance la lecture, puis touche l’icône AirPlay dans le lecteur.');
+        report('no-play-button');
+        return;
+      }
+      btn.click();
+      window.__gcAirPlayShown = 'started';
+      whenVideo(function (video) {
+        if (!video) {
+          step('video: none within ' + VIDEO_WAIT_MS + 'ms');
+          window.__gcAirPlayShown = 'hint';
+          banner('AirPlay', 'La lecture n’a pas démarré : appuie sur Lire, puis sur l’icône AirPlay du lecteur.');
+          report('no-video');
+          return;
+        }
+        step('video: ready');
+        if (tryPicker(video, 'after-play')) { window.__gcAirPlayShown = 'picker'; report('ok-after-play'); return; }
+        window.__gcAirPlayShown = 'hint';
+        banner('AirPlay', 'Touche l’icône AirPlay dans le lecteur pour choisir l’écran.');
+        report('picker-refused-after-play');
+      });
+    });
   }
 
   function airPlayItem(sheet) {
@@ -118,26 +202,41 @@
     return b;
   }
 
-  /* une feuille d'actions vient d'apparaître : est-ce « Jouer sur » avec la note Cast ? */
+  var VERSION = 2;
+  /* « Jouer sur » = la feuille qui suit un appui sur le bouton Cast de l'en-tête (indépendant de la langue) */
+  var lastCastTap = 0;
+  document.addEventListener('click', function (e) {
+    if (e.target && e.target.closest && e.target.closest('.headerCastButton')) lastCastTap = Date.now();
+  }, true);
+
+  /* une feuille d'actions vient d'apparaître : est-ce « Jouer sur » ? */
   function fixSheet(sheet) {
-    if (sheet.__gcAirPlayDone) return;
+    if (sheet.__gcAirPlayV >= VERSION) return;
     var notes = sheet.querySelectorAll('.actionSheetText');
     var note = null;
     for (var i = 0; i < notes.length; i++) if (castUnsupported(notes[i].textContent)) { note = notes[i]; break; }
-    if (!note) return; // pas cette feuille, ou Cast fonctionne ici : on ne touche à rien
+    var fromCast = Date.now() - lastCastTap < 2000;
+    if (!note && !fromCast) return; // pas cette feuille : on ne touche à rien
     sheet.__gcAirPlayDone = true;
+    sheet.__gcAirPlayV = VERSION;
     var scroller = sheet.querySelector('.actionSheetScroller');
-    if (isApple() && scroller) {
-      note.remove();
-      scroller.insertBefore(airPlayItem(sheet), scroller.firstChild);
-      window.__gcAirPlayShown = 'airplay';
-    } else {
-      note.remove();
-      window.__gcAirPlayShown = 'hidden';
+    // une version plus ancienne de ce script (déjà déployée) a pu passer avant : on reprend la main.
+    // Cast est « non pris en charge » si la note est là, ou si cette ancienne version l'avait déjà remplacée.
+    var old = sheet.querySelectorAll('.actionSheetMenuItem[data-id="gc-airplay"]');
+    var unsupported = !!note || old.length > 0;
+    for (var k = 0; k < old.length; k++) old[k].remove();
+    if (note) note.remove();
+    if (unsupported) {
+      if (isApple() && scroller) {
+        scroller.insertBefore(airPlayItem(sheet), scroller.firstChild);
+        window.__gcAirPlayShown = 'airplay';
+      } else {
+        window.__gcAirPlayShown = 'hidden';
+      }
     }
-    if (scroller && !scroller.querySelector('.actionSheetMenuItem')) {
+    if (scroller && !scroller.querySelector('.actionSheetMenuItem') && !sheet.querySelector('.gc-ap-empty')) {
       var p = document.createElement('p');
-      p.className = 'actionSheetText';
+      p.className = 'actionSheetText gc-ap-empty';
       p.textContent = EMPTY_NOTE;
       scroller.parentNode.insertBefore(p, scroller);
     }
