@@ -507,7 +507,7 @@ impl Default for MovieSearch {
         Self {
             interval_secs: 900,
             max_per_run: 3,
-            missing_hours: 24,
+            missing_hours: 0,
             retry_after_hours: 72,
             error_retry_hours: 1,
             query_gap_secs: 15,

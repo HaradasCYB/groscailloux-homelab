@@ -140,11 +140,12 @@ cour_packs = true
 cour_max_files = 30         # au-delà, ce n'est plus un cours
 
 [tasks.movie_search]
-# Rattrapage des films suivis encore manquants 24 h après l'ajout, par identifiant TMDB chez C411
-# (la recherche de Radarr, qui marche par identifiant, reste la voie normale).
+# Recherche des films suivis encore manquants, par identifiant TMDB chez C411, dès le passage qui suit
+# la demande : depuis le 2026-09-17, Radarr n'a plus aucune recherche (C411 en RSS seulement), le RSS ne
+# ramène que les nouveautés — avec 24 h, un film demandé attendait un jour (Matrix, le 2026-09-19).
 interval_secs = 900
 max_per_run = 3
-missing_hours = 24
+missing_hours = 0
 retry_after_hours = 72
 error_retry_hours = 1
 query_gap_secs = 5

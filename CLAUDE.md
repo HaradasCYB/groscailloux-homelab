@@ -135,8 +135,9 @@ journalctl -u homelabd -f
   (100 releases sans rapport). Sonarr garde le RSS, l'import et le suivi. Ne pas remettre la recherche
   à la demande dans Jellyseerr : un animé = 3 à 4 requêtes C411 par épisode → **429** → pause de l'indexeur
   qui s'allonge jusqu'à 24 h (le 2026-09-17, niveau 9). `animeCategories=[5070]` et
-  `animeStandardFormatSearch=true` restent dans les deux Sonarr pour le RSS. Films : Radarr cherche déjà par
-  identifiant ; `movie_search` rattrape ce qui manque après 24 h. Filet : C411 limité à 25 requêtes/heure
+  `animeStandardFormatSearch=true` restent dans les deux Sonarr pour le RSS. Films : `movie_search` cherche **dès le passage suivant** (`missing_hours = 0`, 15 min au plus) — Radarr
+  n'a plus de recherche depuis le 2026-09-17 et le RSS ne ramène que les nouveautés (Matrix a attendu 4 h le
+  2026-09-19 avec l'ancien délai de 24 h). Filet : C411 limité à 25 requêtes/heure
   dans Prowlarr ; homelabd en envoie au plus 12/h pour les séries et 1/h pour les films : la clé est
   partagée avec les 4 Arrs et le 429 est tombé vers 50 requêtes/heure le 2026-09-17. Éviter les recherches interactives en rafale sur un animé.
 - **Indexeur en pause** : `indexer_unblock` lève la pause (table `IndexerStatus`, application arrêtée ~20 s,
@@ -382,6 +383,13 @@ journalctl -u homelabd -f
   tests unitaires de la décision, paragraphe dans AUTOMATION.md.
 - **Changement de comportement** = changement de `homelab.toml` (seuils, intervalles) avant
   changement de code. Les valeurs par défaut du code doivent rester égales à celles du TOML.
+- **Recréer `gluetun` = recréer `qbittorrent`** : qBittorrent est en `network_mode: service:gluetun` ; quand gluetun
+  est recréé (changement de compose, `cpu_shares`…), compose laisse qbittorrent « Up » **sur l'espace réseau de
+  l'ancien conteneur** : injoignable de partout (Homarr, NPM, homelabd `localhost:8080`), alors que son healthcheck
+  interne reste vert. Le 2026-09-19, l'application hors pic de 04:30 a coupé qBittorrent du VPS 11 h (tracker_ratio,
+  torrent_import côté VPS, tuile Homarr rouge). Toujours `docker compose up -d --force-recreate --no-deps
+  qbittorrent` après un `up -d` qui a recréé gluetun, puis reposer le port transféré (`/tmp/gluetun/forwarded_port` →
+  `setPreferences listen_port`, le hook ne rejoue pas seul).
 - **Reboot** : `homelab-stack.service` relance compose ; vérifier `docker compose ps` et
   `systemctl status homelabd` après.
 - `scripts/` ne contient plus que des outils ponctuels (les anciens scripts bash planifiés ont été

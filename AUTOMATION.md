@@ -149,7 +149,7 @@ le rattrapage de l'arriéré (35 requêtes homelabd + RSS + une recherche Sonarr
 Résumé : `grabbed=1 none=2 pending=13`.
 
 ### movie_search — 1 h
-Rattrapage des films **suivis, sans fichier, sortis, ajoutés depuis plus de `missing_hours` (24 h), hors file
+Rattrapage des films **suivis, sans fichier, sortis, ajoutés depuis plus de `missing_hours` (0 : dès le passage suivant, Radarr n'ayant plus de recherche depuis le 2026-09-17), hors file
 d'attente** : la recherche de Radarr, qui interroge déjà par identifiant (*When Marnie Was There* retrouve
 « Souvenirs de Marnie »), reste la voie normale. Même mécanique que `series_search` : `{TmdbId:<id>}` (type
 `movie`), `tmdbId` vérifié, `parse` Radarr, garde-fous, `release/push`, sinon qBittorrent + `homelab:movie=<id>`.
