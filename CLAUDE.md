@@ -529,6 +529,12 @@ journalctl -u homelabd -f
   saison) a été lu S01E01 et la saison 1 d'une série écrasée ; réparé en réimportant les fichiers d'origine
   (toujours présents dans le dossier du torrent, hardlink) avec la correspondance de Sonarr, et vérifié saison
   par saison. Vérifier l'historique (`episodeFileDeleted`, raison `Upgrade`) après tout import manuel.
+- **Deux sessions dans le dépôt** : le binaire installé doit être construit depuis **l'arbre de travail tel quel**
+  (`cargo build … -j4` dans `/opt/homelab`), jamais depuis un arbre indexé/worktree qui exclut les fichiers non
+  validés d'une autre session — le 2026-09-19, cinq installs ainsi construits ont retiré les routes `/premium`
+  (pages non validées d'une autre session) du binaire en service, 404 sur le lien public jusqu'à ce que
+  l'utilisateur le remarque. Le worktree ne sert qu'à `fmt/clippy/test` de ce qu'on committe. Après un restart,
+  `git status --short` puis `curl 127.0.0.1:8766/<route de l'autre session>`.
 - **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans
   `ReadWritePaths` de `systemd/homelabd.service` (sinon « Read-only file system », vu le 2026-09-17).
 - Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
