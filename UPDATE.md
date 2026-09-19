@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.14.4](#1144--19092026--films-demandés-sous-5-minutes)** | 19/09/2026 | **Films demandés sous 5 minutes** |
+| **[1.15.0](#1150--19092026--une-interface-pensée-pour-la-télé)** | 19/09/2026 | **Une interface pensée pour la télé** |
+| [1.14.4](#1144--19092026--films-demandés-sous-5-minutes) | 19/09/2026 | Films demandés sous 5 minutes |
 | [1.14.3](#1143--19092026--airplay-lance-vraiment-la-lecture) | 19/09/2026 | AirPlay lance vraiment la lecture |
 | [1.14.2](#1142--19092026--airplay-dans-le-menu-lire-sur) | 19/09/2026 | AirPlay dans le menu « Lire sur » |
 | [1.14.1](#1141--19092026--lire-sur-retrouve-vos-appareils) | 19/09/2026 | « Lire sur » retrouve vos appareils |
@@ -38,6 +39,20 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.15.0 — 19/09/2026 — Une interface pensée pour la télé
+
+Sur un téléviseur (appli LG, Samsung… qui affichent le site), l'interface est désormais différente de celle du PC,
+du téléphone et de la tablette — qui, eux, ne changent pas d'un pixel.
+
+- **Accueil allégé** : plus de grand bandeau animé ni de bandes-annonces YouTube (ce qui pesait le plus sur une
+  télé) ; les rangées se limitent à l'essentiel — Reprendre, À suivre, Films et Séries ajoutés, Anime, Collections,
+  Ma médiathèque. Les rangées Tendances, Genres, Mieux notés, Découvrir, Mes demandes… restent sur les autres appareils.
+- **Télécommande** : en-tête fixe avec seulement Notifications, Rechercher et Profil (les boutons Aléatoire,
+  SyncPlay et « Lire sur » disparaissent sur télé), focus plus visible sur les cartes et les boutons.
+- **Lecture d'abord** : sur la fiche d'un titre, « Lire » est plus grand et les blocs secondaires (Plus comme ça,
+  genres, tags, studios, services de streaming, langues) sont cachés ; la distribution reste.
+- **Pas de tchat sur télé** : sans clavier il était inutilisable ; il n'est plus chargé du tout.
 
 ## 1.14.4 — 19/09/2026 — Films demandés sous 5 minutes
 

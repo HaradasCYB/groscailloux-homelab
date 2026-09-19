@@ -16,11 +16,14 @@ import urllib.request
 
 BASE = "/opt/homelab"
 PLUGIN = "f5a34f7b2e8a4e6aa7223a216a81b374"  # JavaScript Injector
+# nom → (fichier, authentification requise). Un script public (False) part dans public.js, chargé dès l'ouverture
+# de la page, avant la connexion et avant Media Bar ; les autres dans private.js, après connexion.
 SCRIPTS = {
-    "Groscailloux Tchat": "branding/jellyfin/gc-chat-loader.js",
-    "Groscailloux Lire sur": "branding/jellyfin/gc-cast-filter.js",
-    "Groscailloux Qualité": "branding/jellyfin/gc-quality-helper.js",
-    "Groscailloux AirPlay": "branding/jellyfin/gc-airplay.js",
+    "Groscailloux TV": ("branding/jellyfin/gc-tv.js", False),
+    "Groscailloux Tchat": ("branding/jellyfin/gc-chat-loader.js", True),
+    "Groscailloux Lire sur": ("branding/jellyfin/gc-cast-filter.js", True),
+    "Groscailloux Qualité": ("branding/jellyfin/gc-quality-helper.js", True),
+    "Groscailloux AirPlay": ("branding/jellyfin/gc-airplay.js", True),
 }
 
 env = dict(l.split("=", 1) for l in open(f"{BASE}/.env").read().splitlines() if "=" in l and not l.startswith("#"))
@@ -39,9 +42,9 @@ def call(method, body=None):
 
 conf = call("GET")
 current = {e.get("Name"): e for e in conf.get("CustomJavaScripts", [])}
-wanted = {name: open(f"{BASE}/{path}").read() for name, path in SCRIPTS.items()}
-changes = [n for n, s in wanted.items() if n not in current or current[n].get("Script") != s
-           or not current[n].get("Enabled") or not current[n].get("RequiresAuthentication")]
+wanted = {name: (open(f"{BASE}/{path}").read(), auth) for name, (path, auth) in SCRIPTS.items()}
+changes = [n for n, (s, auth) in wanted.items() if n not in current or current[n].get("Script") != s
+           or not current[n].get("Enabled") or bool(current[n].get("RequiresAuthentication")) != auth]
 if not changes:
     print("déjà à jour")
     sys.exit(0)
@@ -54,9 +57,10 @@ with open(bak, "w") as f:
 os.chmod(bak, 0o600)
 others = [e for e in conf.get("CustomJavaScripts", []) if e.get("Name") not in wanted]
 conf["CustomJavaScripts"] = others + [
-    {"Name": n, "Script": s, "Enabled": True, "RequiresAuthentication": True} for n, s in wanted.items()
+    {"Name": n, "Script": s, "Enabled": True, "RequiresAuthentication": auth} for n, (s, auth) in wanted.items()
 ]
 call("POST", conf)
-after = {e.get("Name"): e.get("Script") for e in call("GET").get("CustomJavaScripts", [])}
-assert all(after.get(n) == s for n, s in wanted.items()), "vérification échouée"
+after = {e.get("Name"): (e.get("Script"), bool(e.get("RequiresAuthentication")))
+         for e in call("GET").get("CustomJavaScripts", [])}
+assert all(after.get(n) == (s, auth) for n, (s, auth) in wanted.items()), "vérification échouée"
 print(f"appliqué ; ancienne configuration : {bak.replace(BASE + '/', '')}")

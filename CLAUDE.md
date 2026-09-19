@@ -225,7 +225,9 @@ journalctl -u homelabd -f
   Modérateurs et phase de test (`beta_users`) dans `[chat]` ; base `state/chat.db` (sauvegardée par
   `homelabctl backup`). Mails : récapitulatif à `CHAT_ADMIN_EMAIL` (repli `GUIDE_CONTACT_EMAIL`), annonces
   aux comptes actifs ayant une adresse **valide** dans Jellyseerr (celle de Haradas y vaut `haradas`).
-  Pas de tchat dans les applis natives (Android TV, Swiftfin).
+  Pas de tchat dans les applis natives (Android TV, Swiftfin), **ni sur les téléviseurs** (2026-09-19 : agent
+  webOS/Tizen… ou classe `layout-tv` → `gc-chat-loader.js` n'insère pas `app.js`, et `app.js` se retire quand même
+  s'il est chargé).
   **Téléviseurs** (webOS, Tizen, Android TV — détectés par l'agent, l'absence de pointeur ou ≤ 2 cœurs) :
   boucle à 3 s au lieu de 1 s, sondages espacés (10 s ouvert / 180 s fermé), ni ombre ni animation, et les
   bandeaux (annonce, message privé, aide à la qualité) se ferment à la touche **Retour** (keyCode 461 webOS,
@@ -237,7 +239,20 @@ journalctl -u homelabd -f
   Rechercher/Tchat/Notifications/Profil sont inaccessibles ; et à 1080p les cinq onglets chevauchaient la cloche
   NotifySync et le bouton Aléatoire de Jellyfin Enhanced. Depuis le 2026-09-19 le calque épingle l'en-tête et
   resserre onglets et boutons sur `.layout-tv` (sondes `backups/cast-tests-20260919/tv_*.js` : agent webOS 1080p,
-  boîtes et chevauchements mesurés, navigation ↑ vérifiée). Les pages « Demandes » et fiches d'un **admin** déclenchent
+  boîtes et chevauchements mesurés, navigation ↑ vérifiée). **Interface TV distincte (v1.15.0)** : script
+  **public** `branding/jellyfin/gc-tv.js` (« Groscailloux TV », `RequiresAuthentication: false` → `public.js`,
+  exécuté dès le chargement, avant la connexion et avant Media Bar) : sur agent TV il neutralise Media Bar
+  (`window.slideshowPure.SlideshowManager.loadSlideshowData` et `CONFIG.enableTrailers`, objets exposés en fin de
+  `slideshowpure.js`) et retire `#randomItemButton` (JE) et `.headerSyncButton` ; le bloc `.layout-tv` du calque
+  cache `#slides-container`, remet `.homeSectionsContainer` à `top: 1.6em` (le calque le décale de 80vh sous le
+  bandeau), cache les rangées HSS non essentielles (classe = SectionId : `gc-tendances`, `BecauseYouWatched…`,
+  `gc-mieux-notes`, `Genre-…`, `gc-films-fr`, `DiscoverMovies/TV`, `MyJellyseerrRequests`, `WatchAgain`), les blocs
+  secondaires des fiches (`#similarCollapsible`, genres/tags/studios, Elsewhere `.streaming-lookup-container`,
+  `.audio-languages-container`) et `.gc-chat-btn`. Règle : **tout ce qui est TV est sous `.layout-tv` ou gardé par
+  l'agent utilisateur — jamais par le nombre de cœurs** (un vieux portable y passerait). Vérification :
+  `tv_home_lite.js` (DEVICE=tv|desktop|iphone, candidats injectés par `CANDIDATE_JS`/`CANDIDATE_CSS`) — bureau et
+  iPhone doivent être identiques avant/après. Media Bar charge encore `youtube.com/iframe_api` au chargement (avant
+  tout script injecté), sans lecteur : négligeable. Les pages « Demandes » et fiches d'un **admin** déclenchent
   des rafales Jellyfin Enhanced (`arr/series-slugs` par carte, réservé aux admins : 249 requêtes/min vues depuis la
   TV) ; `JellyseerrShowNetworkDiscovery` coupé le 2026-09-19 (928 réponses 503/jour : il exige une clé TMDB dans le
   plugin, absente). **Jamais de `window.confirm/alert/prompt`** dans

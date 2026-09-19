@@ -19,6 +19,11 @@
       return (navigator.hardwareConcurrency || 8) <= 2;
     } catch (e) { return false; }
   })();
+  /* Un vrai téléviseur (appli LG/Samsung…, ou disposition TV de jellyfin-web) n'a pas de tchat du tout : rien
+     n'est installé, aucun sondage (2026-09-19). Le critère « ≤ 2 cœurs » ne sert qu'au mode allégé ci-dessous. */
+  var TV_APP = /web0?s|webos|tizen|smart-?tv|netcast|viera|bravia|hbbtv|aft[a-z]|android\s?tv|googletv|crkey/i
+    .test(navigator.userAgent || '') || document.documentElement.classList.contains('layout-tv');
+  if (TV_APP) return;
   var LOOP = TV ? 3000 : 1000;
   var BANNER_AUTO = TV ? 12000 : 0; // sur TV, le bandeau disparaît seul
   var POLL_OPEN = TV ? 10000 : 5000, POLL_CLOSED = TV ? 180000 : 60000, ME_OPEN = TV ? 30000 : 20000;
