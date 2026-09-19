@@ -256,17 +256,21 @@ journalctl -u homelabd -f
   note « (Google Cast non pris en charge) » sous le titre — un `<p class="actionSheetText">`, pas une entrée, la
   liste étant vide (vérifié en test). `branding/jellyfin/gc-airplay.js` (« Groscailloux AirPlay », v1.14.2) la
   remplace sur iPhone/iPad/Mac par une entrée **AirPlay** (v2 le 2026-09-19 : vidéo en cours →
-  `webkitShowPlaybackTargetPicker()` dans le clic ; sinon la feuille est fermée, le bouton Lecture de la page
-  est cliqué et le sélecteur est tenté dès que la vidéo est prête ; le rappel « icône AirPlay du lecteur » n'est
-  affiché que si le sélecteur refuse), la retire ailleurs, et écrit « Aucun autre appareil connecté avec ce
-  compte » quand la liste est vide. Les dialogues jellyfin-web 10.11 se ferment **uniquement** par
+  `webkitShowPlaybackTargetPicker()` dans le clic ; sinon la feuille est fermée, le bouton Lire **natif** de la
+  fiche est cliqué et le sélecteur est tenté dès que la vidéo est prête ; le rappel « icône AirPlay du lecteur »
+  n'est affiché que si le sélecteur refuse), la retire ailleurs, et écrit « Aucun autre appareil connecté avec ce
+  compte » quand la liste est vide. **Le bouton « Lire » du bandeau Media Bar (`.slide .btnPlay`) est inopérant
+  dans l'appli iPhone** : il fait `POST /Sessions/{id}/Playing` vers sa propre session (v3, 2026-09-19, journal
+  client « video: none within 8000ms ») — depuis l'accueil, le script clique le bouton « Détails » de la
+  diapositive active (`#slides-container .slide.active[data-item-id] .detail-button`), attend le `.btnPlay` de
+  la fiche, puis lance ; sans titre affiché, il ferme la feuille et l'explique en une ligne. Les dialogues jellyfin-web 10.11 se ferment **uniquement** par
   `history.back()` (entrée `history.state.usr.dialogs[]`) : clic synthétique sur le fond et Escape n'ont aucun
   effet ; sans entrée d'historique (WebView), le script retire la feuille lui-même. Chaque appui envoie ses étapes
   à `ClientLog/Document` (`jellyfin/config/log/upload_*.log`, lignes « gc-airplay … ») : lire ce journal avant
   toute hypothèse sur ce que fait l'appli iPhone. Une version déployée est **remplacée** par la suivante
   (`VERSION`, override de `__gcAirPlayDone`) : le lot `private.js` peut porter les deux pendant un test. Test :
   `backups/cast-tests-20260919/airplay_test.js` (puppeteer, compte temporaire, script candidat injecté par
-  interception de `/JavaScriptInjector/private.js` ; UA iPhone + simulateur du sélecteur, 16 cas ; relance avec
+  interception de `/JavaScriptInjector/private.js` ; UA iPhone + simulateur du sélecteur, 22 cas dont accueil, fiche et page sans titre ; relance avec
   `NO_INJECT=1` après déploiement).
   Google Cast ne marche que dans Chrome et l'appli Android (« non pris en charge » dans Safari et Jellyfin
   Desktop, c'est normal) ; AirPlay passe par le bouton du lecteur dans Safari/iPhone.

@@ -45,6 +45,10 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
   lecture est déjà en cours, le sélecteur s'ouvre directement. Le rappel « touchez l'icône AirPlay du lecteur »
   n'apparaît plus qu'en dernier recours, si l'appareil refuse d'ouvrir le sélecteur tout seul. La première version
   laissait le menu ouvert et se contentait d'afficher ce rappel.
+- **Depuis l'accueil aussi.** Le bouton « Lire » du bandeau d'accueil ne fait rien dans l'appli iPhone (il envoie
+  une commande à distance à sa propre session) ; l'entrée AirPlay passe désormais par la fiche du titre affiché
+  dans le bandeau, puis lance la lecture. Sur une page sans titre (recherche, bibliothèque), le menu se ferme et
+  une ligne explique d'ouvrir un film ou une série d'abord.
 
 ## 1.14.2 — 19/09/2026 — AirPlay dans le menu « Lire sur »
 

@@ -5,7 +5,9 @@
 // Quand cette note est là (vérifié à l'exécution, pas d'après l'appareil) :
 //   - iPhone, iPad, Mac : elle devient une entrée « AirPlay ».
 //       · vidéo en cours → le sélecteur AirPlay d'Apple s'ouvre dans le geste (il exige une vidéo ET un geste) ;
-//       · sinon → lecture du titre affiché, puis, dès que le lecteur a sa vidéo, tentative d'ouvrir le
+//       · sinon → lecture du titre affiché (fiche : son bouton Lire ; accueil : la fiche du titre du bandeau,
+//         puis son bouton Lire — le bouton du bandeau Media Bar est inopérant dans l'appli iPhone), puis, dès
+//         que le lecteur a sa vidéo, tentative d'ouvrir le
 //         sélecteur tant que l'activation du geste dure (WebKit la garde quelques secondes) ; si Apple refuse,
 //         un rappel discret pointe l'icône AirPlay du lecteur. Le rappel n'est plus affiché d'office.
 //   - ailleurs (Firefox, Jellyfin Desktop…) : la note est retirée.
@@ -110,16 +112,39 @@
 
   function visible(el) { return !!(el && el.offsetParent !== null); }
 
-  /* bouton Lire du titre affiché : bandeau d'accueil (.btnPlay) ou fiche du média ; jamais les boutons
-     des vignettes, présents mais inopérants tant qu'on ne les survole pas */
+  /* bouton Lire natif de la fiche du média ; jamais les boutons des vignettes (inopérants sans survol) ni
+     celui du bandeau Media Bar (.slide) : ce dernier envoie une commande « à distance » à sa propre session
+     (POST /Sessions/{id}/Playing), sans effet dans l'appli iPhone (2026-09-19, journal client : « video: none ») */
   function playButton() {
     var sel = ['.btnPlay', '.detailButton-play', '.mainDetailButtons button[data-action="resume"]',
                '.mainDetailButtons button[data-action="play"]', '.detailPagePrimaryContainer button[data-action="play"]', '.btnPlayAll'];
     for (var i = 0; i < sel.length; i++) {
       var all = document.querySelectorAll(sel[i]);
-      for (var j = 0; j < all.length; j++) if (visible(all[j]) && !all[j].closest('.card')) return all[j];
+      for (var j = 0; j < all.length; j++) if (visible(all[j]) && !all[j].closest('.card') && !all[j].closest('.slide')) return all[j];
     }
     return null;
+  }
+
+  /* titre affiché par le bandeau d'accueil (Media Bar) : on passe par sa fiche, dont le bouton Lire est
+     celui de jellyfin-web. Retourne le bouton « Détails » de la diapositive visible, ou null. */
+  function slideDetailButton() {
+    var slide = document.querySelector('#slides-container .slide.active[data-item-id]') ||
+                document.querySelector('#slides-container .slide[data-item-id]');
+    if (!slide || !visible(slide)) return null;
+    var b = slide.querySelector('.detail-button');
+    return b && visible(b) ? b : null;
+  }
+
+  /* attend le bouton Lire natif après la navigation vers la fiche (même délai que la vidéo) */
+  function whenPlayButton(cb) {
+    var b = playButton();
+    if (b) return cb(b);
+    var mo = new MutationObserver(function () {
+      var b2 = playButton();
+      if (b2) { mo.disconnect(); clearTimeout(t); cb(b2); }
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    var t = setTimeout(function () { mo.disconnect(); cb(null); }, VIDEO_WAIT_MS);
   }
 
   function tryPicker(v, where) {
@@ -152,30 +177,48 @@
       return;
     }
     var btn = playButton();
-    step(btn ? 'play: button ' + String(btn.className || btn.tagName).slice(0, 40) : 'play: no button');
+    var detail = btn ? null : slideDetailButton();
+    step(btn ? 'play: button ' + String(btn.className || btn.tagName).slice(0, 40) : detail ? 'play: via slide detail page' : 'play: no button');
     closeSheet(sheet, function () {
-      if (!btn) {
+      if (!btn && !detail) {
         window.__gcAirPlayShown = 'hint';
-        banner('AirPlay', 'Lance la lecture, puis touche l’icône AirPlay dans le lecteur.');
+        banner('AirPlay', 'Ouvre un film ou une série, puis choisis AirPlay dans « Lire sur ».');
         report('no-play-button');
         return;
       }
-      btn.click();
-      window.__gcAirPlayShown = 'started';
-      whenVideo(function (video) {
-        if (!video) {
-          step('video: none within ' + VIDEO_WAIT_MS + 'ms');
+      if (btn) return startAndPick(btn);
+      detail.click();
+      window.__gcAirPlayShown = 'navigating';
+      whenPlayButton(function (b2) {
+        if (!b2) {
+          step('play: detail page has no play button within ' + VIDEO_WAIT_MS + 'ms');
           window.__gcAirPlayShown = 'hint';
-          banner('AirPlay', 'La lecture n’a pas démarré : appuie sur Lire, puis sur l’icône AirPlay du lecteur.');
-          report('no-video');
+          banner('AirPlay', 'Appuie sur Lire, puis choisis AirPlay dans « Lire sur ».');
+          report('no-play-button-after-nav');
           return;
         }
-        step('video: ready');
-        if (tryPicker(video, 'after-play')) { window.__gcAirPlayShown = 'picker'; report('ok-after-play'); return; }
-        window.__gcAirPlayShown = 'hint';
-        banner('AirPlay', 'Touche l’icône AirPlay dans le lecteur pour choisir l’écran.');
-        report('picker-refused-after-play');
+        step('play: button ' + String(b2.className || b2.tagName).slice(0, 40) + ' (after nav)');
+        startAndPick(b2);
       });
+    });
+  }
+
+  function startAndPick(btn) {
+    btn.click();
+    window.__gcAirPlayShown = 'started';
+    whenVideo(function (video) {
+      if (!video) {
+        step('video: none within ' + VIDEO_WAIT_MS + 'ms');
+        window.__gcAirPlayShown = 'hint';
+        banner('AirPlay', 'La lecture n’a pas démarré : appuie sur Lire, puis sur l’icône AirPlay du lecteur.');
+        report('no-video');
+        return;
+      }
+      step('video: ready');
+      if (tryPicker(video, 'after-play')) { window.__gcAirPlayShown = 'picker'; report('ok-after-play'); return; }
+      window.__gcAirPlayShown = 'hint';
+      banner('AirPlay', 'Touche l’icône AirPlay dans le lecteur pour choisir l’écran.');
+      report('picker-refused-after-play');
     });
   }
 
@@ -202,7 +245,7 @@
     return b;
   }
 
-  var VERSION = 2;
+  var VERSION = 3;
   /* « Jouer sur » = la feuille qui suit un appui sur le bouton Cast de l'en-tête (indépendant de la langue) */
   var lastCastTap = 0;
   document.addEventListener('click', function (e) {
