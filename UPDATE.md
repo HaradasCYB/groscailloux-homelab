@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.14.1](#1141--19092026--lire-sur-retrouve-vos-appareils)** | 19/09/2026 | **« Lire sur » retrouve vos appareils** |
+| **[1.14.2](#1142--19092026--airplay-dans-le-menu-lire-sur)** | 19/09/2026 | **AirPlay dans le menu « Lire sur »** |
+| [1.14.1](#1141--19092026--lire-sur-retrouve-vos-appareils) | 19/09/2026 | « Lire sur » retrouve vos appareils |
 | [1.14.0](#1140--18092026--lecture--le-cache-tient-la-nuit) | 18/09/2026 | Lecture : le cache tient la nuit |
 | [1.13.1](#1131--18092026--avance-rapide-de-10-secondes) | 18/09/2026 | Avance rapide de 10 secondes |
 | [1.13.0](#1130--18092026--version-originale-privilégiée-pour-les-animés) | 18/09/2026 | Version originale privilégiée pour les animés |
@@ -35,6 +36,14 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.14.2 — 19/09/2026 — AirPlay dans le menu « Lire sur »
+
+- **Sur iPhone, iPad et Mac, le menu « Lire sur » propose AirPlay.** Pendant une lecture, il ouvre directement
+  le sélecteur d'écran d'Apple ; sinon il lance le titre affiché et rappelle où se trouve l'icône AirPlay dans le
+  lecteur. La mention « Google Cast non pris en charge » — qui n'était qu'une note, Google Cast n'existant que
+  dans Chrome et sur Android — disparaît partout où Cast n'est pas disponible.
+- Quand aucun autre appareil de votre compte n'est connecté, le menu le dit clairement au lieu de rester vide.
 
 ## 1.14.1 — 19/09/2026 — « Lire sur » retrouve vos appareils
 

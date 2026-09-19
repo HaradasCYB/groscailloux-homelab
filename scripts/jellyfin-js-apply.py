@@ -20,6 +20,7 @@ SCRIPTS = {
     "Groscailloux Tchat": "branding/jellyfin/gc-chat-loader.js",
     "Groscailloux Lire sur": "branding/jellyfin/gc-cast-filter.js",
     "Groscailloux Qualité": "branding/jellyfin/gc-quality-helper.js",
+    "Groscailloux AirPlay": "branding/jellyfin/gc-airplay.js",
 }
 
 env = dict(l.split("=", 1) for l in open(f"{BASE}/.env").read().splitlines() if "=" in l and not l.startswith("#"))

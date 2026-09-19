@@ -252,7 +252,15 @@ journalctl -u homelabd -f
   conservé et testé (`node` sur la liste réelle de `/Sessions`). Le menu ne peut lister qu'un appareil **ouvert
   et connecté** avec le même compte : Desktop fermé ou TV éteinte = liste vide, ce n'est pas une panne. Jellyfin
   garde la liste des cibles en mémoire pendant la vie de la page : le filtre doit être chargé avant la première
-  ouverture du menu.
+  ouverture du menu. **Google Cast n'existe que dans Chrome et l'appli Android** ; ailleurs jellyfin-web met une
+  note « (Google Cast non pris en charge) » sous le titre — un `<p class="actionSheetText">`, pas une entrée, la
+  liste étant vide (vérifié en test). `branding/jellyfin/gc-airplay.js` (« Groscailloux AirPlay », v1.14.2) la
+  remplace sur iPhone/iPad/Mac par une entrée **AirPlay** (vidéo en cours → `webkitShowPlaybackTargetPicker()`
+  dans le clic, sinon lecture du titre affiché + rappel de l'icône du lecteur), la retire ailleurs, et écrit
+  « Aucun autre appareil connecté avec ce compte » quand la liste est vide. Les dialogues jellyfin-web 10.11 se
+  ferment **uniquement** par `history.back()` (entrée `history.state.usr.dialogs[]`) : clic synthétique sur le
+  fond et Escape n'ont aucun effet. Test : `backups/cast-tests-20260919/airplay_test.js` (puppeteer, compte temporaire, script
+  candidat injecté par interception de `/JavaScriptInjector/private.js` ; UA iPhone + simulateur du sélecteur).
   Google Cast ne marche que dans Chrome et l'appli Android (« non pris en charge » dans Safari et Jellyfin
   Desktop, c'est normal) ; AirPlay passe par le bouton du lecteur dans Safari/iPhone.
 - **Adresses des clients** : `KnownProxies = 172.18.0.0/16` (réseau Docker entier) dans la configuration
