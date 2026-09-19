@@ -23,6 +23,15 @@ jellyseerr = "http://localhost:5055"
 listen = "0.0.0.0:8766"
 rate_limit_secs = 30
 
+[onboard]
+# Mail de bienvenue = un bouton vers /bienvenue/<lien> où le membre définit son mot de passe (aucun identifiant
+# dans le mail, 2026-09-19). Le lien expire, la page propose d'en recevoir un nouveau. Page publique
+# /inscription : le compte est créé suspendu, l'admin l'active depuis /accounts (mail au membre à ce moment-là).
+link_ttl_mins = 60
+public_signup = true
+max_signups_per_day = 10      # toutes adresses confondues ; au-delà, la page demande de réessayer demain
+renew_per_hour = 3            # renvois de lien par adresse et par heure
+
 [tasks]
 # Tâches non planifiées par le daemon (restent lançables via `homelabctl run`).
 disabled = ["tba_bypass"]  # inutile depuis episodeTitleRequired = never ; gardée comme filet

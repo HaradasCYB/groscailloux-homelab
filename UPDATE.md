@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.15.1](#1151--19092026--en-français-sur-tous-les-appareils)** | 19/09/2026 | **En français sur tous les appareils** |
+| **[1.16.0](#1160--20092026--bienvenue-comme-chez-les-grands)** | 20/09/2026 | **Bienvenue comme chez les grands** |
+| [1.15.1](#1151--19092026--en-français-sur-tous-les-appareils) | 19/09/2026 | En français sur tous les appareils |
 | [1.15.0](#1150--19092026--une-interface-pensée-pour-la-télé) | 19/09/2026 | Une interface pensée pour la télé |
 | [1.14.4](#1144--19092026--films-demandés-sous-5-minutes) | 19/09/2026 | Films demandés sous 5 minutes |
 | [1.14.3](#1143--19092026--airplay-lance-vraiment-la-lecture) | 19/09/2026 | AirPlay lance vraiment la lecture |
@@ -40,6 +41,19 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.16.0 — 20/09/2026 — Bienvenue comme chez les grands
+
+- **Un vrai mail de bienvenue, qui arrive.** Fini le mail brut avec identifiant et mot de passe en clair (que Gmail
+  rangeait en spam) : un mail sobre, texte et HTML, au nom de Groscailloux, avec **un bouton**. Il mène à une page où
+  le membre **choisit son mot de passe** et retrouve ses accès (regarder, demander, guide). Le lien vaut une heure et ne
+  sert qu'une fois ; expiré, la page en renvoie un nouveau sur demande — ce qui sert aussi de « mot de passe oublié ».
+- **Un second mail à l'activation** : quand l'administrateur active un compte en attente, le membre reçoit « ton
+  compte est actif » avec un bouton.
+- **Une page d'inscription** (`/inscription`) : pseudo + adresse, et le compte est créé en attente de validation ;
+  l'administrateur est prévenu par mail et active depuis la page Comptes, qui affiche aussi l'état du lien de chaque
+  membre et permet de le renvoyer.
+- Aucun mot de passe ne circule plus par mail ni ne s'affiche dans les outils d'admin.
 
 ## 1.15.1 — 19/09/2026 — En français sur tous les appareils
 

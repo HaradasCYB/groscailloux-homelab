@@ -355,6 +355,17 @@ impl JellyfinClient {
             .context("Users/New sans Id")
     }
 
+    /// Nouveau mot de passe posé par l'admin (page de bienvenue) ; Jellyseerr suit, il s'authentifie sur
+    /// Jellyfin. Le mot de passe n'apparaît jamais dans les journaux.
+    pub async fn set_password(&self, user_id: &str, new_password: &Secret) -> Result<()> {
+        let resp = self
+            .req(Method::POST, &format!("Users/{user_id}/Password"))
+            .json(&json!({ "NewPw": new_password.expose(), "ResetPassword": false }))
+            .send()
+            .await?;
+        check(resp, "jellyfin Users/Password").await.map(|_| ())
+    }
+
     pub async fn set_policy(&self, user_id: &str, policy: &Value) -> Result<()> {
         let resp = self
             .req(Method::POST, &format!("Users/{user_id}/Policy"))

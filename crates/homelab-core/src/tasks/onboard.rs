@@ -18,24 +18,42 @@ use crate::clients::jellyfin::non_admin_policy;
 use crate::context::TaskContext;
 use crate::mail;
 use crate::secret::Secret;
+use crate::welcome;
+
+/// D'où vient la demande : formulaire admin / CLI, page publique d'inscription, ou « Add User » Jellyseerr repris
+/// par `user_poller`. Une inscription publique prévient l'admin par mail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Source {
+    #[default]
+    Admin,
+    SelfSignup,
+    Poller,
+}
 
 #[derive(Debug, Clone)]
 pub struct OnboardRequest {
     pub username: String,
     pub email: String,
+    /// Mot de passe imposé par l'admin ; sinon un aléa jamais communiqué, que le membre remplace via le lien.
     pub password: Option<Secret>,
+    pub source: Source,
 }
 
 #[derive(Debug, Clone)]
 pub struct OnboardResult {
     pub username: String,
     pub email: String,
-    pub password: Secret,
+    /// Seulement si l'admin l'a imposé ; sinon le membre le définit sur la page de bienvenue.
+    pub password: Option<Secret>,
     pub jellyfin_id: String,
     pub jellyseerr_id: i64,
     pub jellyfin_url: String,
     pub jellyseerr_url: String,
+    /// Mail de bienvenue (lien) parti.
     pub mail_sent: bool,
+    /// URL du lien de bienvenue (à transmettre à la main si le mail n'est pas parti ; jamais journalisée).
+    pub link_url: Option<String>,
+    pub link_expires_at: Option<i64>,
     /// Compte actif dès la création ; `false` = suspendu, en attente d'activation.
     pub premium: bool,
     pub dry_run: bool,
@@ -62,82 +80,6 @@ pub fn generate_password() -> Secret {
     Secret::new(s)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn welcome_mail(
-    username: &str,
-    password: &str,
-    from: &str,
-    jellyfin_url: &str,
-    jellyseerr_url: &str,
-    premium: bool,
-    auto_approve: bool,
-    guide_url: Option<&str>,
-) -> String {
-    let pending = if premium {
-        ""
-    } else {
-        "
-⏳ Ton compte est cree mais pas encore active : l'administrateur
-   l'active sous peu. D'ici la, la connexion sera refusee.
-"
-    };
-    let guide = match guide_url {
-        Some(u) => format!(
-            "
-📘 Guide pour bien demarrer (se connecter, naviguer, demander un film,
-   suivre ta demande) :
-   {u}
-"
-        ),
-        None => String::new(),
-    };
-    let requests = if auto_approve {
-        "   Tes demandes sont validees automatiquement, dans la limite d'un quota
-   par semaine affiche sur ton profil Jellyseerr.
-"
-    } else {
-        ""
-    };
-    format!(
-        "Salut {username},
-
-Si tu trouves ce mail dans tes spams / courrier indesirable / promotions,
-merci de le marquer comme \"Pas indesirable\" et d'ajouter {from}
-a tes contacts — sinon les futurs mails pourraient ne pas arriver.
-
-Tu as peut-etre recu un premier mail \"Reset password\" automatique de
-Jellyseerr juste avant celui-ci : IGNORE-LE. Ce sont les identifiants
-ci-dessous qu'il faut utiliser.
-
-Voici tes acces :
-
-🎬 Streaming (regarder films/series) :
-   {jellyfin_url}
-
-🎯 Requetes (demander de nouveaux contenus) :
-   {jellyseerr_url}
-{requests}
-Identifiants (les memes sur les deux services) :
-   Username : {username}
-   Password : {password}
-{pending}{guide}
-💬 Une question, un souci ? Le tchat est dans Jellyfin : bulle en haut a
-   droite (salon Entraide, ou \"Ecrire a l'admin\" pour un message prive).
-
-⚠️  Important — ton compte parent est Jellyfin.
-   En cas de changement de mot de passe, la procedure se fait UNIQUEMENT
-   sur Jellyfin (Profil → Mot de passe). Le changement sera automatiquement
-   actif sur Jellyseerr egalement.
-
-Sur Jellyseerr, utilise les memes identifiants (formulaire
-\"Se connecter avec Jellyfin\").
-
-—
-Jellyseerr Groscailloux
-"
-    )
-}
-
 pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult> {
     if !valid_username(&req.username) {
         bail!("username invalide (2-32 caractères, lettres/chiffres/_-)");
@@ -146,6 +88,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         bail!("email invalide");
     }
     let email = req.email.to_lowercase();
+    let imposed = req.password.clone();
     let password = req.password.unwrap_or_else(generate_password);
     let _guard = ctx.onboard_lock.lock().await;
     let s = &ctx.secrets;
@@ -183,12 +126,14 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
     let mut result = OnboardResult {
         username: req.username.clone(),
         email: email.clone(),
-        password: password.clone(),
+        password: imposed,
         jellyfin_id: String::new(),
         jellyseerr_id: 0,
         jellyfin_url: s.jellyfin_public_url.clone(),
         jellyseerr_url: s.jellyseerr_public_url.clone(),
         mail_sent: false,
+        link_url: None,
+        link_expires_at: None,
         premium: ctx.cfg.accounts.new_accounts_premium,
         dry_run: ctx.dry_run,
     };
@@ -288,39 +233,62 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         }
     }
 
-    if let Some(smtp) = &s.smtp {
-        let guide_url = s.onboard_public_url.as_ref().map(|u| format!("{u}/guide"));
-        let body = welcome_mail(
-            &req.username,
-            password.expose(),
-            &smtp.from,
-            &s.jellyfin_public_url,
-            &s.jellyseerr_public_url,
-            result.premium,
-            ctx.cfg.accounts.jellyseerr_auto_approve,
-            guide_url.as_deref(),
-        );
-        match mail::send_plain(
-            smtp,
-            &req.username,
-            &email,
-            "Bienvenue sur Groscailloux — tes identifiants",
-            &body,
-        )
-        .await
-        {
-            Ok(()) => {
-                result.mail_sent = true;
-                info!(task = "onboard", email = %email, "welcome mail sent");
-            }
-            Err(e) => {
-                warn!(task = "onboard", email = %email, error = %e, "mail failed, hand over credentials manually")
+    // lien de bienvenue : le membre définit son mot de passe sur la page, rien de sensible dans le mail
+    match welcome::send(
+        ctx,
+        &jf_id,
+        &req.username,
+        &email,
+        welcome::KIND_WELCOME,
+        result.premium,
+    )
+    .await
+    {
+        Ok(sent) => {
+            result.mail_sent = sent.mail_sent;
+            result.link_expires_at = Some(sent.expires_at);
+            result.link_url = Some(sent.url);
+            if sent.mail_sent {
+                info!(task = "onboard", username = %req.username, "welcome link mailed");
+            } else {
+                warn!(task = "onboard", username = %req.username, "welcome link NOT mailed, hand the link over manually");
             }
         }
-    } else {
-        warn!(task = "onboard", "SMTP non configuré : aucun mail envoyé");
+        Err(e) => {
+            warn!(task = "onboard", username = %req.username, error = %e, "welcome link failed")
+        }
+    }
+    if req.source == Source::SelfSignup {
+        notify_admin_signup(ctx, &req.username).await;
     }
     Ok(result)
+}
+
+/// Inscription publique : l'admin doit activer le compte depuis /accounts.
+async fn notify_admin_signup(ctx: &TaskContext, username: &str) {
+    let s = &ctx.secrets;
+    let (Some(smtp), Some(to)) = (&s.smtp, s.chat_admin_email.as_deref()) else {
+        return;
+    };
+    let accounts = s
+        .onboard_public_url
+        .as_deref()
+        .map(|u| format!("{}/accounts", u.trim_end_matches('/')))
+        .unwrap_or_else(|| "la page Comptes (Homarr)".to_string());
+    let body = format!(
+        "Un nouveau compte vient d'être créé depuis la page d'inscription : {username}.\n\nIl est suspendu tant que tu ne l'actives pas : {accounts}\n\nLe membre a reçu son lien pour définir son mot de passe ; il recevra un second mail à l'activation.\n"
+    );
+    if let Err(e) = mail::send_plain(
+        smtp,
+        "Admin Groscailloux",
+        to,
+        &format!("Nouveau compte à activer : {username}"),
+        &body,
+    )
+    .await
+    {
+        warn!(task = "onboard", error = %e, "admin signup notification failed");
+    }
 }
 
 fn find_js_id(v: &Value, jellyfin_id: &str) -> Option<i64> {
@@ -345,38 +313,6 @@ mod tests {
         assert!(valid_username("hippo_42"));
         assert!(!valid_username("a"));
         assert!(!valid_username("with space"));
-    }
-
-    #[test]
-    fn welcome_mail_guide_and_auto_approve() {
-        let m = welcome_mail(
-            "bob",
-            "pw",
-            "f@x.io",
-            "https://jf",
-            "https://js",
-            true,
-            true,
-            Some("https://onb/guide"),
-        );
-        assert!(m.contains("https://onb/guide"));
-        assert!(m.contains("validees automatiquement"));
-        assert!(m.contains("Se connecter avec Jellyfin"));
-        assert!(m.contains("Le tchat est dans Jellyfin"));
-        assert!(!m.contains("pas encore active"));
-        let m = welcome_mail(
-            "bob",
-            "pw",
-            "f@x.io",
-            "https://jf",
-            "https://js",
-            false,
-            false,
-            None,
-        );
-        assert!(!m.contains("Guide pour bien demarrer"));
-        assert!(!m.contains("validees automatiquement"));
-        assert!(m.contains("pas encore active"));
     }
 
     #[test]

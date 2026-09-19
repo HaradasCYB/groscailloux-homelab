@@ -99,7 +99,16 @@ impl Task for Cleanup {
             (t, d, r, l)
         })
         .await?;
-        let total = transcodes + empty_dirs + recycle + logs;
+        // liens de bienvenue consommés ou expirés depuis plus d'une semaine
+        let links = if dry {
+            0
+        } else {
+            let t = crate::state::now();
+            ctx.state
+                .update(|st| crate::welcome::purge(&mut st.welcome_links, t))
+                .await? as u32
+        };
+        let total = transcodes + empty_dirs + recycle + logs + links;
         info!(
             task = "cleanup",
             dry_run = dry,
@@ -107,11 +116,12 @@ impl Task for Cleanup {
             empty_dirs,
             recycle,
             logs,
+            links,
             "done"
         );
         Ok(Report::new(
             format!(
-                "transcodes={transcodes} empty_dirs={empty_dirs} recycle={recycle} logs={logs}"
+                "transcodes={transcodes} empty_dirs={empty_dirs} recycle={recycle} logs={logs} links={links}"
             ),
             total,
         ))

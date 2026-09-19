@@ -66,6 +66,15 @@ pub struct State {
     /// deletion_cleanup : suppressions constatées et torrents en attente de retrait.
     #[serde(default)]
     pub deletions: Deletions,
+    /// Liens de bienvenue (page où le membre définit son mot de passe), clé = SHA-256 hex du jeton.
+    #[serde(default)]
+    pub welcome_links: BTreeMap<String, WelcomeLink>,
+    /// Dates (secondes) des inscriptions par la page publique : plafond journalier.
+    #[serde(default)]
+    pub signups: Vec<i64>,
+    /// Dates des renvois de lien par adresse (clé = SHA-256 hex de l'adresse) : plafond horaire.
+    #[serde(default)]
+    pub link_renewals: BTreeMap<String, Vec<i64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +153,20 @@ pub struct StuckEntry {
     pub download_id: String,
     pub first_seen: i64,
     pub title: String,
+}
+
+/// Un lien de bienvenue : `welcome` (définir son mot de passe), `activated` (compte activé, même page si le
+/// mot de passe n'est pas encore défini), `demo` (mail de test : page d'exemple, aucun compte).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WelcomeLink {
+    pub user_id: String,
+    pub username: String,
+    pub email: String,
+    pub kind: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    #[serde(default)]
+    pub used_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use homelab_core::accounts::{self, Outcome};
-use homelab_core::tasks::{self, backup, onboard, vpn};
-use homelab_core::{Config, Secret, Secrets, TaskContext};
+use homelab_core::tasks::{self, backup, vpn};
+use homelab_core::{Config, Secrets, TaskContext};
+use serde_json::{json, Value};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
@@ -34,13 +35,20 @@ enum Cmd {
     Onboard {
         username: String,
         email: String,
+        /// Imposer un mot de passe (sinon le membre le définit via le lien de bienvenue)
         #[arg(long)]
         password: Option<String>,
     },
+    /// Envoie le mail de bienvenue en exemple (lien de démonstration, aucun compte touché)
+    MailTest {
+        /// Adresse destinataire
+        to: String,
+    },
     /// Comptes Jellyfin : list ; on|off <compte> (premium ou suspendu) ; delete <compte> --yes ;
-    /// limits (applique `max_devices_per_user`, appareils connectés par compte ; 0 = illimité)
+    /// limits (applique `max_devices_per_user`, appareils connectés par compte ; 0 = illimité) ;
+    /// link <compte> (renvoie un lien de bienvenue : définir ou changer son mot de passe)
     Accounts {
-        #[arg(value_parser = ["list", "on", "off", "delete", "limits"])]
+        #[arg(value_parser = ["list", "on", "off", "delete", "limits", "link"])]
         action: String,
         /// Nom ou id Jellyfin (pour on/off/delete)
         who: Option<String>,
@@ -106,60 +114,60 @@ async fn main() -> Result<()> {
             email,
             password,
         } => {
-            let r = onboard::run(
+            // le lien de bienvenue vit dans l'état du daemon : tout passe par son API (jeton)
+            let v = daemon_post(
                 &ctx,
-                onboard::OnboardRequest {
-                    username,
-                    email,
-                    password: password.map(Secret::new),
-                },
+                "/onboard",
+                json!({ "username": username, "email": email, "password": password }),
             )
             .await?;
-            if r.dry_run {
-                println!(
-                    "DRY-RUN : pré-contrôles OK pour {} <{}>",
-                    r.username, r.email
-                );
+            if v.get("dry_run").and_then(Value::as_bool) == Some(true) {
+                println!("DRY-RUN : pré-contrôles OK pour {username} <{email}>");
                 return Ok(());
             }
+            let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("—").to_string();
+            let mail_sent = v.get("mail_sent").and_then(Value::as_bool).unwrap_or(false);
             println!(
-                "\n✓ Onboarding terminé pour {u}\n\n  Username      : {u}\n  Email         : {e}\n  Password      : {p}\n  Jellyfin Id   : {jf}\n  Jellyseerr id : {js}\n  Mail          : {m}\n  Premium       : {pr}\n\n  Streaming : {ju}\n  Requêtes  : {su}\n",
-                u = r.username,
-                e = r.email,
-                p = r.password.expose(),
-                jf = r.jellyfin_id,
-                js = r.jellyseerr_id,
-                m = if r.mail_sent { "envoyé" } else { "NON envoyé — transmettre à la main" },
-                pr = if r.premium { "oui" } else { "non — à activer (homelabctl accounts on <compte>)" },
-                ju = r.jellyfin_url,
-                su = r.jellyseerr_url
+                "\n✓ Onboarding terminé pour {u}\n\n  Username      : {u}\n  Email         : {e}\n  Mot de passe  : {p}\n  Jellyfin Id   : {jf}\n  Jellyseerr id : {js}\n  Mail          : {m}\n  Lien          : {l}\n  Premium       : {pr}\n\n  Streaming : {ju}\n  Requêtes  : {su}\n",
+                u = s("username"),
+                e = s("email"),
+                p = v.get("password").and_then(Value::as_str).unwrap_or("à définir par le membre (lien)"),
+                jf = s("jellyfin_id"),
+                js = v.get("jellyseerr_id").and_then(Value::as_i64).unwrap_or(0),
+                m = if mail_sent { "envoyé" } else { "NON envoyé — transmettre le lien à la main" },
+                l = s("link_url"),
+                pr = if v.get("premium").and_then(Value::as_bool).unwrap_or(false) { "oui" } else { "non — à activer (homelabctl accounts on <compte>)" },
+                ju = s("jellyfin_url"),
+                su = s("jellyseerr_url"),
+            );
+        }
+        Cmd::MailTest { to } => {
+            let v = daemon_post(&ctx, "/admin/mail-test", json!({ "to": to })).await?;
+            println!(
+                "mail de bienvenue (démo) {} → {to}\n  lien : {}",
+                if v.get("mail_sent").and_then(Value::as_bool).unwrap_or(false) {
+                    "envoyé"
+                } else {
+                    "NON envoyé (SMTP ?)"
+                },
+                v.get("url").and_then(Value::as_str).unwrap_or("—")
             );
         }
         Cmd::Accounts { action, who, yes } => match action.as_str() {
-            "list" => {
-                let list = accounts::list(&ctx).await?;
-                let premium = list.iter().filter(|a| a.premium && !a.protected).count();
+            "link" => {
+                let who = who.context("préciser le compte : homelabctl accounts link <compte>")?;
+                let a = accounts::resolve(&ctx, &who).await?;
+                let v = daemon_post(&ctx, "/admin/link", json!({ "user_id": a.id })).await?;
                 println!(
-                    "{premium} premium / {} max\n\n{:<24} {:<8} {:<8} dernière activité",
-                    ctx.cfg.accounts.max_premium, "compte", "premium", "flux"
+                    "lien de bienvenue pour {} {}\n  lien : {}",
+                    a.name,
+                    if v.get("mail_sent").and_then(Value::as_bool).unwrap_or(false) {
+                        "envoyé"
+                    } else {
+                        "NON envoyé — transmettre à la main"
+                    },
+                    v.get("url").and_then(Value::as_str).unwrap_or("—")
                 );
-                for a in list {
-                    println!(
-                        "{:<24} {:<8} {:<8} {}",
-                        if a.protected {
-                            format!("{} (protégé)", a.name)
-                        } else {
-                            a.name.clone()
-                        },
-                        if a.premium { "oui" } else { "non" },
-                        if a.max_streams == 0 {
-                            "∞".to_string()
-                        } else {
-                            a.max_streams.to_string()
-                        },
-                        a.last_activity.as_deref().unwrap_or("jamais")
-                    );
-                }
             }
             "limits" => {
                 let changed = accounts::apply_device_limit(&ctx).await?;
@@ -415,4 +423,34 @@ async fn install(cfg: &Config) -> Result<()> {
     }
     println!("→ systemctl start homelabd.service (ou restart après mise à jour du binaire)");
     Ok(())
+}
+
+/// Appel de l'API locale de homelabd (jeton `HOMELABD_ONBOARD_TOKEN`) : l'état des liens de bienvenue
+/// appartient au daemon, la CLI ne l'écrit jamais elle-même (un lien émis ici serait invisible du daemon
+/// et écrasé à sa prochaine sauvegarde).
+async fn daemon_post(ctx: &TaskContext, path: &str, body: Value) -> Result<Value> {
+    let token = ctx
+        .secrets
+        .onboard_token
+        .as_ref()
+        .context("HOMELABD_ONBOARD_TOKEN manquant dans .env : requis pour parler à homelabd")?;
+    let port = ctx.cfg.web.listen.rsplit(':').next().unwrap_or("8766");
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let resp = ctx
+        .http
+        .post(&url)
+        .header("x-onboard-token", token.expose())
+        .json(&body)
+        .send()
+        .await
+        .with_context(|| format!("homelabd injoignable sur {url} (systemctl status homelabd)"))?;
+    let status = resp.status();
+    let v: Value = resp.json().await.unwrap_or(Value::Null);
+    if !status.is_success() || v.get("success").and_then(Value::as_bool) == Some(false) {
+        bail!(
+            "homelabd {path} → {status} : {}",
+            v.get("error").and_then(Value::as_str).unwrap_or("?")
+        );
+    }
+    Ok(v)
 }

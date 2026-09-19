@@ -220,6 +220,20 @@ journalctl -u homelabd -f
   `backups/jellyfin-skip-20260918-155125/`), et un compte créé ensuite le reçoit à l'onboarding. Une appli déjà
   ouverte garde l'ancienne valeur en cache jusqu'au rechargement. Ni les raccourcis de Jellyfin Enhanced
   (lettres et chiffres seulement) ni nos scripts injectés ne touchent aux flèches.
+- **Onboarding et mails (2026-09-20, v1.16.0)** : le mail de bienvenue finissait en **spam** — `curl smtps` sans
+  `Date`/`Message-ID`, identifiant + mot de passe en clair, « Jellyseerr Groscailloux », accents retirés, liens
+  duckdns. `mail.rs` construit maintenant un MIME complet (`Date`, `Message-ID`, `Reply-To`, RFC 2047, quoted-printable,
+  `multipart/alternative`) ; `SMTP_FROM_NAME` = « Groscailloux ». **Jamais d'identifiant ni de mot de passe dans un
+  mail** : un bouton vers `/bienvenue/<jeton>` (`homelab_core::welcome`, jeton haché SHA-256 dans
+  `state.welcome_links`, `[onboard] link_ttl_mins` = 60, usage unique) où le membre choisit son mot de passe ; page
+  expirée → renvoi par adresse (réponse neutre, `renew_per_hour`). Page publique `/inscription` (`public_signup`,
+  honeypot, rate limit IP, `max_signups_per_day`, adresse connue → neutre) ; l'admin reçoit « nouveau compte à
+  activer » et le membre « ton compte est actif » à l'activation depuis `/accounts` (colonne « Lien », bouton
+  Renvoyer). **Les liens vivent dans l'état du daemon** : `homelabctl onboard|accounts link|mail-test` passent par
+  `POST /onboard`, `/admin/link`, `/admin/mail-test` (jeton `HOMELABD_ONBOARD_TOKEN` en en-tête) — un lien émis par
+  la CLI dans le fichier d'état serait invisible du daemon et écrasé à sa prochaine sauvegarde (vu le 2026-09-20).
+  Test sans polluer : compte temporaire dont l'adresse est **celle de l'expéditeur** (`SMTP_FROM`, aucun rebond) ;
+  jamais d'adresse inventée (rebonds = réputation Gmail). Jetons et mots de passe jamais journalisés.
 - **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
   la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).

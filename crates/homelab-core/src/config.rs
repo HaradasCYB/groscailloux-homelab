@@ -28,6 +28,8 @@ pub struct Config {
     #[serde(default)]
     pub accounts: Accounts,
     #[serde(default)]
+    pub onboard: Onboard,
+    #[serde(default)]
     pub chat: Chat,
     #[serde(default)]
     pub manual_search: ManualSearch,
@@ -280,6 +282,31 @@ pub struct Urls {
     pub qbittorrent: String,
     pub jellyfin: String,
     pub jellyseerr: String,
+}
+
+/// Onboarding des membres : lien de bienvenue (définir son mot de passe) et page publique d'inscription.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Onboard {
+    /// Durée de validité d'un lien de bienvenue (minutes) ; renouvelable depuis la page elle-même.
+    pub link_ttl_mins: u64,
+    /// Page publique `/inscription` ouverte (le compte reste à activer par l'admin).
+    pub public_signup: bool,
+    /// Inscriptions acceptées par 24 h sur la page publique, toutes adresses confondues.
+    pub max_signups_per_day: usize,
+    /// Renvois de lien acceptés par heure pour une même adresse.
+    pub renew_per_hour: usize,
+}
+
+impl Default for Onboard {
+    fn default() -> Self {
+        Self {
+            link_ttl_mins: 60,
+            public_signup: true,
+            max_signups_per_day: 10,
+            renew_per_hour: 3,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1226,6 +1253,10 @@ jellyseerr = "http://js"
         // saut du lecteur : 10 s des deux côtés (Jellyfin met 30 s en avant par défaut)
         assert_eq!(cfg.accounts.skip_forward_ms, 10_000);
         assert_eq!(cfg.accounts.skip_back_ms, 10_000);
+        assert_eq!(cfg.onboard.link_ttl_mins, 60);
+        assert!(cfg.onboard.public_signup);
+        assert_eq!(cfg.onboard.max_signups_per_day, 10);
+        assert_eq!(cfg.onboard.renew_per_hour, 3);
         assert_eq!(cfg.accounts.max_playbacks_per_user, 2);
         assert_eq!(cfg.tasks.playback_limit.grace_secs, 30);
         assert!(!cfg.accounts.new_accounts_premium);

@@ -21,6 +21,7 @@ pub mod secret;
 pub mod state;
 pub mod tasks;
 pub mod torrent_file;
+pub mod welcome;
 
 pub use config::{Config, Secrets};
 pub use context::TaskContext;

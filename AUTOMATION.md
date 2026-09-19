@@ -389,23 +389,33 @@ première vidéo.
 
 ## Onboarding
 
-`homelabctl onboard <user> <email> [--password]`, `POST /onboard` (UI sur `:8766`, en-tête
-`X-Onboard-Token` = `HOMELABD_ONBOARD_TOKEN`, la page lit `?token=` ; 1 requête / 30 s / IP)
-ou le poller. Séquence sous mutex : pré-contrôles Jellyfin + Jellyseerr → nom Jellyfin libre
-(insensible à la casse) → email Jellyseerr libre → `POST /Users/New` → policy non-admin
-limitée aux bibliothèques `JELLYFIN_LIB_FILMS`/`SERIES` → `POST /api/v1/user/import-from-jellyfin`
-→ `POST /api/v1/user/{id}/settings/main` (email) → mail de bienvenue via `curl smtps://`.
-La policy donne accès à `JELLYFIN_LIB_FILMS`, `JELLYFIN_LIB_SERIES` et aux ids éventuels de
-`JELLYFIN_LIB_EXTRA` (aujourd'hui la bibliothèque « Collections » : sagas et rangées de l'accueil).
-Le mot de passe (16 caractères alphanumériques) n'apparaît jamais dans les logs.
-La policy limite aussi les lectures simultanées (`accounts.max_streams_per_user`). Si
-`accounts.new_accounts_premium = false` (réglage actuel), le compte est ensuite **suspendu** (après
-l'import Jellyseerr) et le mail de bienvenue prévient que l'accès sera activé par l'administrateur.
-Avant la suspension, `accounts.jellyseerr_auto_approve` ajoute la validation automatique des demandes
-(bit 128, `accounts::request_permissions`) aux droits Jellyseerr de l'import ; la suspension les
-sauvegarde et l'activation les rend (en ajoutant le bit aux comptes suspendus avant ce réglage).
-Le mail de bienvenue renvoie vers le guide (`ONBOARD_PUBLIC_URL` + `/guide`, pas de lien si absent) et
-annonce la validation automatique.
+Trois entrées, un seul flux (`onboard::run`) : `homelabctl onboard <user> <email> [--password]` (passe par l'API
+du daemon), le formulaire admin `/` (jeton `HOMELABD_ONBOARD_TOKEN`, la page lit `?token=`), et la **page publique
+`/inscription`** (`[onboard] public_signup`) ; `user_poller` reprend aussi les « Add User » de Jellyseerr.
+Le compte Jellyfin est créé avec un mot de passe aléatoire **jamais communiqué**, importé dans Jellyseerr
+(e-mail, droits), puis suspendu sauf `accounts.new_accounts_premium`.
+
+**Lien de bienvenue** (`homelab_core::welcome`, 2026-09-20) : le mail ne contient qu'un bouton vers
+`/bienvenue/<jeton>` (jeton de 32 octets aléatoires, stocké **haché** dans `state.welcome_links`, valable
+`[onboard] link_ttl_mins`, un seul usage, un seul lien actif par compte). La page fait choisir le mot de passe
+(8 caractères min, sans le pseudo ; `POST /Users/{id}/Password` en admin, Jellyseerr suit), consomme le lien et
+affiche les accès (Jellyfin, Jellyseerr, guide). Lien expiré ou consommé → page « recevoir un nouveau lien »
+(`POST /bienvenue/renouveler`, réponse identique que l'adresse soit connue ou non, `renew_per_hour` par adresse) :
+c'est aussi le « mot de passe oublié ». À l'**activation** depuis `/accounts`, mail « ton compte est actif » (lien
+`activated`, même page si le mot de passe n'est pas encore défini). `/accounts` montre l'état du lien et permet
+de le renvoyer ; `homelabctl accounts link <compte>` idem ; `homelabctl mail-test <adresse>` envoie le mail avec
+un lien de démonstration (page en lecture seule). Les liens vivent dans l'état **du daemon** : la CLI passe par
+`POST /admin/link` et `/admin/mail-test` (jeton en en-tête). `cleanup` purge les liens finis depuis > 7 j.
+
+**Inscription publique** : pseudo + e-mail + case « validé par l'admin » + champ leurre ; rate limit IP
+(`web.rate_limit_secs`), plafond `max_signups_per_day` (toutes adresses), adresse déjà connue → réponse neutre sans
+création, pseudo pris → message. Le compte est créé suspendu, le membre reçoit son lien, l'admin un mail
+« nouveau compte à activer » (`CHAT_ADMIN_EMAIL`, repli `GUIDE_CONTACT_EMAIL`).
+
+**Mails** (`mail.rs`) : `curl smtps` vers le SMTP de `.env`, message MIME construit ici — `Date`, `Message-ID`,
+`Reply-To` (contact), sujet/noms RFC 2047, corps quoted-printable UTF-8, `multipart/alternative` texte + HTML
+pour les membres (`assets/mail/welcome.html`), texte seul pour l'admin. Jamais d'identifiant ni de mot de passe
+dans un mail.
 
 ## Guide des nouveaux membres
 

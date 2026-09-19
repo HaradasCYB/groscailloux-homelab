@@ -331,6 +331,43 @@ pub async fn delete(ctx: &TaskContext, user_id: &str) -> Result<Deleted> {
 
 /// Applique `max_devices_per_user` (`MaxActiveSessions`) aux comptes non protégés qui ne l'ont pas encore.
 /// Renvoie les noms des comptes modifiés (ou qui le seraient en dry-run).
+/// Adresse e-mail d'un compte (celle de Jellyseerr, posée à l'onboarding), en minuscules.
+pub async fn email_of(ctx: &TaskContext, user_id: &str) -> Result<Option<String>> {
+    Ok(ctx
+        .jellyseerr
+        .users(1000)
+        .await?
+        .iter()
+        .find(|u| u.get("jellyfinUserId").and_then(Value::as_str) == Some(user_id))
+        .and_then(|u| u.get("email").and_then(Value::as_str))
+        .filter(|e| e.contains('@'))
+        .map(|e| e.to_lowercase()))
+}
+
+/// Compte Jellyfin dont l'adresse Jellyseerr est `email` : (id Jellyfin, pseudo).
+pub async fn account_by_email(ctx: &TaskContext, email: &str) -> Result<Option<(String, String)>> {
+    let wanted = email.trim().to_lowercase();
+    Ok(ctx
+        .jellyseerr
+        .users(1000)
+        .await?
+        .iter()
+        .find(|u| {
+            u.get("email")
+                .and_then(Value::as_str)
+                .map(|e| e.to_lowercase() == wanted)
+                .unwrap_or(false)
+        })
+        .and_then(|u| {
+            let id = u.get("jellyfinUserId").and_then(Value::as_str)?;
+            let name = u
+                .get("jellyfinUsername")
+                .and_then(Value::as_str)
+                .or_else(|| u.get("displayName").and_then(Value::as_str))?;
+            Some((id.to_string(), name.to_string()))
+        }))
+}
+
 pub async fn apply_device_limit(ctx: &TaskContext) -> Result<Vec<String>> {
     let max = ctx.cfg.accounts.max_devices_per_user;
     let mut changed = Vec::new();

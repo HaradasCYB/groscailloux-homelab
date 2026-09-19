@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Créer un compte Groscailloux</title>
+<style>
+  :root {
+    --bg-1: #0f0c1d; --bg-2: #1a1530; --bg-3: #2a2347;
+    --accent: #8b5cf6; --accent-glow: rgba(139, 92, 246, 0.4); --accent-2: #ec4899;
+    --text: #e8e6f0; --text-dim: #9b94b8; --border: #3a325a;
+    --success: #10b981; --error: #ef4444; --shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 50%, var(--bg-3) 100%); background-attachment: fixed;
+    color: var(--text); display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+  .card { width: 100%; max-width: 480px; background: rgba(26, 21, 48, 0.9); border: 1px solid var(--border); border-radius: 20px;
+    padding: 36px 28px; box-shadow: var(--shadow); }
+  .brand { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-dim); font-weight: 600; }
+  h1 { margin: 12px 0 8px; font-size: 26px; line-height: 1.2; background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  p { margin: 0 0 14px; line-height: 1.55; }
+  .dim { color: var(--text-dim); font-size: 14px; }
+  .notice { border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.5; margin: 0 0 18px; border: 1px solid var(--border); background: rgba(15,12,29,.6); }
+  .notice.err { border-color: var(--error); color: #fecaca; }
+  .notice.ok { border-color: var(--success); color: #a7f3d0; }
+  form { display: flex; flex-direction: column; gap: 16px; margin-top: 8px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  label { font-size: 13px; color: var(--text-dim); font-weight: 500; }
+  input[type=text], input[type=email] { background: rgba(15, 12, 29, 0.6); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+    color: var(--text); font-size: 16px; width: 100%; }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+  .check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--text-dim); line-height: 1.45; }
+  .check input { margin-top: 3px; }
+  .btn { display: block; width: 100%; text-align: center; text-decoration: none; border: 0; border-radius: 12px; padding: 15px 18px;
+    font-size: 16px; font-weight: 700; cursor: pointer; background: linear-gradient(135deg, var(--accent), #7c3aed); color: #fff; }
+  .hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+  .foot { margin-top: 22px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+  .foot a { color: #c4b5fd; }
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="brand">Groscailloux</div>
+  <h1>{{heading}}</h1>
+  {{body}}
+</main>
+</body>
+</html>

@@ -17,6 +17,8 @@ pub struct PageData<'a> {
     pub token: &'a str,
     /// Code de résultat de la dernière action (`activated`, `suspended`, `cap`, …) et compte visé.
     pub msg: Option<(&'a str, &'a str)>,
+    /// État du lien de bienvenue par compte (`welcome::LinkStatus`), texte prêt à afficher.
+    pub links: &'a std::collections::HashMap<String, String>,
 }
 
 fn esc(s: &str) -> String {
@@ -51,6 +53,14 @@ pub fn message(code: &str, who: &str, max_premium: usize) -> Option<(&'static st
             format!("<b>{who}</b> est supprimé (Jellyfin et Jellyseerr)."),
         ),
         "protected" => ("err", format!("<b>{who}</b> est un compte protégé.")),
+        "link_sent" => (
+            "ok",
+            format!("Nouveau lien de bienvenue envoyé à <b>{who}</b> (valable une heure)."),
+        ),
+        "link_failed" => (
+            "err",
+            format!("Le lien pour <b>{who}</b> n'est pas parti (SMTP ou adresse inconnue ; voir journalctl -u homelabd)."),
+        ),
         "error" => (
             "err",
             format!("L'action sur <b>{who}</b> a échoué (voir journalctl -u homelabd)."),
@@ -59,7 +69,8 @@ pub fn message(code: &str, who: &str, max_premium: usize) -> Option<(&'static st
     })
 }
 
-const CSS: &str = r#":root{color-scheme:dark}*{box-sizing:border-box}
+const CSS: &str = r#".lk{display:block;font-size:12px;color:#9b94b8;margin-bottom:4px}.lnk{background:none;border:1px solid #3a325a;color:#c4b5fd;border-radius:8px;padding:4px 8px;font:inherit;font-size:12px;cursor:pointer}
+:root{color-scheme:dark}*{box-sizing:border-box}
 body{margin:0;padding-block:20px;padding-inline:16px;background:#141517;color:#dfe5ea;font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:800px;margin:0 auto;display:grid;gap:16px}
 h1{font-size:18px;margin:0;font-weight:650;letter-spacing:.01em}
@@ -162,8 +173,18 @@ pub fn render(d: &PageData<'_>) -> String {
                 dis = if blocked { " disabled" } else { "" },
             )
         };
+        let link = if a.protected {
+            String::new()
+        } else {
+            format!(
+                r#"<span class="lk">{status}</span><form method="post" action="/accounts/link"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><button class="lnk" type="submit" title="Renvoyer un lien de bienvenue à {name}">Renvoyer le lien</button></form>"#,
+                status = esc(d.links.get(&a.id).map(String::as_str).unwrap_or("—")),
+                id = esc(&a.id),
+                name = esc(&a.name),
+            )
+        };
         rows.push_str(&format!(
-            r#"<tr class="{state}"><td class="n">{name}{badges}</td><td class="w">{act}</td><td class="w">{streams}</td><td class="t">{actions}</td></tr>"#,
+            r#"<tr class="{state}"><td class="n">{name}{badges}</td><td class="w">{act}</td><td class="w">{streams}</td><td class="w">{link}</td><td class="t">{actions}</td></tr>"#,
             name = esc(&a.name),
             act = esc(&activity(d.now, a.last_activity.as_deref())),
         ));
@@ -179,8 +200,8 @@ pub fn render(d: &PageData<'_>) -> String {
             r#"<header><div><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><a class="new" href="/?token={token}">Créer un compte</a></header>
 <section class="cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} lectures simultanées par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
 {flash}
-<div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
-<p class="foot">Les comptes protégés ne se gèrent que dans le tableau de bord Jellyfin et ne comptent pas dans le plafond. Les nouveaux comptes arrivent suspendus.</p>"#,
+<div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th>Lien de bienvenue</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
+<p class="foot">Les comptes protégés ne se gèrent que dans le tableau de bord Jellyfin et ne comptent pas dans le plafond. Les nouveaux comptes arrivent suspendus ; à l'activation, le membre reçoit un mail. « Renvoyer le lien » envoie un nouveau lien de bienvenue (définir ou changer son mot de passe).</p>"#,
             max = d.max_premium,
             streams = d.max_playbacks,
         ),
@@ -232,6 +253,7 @@ mod tests {
             max_playbacks: 2,
             token: "t\"k",
             msg: Some(("suspended", "<bob>")),
+            links: &std::collections::HashMap::new(),
         });
         assert!(html.contains("1 / 25"));
         assert!(html.contains(r#"aria-checked="true""#));
@@ -254,6 +276,7 @@ mod tests {
             max_playbacks: 2,
             token: "t",
             msg: Some(("cap", "")),
+            links: &std::collections::HashMap::new(),
         });
         assert_eq!(html.matches(" disabled>").count(), 1);
         assert!(html.contains("Plafond atteint"));
@@ -274,6 +297,7 @@ mod tests {
             max_playbacks: 2,
             token: "t",
             msg: None,
+            links: &std::collections::HashMap::new(),
         });
         assert!(
             html.contains("1 / 25"),
