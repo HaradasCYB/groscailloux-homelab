@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.14.0](#1140--18092026--lecture--le-cache-tient-la-nuit)** | 18/09/2026 | **Lecture : le cache tient la nuit** |
+| **[1.14.1](#1141--19092026--lire-sur-retrouve-vos-appareils)** | 19/09/2026 | **« Lire sur » retrouve vos appareils** |
+| [1.14.0](#1140--18092026--lecture--le-cache-tient-la-nuit) | 18/09/2026 | Lecture : le cache tient la nuit |
 | [1.13.1](#1131--18092026--avance-rapide-de-10-secondes) | 18/09/2026 | Avance rapide de 10 secondes |
 | [1.13.0](#1130--18092026--version-originale-privilégiée-pour-les-animés) | 18/09/2026 | Version originale privilégiée pour les animés |
 | [1.12.0](#1120--18092026--les-saisons-dannimé-se-complètent-seules) | 18/09/2026 | Les saisons d'animé se complètent seules |
@@ -34,6 +35,14 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.14.1 — 19/09/2026 — « Lire sur » retrouve vos appareils
+
+- **Le menu « Lire sur » propose de nouveau tous vos appareils connectés**, quel que soit le réseau. Depuis le
+  16/09, il n'affichait que ceux partageant l'adresse de votre box ; un iPhone protégé par le Relais privé
+  iCloud (ou un VPN) ne la partage pas toujours, et sa propre TV disparaissait. Les appareils des autres
+  membres restent invisibles. Rappel : un appareil n'apparaît que s'il est allumé et connecté avec votre compte ;
+  sur iPhone, « Google Cast non pris en charge » est normal — utilisez AirPlay depuis le lecteur.
 
 ## 1.14.0 — 18/09/2026 — Lecture : le cache tient la nuit
 

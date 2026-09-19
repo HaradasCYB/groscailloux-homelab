@@ -244,10 +244,15 @@ journalctl -u homelabd -f
   (roue crantée → Qualité) : la commande `SetMaxStreamingBitrate` n'est pas gérée par le client web
   (« does not recognize ») et écrire `maxbitrate-Video-*` ne change pas la lecture en cours.
 - **« Lire sur » (diffuser vers un autre appareil)** : filtré par `branding/jellyfin/gc-cast-filter.js`
-  (JavaScript Injector, déployé avec `scripts/jellyfin-js-apply.py`) : seulement ses propres appareils,
-  et seulement ceux qui ont la même adresse publique que l'appareil courant (même box = même Wi-Fi ; pas en
-  données mobiles). Adresse inconnue ou privée ⇒ rien d'autre proposé. Jellyfin garde la liste des cibles en
-  mémoire pendant la vie de la page : le filtre doit être chargé avant la première ouverture du menu.
+  (JavaScript Injector, déployé avec `scripts/jellyfin-js-apply.py`) : **seulement ses propres appareils
+  connectés**, quel que soit le réseau. Jusqu'au 2026-09-19 il exigeait aussi la même adresse publique que
+  l'appareil courant ; or un iPhone derrière le **Relais privé iCloud** (ou un VPN) joint le serveur par deux
+  adresses à la fois — la box (86.194.x) et un relais DataPacket (79.127.x), à 7 s d'écart dans le journal NPM —
+  et sa propre TV disparaissait du menu (vu sur le compte admin). Condition réseau retirée, garde-fou par compte
+  conservé et testé (`node` sur la liste réelle de `/Sessions`). Le menu ne peut lister qu'un appareil **ouvert
+  et connecté** avec le même compte : Desktop fermé ou TV éteinte = liste vide, ce n'est pas une panne. Jellyfin
+  garde la liste des cibles en mémoire pendant la vie de la page : le filtre doit être chargé avant la première
+  ouverture du menu.
   Google Cast ne marche que dans Chrome et l'appli Android (« non pris en charge » dans Safari et Jellyfin
   Desktop, c'est normal) ; AirPlay passe par le bouton du lecteur dans Safari/iPhone.
 - **Adresses des clients** : `KnownProxies = 172.18.0.0/16` (réseau Docker entier) dans la configuration
