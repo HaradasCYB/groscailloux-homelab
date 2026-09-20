@@ -145,26 +145,46 @@ impl PayPalClient {
         .await
     }
 
-    /// Vérifie la signature d'un webhook auprès de PayPal (`verify-webhook-signature`).
-    pub async fn verify_webhook(&self, headers: &WebhookHeaders, body: &Value) -> Result<bool> {
+    /// Vérifie la signature d'un webhook auprès de PayPal (`verify-webhook-signature`). `raw_body` :
+    /// le corps **tel que reçu**, octet pour octet — re-sérialisé (clés triées), la signature ne
+    /// correspond plus et PayPal répond FAILURE.
+    pub async fn verify_webhook(&self, headers: &WebhookHeaders, raw_body: &str) -> Result<bool> {
         let Some(webhook_id) = self.cfg.webhook_id.as_deref() else {
             return Err(anyhow!("PAYPAL_WEBHOOK_ID absent : webhook non vérifiable"));
         };
-        let v = self
-            .call(
-                reqwest::Method::POST,
-                "/v1/notifications/verify-webhook-signature",
-                Some(json!({
-                    "auth_algo": headers.auth_algo,
-                    "cert_url": headers.cert_url,
-                    "transmission_id": headers.transmission_id,
-                    "transmission_sig": headers.transmission_sig,
-                    "transmission_time": headers.transmission_time,
-                    "webhook_id": webhook_id,
-                    "webhook_event": body,
-                })),
-            )
-            .await?;
+        let q = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
+        let body = format!(
+            "{{\"auth_algo\":{},\"cert_url\":{},\"transmission_id\":{},\"transmission_sig\":{},\"transmission_time\":{},\"webhook_id\":{},\"webhook_event\":{}}}",
+            q(&headers.auth_algo),
+            q(&headers.cert_url),
+            q(&headers.transmission_id),
+            q(&headers.transmission_sig),
+            q(&headers.transmission_time),
+            q(webhook_id),
+            raw_body.trim()
+        );
+        let t = self.token().await?;
+        let resp = self
+            .http
+            .post(format!(
+                "{}/v1/notifications/verify-webhook-signature",
+                self.base()
+            ))
+            .bearer_auth(t)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .context("paypal verify-webhook-signature")?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(anyhow!(
+                "paypal verify-webhook-signature: HTTP {status} {}",
+                text.chars().take(200).collect::<String>()
+            ));
+        }
+        let v: Value = serde_json::from_str(&text).context("verify: JSON invalide")?;
         Ok(v.get("verification_status").and_then(Value::as_str) == Some("SUCCESS"))
     }
 

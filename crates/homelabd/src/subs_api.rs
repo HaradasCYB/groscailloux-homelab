@@ -310,7 +310,11 @@ async fn webhook(State(st): State<SubsState>, headers: HeaderMap, body: Bytes) -
     if body.len() > 256 * 1024 {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     }
-    let event: Value = match serde_json::from_slice(&body) {
+    let raw = match std::str::from_utf8(&body) {
+        Ok(s) => s,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let event: Value = match serde_json::from_str(raw) {
         Ok(v) => v,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
@@ -319,7 +323,7 @@ async fn webhook(State(st): State<SubsState>, headers: HeaderMap, body: Bytes) -
         warn!(task = "subs", "webhook sans en-têtes de signature");
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    match pp.verify_webhook(&wh, &event).await {
+    match pp.verify_webhook(&wh, raw).await {
         Ok(true) => {}
         Ok(false) => {
             warn!(task = "subs", "webhook PayPal : signature refusée");
