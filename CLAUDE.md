@@ -162,7 +162,14 @@ journalctl -u homelabd -f
      4M` (un chunk est livré entier : 8M = 0,67 s au premier Mio), `--sftp-connections 32`. `--vfs-read-ahead`
      reste absent (palier B, à mesurer) : le refus historique visait le doublement de chunk du mode
      `streams = 0`, pas cette option. **Le lien seedbox est > 500 Mbit/s entrant** (mesuré), pas ~190.
-  3. **Jellyfin** : tmpfs 2 Go compté dans `mem_limit 4g` → `ThrottleDelaySeconds 180`, `SegmentKeepSeconds 300`
+  3. **Le tmpfs `/cache/transcodes` (2 Go) se remplit de segments abandonnés** : Jellyfin ne les efface pas tous à la fin
+     d'un job (28 jobs, 926 fichiers, 2 Go le 2026-09-20 à 17:55 ; les plus vieux de la veille). Plein, ffmpeg écrit des
+     segments **vides** servis en 200 (`[Length 0]` dans le journal NPM) : le lecteur les télécharge à toute vitesse et
+     n'affiche jamais rien (« chargement infini », un membre bloqué 4 essais ; la lecture directe passe, tout remux ou
+     transcodage échoue). Diagnostic : `docker exec jellyfin df -h /cache/transcodes`. Purge horaire par timer transitoire
+     `jellyfin-transcodes-purge` (`find /cache/transcodes -type f -mmin +60 -delete` dans le conteneur, xx:20) — ne
+     survit pas à un reboot : à porter dans homelabd (`stack_health` ou tâche dédiée).
+  4. **Jellyfin** : tmpfs 2 Go compté dans `mem_limit 4g` → `ThrottleDelaySeconds 180`, `SegmentKeepSeconds 300`
      (retour arrière 5 min sans relance ffmpeg ; 720 après la sortie du tmpfs, palier B) ; **`cpus: 4` retiré**
      (deux transcodages passaient à 0,82× ; `cpu_shares` arbitre) ; healthcheck explicite `start_period 180s`
      (l'image en a un à 0 : une migration de base au boot était redémarrée par `stack_health` après ~3,5 min).
@@ -511,7 +518,10 @@ journalctl -u homelabd -f
 - Jellyfin : « Films » et « Séries » ont chacune deux dossiers (`/media/…` et `/seedbox/media/…`) ;
   plus de bibliothèques « (Seedbox) ». qBittorrent seedbox : `[seedbox] qbit_url` + `SEEDBOX_QBIT_PASSWORD`.
 - Jellyseerr : ne jamais appeler `settings/jellyfin/library?sync=true` sans renvoyer `?enable=`
-  avec la liste complète des bibliothèques.
+  avec la liste complète des bibliothèques. **Le `GET settings/jellyfin/library` sans paramètre désactive lui aussi
+  tout** (vérifié le 2026-09-20 dans `settings.json`) : lire l'état par `GET /api/v1/settings/jellyfin`
+  (champ `libraries`), et n'appeler `?enable=<4 ids>` qu'en écriture. Un `?sync=true` peut rester bloqué plusieurs
+  minutes : `--max-time 60`.
 - **Déménager un titre du VPS vers la seedbox** : `scripts/move-to-seedbox.py` (`--list` numérote, `--titles a-b`,
   `--worker i/n` pour paralléliser, `--dry-run`), ordre immuable : rsync (`-a --partial`, ssh admin, `nice`/`ionice`)
   → vérification nom+taille de chaque fichier → fiche de l'Arr seedbox **créée non surveillée** (ou fiche existante,
@@ -597,7 +607,11 @@ journalctl -u homelabd -f
 - **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans
   `ReadWritePaths` de `systemd/homelabd.service` (sinon « Read-only file system », vu le 2026-09-17).
 - Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
-  même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`).
+  même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`). Après le
+  redémarrage, les membres ne la voient plus, mais ses `CollectionFolder` restent en base (visibles des **admins**,
+  `EnableAllFolders`) et dans la liste Jellyseerr jusqu'à l'analyse complète suivante (vu le 2026-09-20).
+- **Rangée « Mes médias »** (Home Screen Sections `MyMedia`, `OrderIndex 16` = dernière des 16 rangées, chargées 4 par 4
+  au défilement) : sur téléphone elle n'apparaît qu'en bas de page, un membre a cru qu'elle manquait.
   `DELETE /Items/<id>` **efface le disque** (c'est le bouton « Supprimer » de Jellyfin) : jamais pour
   « nettoyer » une vue ou une bibliothèque.
 - **qBittorrent** : ne jamais remettre `172.18.0.0/16` dans `bypass_auth_subnet_whitelist` (NPM y
