@@ -309,6 +309,9 @@ pub async fn delete(ctx: &TaskContext, user_id: &str) -> Result<Deleted> {
     }
     ctx.jellyfin.delete_user(user_id).await?;
     info!(task = "accounts", user = %name, "jellyfin account deleted");
+    if let Err(e) = ctx.subs.remove(user_id) {
+        warn!(task = "accounts", error = %e, "fiche abonné non supprimée");
+    }
     let mut jellyseerr = false;
     if let Some(id) = js_id {
         match ctx.jellyseerr.delete_user(id).await {

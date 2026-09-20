@@ -96,6 +96,17 @@ pub async fn ensure_fiches(ctx: &TaskContext) -> Result<usize> {
             }
         }
     }
+    // fiches orphelines (compte supprimé hors de homelabd) : retirées, l'historique part avec
+    let ids: std::collections::HashSet<String> = users
+        .iter()
+        .filter_map(|u| u.get("Id").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    for s in ctx.subs.list()? {
+        if !ids.contains(&s.user_id) {
+            info!(task = "subs", user = %s.username, "fiche orpheline retirée (compte Jellyfin absent)");
+            ctx.subs.remove(&s.user_id)?;
+        }
+    }
     Ok(created)
 }
 
