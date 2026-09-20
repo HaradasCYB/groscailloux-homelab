@@ -32,6 +32,13 @@ public_signup = true
 max_signups_per_day = 10      # toutes adresses confondues ; au-delà, la page demande de réessayer demain
 renew_per_hour = 3            # renvois de lien par adresse et par heure
 
+[discord]
+# Webhooks dans .env : DISCORD_WEBHOOK_MEMBERS (#jellyfin : nouveautés des Arrs, demandes Jellyseerr, annonces du
+# tchat) et DISCORD_WEBHOOK_ADMIN (salon privé : alertes homelabd, santé des Arrs). `homelabctl discord apply`
+# configure les 4 Arrs et Jellyseerr ; `test` poste un message d'essai ; `remove` retire tout.
+announcements = true          # annonces du tchat → salon des membres
+admin_alerts = true           # alertes admin (boucles HLS, indexeur, inscriptions, relances) → salon admin
+
 [tasks]
 # Tâches non planifiées par le daemon (restent lançables via `homelabctl run`).
 disabled = ["tba_bypass"]  # inutile depuis episodeTitleRequired = never ; gardée comme filet

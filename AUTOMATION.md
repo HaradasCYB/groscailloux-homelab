@@ -417,6 +417,17 @@ création, pseudo pris → message. Le compte est créé suspendu, le membre re�
 pour les membres (`assets/mail/welcome.html`), texte seul pour l'admin. Jamais d'identifiant ni de mot de passe
 dans un mail.
 
+## Discord
+
+Webhooks (aucun bot) : `DISCORD_WEBHOOK_MEMBERS` (salon des membres) et `DISCORD_WEBHOOK_ADMIN` (salon privé) dans
+`.env` ; `[discord] announcements` / `admin_alerts` dans `homelab.toml`. `homelab_core::discord` : embeds avec limites
+de l'API, reprise sur 429, URL masquée dans les journaux. `homelabctl discord apply` crée ou met à jour, dans les 4
+Arrs, « Discord membres » (imports : Radarr `onDownload`/`onUpgrade`, Sonarr `onImportComplete`/`onUpgrade`) et
+« Discord admin » (`onHealthIssue`/`onHealthRestored`/`onManualInteractionRequired`), et active l'agent Discord de
+Jellyseerr (demande, validée d'office, refusée, disponible) ; `test` poste un message d'essai sur chaque salon et
+déclenche le test Jellyseerr ; `remove` retire tout. Ce que homelabd poste lui-même : annonces du tchat (membres),
+alertes admin via `alerts::admin` (mail + Discord), relances de `stack_health`.
+
 ## Guide des nouveaux membres
 
 `GET /guide` (public, sans jeton, sur l'onboarder) : `crates/homelabd/assets/guide.html`, captures

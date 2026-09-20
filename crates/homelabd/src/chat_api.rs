@@ -296,6 +296,20 @@ async fn send(
     let (uc, chc, t) = (u.clone(), ch.clone(), text.clone());
     let msg = db(&st, move |s| s.insert(&chc, &uc, &t, now())).await?;
     info!(task = "chat", channel = %msg.channel, author = %u.name, chars = text.chars().count(), "message posted");
+    if u.moderator && ch == Channel::Annonces && st.ctx.cfg.discord.announcements {
+        // l'annonce part aussi sur le salon Discord des membres (si un webhook est configuré)
+        let st3 = st.clone();
+        let (author, body) = (u.name.clone(), text.clone());
+        tokio::spawn(async move {
+            homelab_core::discord::notify(
+                &st3.ctx,
+                homelab_core::discord::Channel::Members,
+                homelab_core::discord::Embed::info(format!("Annonce — {author}"), body)
+                    .link(st3.ctx.secrets.jellyfin_public_url.clone()),
+            )
+            .await;
+        });
+    }
     if b.email_members && u.moderator && ch == Channel::Annonces {
         let st2 = st.clone();
         tokio::spawn(async move { mail_members(st2, u, text).await });
@@ -581,6 +595,14 @@ async fn moderator_mail_pass(st: &ChatState) -> anyhow::Result<()> {
         return Ok(());
     }
     mail::send_plain(smtp, "Admin Groscailloux", to, &subject, &body).await?;
+    if st.ctx.cfg.discord.admin_alerts {
+        homelab_core::discord::notify(
+            &st.ctx,
+            homelab_core::discord::Channel::Admin,
+            homelab_core::discord::Embed::info(subject.clone(), body.clone()),
+        )
+        .await;
+    }
     store.set_meta("mail_last_id", max)?;
     store.set_meta("mail_last_sent", now())?;
     info!(

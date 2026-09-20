@@ -25,7 +25,6 @@ use crate::clients::ArrClient;
 use crate::config::Config;
 use crate::context::TaskContext;
 use crate::docker;
-use crate::mail;
 use crate::state::now;
 
 pub struct IndexerUnblock;
@@ -273,12 +272,7 @@ fn prune_backups(dir: &Path, key: &str, days: u64) {
 }
 
 async fn notify(ctx: &TaskContext, subject: &str, body: &str) {
-    let (Some(smtp), Some(to)) = (&ctx.secrets.smtp, &ctx.secrets.chat_admin_email) else {
-        return;
-    };
-    if let Err(e) = mail::send_plain(smtp, "Admin Groscailloux", to, subject, body).await {
-        warn!(task = "indexer_unblock", error = %e, "mail admin en échec");
-    }
+    crate::alerts::admin(ctx, crate::alerts::Level::Warn, subject, body).await;
 }
 
 fn fmt_time(secs: i64) -> String {

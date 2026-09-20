@@ -143,6 +143,17 @@ async fn compose_action(ctx: &TaskContext, verb: &str, service: &str) -> bool {
     match docker::compose(&ctx.cfg.paths.base, args).await {
         Ok(_) => {
             warn!(task = "stack_health", service, "compose {verb} done");
+            if ctx.cfg.discord.admin_alerts {
+                crate::discord::notify(
+                    ctx,
+                    crate::discord::Channel::Admin,
+                    crate::discord::Embed::warn(
+                        format!("Service relancé : {service}"),
+                        format!("`docker compose {verb} {service}` par stack_health (conteneur unhealthy ou sonde en échec). Voir `journalctl -u homelabd`."),
+                    ),
+                )
+                .await;
+            }
             true
         }
         Err(e) => {

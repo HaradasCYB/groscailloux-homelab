@@ -5,12 +5,14 @@
 //! verrous partagés (qBittorrent, onboarding) et le mode dry-run global.
 
 pub mod accounts;
+pub mod alerts;
 pub mod anime;
 pub mod chat;
 pub mod classify;
 pub mod clients;
 pub mod config;
 pub mod context;
+pub mod discord;
 pub mod disk;
 pub mod docker;
 pub mod indexer;

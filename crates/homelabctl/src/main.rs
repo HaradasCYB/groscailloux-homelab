@@ -39,6 +39,11 @@ enum Cmd {
         #[arg(long)]
         password: Option<String>,
     },
+    /// Discord : apply (configure les 4 Arrs et Jellyseerr d'après .env) ; test (message d'essai) ; remove
+    Discord {
+        #[arg(value_parser = ["apply", "test", "remove"])]
+        action: String,
+    },
     /// Envoie le mail de bienvenue en exemple (lien de démonstration, aucun compte touché)
     MailTest {
         /// Adresse destinataire
@@ -140,6 +145,17 @@ async fn main() -> Result<()> {
                 ju = s("jellyfin_url"),
                 su = s("jellyseerr_url"),
             );
+        }
+        Cmd::Discord { action } => {
+            let r = match action.as_str() {
+                "apply" => homelab_core::discord::apply(&ctx).await?,
+                "remove" => homelab_core::discord::remove(&ctx).await?,
+                _ => homelab_core::discord::test(&ctx).await?,
+            };
+            let dry = if ctx.dry_run { "DRY-RUN : " } else { "" };
+            for l in r.lines {
+                println!("{dry}{l}");
+            }
         }
         Cmd::MailTest { to } => {
             let v = daemon_post(&ctx, "/admin/mail-test", json!({ "to": to })).await?;

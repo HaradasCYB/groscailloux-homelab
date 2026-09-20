@@ -234,6 +234,18 @@ journalctl -u homelabd -f
   la CLI dans le fichier d'état serait invisible du daemon et écrasé à sa prochaine sauvegarde (vu le 2026-09-20).
   Test sans polluer : compte temporaire dont l'adresse est **celle de l'expéditeur** (`SMTP_FROM`, aucun rebond) ;
   jamais d'adresse inventée (rebonds = réputation Gmail). Jetons et mots de passe jamais journalisés.
+- **Discord (2026-09-20, v1.17.0)** : deux **webhooks** dans `.env` (`DISCORD_WEBHOOK_MEMBERS` = salon des membres,
+  `DISCORD_WEBHOOK_ADMIN` = salon privé, repli sur membres ; `DISCORD_ROLE_MEMBERS` facultatif), **jamais dans le
+  dépôt ni les journaux** (`discord::mask`). `homelab_core::discord` poste les embeds de homelabd (annonces du tchat →
+  membres ; `alerts::admin` = mail **et** Discord admin pour `hls_loop_watch`, `indexer_unblock`, inscription à
+  activer, mail de bienvenue non parti, récap du tchat ; `stack_health` → Discord seulement). `homelabctl discord
+  apply` configure par API les 4 Arrs (connexions « Discord membres » : Radarr `onDownload/onUpgrade`, Sonarr
+  **`onImportComplete`** — un message par téléchargement, jamais `onDownload` = un par épisode ; « Discord admin » :
+  santé) et l'agent Discord de Jellyseerr (types 2|8|64|128 : demande, disponible, refusée, validée d'office) ;
+  `test` poste un essai ; `remove` retire tout ; sauvegardes JSON dans `backups/discord-<date>/` (contiennent
+  l'URL : 600). Chemins Arr toujours préfixés `api/v3/` (la base de `ArrClient` est la racine). Un webhook collé
+  dans une conversation est compromis : le recréer dans Discord (Modifier le salon → Intégrations → Webhooks) et
+  relancer `apply`.
 - **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
   la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).

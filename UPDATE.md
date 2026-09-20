@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.16.0](#1160--20092026--bienvenue-comme-chez-les-grands)** | 20/09/2026 | **Bienvenue comme chez les grands** |
+| **[1.17.0](#1170--20092026--les-nouveautés-sur-discord)** | 20/09/2026 | **Les nouveautés sur Discord** |
+| [1.16.0](#1160--20092026--bienvenue-comme-chez-les-grands) | 20/09/2026 | Bienvenue comme chez les grands |
 | [1.15.1](#1151--19092026--en-français-sur-tous-les-appareils) | 19/09/2026 | En français sur tous les appareils |
 | [1.15.0](#1150--19092026--une-interface-pensée-pour-la-télé) | 19/09/2026 | Une interface pensée pour la télé |
 | [1.14.4](#1144--19092026--films-demandés-sous-5-minutes) | 19/09/2026 | Films demandés sous 5 minutes |
@@ -41,6 +42,16 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.17.0 — 20/09/2026 — Les nouveautés sur Discord
+
+- **Un salon Discord pour les membres** : chaque film ou série qui arrive (avec l'affiche, un seul message par
+  téléchargement), les demandes (nouvelle, validée, refusée, disponible — avec le pseudo du demandeur) et les
+  annonces de l'administrateur y sont publiés. Plus besoin d'attendre un mail.
+- **Un salon privé pour l'administrateur** : alertes de lecture (boucles), indexeur bloqué ou débloqué, nouveau
+  compte à activer, mail de bienvenue non parti, service relancé, santé des outils d'acquisition, récapitulatif du
+  tchat. Les mails d'alerte continuent en parallèle.
+- Réglé par deux webhooks dans `.env` ; `homelabctl discord apply|test|remove` configure ou retire tout.
 
 ## 1.16.0 — 20/09/2026 — Bienvenue comme chez les grands
 

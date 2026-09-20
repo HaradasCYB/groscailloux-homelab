@@ -23,7 +23,6 @@ use tracing::{info, warn};
 use super::{Report, Task};
 use crate::config::Config;
 use crate::context::TaskContext;
-use crate::mail;
 
 pub struct HlsLoopWatch;
 
@@ -279,13 +278,7 @@ impl Task for HlsLoopWatch {
                  segments dans la fenêtre.\n\nJournal : /opt/homelab/npm/data/logs/proxy-host-1_access.log \
                  (UTC) et jellyfin/config/log/log_{day}.log."
             );
-            if let (Some(smtp), Some(to)) = (&ctx.secrets.smtp, &ctx.secrets.chat_admin_email) {
-                if let Err(e) =
-                    mail::send_plain(smtp, "Admin Groscailloux", to, &subject, &body).await
-                {
-                    warn!(task = "hls_loop_watch", error = %e, "mail admin en échec");
-                }
-            }
+            crate::alerts::admin(ctx, crate::alerts::Level::Warn, &subject, &body).await;
         }
         info!(
             task = "hls_loop_watch",

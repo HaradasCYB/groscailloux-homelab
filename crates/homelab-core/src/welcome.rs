@@ -408,6 +408,13 @@ pub async fn send(
         Ok(()) => true,
         Err(e) => {
             tracing::warn!(task = "onboard", username = %username, error = %e, "link mail failed");
+            crate::alerts::admin(
+                ctx,
+                crate::alerts::Level::Error,
+                &format!("Mail de bienvenue non parti : {username}"),
+                &format!("Le mail ({kind}) pour {username} n'est pas parti ({e}). Lien à transmettre à la main : {link}"),
+            )
+            .await;
             false
         }
     };

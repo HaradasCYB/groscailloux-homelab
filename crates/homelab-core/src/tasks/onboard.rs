@@ -16,7 +16,6 @@ use tracing::{info, warn};
 use crate::accounts::{self, Outcome};
 use crate::clients::jellyfin::non_admin_policy;
 use crate::context::TaskContext;
-use crate::mail;
 use crate::secret::Secret;
 use crate::welcome;
 
@@ -267,9 +266,6 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
 /// Inscription publique : l'admin doit activer le compte depuis /accounts.
 async fn notify_admin_signup(ctx: &TaskContext, username: &str) {
     let s = &ctx.secrets;
-    let (Some(smtp), Some(to)) = (&s.smtp, s.chat_admin_email.as_deref()) else {
-        return;
-    };
     let accounts = s
         .onboard_public_url
         .as_deref()
@@ -278,17 +274,13 @@ async fn notify_admin_signup(ctx: &TaskContext, username: &str) {
     let body = format!(
         "Un nouveau compte vient d'être créé depuis la page d'inscription : {username}.\n\nIl est suspendu tant que tu ne l'actives pas : {accounts}\n\nLe membre a reçu son lien pour définir son mot de passe ; il recevra un second mail à l'activation.\n"
     );
-    if let Err(e) = mail::send_plain(
-        smtp,
-        "Admin Groscailloux",
-        to,
+    crate::alerts::admin(
+        ctx,
+        crate::alerts::Level::Info,
         &format!("Nouveau compte à activer : {username}"),
         &body,
     )
-    .await
-    {
-        warn!(task = "onboard", error = %e, "admin signup notification failed");
-    }
+    .await;
 }
 
 fn find_js_id(v: &Value, jellyfin_id: &str) -> Option<i64> {

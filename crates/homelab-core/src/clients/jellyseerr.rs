@@ -28,6 +28,20 @@ impl JellyseerrClient {
             .header("X-Api-Key", self.key.expose())
     }
 
+    /// GET brut (réglages) ; les réponses de `settings/*` peuvent contenir des secrets : ne jamais les afficher.
+    pub async fn get_json(&self, path: &str) -> Result<Value> {
+        let resp = self.req(Method::GET, path).send().await?;
+        json(resp, &format!("jellyseerr GET {path}")).await
+    }
+
+    /// POST brut (réglages, tests).
+    pub async fn post_json(&self, path: &str, body: &Value) -> Result<()> {
+        let resp = self.req(Method::POST, path).json(body).send().await?;
+        check(resp, &format!("jellyseerr POST {path}"))
+            .await
+            .map(|_| ())
+    }
+
     /// Fiche série TMDB vue par Jellyseerr, titres en français (`name`) et d'origine (`originalName`).
     pub async fn tv_details(&self, tmdb_id: i64) -> Result<Value> {
         let resp = self

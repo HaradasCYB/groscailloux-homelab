@@ -30,6 +30,8 @@ pub struct Config {
     #[serde(default)]
     pub onboard: Onboard,
     #[serde(default)]
+    pub discord: Discord,
+    #[serde(default)]
     pub chat: Chat,
     #[serde(default)]
     pub manual_search: ManualSearch,
@@ -282,6 +284,25 @@ pub struct Urls {
     pub qbittorrent: String,
     pub jellyfin: String,
     pub jellyseerr: String,
+}
+
+/// Discord (webhooks `DISCORD_WEBHOOK_MEMBERS` / `DISCORD_WEBHOOK_ADMIN` dans `.env`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Discord {
+    /// Les annonces du tchat sont aussi postées sur le salon des membres.
+    pub announcements: bool,
+    /// Les alertes admin (boucles HLS, indexeur, inscriptions, relances) vont aussi sur le salon admin.
+    pub admin_alerts: bool,
+}
+
+impl Default for Discord {
+    fn default() -> Self {
+        Self {
+            announcements: true,
+            admin_alerts: true,
+        }
+    }
 }
 
 /// Onboarding des membres : lien de bienvenue (définir son mot de passe) et page publique d'inscription.
@@ -1088,6 +1109,10 @@ pub struct Secrets {
     pub guide_contact_discord: Option<String>,
     /// Destinataire des récapitulatifs du tchat (`CHAT_ADMIN_EMAIL`, repli `GUIDE_CONTACT_EMAIL`).
     pub chat_admin_email: Option<String>,
+    /// Webhooks Discord (secrets) : salon des membres, salon admin (repli sur membres), rôle à mentionner.
+    pub discord_webhook_members: Option<String>,
+    pub discord_webhook_admin: Option<String>,
+    pub discord_role_members: Option<String>,
     pub quality_profile_id: i64,
     pub onboard_token: Option<Secret>,
     /// Protège `/status` et `/status.html` de homelabd (`?token=`).
@@ -1168,6 +1193,11 @@ impl Secrets {
             guide_contact_email: opt("GUIDE_CONTACT_EMAIL"),
             guide_contact_discord: opt("GUIDE_CONTACT_DISCORD"),
             chat_admin_email: opt("CHAT_ADMIN_EMAIL").or_else(|| opt("GUIDE_CONTACT_EMAIL")),
+            discord_webhook_members: opt("DISCORD_WEBHOOK_MEMBERS")
+                .filter(|u| u.starts_with("https://")),
+            discord_webhook_admin: opt("DISCORD_WEBHOOK_ADMIN")
+                .filter(|u| u.starts_with("https://")),
+            discord_role_members: opt("DISCORD_ROLE_MEMBERS").filter(|r| !r.is_empty()),
             quality_profile_id: opt("QUALITY_PROFILE_ID")
                 .map(|v| v.parse::<i64>().context("QUALITY_PROFILE_ID non numérique"))
                 .transpose()?
@@ -1257,6 +1287,7 @@ jellyseerr = "http://js"
         assert!(cfg.onboard.public_signup);
         assert_eq!(cfg.onboard.max_signups_per_day, 10);
         assert_eq!(cfg.onboard.renew_per_hour, 3);
+        assert!(cfg.discord.announcements && cfg.discord.admin_alerts);
         assert_eq!(cfg.accounts.max_playbacks_per_user, 2);
         assert_eq!(cfg.tasks.playback_limit.grace_secs, 30);
         assert!(!cfg.accounts.new_accounts_premium);
