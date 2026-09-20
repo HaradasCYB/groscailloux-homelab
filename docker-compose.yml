@@ -37,11 +37,14 @@ services:
       # se propage dans le conteneur sans le recréer. Ne pas lier le point de montage FUSE lui-même.
       - /mnt/seedbox:/seedbox:rslave                # idem (montage rclone en écriture)
     tmpfs:
-      - /cache/transcodes:rw,size=2g,uid=1000,gid=1000,mode=1777
+      # 4 Go (2 avant le 2026-09-20) : un job de transcodage garde ~480 s de vidéo (SegmentKeepSeconds 300 +
+      # ThrottleDelaySeconds 180) ; un remux 4K à 60 Mbit/s = 3,6 Go, deux transcodages 1080p = 0,9 Go. Compté dans
+      # mem_limit. Purge des segments abandonnés : scripts/jellyfin-transcodes-purge.sh (timer chaque minute).
+      - /cache/transcodes:rw,size=4g,uid=1000,gid=1000,mode=1777
     environment:
       - TZ=${TZ}
       - JELLYFIN_PublishedServerUrl=http://${HOST_IP}:8096
-    mem_limit: 4g
+    mem_limit: 6g               # 4g + 2 Go de tmpfs supplémentaires (VPS : 17 Go, ~10 disponibles)
     cpu_shares: 2048          # priorité CPU en cas de contention (défaut 1024)
     # Pas de quota dur `cpus:` (audit lecture 2026-09-18) : il plafonnait Jellyfin à 4 vCPU sur 6 même serveur
     # au repos, et deux transcodages tombaient à 0,82× le temps réel. cpu_shares arbitre déjà sous contention.

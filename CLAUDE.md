@@ -167,11 +167,15 @@ journalctl -u homelabd -f
      segments **vides** servis en 200 (`[Length 0]` dans le journal NPM) : le lecteur les télécharge à toute vitesse et
      n'affiche jamais rien (« chargement infini », un membre bloqué 4 essais ; la lecture directe passe, tout remux ou
      transcodage échoue). Diagnostic : `docker exec jellyfin df -h /cache/transcodes`. Purge horaire par timer transitoire
-     `scripts/jellyfin-transcodes-purge.sh` (unités `systemd/jellyfin-transcodes-purge.{service,timer}`, toutes les
-     5 min, installées par `homelabctl install`) : routine = jobs sans ffmpeg actif vieux de > 30 min ; **urgence**
-     automatique dès 85 % (tout ce qui n'a pas de ffmpeg actif, puis les segments > 10 min des jobs actifs) ;
-     `--check` pour voir, `--urgent` à la main, `--force` refusé tant qu'un ffmpeg tourne. « Chargement infini » sur
-     tout ce qui transcode = `--check` d'abord.
+     `scripts/jellyfin-transcodes-purge.sh` (unités `systemd/jellyfin-transcodes-purge.{service,timer}`, **chaque
+     minute**, installées par `homelabctl install`) : routine = jobs sans ffmpeg actif vieux de > 2 min (un job terminé
+     n'est jamais réutilisé) ; **urgence** automatique dès 85 % (tout ce qui n'a pas de ffmpeg actif, puis les segments
+     > 10 min des jobs actifs) + message Discord admin ; `--check` pour voir, `--urgent` à la main, `--force` refusé tant
+     qu'un ffmpeg tourne. Mécanisme mesuré : le tmpfs se remplit **par paliers à la fin de chaque job** (~400 Mo laissés
+     par un 1080p), pas au fil d'une lecture (`EnableSegmentDeletion`, 300 s gardées + 180 s d'avance = ~480 s × débit
+     par job actif). **Un job actif plus gros que le tmpfs ne se purge pas** (remux 4K 60 Mbit/s ≈ 3,6 Go) : tmpfs porté
+     à **4 Go** et `mem_limit 6g` (compose, appliqué hors pic le 2026-09-21 04:30). « Chargement infini » sur tout ce qui
+     transcode = `--check` d'abord.
   4. **Jellyfin** : tmpfs 2 Go compté dans `mem_limit 4g` → `ThrottleDelaySeconds 180`, `SegmentKeepSeconds 300`
      (retour arrière 5 min sans relance ffmpeg ; 720 après la sortie du tmpfs, palier B) ; **`cpus: 4` retiré**
      (deux transcodages passaient à 0,82× ; `cpu_shares` arbitre) ; healthcheck explicite `start_period 180s`

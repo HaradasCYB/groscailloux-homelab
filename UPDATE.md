@@ -57,7 +57,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
   tout en bas et, sur téléphone, il fallait tout faire défiler pour la voir).
 - Correctif du soir : la lecture restait sur « chargement » pour tout ce qui devait être converti à la volée (un membre,
   quatre essais) — l'espace temporaire de conversion était plein de restes de la veille. Vidé, purge automatique toutes
-  les heures, redémarrage de Jellyfin qui fait aussi disparaître les deux entrées « Découvrir » fantômes.
+  la minute (alerte à l'administrateur si ça sature), espace doublé à 4 Go, redémarrage de Jellyfin qui fait aussi
+  disparaître les deux entrées « Découvrir » fantômes.
 - Correctif du soir même : le déménagement lancé l'après-midi a gêné la lecture d'un film depuis la seedbox pour un
   membre (chargement sans fin). Transfert arrêté à 17:45, il reprend seul chaque matin entre 08 h 30 et 12 h 30, sur
   un seul flux plafonné, jusqu'à la fin des 19 titres restants.
