@@ -255,7 +255,9 @@ jellyfin_log_dir = "/opt/homelab/jellyfin/config/log"
 jellyfin_log_max_age_days = 7
 
 [backup]
-excludes = ["library", "backups", "influxdb", "jellyfin/cache", "jellyfin/config/log", "target", "logs"]
+# `cache` = cache rclone de la seedbox (fichiers creux de plusieurs centaines de Go) : sans lui la sauvegarde du
+# 2026-09-20 faisait 149 Go au lieu de 3.
+excludes = ["library", "backups", "cache", "influxdb", "jellyfin/cache", "jellyfin/config/log", "target", "logs"]
 keep_last = 4
 mysql_container = "guacdb"
 

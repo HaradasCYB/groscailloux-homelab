@@ -452,6 +452,10 @@ journalctl -u homelabd -f
   torrent_import côté VPS, tuile Homarr rouge). Toujours `docker compose up -d --force-recreate --no-deps
   qbittorrent` après un `up -d` qui a recréé gluetun, puis reposer le port transféré (`/tmp/gluetun/forwarded_port` →
   `setPreferences listen_port`, le hook ne rejoue pas seul).
+- **Sauvegarde d'état (`homelabctl backup`, tâche `backup`)** : tout dossier volumineux sous `/opt/homelab` doit être
+  dans `[backup] excludes` — le 2026-09-20, `cache/rclone` (fichiers **creux** de plusieurs centaines de Go) a produit
+  une archive de **149 Go** (au lieu de 3) et poussé le disque à 92 %. Après un nouveau dossier de cache ou de données
+  massives : l'ajouter aux exclusions, puis contrôler la taille de l'archive suivante et son manifeste (`.list.gz`).
 - **Reboot** : `homelab-stack.service` relance compose ; vérifier `docker compose ps` et
   `systemctl status homelabd` après.
 - `scripts/` ne contient plus que des outils ponctuels (les anciens scripts bash planifiés ont été

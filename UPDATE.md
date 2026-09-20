@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.17.0](#1170--20092026--les-nouveautés-sur-discord)** | 20/09/2026 | **Les nouveautés sur Discord** |
+| **[1.17.1](#1171--20092026--sauvegarde-corrigée)** | 20/09/2026 | **Sauvegarde corrigée** |
+| [1.17.0](#1170--20092026--les-nouveautés-sur-discord) | 20/09/2026 | Les nouveautés sur Discord |
 | [1.16.0](#1160--20092026--bienvenue-comme-chez-les-grands) | 20/09/2026 | Bienvenue comme chez les grands |
 | [1.15.1](#1151--19092026--en-français-sur-tous-les-appareils) | 19/09/2026 | En français sur tous les appareils |
 | [1.15.0](#1150--19092026--une-interface-pensée-pour-la-télé) | 19/09/2026 | Une interface pensée pour la télé |
@@ -42,6 +43,11 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.17.1 — 20/09/2026 — Sauvegarde corrigée
+
+- La sauvegarde de nuit embarquait le cache de lecture de la seedbox (149 Go d'archive au lieu de 3) et avait rempli
+  le disque du serveur à 92 %. Archive supprimée, cache exclu des sauvegardes.
 
 ## 1.17.0 — 20/09/2026 — Les nouveautés sur Discord
 

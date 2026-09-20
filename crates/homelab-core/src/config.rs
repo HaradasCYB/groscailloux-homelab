@@ -972,6 +972,7 @@ impl Default for Backup {
             excludes: [
                 "library",
                 "backups",
+                "cache",
                 "influxdb",
                 "jellyfin/cache",
                 "jellyfin/config/log",
