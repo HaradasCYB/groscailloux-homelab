@@ -41,7 +41,7 @@ admin_alerts = true           # alertes admin (boucles HLS, indexeur, inscriptio
 
 [tasks]
 # Tâches non planifiées par le daemon (restent lançables via `homelabctl run`).
-disabled = ["tba_bypass"]  # inutile depuis episodeTitleRequired = never ; gardée comme filet
+disabled = ["tba_bypass", "deletion_cleanup"]  # deletion_cleanup : coupée pendant le transfert VPS → seedbox du 2026-09-20 (à remettre) ; tba_bypass inutile depuis episodeTitleRequired = never ; gardée comme filet
 
 [tasks.stack_health]
 # Première passe juste après le boot, puis toutes les 5 min : relance ce qui est arrêté,
@@ -117,6 +117,14 @@ fallback_days = 30      # semaine trop calme : complète avec le mois
 size = 10
 min_minutes = 10        # visionnage minimal par spectateur et par titre
 collection_name = "Tendances cette semaine"
+
+[tasks.subscription_cycle]
+# Rappels, passage en grâce, suspension à la fin de la grâce, réactivation (voir [subscriptions]).
+interval_secs = 3600
+
+[tasks.subscription_reconcile]
+# Relit chaque abonnement PayPal connu (statut, prochaine facturation) et corrige les écarts (webhook manqué).
+interval_secs = 86400
 
 [tasks.playback_limit]
 # Au-delà de accounts.max_playbacks_per_user lectures d'un même compte : la plus récente est arrêtée,
@@ -321,6 +329,22 @@ auto_sides = ["seedbox"]
 c411_indexer = "C411"
 text_queries = 2
 results_ttl_mins = 30
+
+[subscriptions]
+# Abonnés et cycle premium (v1.18, 2026-09-20). Fiche par compte dans state/subscriptions.db (sauvegardée).
+# Statuts : essai, actif, échéance dépassée (grâce), suspendu, offert, exempt, à qualifier (jamais touché par
+# le cycle). PayPal relié par webhooks (PAYPAL_* dans .env) ; l'admin garde la main sur /accounts.
+enabled = true
+db_file = "/opt/homelab/state/subscriptions.db"
+period_days = 31          # couverture d'un paiement quand PayPal n'annonce pas la prochaine facturation
+grace_days = 3            # après l'échéance, avant suspension (rien n'est supprimé)
+remind_days = [7, 1]      # rappels au membre, N jours avant l'échéance
+trial_days = 7            # essai gratuit à l'inscription publique (0 = activation manuelle comme avant)
+referral_days = 15        # jours offerts au parrain et au filleul au premier paiement du filleul
+referral_cap_days_per_year = 90
+exempt = []               # jamais suspendus par le cycle (accounts.protected l'est déjà)
+cycle_dry_run = true      # première semaine : le cycle annonce sans suspendre ni écrire aux membres
+price_text = "3,50 € / mois"
 
 [chat]
 # Tchat des membres dans Jellyfin (bulle en haut à droite) : salons Annonces (modérateurs), Entraide,

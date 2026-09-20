@@ -478,6 +478,42 @@ LG webOS). Salons `annonces` (modérateurs seulement), `entraide`, `discussion`,
   la lecture ; bannière de la dernière annonce non lue sur l'accueil ; aucun HTML de message interprété.
 - **Couper** : `[chat] enabled = false` (+ restart homelabd) et désactiver le script dans JavaScript Injector.
 
+## Abonnés et cycle premium (v1.18, 2026-09-20)
+
+Une fiche par compte dans `state/subscriptions.db` (SQLite, sauvegardée) : statut (`essai`, `actif`, `échéance
+dépassée`, `suspendu`, `offert`, `exempt`, `à qualifier`), échéance, source (`paypal`, `manual`, `trial`, `import`),
+abonnement PayPal lié, code de parrainage, historique horodaté. Module `homelab_core::subscriptions` (décisions pures,
+testées) + `subscription_ops` (ce qui touche Jellyfin/PayPal/mails, toujours via `accounts::set_premium`).
+
+- **Page `/premium`** : le membre saisit son nom de compte, PayPal reçoit ce nom en `custom_id` ; à l'approbation, la
+  page poste `/premium/lier` qui relit l'abonnement chez PayPal, le rattache et **active tout de suite** (page
+  `/premium/merci`). `/premium/activate` : rattachement par identifiant `I-…` (ou demande à l'admin, comme avant).
+- **Webhook `POST /paypal/webhook`** (hôte public de `/premium`, sans liste d'accès) : signature vérifiée par
+  `verify-webhook-signature` (`PAYPAL_WEBHOOK_ID`), chaque événement traité une fois (`paypal_events`).
+  `ACTIVATED`/`RE-ACTIVATED`/`PAYMENT.SALE.COMPLETED` → paiement (échéance = prochaine facturation PayPal, sinon
+  `period_days`) ; `CANCELLED`/`SUSPENDED`/`EXPIRED`/`PAYMENT.FAILED` → note dans l'historique, le compte va au bout
+  de sa période ; remboursement → alerte admin. 5xx = PayPal réessaie.
+- **`subscription_cycle` — 1 h** : fiches créées pour les comptes qui n'en ont pas (actifs → « à qualifier », jamais
+  suspendus tant que l'admin n'a pas tranché), rappels J-7 et J-1 (mail au membre), grâce `grace_days` après
+  l'échéance, puis suspension (`set_premium(false)`, mail « accès en pause », rien de supprimé). Récapitulatif
+  Discord admin à chaque passage qui a agi. `cycle_dry_run = true` : tout est annoncé, rien n'est appliqué.
+- **`subscription_reconcile` — 24 h** : relit chaque abonnement PayPal lié et rejoue un paiement manqué
+  (idempotent par date de dernier règlement).
+- **Essai et parrainage** : `/inscription` active le compte en « essai » `trial_days` jours (mail de fin d'essai par
+  le cycle) ; code de parrainage facultatif à l'inscription ; au premier paiement du filleul, `referral_days` offerts
+  aux deux, plafond `referral_cap_days_per_year`.
+- **« Mon compte » dans Jellyfin** : script JavaScript Injector « Groscailloux Mon compte »
+  (`branding/jellyfin/gc-account-loader.js`) → `/gc-compte/app.js` (NPM hôte 1 → homelabd `/compte/`) : statut,
+  échéance, bouton d'abonnement pré-rempli, appareils connectés (déconnexion vérifiée sur `LastUserId`), lien de
+  changement de mot de passe (page `/bienvenue`), code de parrainage, historique. Identité = jeton Jellyfin
+  (`/Users/Me`, cache 5 min). Téléviseurs : lecture seule, Retour ferme.
+- **Admin** : colonne « Abonnement » sur `/accounts` (statut, échéance, source) et décision par compte (prolonger de
+  N jours, actif, offert, exempté, à qualifier, suspendu) ; `homelabctl subs list | set <compte> --status … [--days N]
+  | extend <compte> --days N | link <compte> --sub I-… | import <csv PayPal> | paypal [--webhook <url>]`.
+- **Secrets** : `PAYPAL_ENV` (sandbox|live), `PAYPAL_CLIENT_ID`/`PAYPAL_SECRET`/`PAYPAL_PLAN_ID`/`PAYPAL_WEBHOOK_ID`
+  (ou `PAYPAL_SANDBOX_*`), `PREMIUM_PUBLIC_URL`. En sandbox, la page publique garde le bouton Live historique
+  (`DONATION_*`) ; `/premium?test=1` montre le bouton sandbox.
+
 ## Page de don
 
 `GET /don` (public, sous-domaine `don.`) : page statique `crates/homelabd/assets/don.html` avec le

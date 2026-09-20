@@ -21,6 +21,8 @@ pub mod manual_search;
 pub mod matching;
 pub mod secret;
 pub mod state;
+pub mod subscription_ops;
+pub mod subscriptions;
 pub mod tasks;
 pub mod torrent_file;
 pub mod welcome;

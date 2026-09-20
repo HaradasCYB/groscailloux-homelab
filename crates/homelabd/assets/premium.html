@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Homeflix GrosCailloux — Abonnement Premium</title>
+<meta name="description" content="Active le compte Premium de ton Homeflix GrosCailloux pour 3,50 € par mois.">
+<meta name="robots" content="noindex">
+<link rel="icon" href="/avatar.jpg" type="image/jpeg">
+<style>
+:root{
+  --ground:#eef4f9; --card:#ffffff; --ink:#15212c; --muted:#566676; --line:#d8e3ee;
+  --accent:#0a6fb0; --accent-soft:#7cc4ef; --wash:#e4f1fb; --focus:#0a6fb0;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --ground:#0e141b; --card:#151e28; --ink:#e2eaf2; --muted:#96a6b6; --line:#253240;
+    --accent:#5cc0f5; --accent-soft:#2b7fb3; --wash:#162636; --focus:#8fd3fb;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding-block:32px;padding-inline:16px;
+  background:var(--ground);color:var(--ink);
+  font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+main{width:100%;max-width:30rem;background:var(--card);border:1px solid var(--line);border-radius:18px;
+  padding:clamp(22px,5vw,36px);display:grid;gap:18px}
+.avatar{width:96px;height:96px;border-radius:50%;object-fit:cover;display:block;
+  border:3px solid var(--accent);box-shadow:0 0 0 5px var(--wash)}
+h1{margin:0;font:600 clamp(1.5rem,4.4vw,1.9rem)/1.15 ui-serif,Georgia,"Times New Roman",serif;
+  letter-spacing:-.01em;text-wrap:balance}
+p{margin:0}
+.lead{font-size:1.05rem}
+.price{display:inline-block;margin:0;padding:6px 14px;border-radius:999px;background:var(--accent);
+  color:#fff;font-weight:700;font-size:1.02rem}
+.muted{color:var(--muted);font-size:.92rem}
+.facts{margin:0;padding:14px 16px;border-radius:12px;background:var(--wash);display:grid;gap:6px;
+  list-style:none;font-size:.93rem}
+.facts li{display:flex;gap:10px;align-items:baseline}
+.facts li::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);
+  transform:translateY(-1px)}
+#paypal-button-container{min-height:54px}
+#paypal-button-container,#paypal-button-container iframe{color-scheme:light}
+.fallback{font-size:.9rem;color:var(--muted)}
+.who{display:grid;gap:8px}.who label{font-weight:600}
+.who input{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font:inherit}
+.who input:focus{outline:2px solid var(--focus);outline-offset:2px;border-radius:10px}
+.who input:invalid:not(:placeholder-shown){border-color:#c0392b}
+a{color:var(--accent);text-underline-offset:3px}
+a:focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:4px}
+footer{border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<main>
+  <img class="avatar" src="/avatar.jpg" alt="Homeflix GrosCailloux" width="96" height="96">
+
+  <h1>Homeflix GrosCailloux Premium</h1>
+
+  <p class="price">{{PRICE}}</p>
+
+  <p class="lead">Abonne-toi et active le compte <strong>Premium</strong> de ton Homeflix GrosCailloux
+  pour profiter de tout le catalogue, où que tu sois, sans limite de durée de lecture.</p>
+
+  <ul class="facts">
+    <li>{{PRICE}}, sans engagement.</li>
+    <li>Activation <strong>immédiate</strong> dès le paiement : indique ton nom de compte ci-dessous.</li>
+    <li>Jusqu'à 2 lectures simultanées et catalogue complet.</li>
+    <li>Résiliable à tout moment depuis ton compte PayPal.</li>
+  </ul>
+
+  <form id="who" class="who" onsubmit="return false" autocomplete="off">
+    <label for="compte">Ton nom de compte Groscailloux</label>
+    <input id="compte" name="compte" type="text" value="{{COMPTE}}" maxlength="32" autocapitalize="none" spellcheck="false"
+      pattern="[a-zA-Z0-9_\-]{2,32}" placeholder="Ex. : john_doe" required>
+    <p class="muted" id="who-hint">Celui avec lequel tu te connectes à Jellyfin. Il sera activé (ou prolongé) tout seul après le paiement.</p>
+  </form>
+
+  <div id="paypal-button-container" aria-live="polite"></div>
+  <form id="link" method="post" action="/premium/lier" hidden>
+    <input type="hidden" name="subscription_id" id="sub_id"><input type="hidden" name="compte" id="sub_compte">
+  </form>
+  <p class="muted" id="linking" hidden>Paiement approuvé, activation en cours…</p>
+
+  <p class="fallback">Le bouton ne s'affiche pas ?
+    <a href="{{SUBSCRIBE_URL}}" rel="noopener noreferrer" target="_blank">S'abonner directement sur PayPal</a>,
+    puis <a href="/premium/activate">indique ton compte ici</a>.</p>
+
+  <footer><p class="muted">Paiement sécurisé par PayPal. Activation automatique dès confirmation du paiement ; sans engagement, résiliable depuis ton compte PayPal.</p></footer>
+</main>
+
+<script src="{{SDK_HOST}}/sdk/js?client-id={{CLIENT_ID}}&vault=true&intent=subscription&locale=fr_FR" data-sdk-integration-source="button-factory"></script>
+<script>
+  (function () {
+    var input = document.getElementById('compte');
+    function compte() { return (input.value || '').trim(); }
+    function valid() { return /^[a-zA-Z0-9_-]{2,32}$/.test(compte()); }
+    if (!window.paypal) return;
+    paypal.Buttons({
+      style: { shape: 'rect', color: 'gold', layout: 'vertical', label: 'subscribe' },
+      onInit: function (data, actions) {
+        if (!valid()) actions.disable();
+        input.addEventListener('input', function () { valid() ? actions.enable() : actions.disable(); });
+      },
+      onClick: function () {
+        if (!valid()) { input.focus(); document.getElementById('who-hint').textContent = 'Indique d\'abord ton nom de compte (2 à 32 lettres, chiffres, tiret ou souligné).'; }
+      },
+      createSubscription: function (data, actions) {
+        return actions.subscription.create({ plan_id: '{{PLAN_ID}}', custom_id: compte() });
+      },
+      onApprove: function (data) {
+        document.getElementById('sub_id').value = data.subscriptionID || '';
+        document.getElementById('sub_compte').value = compte();
+        document.getElementById('linking').hidden = false;
+        document.getElementById('link').submit();
+      }
+    }).render('#paypal-button-container');
+  })();
+</script>
+</body>
+</html>

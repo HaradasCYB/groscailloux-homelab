@@ -7,6 +7,7 @@ mod guide;
 mod scheduler;
 mod search_page;
 mod status_page;
+mod subs_api;
 mod watcher;
 mod web;
 

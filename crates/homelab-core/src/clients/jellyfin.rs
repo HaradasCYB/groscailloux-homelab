@@ -331,6 +331,27 @@ impl JellyfinClient {
             .map(|_| ())
     }
 
+    /// Appareils connus de Jellyfin (tous comptes : `GET /Devices?userId=` ignore son filtre, on trie
+    /// nous-mêmes sur `LastUserId`).
+    pub async fn devices(&self) -> Result<Vec<Value>> {
+        let resp = self.req(Method::GET, "Devices").send().await?;
+        let v = json(resp, "jellyfin Devices").await?;
+        Ok(v.get("Items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Supprime un appareil (déconnexion de ses sessions). L'appelant vérifie le propriétaire avant.
+    pub async fn delete_device(&self, device_id: &str) -> Result<()> {
+        let resp = self
+            .req(Method::DELETE, "Devices")
+            .query(&[("id", device_id)])
+            .send()
+            .await?;
+        check(resp, "jellyfin DELETE Devices").await.map(|_| ())
+    }
+
     pub async fn stop_playback(&self, session_id: &str) -> Result<()> {
         let resp = self
             .req(Method::POST, &format!("Sessions/{session_id}/Playing/Stop"))

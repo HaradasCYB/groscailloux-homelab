@@ -61,6 +61,24 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Abonnés : list ; set <compte> --status active|offered|exempt|unknown|suspended [--days N] ;
+    /// extend <compte> --days N ; link <compte> --sub I-… ; import <csv PayPal> ; paypal (webhook, plan)
+    Subs {
+        #[arg(value_parser = ["list", "set", "extend", "link", "import", "paypal"])]
+        action: String,
+        /// Compte Jellyfin (set/extend/link) ou fichier CSV (import)
+        who: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        days: Option<i64>,
+        /// Identifiant d'abonnement PayPal (I-…)
+        #[arg(long)]
+        sub: Option<String>,
+        /// paypal : crée le webhook sur cette URL (https://…/paypal/webhook)
+        #[arg(long)]
+        webhook: Option<String>,
+    },
     /// qBittorrent derrière gluetun (on) ou en direct (off)
     Vpn {
         #[arg(value_parser = ["on", "off", "status"])]
@@ -168,6 +186,16 @@ async fn main() -> Result<()> {
                 },
                 v.get("url").and_then(Value::as_str).unwrap_or("—")
             );
+        }
+        Cmd::Subs {
+            action,
+            who,
+            status,
+            days,
+            sub,
+            webhook,
+        } => {
+            subs_cmd(&ctx, &action, who, status, days, sub, webhook).await?;
         }
         Cmd::Accounts { action, who, yes } => match action.as_str() {
             "link" => {
@@ -469,4 +497,188 @@ async fn daemon_post(ctx: &TaskContext, path: &str, body: Value) -> Result<Value
         );
     }
     Ok(v)
+}
+
+async fn subs_cmd(
+    ctx: &homelab_core::TaskContext,
+    action: &str,
+    who: Option<String>,
+    status: Option<String>,
+    days: Option<i64>,
+    sub: Option<String>,
+    webhook: Option<String>,
+) -> Result<()> {
+    use homelab_core::subscription_ops as ops;
+    use homelab_core::subscriptions::{self as subs, Status};
+    let t = homelab_core::state::now();
+    let resolve = |who: Option<String>| async move {
+        let who = who.context("préciser le compte")?;
+        ops::resolve_account(ctx, &who)
+            .await?
+            .with_context(|| format!("compte inconnu : {who}"))
+    };
+    match action {
+        "list" => {
+            let created = ops::ensure_fiches(ctx).await?;
+            if created > 0 {
+                println!("{created} fiche(s) créée(s) pour des comptes sans fiche");
+            }
+            println!(
+                "{:<18} {:<18} {:<12} {:<8} paypal",
+                "compte", "statut", "échéance", "source"
+            );
+            for s in ctx.subs.list()? {
+                println!(
+                    "{:<18} {:<18} {:<12} {:<8} {}",
+                    s.username,
+                    s.status.label(),
+                    s.expires_at
+                        .map(ops::date_text)
+                        .unwrap_or_else(|| "—".into()),
+                    s.source,
+                    s.paypal_sub_id.as_deref().unwrap_or("—")
+                );
+            }
+        }
+        "set" => {
+            let a = resolve(who).await?;
+            let st = status
+                .as_deref()
+                .and_then(Status::parse)
+                .context("--status active|trial|offered|exempt|unknown|suspended")?;
+            let s = ops::admin_set(ctx, &a.user_id, st, days, "homelabctl").await?;
+            println!(
+                "{} : {}{}",
+                s.username,
+                s.status.label(),
+                s.expires_at
+                    .map(|e| format!(" jusqu'au {}", ops::date_text(e)))
+                    .unwrap_or_default()
+            );
+        }
+        "extend" => {
+            let a = resolve(who).await?;
+            let d = days.context("--days N")?;
+            let new = ops::admin_extend(ctx, &a.user_id, d, "homelabctl").await?;
+            println!("{} : prolongé jusqu'au {}", a.username, ops::date_text(new));
+        }
+        "link" => {
+            let a = resolve(who).await?;
+            let sid = sub.context("--sub I-…")?;
+            if !subs::valid_paypal_sub_id(&sid) {
+                bail!("identifiant d'abonnement invalide : {sid}");
+            }
+            let pp = ctx
+                .paypal
+                .as_ref()
+                .context("PayPal non configuré (PAYPAL_* dans .env)")?;
+            let v = pp.subscription(&sid).await?;
+            let facts = homelab_core::clients::paypal::event_facts(
+                &json!({ "id": format!("link:{sid}"), "event_type": "BILLING.SUBSCRIPTION.ACTIVATED", "resource": v }),
+            );
+            let mut facts = facts;
+            facts.custom_id = Some(a.username.clone());
+            ctx.subs
+                .link_paypal(&a.user_id, &sid, facts.email.as_deref(), "homelabctl", t)?;
+            let st = facts.status.clone().unwrap_or_default();
+            if st == "ACTIVE" {
+                let _ = ctx.subs.record_paypal_event(
+                    &facts.event_id,
+                    "LINK",
+                    Some(&sid),
+                    "homelabctl",
+                    t,
+                );
+                ops::on_payment(ctx, &facts, "homelabctl").await?;
+            }
+            let s = ctx.subs.get(&a.user_id)?.context("fiche")?;
+            println!(
+                "{} ↔ {sid} (PayPal : {st}) → {}{}",
+                s.username,
+                s.status.label(),
+                s.expires_at
+                    .map(|e| format!(" jusqu'au {}", ops::date_text(e)))
+                    .unwrap_or_default()
+            );
+        }
+        "import" => {
+            let path = who.context("préciser le fichier CSV exporté de PayPal")?;
+            let text = std::fs::read_to_string(&path).with_context(|| format!("lecture {path}"))?;
+            let rows = subs::parse_paypal_csv(&text);
+            println!("{} abonnement(s) dans le fichier", rows.len());
+            ops::ensure_fiches(ctx).await?;
+            let all = ctx.subs.list()?;
+            let mut linked = 0;
+            for r in &rows {
+                if ctx.subs.by_paypal_sub(&r.sub_id)?.is_some() {
+                    continue;
+                }
+                // rapprochement : e-mail Jellyseerr du compte, sinon nom PayPal ≈ nom de compte
+                let mut target: Option<String> = None;
+                if r.email.contains('@') {
+                    if let Ok(Some((id, _))) =
+                        homelab_core::accounts::account_by_email(ctx, &r.email).await
+                    {
+                        target = Some(id);
+                    }
+                }
+                if target.is_none() && !r.name.is_empty() {
+                    let n = r.name.to_lowercase();
+                    target = all
+                        .iter()
+                        .find(|s| n.contains(&s.username.to_lowercase()))
+                        .map(|s| s.user_id.clone());
+                }
+                match target {
+                    Some(uid) => {
+                        ctx.subs.link_paypal(&uid, &r.sub_id, Some(&r.email), "import", t)?;
+                        let name = all.iter().find(|s| s.user_id == uid).map(|s| s.username.clone()).unwrap_or(uid.clone());
+                        println!("  {} ↔ {} ({})", name, r.sub_id, r.status);
+                        linked += 1;
+                    }
+                    None => println!("  ? {} — {} {} : aucun compte trouvé, à rattacher à la main (homelabctl subs link <compte> --sub {})", r.sub_id, r.name, r.email, r.sub_id),
+                }
+            }
+            println!("{linked} rattaché(s) ; lancer `homelabctl run subscription_reconcile` pour poser les échéances");
+        }
+        "paypal" => {
+            let pp = ctx
+                .paypal
+                .as_ref()
+                .context("PayPal non configuré (PAYPAL_* dans .env)")?;
+            println!(
+                "environnement : {}",
+                if pp.cfg().sandbox { "sandbox" } else { "live" }
+            );
+            match pp.plan(&pp.cfg().plan_id).await {
+                Ok(v) => println!(
+                    "plan {} : {} ({})",
+                    pp.cfg().plan_id,
+                    v.get("name").and_then(Value::as_str).unwrap_or("?"),
+                    v.get("status").and_then(Value::as_str).unwrap_or("?")
+                ),
+                Err(e) => println!("plan {} : {e}", pp.cfg().plan_id),
+            }
+            for w in pp.webhooks().await? {
+                println!(
+                    "webhook {} → {} ({} événements)",
+                    w.get("id").and_then(Value::as_str).unwrap_or("?"),
+                    w.get("url").and_then(Value::as_str).unwrap_or("?"),
+                    w.get("event_types")
+                        .and_then(Value::as_array)
+                        .map(|a| a.len())
+                        .unwrap_or(0)
+                );
+            }
+            if let Some(url) = webhook {
+                let id = pp.ensure_webhook(&url).await?;
+                println!(
+                    "webhook prêt : {id}
+→ mettre PAYPAL_WEBHOOK_ID={id} (ou PAYPAL_SANDBOX_WEBHOOK_ID) dans .env puis restart homelabd"
+                );
+            }
+        }
+        _ => bail!("action inconnue"),
+    }
+    Ok(())
 }

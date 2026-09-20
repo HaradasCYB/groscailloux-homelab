@@ -260,6 +260,18 @@ journalctl -u homelabd -f
   l'URL : 600). Chemins Arr toujours préfixés `api/v3/` (la base de `ArrClient` est la racine). Un webhook collé
   dans une conversation est compromis : le recréer dans Discord (Modifier le salon → Intégrations → Webhooks) et
   relancer `apply`.
+- **Abonnés (v1.18, 2026-09-20)** : `homelab_core::subscriptions` (fiches SQLite `state/subscriptions.db`, décisions pures
+  `decide` testées) + `subscription_ops` (tout passage par `accounts::set_premium`) ; tâches `subscription_cycle` (1 h,
+  `cycle_dry_run = true` la première semaine) et `subscription_reconcile` (24 h) ; `[subscriptions]` dans le TOML.
+  PayPal : `PAYPAL_ENV` + `PAYPAL_*` (live) ou `PAYPAL_SANDBOX_*` dans `.env` — les identifiants fournis le 2026-09-20
+  sont ceux du **sandbox** (application « APP-9R85… ») et ont été collés dans une conversation : à régénérer, et les
+  identifiants **Live** restent à fournir ; tant que l'application est en sandbox, la page publique `/premium` garde le
+  bouton Live historique (`DONATION_*`, activation manuelle) et `/premium?test=1` montre le bouton sandbox. Webhook
+  `/paypal/webhook` sur l'hôte public de `/premium` (hôte NPM 20, sans liste d'accès), signature vérifiée chez PayPal,
+  id dans `PAYPAL_WEBHOOK_ID` (`homelabctl subs paypal --webhook <url>` le crée). « Mon compte » = script Injector
+  « Groscailloux Mon compte » → `/gc-compte/` (NPM hôte 1, base **et** `1.conf`, sauvegarde `backups/npm-20260920-gc-compte/`)
+  → homelabd `/compte/`. Statut « à qualifier » = compte actif sans abonnement connu : **jamais suspendu par le cycle**,
+  l'admin tranche sur `/accounts`. Aucun secret ni identifiant PayPal dans le dépôt, les journaux ou les pages.
 - **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
   la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).
@@ -474,7 +486,8 @@ journalctl -u homelabd -f
   `systemctl status homelabd` après.
 - `scripts/` ne contient plus que des outils ponctuels (les anciens scripts bash planifiés ont été
   retirés) : `jellyfin-branding-apply.sh`, `jellyfin-ui-rollback.sh` (voir « Interface Jellyfin »),
-  `jellyseerr-rotate-key.py` (voir « Pièges connus »), `jellyfin-js-apply.py` (scripts JavaScript Injector),
+  `jellyseerr-rotate-key.py` (voir « Pièges connus »), `jellyfin-js-apply.py` (scripts JavaScript Injector, dont
+  « Groscailloux Mon compte »),
   `move-to-seedbox.py` et `seedbox-cleanup.py` (voir « Seedbox »).
 
 ## Interface Jellyfin (« Groscailloux TV », 2026-09-14)

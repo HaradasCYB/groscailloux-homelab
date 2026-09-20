@@ -4,9 +4,12 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::sync::Mutex;
 
-use crate::clients::{ArrClient, JellyfinClient, JellyseerrClient, ProwlarrClient, QbitClient};
+use crate::clients::{
+    ArrClient, JellyfinClient, JellyseerrClient, PayPalClient, ProwlarrClient, QbitClient,
+};
 use crate::config::{Config, Secrets};
 use crate::state::StateStore;
+use crate::subscriptions::SubStore;
 
 /// Tout ce dont une tâche a besoin. Cloné par `Arc` entre les boucles du scheduler.
 pub struct TaskContext {
@@ -25,6 +28,10 @@ pub struct TaskContext {
     pub jellyseerr: JellyseerrClient,
     /// Recherche en texte libre chez un indexer (titres traduits) ; absent sans `PROWLARR_API_KEY`.
     pub prowlarr: Option<ProwlarrClient>,
+    /// PayPal REST, si `PAYPAL_*` est renseigné dans `.env`.
+    pub paypal: Option<PayPalClient>,
+    /// Fiches abonnés (`[subscriptions] db_file`).
+    pub subs: Arc<SubStore>,
     /// Sérialise toute mutation de qBittorrent (stuck, disk pressure, ratio).
     pub qbit_lock: Arc<Mutex<()>>,
     /// Sérialise les onboardings (poller + web).
@@ -113,6 +120,11 @@ impl TaskContext {
                 Some(k) => Some(ProwlarrClient::new(&cfg.urls.prowlarr, k, http.clone())?),
                 None => None,
             },
+            paypal: secrets
+                .paypal
+                .clone()
+                .map(|p| PayPalClient::new(http.clone(), p)),
+            subs: Arc::new(SubStore::open(&cfg.subscriptions.db_file)?),
             cfg: Arc::new(cfg),
             secrets: Arc::new(secrets),
             http,

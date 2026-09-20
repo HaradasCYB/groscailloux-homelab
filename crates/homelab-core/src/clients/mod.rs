@@ -5,12 +5,14 @@
 mod arr;
 pub mod jellyfin;
 mod jellyseerr;
+pub mod paypal;
 mod prowlarr;
 mod qbit;
 
 pub use arr::{ArrClient, QueueItem};
 pub use jellyfin::JellyfinClient;
 pub use jellyseerr::JellyseerrClient;
+pub use paypal::PayPalClient;
 pub use prowlarr::ProwlarrClient;
 pub use qbit::{QbitClient, Torrent, TorrentFile};
 

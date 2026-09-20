@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.17.2](#1172--20092026--de-la-place-sur-les-deux-disques)** | 20/09/2026 | **De la place sur les deux disques** |
+| **[1.18.0](#1180--20092026--abonnement-automatique-et-mon-compte)** | 20/09/2026 | **Abonnement automatique et « Mon compte »** |
+| [1.17.2](#1172--20092026--de-la-place-sur-les-deux-disques) | 20/09/2026 | De la place sur les deux disques |
 | [1.17.1](#1171--20092026--sauvegarde-corrigée) | 20/09/2026 | Sauvegarde corrigée |
 | [1.17.0](#1170--20092026--les-nouveautés-sur-discord) | 20/09/2026 | Les nouveautés sur Discord |
 | [1.16.0](#1160--20092026--bienvenue-comme-chez-les-grands) | 20/09/2026 | Bienvenue comme chez les grands |
@@ -44,6 +45,20 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.18.0 — 20/09/2026 — Abonnement automatique et « Mon compte »
+
+- **Abonnement activé tout seul** : sur la page Premium, tu indiques ton nom de compte, tu payes, et ton compte est
+  actif dans la seconde ; chaque mensualité le prolonge automatiquement. Tu as payé sans passer par la page ? Un
+  formulaire rattache ton abonnement avec son identifiant PayPal.
+- **Fin d'abonnement en douceur** : rappels par mail 7 jours et 1 jour avant l'échéance, 3 jours de grâce, puis
+  l'accès se met en pause (rien n'est supprimé) et repart dès le paiement.
+- **« Mon compte » dans Jellyfin** (icône en haut à droite) : état de l'abonnement et échéance, bouton d'abonnement,
+  appareils connectés avec déconnexion, changement de mot de passe, code de parrainage, historique.
+- **Essai gratuit de 7 jours** à l'inscription, et **parrainage** : 15 jours offerts au parrain et au filleul au premier
+  paiement du filleul.
+- Côté administrateur : colonne Abonnement sur la page Comptes (offrir, exempter, prolonger, suspendre), commande
+  `homelabctl subs`, cycle en mode observation la première semaine.
 
 ## 1.17.2 — 20/09/2026 — De la place sur les deux disques
 

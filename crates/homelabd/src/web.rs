@@ -16,6 +16,9 @@ use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use homelab_core::accounts::{self, Outcome};
 use homelab_core::config::Donation;
+use homelab_core::mail;
+use homelab_core::subscription_ops;
+use homelab_core::subscriptions::Status as SubStatus;
 use homelab_core::tasks::onboard::{self, OnboardRequest};
 use homelab_core::welcome;
 use homelab_core::{Secret, TaskContext};
@@ -29,7 +32,9 @@ use crate::{accounts_page, guide, status_page};
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const BIENVENUE_HTML: &str = include_str!("../assets/bienvenue.html");
 const INSCRIPTION_HTML: &str = include_str!("../assets/inscription.html");
-const DON_HTML: &str = include_str!("../assets/don.html");
+const PREMIUM_HTML: &str = include_str!("../assets/premium.html");
+const PREMIUM_ACTIVATE_HTML: &str = include_str!("../assets/premium-activate.html");
+const PREMIUM_MERCI_HTML: &str = include_str!("../assets/premium-merci.html");
 
 #[derive(Clone)]
 struct AppState {
@@ -49,6 +54,7 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
     let listen = ctx.cfg.web.listen.clone();
     let chat = crate::chat_api::router(ctx.clone())?;
     let search = crate::search_page::router(ctx.clone());
+    let subs = crate::subs_api::router(ctx.clone());
     let state = AppState {
         ctx,
         last_request: Arc::new(Mutex::new(HashMap::new())),
@@ -68,7 +74,14 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/accounts/link", post(accounts_link))
         .route("/admin/link", post(admin_link))
         .route("/admin/mail-test", post(admin_mail_test))
-        .route("/don", get(don))
+        .route("/don", get(don_redirect))
+        .route("/premium", get(premium))
+        .route("/premium/merci", get(premium_merci))
+        .route("/accounts/subs", post(accounts_subs))
+        .route(
+            "/premium/activate",
+            get(premium_activate).post(premium_activate_post),
+        )
         .route("/accounts", get(accounts_html))
         .route("/accounts/premium", post(accounts_toggle))
         .route(
@@ -77,7 +90,8 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         )
         .with_state(state)
         .merge(chat)
-        .merge(search);
+        .merge(search)
+        .merge(subs);
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
         .with_context(|| format!("bind {listen}"))?;
@@ -123,25 +137,274 @@ async fn guide_icon() -> Response {
         .into_response()
 }
 
-/// Page de don (publique, sans lien avec le reste) : 404 tant que PayPal n'est pas configuré.
-fn don_page(d: &Donation) -> String {
-    DON_HTML
-        .replace("{{CLIENT_ID}}", &d.paypal_client_id)
-        .replace("{{PLAN_ID}}", &d.paypal_plan_id)
+/// Garde le lien court historique `/don` : redirection 301 (permanente) vers `/premium`.
+async fn don_redirect() -> Response {
+    (
+        StatusCode::MOVED_PERMANENTLY,
+        [(
+            axum::http::header::LOCATION,
+            axum::http::HeaderValue::from_static("/premium"),
+        )],
+        Html("<a href=\"/premium\">Premium</a>".to_string()),
+    )
+        .into_response()
 }
 
-async fn don(State(st): State<AppState>) -> Response {
-    match &st.ctx.secrets.donation {
-        Some(d) => (
-            [(
-                axum::http::header::CACHE_CONTROL,
-                axum::http::HeaderValue::from_static("public, max-age=3600"),
-            )],
-            Html(don_page(d)),
-        )
-            .into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
+/// Page d'abonnement Premium (publique) : 404 tant que PayPal n'est pas configuré.
+/// Identifiants du bouton PayPal : l'application REST (`PAYPAL_*`, sandbox ou live) quand elle est
+/// configurée, sinon les identifiants historiques de la page de don.
+fn premium_ids(st: &AppState, test: bool) -> Option<(String, String, bool)> {
+    // Tant que l'application REST est en sandbox, la page publique garde le bouton Live historique
+    // (`DONATION_*`) : seul `?test=1` montre le bouton sandbox.
+    if let Some(p) = &st.ctx.secrets.paypal {
+        if !p.sandbox || test || st.ctx.secrets.donation.is_none() {
+            return Some((p.client_id.clone(), p.plan_id.clone(), p.sandbox));
+        }
     }
+    st.ctx
+        .secrets
+        .donation
+        .as_ref()
+        .map(|d| (d.paypal_client_id.clone(), d.paypal_plan_id.clone(), false))
+}
+
+fn premium_page(
+    client_id: &str,
+    plan_id: &str,
+    sandbox: bool,
+    compte: &str,
+    price: &str,
+) -> String {
+    let host = if sandbox {
+        "https://www.sandbox.paypal.com"
+    } else {
+        "https://www.paypal.com"
+    };
+    PREMIUM_HTML
+        .replace("{{CLIENT_ID}}", client_id)
+        .replace("{{PLAN_ID}}", plan_id)
+        .replace("{{SDK_HOST}}", host)
+        .replace(
+            "{{SUBSCRIBE_URL}}",
+            &format!("{host}/webapps/billing/plans/subscribe?plan_id={plan_id}"),
+        )
+        .replace("{{COMPTE}}", &page_esc(compte))
+        .replace("{{PRICE}}", &page_esc(price))
+}
+
+async fn premium(State(st): State<AppState>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let Some((cid, plan, sandbox)) = premium_ids(&st, q.contains_key("test")) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let compte = q
+        .get("compte")
+        .map(|c| c.trim())
+        .filter(|c| onboard::valid_username(c))
+        .unwrap_or("");
+    let mut resp = Html(premium_page(
+        &cid,
+        &plan,
+        sandbox,
+        compte,
+        &st.ctx.cfg.subscriptions.price_text,
+    ))
+    .into_response();
+    resp.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    resp
+}
+
+/// GET /premium/merci : après un rattachement réussi.
+async fn premium_merci(
+    State(st): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let compte = q.get("compte").map(String::as_str).unwrap_or("");
+    let jusqu = q
+        .get("jusqu")
+        .filter(|j| !j.is_empty())
+        .map(|j| format!(" jusqu'au {}", page_esc(j)))
+        .unwrap_or_default();
+    let html = PREMIUM_MERCI_HTML
+        .replace("{{COMPTE}}", &page_esc(compte))
+        .replace("{{JUSQU}}", &jusqu)
+        .replace(
+            "{{JELLYFIN_URL}}",
+            &page_esc(&st.ctx.secrets.jellyfin_public_url),
+        );
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    resp
+}
+
+#[derive(Deserialize)]
+struct SubsForm {
+    token: String,
+    user_id: String,
+    /// `active`, `offered`, `exempt`, `suspended`, `unknown`, `trial` ou `extend`.
+    action: String,
+    #[serde(default)]
+    days: Option<i64>,
+}
+
+/// POST /accounts/subs : décision admin sur une fiche (statut, prolongation), journalisée.
+async fn accounts_subs(
+    State(st): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<SubsForm>,
+) -> Response {
+    if !accounts_allowed(&st, Some(&f.token)) {
+        return denied();
+    }
+    let ip = client_ip(&headers, addr);
+    let who = st
+        .ctx
+        .subs
+        .get(&f.user_id)
+        .ok()
+        .flatten()
+        .map(|s| s.username)
+        .unwrap_or_default();
+    let days = f.days.filter(|d| (1..=730).contains(d));
+    let code = if f.action == "extend" {
+        match subscription_ops::admin_extend(&st.ctx, &f.user_id, days.unwrap_or(30), "admin").await
+        {
+            Ok(_) => "sub_extended",
+            Err(e) => {
+                warn!(task = "subs", %ip, user = %who, error = %e, "extend failed");
+                "error"
+            }
+        }
+    } else if let Some(status) = SubStatus::parse(&f.action) {
+        match subscription_ops::admin_set(&st.ctx, &f.user_id, status, days, "admin").await {
+            Ok(_) => "sub_set",
+            Err(e) => {
+                warn!(task = "subs", %ip, user = %who, error = %e, "status change failed");
+                "error"
+            }
+        }
+    } else {
+        "error"
+    };
+    info!(task = "subs", %ip, user = %who, action = %f.action, result = code, "subscription action via web");
+    Redirect::to(&format!(
+        "/accounts?token={}&msg={code}&who={}",
+        urlencode(&f.token),
+        urlencode(&who)
+    ))
+    .into_response()
+}
+
+/// Page « activation Premium » : le visiteur y indique le nom exact de son compte après paiement.
+async fn premium_activate() -> Response {
+    let mut resp = Html(PREMIUM_ACTIVATE_HTML).into_response();
+    resp.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    resp
+}
+
+#[derive(Deserialize)]
+struct ActivateForm {
+    name: String,
+}
+
+/// Demande d'activation Premium : nom exact + IP → mail admin (rate-limit 30 s/IP partagé avec
+/// l'onboarding). POST → GET avec `?ok=1` / `?err=1` pour tenir hors du panneau de succès.
+async fn premium_activate_post(
+    State(st): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<ActivateForm>,
+) -> Response {
+    let ip = client_ip(&headers, addr);
+    let limit = Duration::from_secs(st.ctx.cfg.web.rate_limit_secs);
+    {
+        let mut map = st.last_request.lock().await;
+        let now = Instant::now();
+        map.retain(|_, t| now.duration_since(*t) < limit);
+        if map.contains_key(&ip) {
+            return Redirect::to("/premium/activate?err=1").into_response();
+        }
+        map.insert(ip.clone(), now);
+    }
+    let name = f.name.trim().to_string();
+    if name.is_empty() || name.chars().count() > 64 {
+        return Redirect::to("/premium/activate?err=1").into_response();
+    }
+    let to = st.ctx.secrets.donation_notify_email.clone();
+    if !to.is_empty() {
+        if let Some(smtp) = &st.ctx.secrets.smtp {
+            let body = activation_mail_body(
+                st.ctx.secrets.donation.as_ref(),
+                st.ctx.secrets.onboard_token.as_ref(),
+                &name,
+                &ip,
+            );
+            match mail::send_plain(
+                smtp,
+                "Admin Premium",
+                &to,
+                &format!("Demande d'activation Premium — {name}"),
+                &body,
+            )
+            .await
+            {
+                Ok(()) => {
+                    info!(task = "premium", %ip, name = %name, %to, "activation demand emailed")
+                }
+                Err(e) => {
+                    warn!(task = "premium", %ip, name = %name, error = %e, "activation demand mail failed")
+                }
+            }
+        } else {
+            warn!(
+                task = "premium",
+                "SMTP non configuré : demande d'activation non envoyée"
+            );
+        }
+    }
+    info!(task = "premium", %ip, name = %name, "premium activation requested via web");
+    Redirect::to("/premium/activate?ok=1").into_response()
+}
+
+/// Corps du mail d'activation : horodatage lisible + epoch, IP, plan PayPal et lien admin
+/// vers la page Comptes (jeton inclus : destinataire = administrateur uniquement).
+fn activation_mail_body(
+    donation: Option<&Donation>,
+    onboard_token: Option<&Secret>,
+    name: &str,
+    ip: &str,
+) -> String {
+    let now = chrono::Local::now();
+    let plan = donation
+        .map(|d| format!("Plan PayPal {} · 3,50 €/mois", d.paypal_plan_id))
+        .unwrap_or_else(|| "Plan PayPal non configuré côté serveur".to_string());
+    let activation = match onboard_token {
+        Some(t) => format!(
+            "\n\nActiver le compte depuis la page Comptes :\nhttps://onboarder.groscaillouxmovie.duckdns.org/accounts?token={}\n",
+            t.expose()
+        ),
+        None => String::new(),
+    };
+    format!(
+        "Demande d'activation du compte Premium Homeflix GrosCailloux.\n\n\
+Nom saisi : {name}\n\
+IP : {ip}\n\
+Date : {date}\n\
+Epoch : {epoch}\n\
+{plan}\n\
+\nVérifier le paiement PayPal puis activer le compte si le nom correspond.{activation}",
+        date = now.format("%Y-%m-%d %H:%M:%S %z"),
+        epoch = now.timestamp(),
+    )
 }
 
 async fn health() -> Json<Value> {
@@ -296,6 +559,26 @@ async fn accounts_html(
         .iter()
         .map(|a| (a.id.clone(), link_status_text(&all_links, &a.id, now)))
         .collect();
+    let mut subs: HashMap<String, accounts_page::SubInfo> = HashMap::new();
+    if st.ctx.cfg.subscriptions.enabled {
+        if let Err(e) = subscription_ops::ensure_fiches(&st.ctx).await {
+            warn!(task = "subs", error = %e, "fiches non synchronisées");
+        }
+        for s in st.ctx.subs.list().unwrap_or_default() {
+            subs.insert(
+                s.user_id.clone(),
+                accounts_page::SubInfo {
+                    status: s.status.as_str().to_string(),
+                    label: s.status.label().to_string(),
+                    expires: s
+                        .expires_at
+                        .map(subscription_ops::date_text)
+                        .unwrap_or_default(),
+                    source: s.source.clone(),
+                },
+            );
+        }
+    }
     let html = accounts_page::render(&accounts_page::PageData {
         now,
         accounts: &list,
@@ -304,6 +587,7 @@ async fn accounts_html(
         token: token.unwrap_or(""),
         msg,
         links: &links,
+        subs: &subs,
     });
     let mut resp = Html(html).into_response();
     resp.headers_mut().insert(
@@ -768,11 +1052,16 @@ async fn welcome_renew(
 }
 
 fn signup_form(username: &str, email: &str, err: Option<&str>) -> String {
+    signup_form_p(username, email, "", err)
+}
+
+fn signup_form_p(username: &str, email: &str, parrain: &str, err: Option<&str>) -> String {
     format!(
         r#"{err}<p>Indique le pseudo que tu veux et ton adresse e-mail : tu recevras un lien pour choisir ton mot de passe. Chaque compte est ensuite validé par l'administrateur.</p>
 <form method="post" action="/inscription" autocomplete="off">
 <div class="field"><label for="username">Pseudo</label><input id="username" name="username" type="text" required pattern="[a-zA-Z0-9_-]{{2,32}}" maxlength="32" value="{u}" autocomplete="username"></div>
 <div class="field"><label for="email">Adresse e-mail</label><input id="email" name="email" type="email" required maxlength="120" value="{e}" autocomplete="email"></div>
+<div class="field"><label for="parrain">Code de parrainage <span class="opt">(facultatif)</span></label><input id="parrain" name="parrain" type="text" maxlength="8" value="{p}" autocomplete="off" autocapitalize="characters" spellcheck="false" pattern="[A-Za-z0-9]{{8}}"></div>
 <div class="hp" aria-hidden="true"><label for="website">Site web</label><input id="website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
 <label class="check"><input type="checkbox" name="accept" value="1" required> Je sais que mon compte sera validé par l'administrateur avant de pouvoir regarder.</label>
 <button class="btn" type="submit">Créer mon compte</button>
@@ -783,6 +1072,7 @@ fn signup_form(username: &str, email: &str, err: Option<&str>) -> String {
             .unwrap_or_default(),
         u = page_esc(username),
         e = page_esc(email),
+        p = page_esc(parrain),
     )
 }
 
@@ -807,6 +1097,8 @@ struct SignupForm {
     accept: String,
     #[serde(default)]
     website: String,
+    #[serde(default)]
+    parrain: String,
 }
 
 fn signup_done() -> Response {
@@ -937,8 +1229,22 @@ async fn signup_post(
         password: None,
         source: onboard::Source::SelfSignup,
     };
+    let parrain = f.parrain.trim().to_uppercase();
     match onboard::run(&st.ctx, req).await {
-        Ok(_) => signup_done(),
+        Ok(r) => {
+            // essai gratuit (`[subscriptions] trial_days`) : fiche « essai » + compte activé tout de suite
+            if st.ctx.cfg.subscriptions.enabled {
+                let referral = (!parrain.is_empty()).then_some(parrain.as_str());
+                match subscription_ops::start_trial(&st.ctx, &r.jellyfin_id, &username, referral)
+                    .await
+                {
+                    Ok(true) => info!(task = "subs", %username, "trial started at signup"),
+                    Ok(false) => {}
+                    Err(e) => warn!(task = "subs", %username, error = %e, "trial not started"),
+                }
+            }
+            signup_done()
+        }
         Err(e) => {
             warn!(task = "onboard", %ip, error = %e, "public signup failed");
             public_page(INSCRIPTION_HTML, "Créer ton compte", &signup_form(&username, &email, Some("La création a échoué, réessaie dans un instant ou écris à l'administrateur.")), StatusCode::BAD_GATEWAY)
@@ -1194,18 +1500,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn don_page_fills_every_placeholder() {
-        let html = don_page(&Donation {
-            paypal_client_id: "CID-1".into(),
-            paypal_plan_id: "P-9".into(),
-        });
-        assert!(!html.contains("{{"));
-        assert!(html.contains("client-id=CID-1&"));
-        assert!(html.contains("locale=fr_FR"));
+    fn premium_page_fills_every_placeholder() {
+        let html = premium_page("CID-1", "P-9", false, "jo<hn", "3,50 € / mois");
+        assert!(html.contains("client-id=CID-1"));
         assert!(html.contains("plan_id: 'P-9'"));
-        assert!(html.contains("subscribe?plan_id=P-9"));
-        assert!(html.contains("aucun service"));
-        // un élément id="paypal" masquerait window.paypal et ferait planter le SDK
-        assert!(!html.contains(r#"id="paypal""#));
+        assert!(html.contains("jo&lt;hn"));
+        assert!(!html.contains("{{"));
+    }
+
+    #[test]
+    fn activate_page_has_subscription_form() {
+        let html = PREMIUM_ACTIVATE_HTML;
+        assert!(html.contains(r#"<form method="post" action="/premium/activate">"#));
+        assert!(html.contains(r#"name="name""#));
+        assert!(html.contains(r#"type="submit""#));
+        assert!(html.contains("/premium"));
+    }
+
+    #[test]
+    fn activation_mail_contains_contact_and_plan() {
+        let body = activation_mail_body(
+            Some(&Donation {
+                paypal_client_id: "CID-1".into(),
+                paypal_plan_id: "P-9".into(),
+            }),
+            None,
+            "john.doe",
+            "1.2.3.4",
+        );
+        assert!(body.contains("john.doe"));
+        assert!(body.contains("1.2.3.4"));
+        assert!(body.contains("P-9"));
+        assert!(body.contains("Epoch"));
     }
 }

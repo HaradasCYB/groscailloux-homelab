@@ -19,6 +19,20 @@ pub struct PageData<'a> {
     pub msg: Option<(&'a str, &'a str)>,
     /// État du lien de bienvenue par compte (`welcome::LinkStatus`), texte prêt à afficher.
     pub links: &'a std::collections::HashMap<String, String>,
+    /// Fiche abonné par compte (`subscriptions`), si le module est activé.
+    pub subs: &'a std::collections::HashMap<String, SubInfo>,
+}
+
+/// Ce que la page affiche d'une fiche abonné.
+#[derive(Debug, Clone, Default)]
+pub struct SubInfo {
+    /// `trial`, `active`, `grace`, `suspended`, `offered`, `exempt`, `unknown`.
+    pub status: String,
+    pub label: String,
+    /// Échéance lisible (« 12/10/2026 ») ou vide.
+    pub expires: String,
+    /// `paypal`, `manual`, `trial`, `import`.
+    pub source: String,
 }
 
 fn esc(s: &str) -> String {
@@ -61,6 +75,8 @@ pub fn message(code: &str, who: &str, max_premium: usize) -> Option<(&'static st
             "err",
             format!("Le lien pour <b>{who}</b> n'est pas parti (SMTP ou adresse inconnue ; voir journalctl -u homelabd)."),
         ),
+        "sub_set" => ("ok", format!("<b>{who}</b> : statut d'abonnement enregistré.")),
+        "sub_extended" => ("ok", format!("<b>{who}</b> : accès prolongé.")),
         "error" => (
             "err",
             format!("L'action sur <b>{who}</b> a échoué (voir journalctl -u homelabd)."),
@@ -69,7 +85,11 @@ pub fn message(code: &str, who: &str, max_premium: usize) -> Option<(&'static st
     })
 }
 
-const CSS: &str = r#".lk{display:block;font-size:12px;color:#9b94b8;margin-bottom:4px}.lnk{background:none;border:1px solid #3a325a;color:#c4b5fd;border-radius:8px;padding:4px 8px;font:inherit;font-size:12px;cursor:pointer}
+const CSS: &str = r#".sb{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11.5px;font-weight:600;margin-bottom:3px}
+.sb.active,.sb.offered,.sb.exempt{background:#143d2a;color:#9fe3bd}.sb.trial{background:#1c3556;color:#b9d6ff}.sb.grace{background:#4d3a10;color:#ffd98a}.sb.suspended{background:#4a1d1d;color:#ffb3b3}.sb.unknown{background:#2c3038;color:#d3d9e2}
+.subf{display:flex;gap:4px;align-items:center;margin-top:2px}.subf select,.subf input{background:#16121f;color:#e6e1f5;border:1px solid #3a325a;border-radius:8px;padding:3px 6px;font:inherit;font-size:12px}.subf input{width:4.2em}
+td.sub{min-width:15em}
+.lk{display:block;font-size:12px;color:#9b94b8;margin-bottom:4px}.lnk{background:none;border:1px solid #3a325a;color:#c4b5fd;border-radius:8px;padding:4px 8px;font:inherit;font-size:12px;cursor:pointer}
 :root{color-scheme:dark}*{box-sizing:border-box}
 body{margin:0;padding-block:20px;padding-inline:16px;background:#141517;color:#dfe5ea;font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:800px;margin:0 auto;display:grid;gap:16px}
@@ -183,8 +203,36 @@ pub fn render(d: &PageData<'_>) -> String {
                 name = esc(&a.name),
             )
         };
+        let sub = if a.protected {
+            r#"<span class="lock">—</span>"#.to_string()
+        } else {
+            match d.subs.get(&a.id) {
+                Some(si) => {
+                    let sel = |v: &str| if si.status == v { " selected" } else { "" };
+                    format!(
+                        r#"<span class="sb {st}">{label}</span><span class="lk">{exp}{src}</span><form method="post" action="/accounts/subs" class="subf"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><select name="action" aria-label="Décision pour {name}"><option value="extend">Prolonger de…</option><option value="active"{sa}>Actif (période)</option><option value="offered"{so}>Offert</option><option value="exempt"{se}>Exempté</option><option value="unknown"{su}>À qualifier</option><option value="suspended"{ss}>Suspendu</option></select><input type="number" name="days" min="1" max="730" value="30" aria-label="Jours"><button class="lnk" type="submit">OK</button></form>"#,
+                        st = esc(&si.status),
+                        label = esc(&si.label),
+                        exp = if si.expires.is_empty() {
+                            String::new()
+                        } else {
+                            format!("jusqu'au {} · ", esc(&si.expires))
+                        },
+                        src = esc(&si.source),
+                        id = esc(&a.id),
+                        name = esc(&a.name),
+                        sa = sel("active"),
+                        so = sel("offered"),
+                        se = sel("exempt"),
+                        su = sel("unknown"),
+                        ss = sel("suspended"),
+                    )
+                }
+                None => r#"<span class="lock">pas de fiche</span>"#.to_string(),
+            }
+        };
         rows.push_str(&format!(
-            r#"<tr class="{state}"><td class="n">{name}{badges}</td><td class="w">{act}</td><td class="w">{streams}</td><td class="w">{link}</td><td class="t">{actions}</td></tr>"#,
+            r#"<tr class="{state}"><td class="n">{name}{badges}</td><td class="w">{act}</td><td class="w">{streams}</td><td class="w sub">{sub}</td><td class="w">{link}</td><td class="t">{actions}</td></tr>"#,
             name = esc(&a.name),
             act = esc(&activity(d.now, a.last_activity.as_deref())),
         ));
@@ -200,7 +248,8 @@ pub fn render(d: &PageData<'_>) -> String {
             r#"<header><div><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><a class="new" href="/?token={token}">Créer un compte</a></header>
 <section class="cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} lectures simultanées par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
 {flash}
-<div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th>Lien de bienvenue</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
+<div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th>Abonnement</th><th>Lien de bienvenue</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
+<p class="foot">Abonnement : « Actif (période) » pose une échéance de N jours (30 par défaut), « Prolonger » l'ajoute ; « Offert » et « Exempté » ne sont jamais suspendus par le cycle ; « À qualifier » = compte actif sans abonnement connu, laissé tel quel jusqu'à ta décision. Un membre qui paie sur PayPal est rattaché et prolongé tout seul.</p>
 <p class="foot">Les comptes protégés ne se gèrent que dans le tableau de bord Jellyfin et ne comptent pas dans le plafond. Les nouveaux comptes arrivent suspendus ; à l'activation, le membre reçoit un mail. « Renvoyer le lien » envoie un nouveau lien de bienvenue (définir ou changer son mot de passe).</p>"#,
             max = d.max_premium,
             streams = d.max_playbacks,
@@ -254,6 +303,7 @@ mod tests {
             token: "t\"k",
             msg: Some(("suspended", "<bob>")),
             links: &std::collections::HashMap::new(),
+            subs: &std::collections::HashMap::new(),
         });
         assert!(html.contains("1 / 25"));
         assert!(html.contains(r#"aria-checked="true""#));
@@ -277,6 +327,7 @@ mod tests {
             token: "t",
             msg: Some(("cap", "")),
             links: &std::collections::HashMap::new(),
+            subs: &std::collections::HashMap::new(),
         });
         assert_eq!(html.matches(" disabled>").count(), 1);
         assert!(html.contains("Plafond atteint"));
@@ -298,6 +349,7 @@ mod tests {
             token: "t",
             msg: None,
             links: &std::collections::HashMap::new(),
+            subs: &std::collections::HashMap::new(),
         });
         assert!(
             html.contains("1 / 25"),

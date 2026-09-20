@@ -34,6 +34,8 @@ pub struct Config {
     #[serde(default)]
     pub chat: Chat,
     #[serde(default)]
+    pub subscriptions: Subscriptions,
+    #[serde(default)]
     pub manual_search: ManualSearch,
     #[serde(default)]
     pub indexers: Indexers,
@@ -143,6 +145,52 @@ pub struct Chat {
     pub delete_own_within_mins: i64,
     /// Au plus un mail récapitulatif (entraide + privé) par intervalle.
     pub moderator_mail_interval_mins: i64,
+}
+
+/// Abonnés et cycle premium (`homelab_core::subscriptions`, tâches `subscription_cycle` et
+/// `subscription_reconcile`, page « Mon compte » dans Jellyfin). L'admin garde la main : statuts
+/// « offert » et « exempt », prolongations manuelles, `cycle_dry_run` pour observer avant d'agir.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Subscriptions {
+    pub enabled: bool,
+    pub db_file: PathBuf,
+    /// Jours couverts par un paiement quand PayPal n'annonce pas la prochaine facturation.
+    pub period_days: u32,
+    /// Jours de grâce après l'échéance avant suspension.
+    pub grace_days: u32,
+    /// Rappels envoyés N jours avant l'échéance (mail au membre, récapitulatif admin).
+    pub remind_days: Vec<u32>,
+    /// Essai gratuit à l'inscription publique (0 = compte à activer par l'admin, comme avant).
+    pub trial_days: u32,
+    /// Jours offerts au parrain et au filleul au premier paiement du filleul.
+    pub referral_days: u32,
+    /// Plafond de jours de parrainage par compte et par année glissante.
+    pub referral_cap_days_per_year: u32,
+    /// Comptes jamais suspendus par le cycle (en plus de `accounts.protected`).
+    pub exempt: Vec<String>,
+    /// Le cycle annonce (journal + Discord admin) sans suspendre ni envoyer de mail aux membres.
+    pub cycle_dry_run: bool,
+    /// Prix affiché aux membres (texte libre, ex. « 3,50 € / mois »).
+    pub price_text: String,
+}
+
+impl Default for Subscriptions {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            db_file: "/opt/homelab/state/subscriptions.db".into(),
+            period_days: 31,
+            grace_days: 3,
+            remind_days: vec![7, 1],
+            trial_days: 7,
+            referral_days: 15,
+            referral_cap_days_per_year: 90,
+            exempt: Vec::new(),
+            cycle_dry_run: true,
+            price_text: "3,50 € / mois".into(),
+        }
+    }
 }
 
 impl Default for Chat {
@@ -371,6 +419,10 @@ pub struct Tasks {
     pub deletion_cleanup: DeletionCleanup,
     pub trending: Trending,
     pub playback_limit: PlaybackLimit,
+    #[serde(default)]
+    pub subscription_cycle: Interval3600,
+    #[serde(default)]
+    pub subscription_reconcile: Interval86400,
 }
 
 /// Lectures simultanées par compte : arrêt des lectures en trop (voir `tasks::playback_limit`).
@@ -872,6 +924,32 @@ impl Default for Interval300 {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
+pub struct Interval3600 {
+    pub interval_secs: u64,
+}
+impl Default for Interval3600 {
+    fn default() -> Self {
+        Self {
+            interval_secs: 3600,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Interval86400 {
+    pub interval_secs: u64,
+}
+impl Default for Interval86400 {
+    fn default() -> Self {
+        Self {
+            interval_secs: 86_400,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
 pub struct Interval600 {
     pub interval_secs: u64,
 }
@@ -1121,7 +1199,64 @@ pub struct Secrets {
     /// Page de don `/don` (bouton PayPal) : identifiants publics mais propres au compte PayPal,
     /// gardés hors du dépôt. Absents = pas de page.
     pub donation: Option<Donation>,
+    /// Destinataire des notifications de demande d'activation Premium (`DONATION_NOTIFY_EMAIL`,
+    /// repli sur `ADMIN_EMAIL`). Vide = notifications désactivées.
+    pub donation_notify_email: String,
     pub smtp: Option<Smtp>,
+    /// API REST PayPal (abonnements) : `PAYPAL_ENV` = live|sandbox, identifiants `PAYPAL_CLIENT_ID`/
+    /// `PAYPAL_SECRET` (ou `PAYPAL_SANDBOX_*`), `PAYPAL_PLAN_ID`, `PAYPAL_WEBHOOK_ID`. Absent = pas de
+    /// paiement relié (fiches manuelles seulement).
+    pub paypal: Option<PayPal>,
+    /// Adresse publique de la page `/premium` (`PREMIUM_PUBLIC_URL`, repli `ONBOARD_PUBLIC_URL`) :
+    /// liens de paiement dans les mails et « Mon compte ».
+    pub premium_public_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PayPal {
+    pub client_id: String,
+    pub secret: Secret,
+    pub plan_id: String,
+    pub sandbox: bool,
+    pub webhook_id: Option<String>,
+}
+
+impl PayPal {
+    pub fn from_env() -> Option<Self> {
+        let sandbox = opt("PAYPAL_ENV")
+            .map(|e| e.eq_ignore_ascii_case("sandbox"))
+            .unwrap_or(false);
+        let (cid, sec, plan, wh) = if sandbox {
+            (
+                opt("PAYPAL_SANDBOX_CLIENT_ID"),
+                opt("PAYPAL_SANDBOX_SECRET"),
+                opt("PAYPAL_SANDBOX_PLAN_ID"),
+                opt("PAYPAL_SANDBOX_WEBHOOK_ID"),
+            )
+        } else {
+            (
+                opt("PAYPAL_CLIENT_ID"),
+                opt("PAYPAL_SECRET"),
+                opt("PAYPAL_PLAN_ID"),
+                opt("PAYPAL_WEBHOOK_ID"),
+            )
+        };
+        let ok = |s: &str| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        };
+        match (cid, sec, plan) {
+            (Some(c), Some(s), Some(p)) if ok(&c) && ok(&p) && !s.is_empty() => Some(Self {
+                client_id: c,
+                secret: Secret::new(s),
+                plan_id: p,
+                sandbox,
+                webhook_id: wh.filter(|w| ok(w)),
+            }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1209,6 +1344,13 @@ impl Secrets {
                 opt("DONATION_PAYPAL_CLIENT_ID"),
                 opt("DONATION_PAYPAL_PLAN_ID"),
             ),
+            donation_notify_email: opt("DONATION_NOTIFY_EMAIL")
+                .or_else(|| opt("ADMIN_EMAIL"))
+                .unwrap_or_default(),
+            paypal: PayPal::from_env(),
+            premium_public_url: opt("PREMIUM_PUBLIC_URL")
+                .or_else(|| opt("ONBOARD_PUBLIC_URL"))
+                .map(|u| u.trim_end_matches('/').to_string()),
             smtp: match (opt("SMTP_HOST"), opt("SMTP_USER"), opt("SMTP_PASS")) {
                 (Some(host), Some(user), Some(pass)) => Some(Smtp {
                     port: opt("SMTP_PORT").and_then(|p| p.parse().ok()).unwrap_or(465),
