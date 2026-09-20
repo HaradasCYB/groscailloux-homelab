@@ -615,8 +615,14 @@ journalctl -u homelabd -f
   `ReadWritePaths` de `systemd/homelabd.service` (sinon « Read-only file system », vu le 2026-09-17).
 - Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
   même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`). Après le
-  redémarrage, les membres ne la voient plus, mais ses `CollectionFolder` restent en base (visibles des **admins**,
-  `EnableAllFolders`) et dans la liste Jellyseerr jusqu'à l'analyse complète suivante (vu le 2026-09-20).
+  redémarrage, les membres ne la voient plus, mais ses `CollectionFolder` restent en base (visibles des comptes
+  `EnableAllFolders`, admins compris) : il faut **une analyse complète** (qui les retire de la base, 131 s le 2026-09-20)
+  **puis un second redémarrage** (les vues sont en mémoire), et Jellyseerr ne les oublie qu'après son propre `?sync=true`
+  (+ `?enable=`). Ordre complet : supprimer la bibliothèque → analyse → redémarrage → Jellyseerr sync + enable.
+- **Comptes « toutes les bibliothèques »** : seuls les admins protégés doivent avoir `EnableAllFolders = true` ; un membre
+  ordinaire a la liste explicite des 5 bibliothèques (Films, Séries, Anime, Films d'animation, Collections), pas de TV en
+  direct, pas de téléchargement, verrouillage après 5 échecs (modèle `non_admin_policy`). Ardus et caca, créés avant
+  l'onboarding v2, ont été réalignés le 2026-09-20 (sauvegarde `backups/jellyfin-ui-20260920-mymedia/*-before.json`).
 - **Rangée « Mes médias » en tête** (Home Screen Sections `MyMedia`, `OrderIndex 0` depuis le 2026-09-20, demandé par
   l'admin : jusque-là 17ᵉ et dernière, chargée au défilement, invisible sur téléphone sans tout faire défiler). L'ordre
   du plugin est **global** (identique pour les 17 comptes, vérifié par `GET /HomeScreen/Sections?userId=`) ; il se
