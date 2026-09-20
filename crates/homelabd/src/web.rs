@@ -272,10 +272,14 @@ async fn accounts_subs(
         .map(|s| s.username)
         .unwrap_or_default();
     let days = f.days.filter(|d| (1..=730).contains(d));
+    let mut until = String::new();
     let code = if f.action == "extend" {
         match subscription_ops::admin_extend(&st.ctx, &f.user_id, days.unwrap_or(30), "admin").await
         {
-            Ok(_) => "sub_extended",
+            Ok(t) => {
+                until = subscription_ops::date_text(t);
+                "sub_extended"
+            }
             Err(e) => {
                 warn!(task = "subs", %ip, user = %who, error = %e, "extend failed");
                 "error"
@@ -283,7 +287,13 @@ async fn accounts_subs(
         }
     } else if let Some(status) = SubStatus::parse(&f.action) {
         match subscription_ops::admin_set(&st.ctx, &f.user_id, status, days, "admin").await {
-            Ok(_) => "sub_set",
+            Ok(s) => {
+                until = s
+                    .expires_at
+                    .map(subscription_ops::date_text)
+                    .unwrap_or_default();
+                "sub_set"
+            }
             Err(e) => {
                 warn!(task = "subs", %ip, user = %who, error = %e, "status change failed");
                 "error"
@@ -292,11 +302,12 @@ async fn accounts_subs(
     } else {
         "error"
     };
-    info!(task = "subs", %ip, user = %who, action = %f.action, result = code, "subscription action via web");
+    info!(task = "subs", %ip, user = %who, action = %f.action, days = ?days, %until, result = code, "subscription action via web");
     Redirect::to(&format!(
-        "/accounts?token={}&msg={code}&who={}",
+        "/accounts?token={}&msg={code}&who={}&until={}",
         urlencode(&f.token),
-        urlencode(&who)
+        urlencode(&who),
+        urlencode(&until)
     ))
     .into_response()
 }
@@ -546,9 +557,12 @@ async fn accounts_html(
                 .into_response();
         }
     };
-    let msg = q
-        .get("msg")
-        .map(|m| (m.as_str(), q.get("who").map(String::as_str).unwrap_or("")));
+    let who_until = match (q.get("who"), q.get("until")) {
+        (Some(w), Some(u)) if !u.is_empty() => format!("{w}|{u}"),
+        (Some(w), _) => w.clone(),
+        _ => String::new(),
+    };
+    let msg = q.get("msg").map(|m| (m.as_str(), who_until.as_str()));
     let now = homelab_core::state::now();
     let all_links: Vec<homelab_core::state::WelcomeLink> = st
         .ctx

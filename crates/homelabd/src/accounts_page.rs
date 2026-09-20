@@ -75,8 +75,19 @@ pub fn message(code: &str, who: &str, max_premium: usize) -> Option<(&'static st
             "err",
             format!("Le lien pour <b>{who}</b> n'est pas parti (SMTP ou adresse inconnue ; voir journalctl -u homelabd)."),
         ),
-        "sub_set" => ("ok", format!("<b>{who}</b> : statut d'abonnement enregistré.")),
-        "sub_extended" => ("ok", format!("<b>{who}</b> : accès prolongé.")),
+        "sub_set" => {
+            let (w, until) = who.split_once('|').unwrap_or((who.as_str(), ""));
+            let tail = if until.is_empty() {
+                String::new()
+            } else {
+                format!(", actif jusqu'au {until}")
+            };
+            ("ok", format!("<b>{w}</b> : statut enregistré{tail}."))
+        }
+        "sub_extended" => {
+            let (w, until) = who.split_once('|').unwrap_or((who.as_str(), ""));
+            ("ok", format!("<b>{w}</b> : accès prolongé jusqu'au {until}."))
+        }
         "error" => (
             "err",
             format!("L'action sur <b>{who}</b> a échoué (voir journalctl -u homelabd)."),
@@ -210,7 +221,7 @@ pub fn render(d: &PageData<'_>) -> String {
                 Some(si) => {
                     let sel = |v: &str| if si.status == v { " selected" } else { "" };
                     format!(
-                        r#"<span class="sb {st}">{label}</span><span class="lk">{exp}{src}</span><form method="post" action="/accounts/subs" class="subf"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><select name="action" aria-label="Décision pour {name}"><option value="extend">Prolonger de…</option><option value="active"{sa}>Actif (période)</option><option value="offered"{so}>Offert</option><option value="exempt"{se}>Exempté</option><option value="unknown"{su}>À qualifier</option><option value="suspended"{ss}>Suspendu</option></select><input type="number" name="days" min="1" max="730" value="30" aria-label="Jours"><button class="lnk" type="submit">OK</button></form>"#,
+                        r#"<span class="sb {st}">{label}</span><span class="lk">{exp}{src}</span><form method="post" action="/accounts/subs" class="subf"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><select name="action" aria-label="Décision pour {name}"><option value="extend">Prolonger de N jours</option><option value="active"{sa}>Actif pour N jours</option><option value="offered"{so}>Offert</option><option value="exempt"{se}>Exempté</option><option value="unknown"{su}>À qualifier</option><option value="suspended"{ss}>Suspendu</option></select><input type="number" name="days" min="1" max="730" value="30" aria-label="N jours" title="N jours : la case revient à 30 après validation, l'échéance obtenue s'affiche à gauche et dans le message"><span class="lk">j</span><button class="lnk" type="submit">OK</button></form>"#,
                         st = esc(&si.status),
                         label = esc(&si.label),
                         exp = if si.expires.is_empty() {
