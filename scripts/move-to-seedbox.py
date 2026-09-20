@@ -11,6 +11,9 @@ identifiants. Un titre en cours de lecture est copié mais sa bascule est report
     scripts/move-to-seedbox.py --list                 # numérote les titres du VPS (taille décroissante) → titles.json
     scripts/move-to-seedbox.py --titles 1-30 --dry-run
     scripts/move-to-seedbox.py --titles 1-30 --worker 0/2   # deux instances en parallèle : 0/2 et 1/2
+    scripts/move-to-seedbox.py --titles 1-30 --bwlimit 15000  # HORS PIC (08:30-12:30) : un flux plafonné, sinon les
+                                                               # lectures seedbox calent (mesuré le 2026-09-20 : 8-10 Mo/s
+                                                               # en lecture avec deux rsync à 20 Mo/s, un membre bloqué)
 
 Journal et état : backups/move-to-seedbox-<date>/. Rejouable : chaque étape est idempotente.
 """
@@ -64,6 +67,7 @@ JF = ("http://127.0.0.1:8096", env["JELLYFIN_API_KEY"])
 
 DRY = False
 LOG = None
+BWLIMIT = 0  # Ko/s pour rsync (0 = illimité) ; hors pic seulement : deux flux à 20 Mo/s font caler les lectures seedbox
 
 
 def log(msg):
@@ -160,7 +164,10 @@ def rsync(src, dest):
         return 0.0
     remote(f"mkdir -p {q}")
     # sans sudo : les médias appartiennent à deploy, et la clé ssh de la seedbox est la sienne
-    cmd = ["nice", "-n", "10", "ionice", "-c2", "-n7", "rsync", "-a", "--partial", "--no-owner", "--no-group", "--chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r", "-e", " ".join(SSH[:-1]), src.rstrip("/") + "/", f"seedbox:{dest}/"]
+    cmd = ["nice", "-n", "10", "ionice", "-c2", "-n7", "rsync", "-a", "--partial", "--no-owner", "--no-group", "--chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r"]
+    if BWLIMIT:
+        cmd.append(f"--bwlimit={BWLIMIT}")
+    cmd += ["-e", " ".join(SSH[:-1]), src.rstrip("/") + "/", f"seedbox:{dest}/"]
     t0 = time.time()
     sh(cmd)
     return time.time() - t0
@@ -441,14 +448,16 @@ def parse_range(s):
 
 
 def main():
-    global DRY, LOG, STATE_FILE
+    global DRY, LOG, STATE_FILE, BWLIMIT
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--titles", default="")
     ap.add_argument("--worker", default="0/1")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--bwlimit", type=int, default=0, help="Ko/s pour rsync (ex. 15000)")
     a = ap.parse_args()
     DRY = a.dry_run
+    BWLIMIT = a.bwlimit
     os.makedirs(WORK, exist_ok=True)
     if a.list:
         titles = list_titles()

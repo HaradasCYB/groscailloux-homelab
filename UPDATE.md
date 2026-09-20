@@ -53,6 +53,9 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 - **Ménage de la seedbox** (`scripts/seedbox-cleanup.py`) : 62 téléchargements jamais entrés dans la médiathèque
   (ISO, logiciels, musique, journaux, sport…) et 18 entrées de corbeille retirés, ≈ 800 Go libérés ; les torrents
   trop récents pour le tracker sont retirés automatiquement au 7ᵉ jour.
+- Correctif du soir même : le déménagement lancé l'après-midi a gêné la lecture d'un film depuis la seedbox pour un
+  membre (chargement sans fin). Transfert arrêté à 17:45, il reprend seul chaque matin entre 08 h 30 et 12 h 30, sur
+  un seul flux plafonné, jusqu'à la fin des 19 titres restants.
 
 ## 1.17.1 — 20/09/2026 — Sauvegarde corrigée
 

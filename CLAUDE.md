@@ -524,7 +524,14 @@ journalctl -u homelabd -f
   l'opération (une fiche seedbox fraîche dont le montage ne voit pas encore les fichiers serait « sans fichier ») ;
   jamais pendant une lecture du titre (`/Sessions`). Jellyfin recrée l'item (nouvel id) : l'état « vu » suit les
   identifiants TMDB/TVDB. Débit mesuré : ~17 Mo/s par flux, ~25 Mo/s à deux. Deux workers en parallèle ont mis un
-  Sonarr seedbox en « database is locked » (500) : le script réessaie.
+  Sonarr seedbox en « database is locked » (500) : le script réessaie. **Hors pic seulement, un flux, `--bwlimit 15000`**
+  (timer `move-to-seedbox-offpeak`, 08:30–12:30, `RuntimeMaxSec=4h`) : le 2026-09-20 à 17:28, avec deux rsync à
+  20 Mo/s, un membre n'a pas pu lire un film de la seedbox (4 essais, segments HLS servis puis requête suivante jamais
+  aboutie, cache rclone figé une minute). Mesuré après arrêt : **le VPS reçoit ~8–10 Mo/s par connexion** quelle que
+  soit la source (OVH 8,6 Mo/s, seedbox 7–10 Mo/s, RTT seedbox 97 ms), l'agrégat monte avec le nombre de flux (4 ssh =
+  30 Mo/s ; les « 500 Mbit/s » du 18/09 étaient l'agrégat trickplay). Une lecture = un flux ≈ 65 Mbit/s : assez, mais
+  sans marge pour un à-coup ; l'hôte seedbox est partagé (charge 45–60, 128 cœurs). Le transfert reprend seul le
+  lendemain 08:30 sur ce qui reste (`state-0.json`), `deletion_cleanup` reste coupée jusqu'à la fin.
 - **Ménage de la seedbox** (`scripts/seedbox-cleanup.py`, 2026-09-20) : les torrents **sans catégorie** (ajoutés à la
   main les 11–12/09 : ISO, logiciels, musique, PDF, sport, docs) sont repérés par inode — un torrent dont **aucun**
   fichier n'est relié à `media/` (hors `.recycle`) est retiré avec ses fichiers ; un torrent partiellement relié est
