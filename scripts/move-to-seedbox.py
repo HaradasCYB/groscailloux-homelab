@@ -310,6 +310,29 @@ def rclone_refresh(rel):
         raise RuntimeError(f"le montage rclone ne voit pas {mounted}")
 
 
+JELLYSEERR_DB = f"{BASE}/jellyseerr/config/db/db.sqlite3"
+
+
+def jellyseerr_repoint(kind, tmdb, tvdb, sb_id, slug):
+    """Jellyseerr garde (serviceId, externalServiceId) de la fiche Arr : après un déménagement, la fiche VPS n'existe
+    plus et la fiche seedbox est inconnue (monitor_sync et l'avancement des demandes perdent le titre). On repointe
+    la ligne `media` vers la seedbox (serviceId 1). Petite écriture SQLite en WAL, Jellyseerr en marche."""
+    import sqlite3
+    if DRY or not os.path.exists(JELLYSEERR_DB):
+        return
+    try:
+        con = sqlite3.connect(JELLYSEERR_DB, timeout=10)
+        if kind == "sonarr":
+            n = con.execute("UPDATE media SET serviceId=1, externalServiceId=?, externalServiceSlug=? WHERE mediaType='tv' AND tvdbId=? AND serviceId=0", (sb_id, slug, tvdb)).rowcount
+        else:
+            n = con.execute("UPDATE media SET serviceId=1, externalServiceId=?, externalServiceSlug=? WHERE mediaType='movie' AND tmdbId=? AND serviceId=0", (sb_id, slug, tmdb)).rowcount
+        con.commit()
+        if n:
+            log(f"  Jellyseerr : fiche média repointée vers la seedbox ({n})")
+    except Exception as e:  # noqa: BLE001
+        log(f"  Jellyseerr : repointage impossible ({e})")
+
+
 def playing_under(prefix):
     for s in jf("GET", "/Sessions"):
         np = s.get("NowPlayingItem") or {}
@@ -408,6 +431,8 @@ def process(t, state):
         else:
             api("radarr", "DELETE", f"/movie/{rec['id']}?deleteFiles=true&addImportExclusion=false")
         log("  fiche VPS supprimée avec ses fichiers")
+        if sb_rec and "id" in sb_rec:
+            jellyseerr_repoint(arr, rec.get("tmdbId"), rec.get("tvdbId"), sb_rec["id"], sb_rec.get("titleSlug", ""))
     if os.path.isdir(src) and src.startswith(MEDIA + "/"):
         sh(["rm", "-rf", src])
         log("  dossier VPS restant supprimé")

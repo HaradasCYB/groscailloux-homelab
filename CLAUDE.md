@@ -272,6 +272,15 @@ journalctl -u homelabd -f
   « Groscailloux Mon compte » → `/gc-compte/` (NPM hôte 1, base **et** `1.conf`, sauvegarde `backups/npm-20260920-gc-compte/`)
   → homelabd `/compte/`. Statut « à qualifier » = compte actif sans abonnement connu : **jamais suspendu par le cycle**,
   l'admin tranche sur `/accounts`. Aucun secret ni identifiant PayPal dans le dépôt, les journaux ou les pages.
+- **Lot « lecture et suivi » (v1.19, 2026-09-21)** : `playback_canary` (15 min, transcodage réel de 2 segments, alerte
+  admin au premier échec, `state.canary`) ; **langue par compte** posée à l'onboarding (`[accounts] audio_language
+  = "fre"`, `subtitle_language = "fre"`, `subtitle_mode = "Smart"`, `PlayDefaultAudioTrack = false`) et rattrapée le
+  21/09 sur 16 comptes (sauvegarde `backups/jellyfin-language-20260921/`), choix « VO sous-titrée » dans « Mon
+  compte » ; **avancement des demandes** dans l'onglet Demandes de Jellyfin Enhanced (`/compte/api/requests`,
+  `homelab_core::requests_progress`, cartes `.je-request-card` + `data-tmdb-id`) — clés d'état
+  `unknown_series` = `<arr>:<seriesId>:<saison>`, `movie_search` = `<arr>:<movieId>` avec `<arr>` = `sonarr`,
+  `radarr`, `sonarr-seedbox`, `radarr-seedbox`, Jellyseerr `serviceId` 0 = VPS, 1 = seedbox, `externalServiceId` =
+  id Arr ; **sous-titres** = Bazarr de la seedbox (profil « Français (+anglais) », `subsync` off), rien sur le VPS.
 - **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
   la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).

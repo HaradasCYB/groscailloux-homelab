@@ -14,6 +14,7 @@ pub mod indexer_unblock;
 pub mod monitor_sync;
 pub mod movie_search;
 pub mod onboard;
+pub mod playback_canary;
 pub mod playback_limit;
 pub mod seedbox_refresh;
 pub mod series_search;
@@ -77,6 +78,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(deletion_cleanup::DeletionCleanup),
         Box::new(trending::Trending),
         Box::new(playback_limit::PlaybackLimit),
+        Box::new(playback_canary::PlaybackCanary),
         Box::new(subscription_cycle::SubscriptionCycle),
         Box::new(subscription_reconcile::SubscriptionReconcile),
         Box::new(monitor_sync::MonitorSync),

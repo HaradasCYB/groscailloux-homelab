@@ -118,6 +118,13 @@ size = 10
 min_minutes = 10        # visionnage minimal par spectateur et par titre
 collection_name = "Tendances cette semaine"
 
+[tasks.playback_canary]
+# Canari de lecture : toutes les 15 min, un transcodage réel de deux segments (un fichier VPS, un seedbox en
+# alternance) ; alerte admin (mail + Discord) au premier échec ou si le premier segment met plus de 20 s.
+interval_secs = 900
+max_first_segment_secs = 20
+skip_if_transcodes_at_least = 2
+
 [tasks.subscription_cycle]
 # Rappels, passage en grâce, suspension à la fin de la grâce, réactivation (voir [subscriptions]).
 interval_secs = 3600
@@ -295,6 +302,12 @@ jellyseerr_view_requests = true
 # convertis le 2026-09-18 (sauvegarde backups/jellyfin-skip-20260918-155125/).
 skip_forward_ms = 10000
 skip_back_ms = 10000
+# Langue posée sur chaque compte (onboarding + rattrapage du 2026-09-21) : piste française d'un MULTi choisie
+# d'office, sous-titres français seulement quand l'audio n'est pas en français (Smart). Le membre peut passer en
+# « VO sous-titrée » depuis « Mon compte ».
+audio_language = "fre"
+subtitle_language = "fre"
+subtitle_mode = "Smart"
 
 [indexers]
 # C411 est le SEUL indexer, dans les 4 Arrs comme dans Prowlarr (les indexers publics et Jackett ont été

@@ -168,6 +168,19 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
     {
         warn!(task = "onboard", username = %req.username, error = %e, "skip lengths not applied");
     }
+    if let Err(e) = ctx
+        .jellyfin
+        .set_language_prefs(
+            &jf_id,
+            &skip.audio_language,
+            &skip.subtitle_language,
+            &skip.subtitle_mode,
+            false,
+        )
+        .await
+    {
+        warn!(task = "onboard", username = %req.username, error = %e, "language preferences not applied");
+    }
     result.jellyfin_id = jf_id.clone();
 
     let imported = ctx.jellyseerr.import_from_jellyfin(&[&jf_id]).await?;

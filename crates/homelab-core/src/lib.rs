@@ -19,6 +19,7 @@ pub mod indexer;
 pub mod mail;
 pub mod manual_search;
 pub mod matching;
+pub mod requests_progress;
 pub mod secret;
 pub mod state;
 pub mod subscription_ops;

@@ -513,6 +513,7 @@ async fn status_html(
         mount_ok: mounted,
         stuck_torrents: &status_page::unmatched(&imports, homelab_core::state::now(), 15),
         blocked_seasons: &status_page::blocked_seasons(&seasons, homelab_core::state::now(), 15),
+        canary: canary_text(&st.ctx).await,
     });
     (StatusCode::OK, Html(html))
 }
@@ -611,6 +612,24 @@ async fn accounts_html(
         axum::http::HeaderValue::from_static("no-store"),
     );
     resp
+}
+
+/// Ligne « Canari de lecture » de `/status.html` : (ok, texte).
+async fn canary_text(ctx: &TaskContext) -> Option<(bool, String)> {
+    let c = ctx.state.read(|s| s.canary.clone()).await;
+    let ok = c.last_ok?;
+    let ago = status_page::ago(homelab_core::state::now(), c.last_run);
+    Some((
+        ok,
+        if ok {
+            format!("OK {ago} ({})", c.last_detail)
+        } else {
+            format!(
+                "ÉCHEC il y a {ago}, {} de suite — {}",
+                c.failures, c.last_detail
+            )
+        },
+    ))
 }
 
 /// Bascule premium puis redirection (POST → GET) avec le résultat en paramètre.

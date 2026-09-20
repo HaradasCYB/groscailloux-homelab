@@ -478,6 +478,44 @@ LG webOS). Salons `annonces` (modérateurs seulement), `entraide`, `discussion`,
   la lecture ; bannière de la dernière annonce non lue sur l'accueil ; aucun HTML de message interprété.
 - **Couper** : `[chat] enabled = false` (+ restart homelabd) et désactiver le script dans JavaScript Injector.
 
+### playback_canary — 15 min
+
+Un vrai transcodage HLS (PlaybackInfo forcé h264/aac 2 Mbit/s, appareil `gc-canary`, compte admin) sur un petit
+épisode, en alternance VPS puis seedbox : `master.m3u8` → `main.m3u8` → deux segments. Échec si un segment est
+vide ou tronqué (tmpfs plein), si le premier segment dépasse `max_first_segment_secs` (20 s), ou si Jellyfin refuse
+le transcodage. Alerte admin (mail + Discord) au premier échec, message de retour à la normale, état dans
+`state.canary` et ligne « Canari de lecture » sur `/status.html`. Sauté si `skip_if_transcodes_at_least` (2)
+transcodages de membres sont déjà en cours. Le transcodage est arrêté proprement (`DELETE /Videos/ActiveEncodings`).
+
+## Langue par membre (v1.19, 2026-09-21)
+
+Chaque compte reçoit à l'onboarding (`[accounts] audio_language`, `subtitle_language`, `subtitle_mode`) : audio
+préféré `fre`, sous-titres `fre`, mode **Smart** (sous-titres seulement quand l'audio n'est pas en français),
+`PlayDefaultAudioTrack = false` (Jellyfin choisit la piste française d'un MULTi au lieu de la piste « par défaut » du
+fichier). Rattrapage du 2026-09-21 sur les comptes sans préférence (sauvegarde `backups/jellyfin-language-20260921/`).
+Dans « Mon compte », le membre choisit « Français quand il existe » ou « Toujours en VO, sous-titres français »
+(`POST /compte/api/language`, audio vide + sous-titres `Always`).
+
+## Suivi des demandes dans l'onglet Demandes (v1.19)
+
+`GET /compte/api/requests` (jeton Jellyfin, cache 20 s) : pour chaque demande Jellyseerr approuvée, l'**étape** et
+l'**avancement** (`homelab_core::requests_progress`, pur et testé) : *recherche* (état `unknown_series` /
+`movie_search`, prochaine tentative d'après les délais de `series_search`/`movie_search`, « introuvable » si des
+épisodes sont sans release), *téléchargement* (files des 4 Arrs par `externalServiceId` : `%` = 1 −
+Σ sizeleft / Σ size, ETA = `timeleft` max + 2 min d'import + un passage de `seedbox_refresh`), *ajout* (fichier
+présent côté Arr, pas encore vu par Jellyfin), *disponible* (statut média Jellyseerr). Le script « Mon compte »
+détecte les cartes `.je-request-card` de Jellyfin Enhanced et y insère une barre + texte, rafraîchis toutes les
+30 s ; sur téléviseur, pourcentage seul.
+
+## Sous-titres (Bazarr, seedbox)
+
+Bazarr tourne **sur la seedbox** (conteneur usbx, `https://kakaouette.tofino.usbx.me/bazarr`, relié aux Sonarr/Radarr
+de la seedbox) : profil « Français (+anglais) » par défaut sur séries et films, recherche des manquants toutes les
+6 h, amélioration 12 h, providers `embeddedsubtitles`, `podnapisi`, `gestdown`, `yifysubtitles`, `tvsubtitles` ;
+`subsync` désactivé (il lirait l'audio complet). Rien ne tourne sur le VPS : les `.fr.srt` écrits sur la seedbox
+apparaissent dans Jellyfin au passage de `seedbox_refresh`. Compte OpenSubtitles.com à saisir dans l'interface
+Bazarr (Settings → Providers), jamais dans le dépôt.
+
 ## Abonnés et cycle premium (v1.18, 2026-09-20)
 
 Une fiche par compte dans `state/subscriptions.db` (SQLite, sauvegardée) : statut (`essai`, `actif`, `échéance

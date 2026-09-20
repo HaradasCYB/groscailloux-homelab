@@ -28,6 +28,8 @@ pub struct PageData<'a> {
     /// Saisons suivies dont l'indexer ne propose **rien** pour certains épisodes : la recherche
     /// repartira tous les jours sans jamais rien trouver, il faut la main d'un admin (`/recherche`).
     pub blocked_seasons: &'a [String],
+    /// Dernier résultat du canari de lecture (`state.canary`), texte prêt à afficher.
+    pub canary: Option<(bool, String)>,
 }
 
 /// Saisons dont le dernier passage a laissé des épisodes sans aucune release, les plus récentes
@@ -255,13 +257,21 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
 </style></head><body>
 <header><h1>Automatisation homelabd</h1><div>{headline} {mount}</div></header>
 <div class="gs">{vps}{sb}</div>
-<table>{rows}</table>{stuck}{blocked}
+<table>{rows}</table>{canary}{stuck}{blocked}
 </body></html>"#,
         vps = gauge(
             "Disque VPS",
             d.vps_disk_pct,
             "médias, téléchargements, état des services"
         ),
+        canary = match &d.canary {
+            Some((ok, text)) => format!(
+                r#"<p class="{cls}" style="margin:12px 0 0"><b>Canari de lecture</b> : {text}</p>"#,
+                cls = if *ok { "ok" } else { "err" },
+                text = esc(text),
+            ),
+            None => String::new(),
+        },
         stuck = if d.stuck_torrents.is_empty() {
             String::new()
         } else {
@@ -333,6 +343,7 @@ mod tests {
             vps_disk_pct: Some(74),
             stuck_torrents: &[],
             blocked_seasons: &[],
+            canary: None,
             seedbox: Some(SeedboxQuota {
                 used_kb: 1_429_000_000,
                 quota_kb: 3_725_000_000,
@@ -420,6 +431,7 @@ mod tests {
             mount_ok: None,
             stuck_torrents: &[],
             blocked_seasons: &[],
+            canary: None,
         });
         assert!(html.contains("quota non disponible"));
     }

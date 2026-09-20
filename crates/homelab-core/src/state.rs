@@ -69,6 +69,9 @@ pub struct State {
     /// Liens de bienvenue (page où le membre définit son mot de passe), clé = SHA-256 hex du jeton.
     #[serde(default)]
     pub welcome_links: BTreeMap<String, WelcomeLink>,
+    /// Dernier résultat du canari de lecture (`tasks::playback_canary`).
+    #[serde(default)]
+    pub canary: CanaryState,
     /// Dates (secondes) des inscriptions par la page publique : plafond journalier.
     #[serde(default)]
     pub signups: Vec<i64>,
@@ -173,6 +176,23 @@ pub struct WelcomeLink {
 pub struct OnboardRecord {
     pub at: i64,
     pub outcome: String,
+}
+
+/// État du canari de lecture.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CanaryState {
+    pub last_run: i64,
+    pub last_ok: Option<bool>,
+    pub last_ok_at: i64,
+    pub failures: u32,
+    /// Ce qui a été testé (`vps` / `seedbox`) et le temps du premier segment, ou l'erreur.
+    pub last_detail: String,
+    /// Passages effectués (alternance VPS / seedbox).
+    #[serde(default)]
+    pub runs: u64,
+    /// Items Jellyfin choisis une fois pour toutes (petits fichiers), par côté.
+    #[serde(default)]
+    pub items: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

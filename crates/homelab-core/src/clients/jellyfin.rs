@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use reqwest::{Client, Method, RequestBuilder, Url};
 use serde_json::{json, Value};
 
@@ -415,6 +415,90 @@ impl JellyfinClient {
             .send()
             .await?;
         check(resp, "jellyfin Users/{id}/Configuration")
+            .await
+            .map(|_| ())
+    }
+
+    /// Préférences de langue d'un compte (`Users/{id}/Configuration`) : audio et sous-titres préférés
+    /// (ISO 639-2, vide = aucune préférence), mode de sous-titres (`Smart`, `Always`, `OnlyForced`,
+    /// `Default`, `None`) et `PlayDefaultAudioTrack` (false = Jellyfin choisit la piste dans la langue
+    /// préférée plutôt que la piste « par défaut » du fichier).
+    pub async fn set_language_prefs(
+        &self,
+        user_id: &str,
+        audio: &str,
+        subtitles: &str,
+        mode: &str,
+        play_default_audio: bool,
+    ) -> Result<()> {
+        let resp = self
+            .req(Method::GET, &format!("Users/{user_id}"))
+            .send()
+            .await?;
+        let user = json(resp, "jellyfin Users/{id}").await?;
+        let mut cfg = user
+            .get("Configuration")
+            .cloned()
+            .context("compte Jellyfin sans Configuration")?;
+        cfg["AudioLanguagePreference"] = json!(audio);
+        cfg["SubtitleLanguagePreference"] = json!(subtitles);
+        cfg["SubtitleMode"] = json!(mode);
+        cfg["PlayDefaultAudioTrack"] = json!(play_default_audio);
+        let resp = self
+            .req(Method::POST, &format!("Users/{user_id}/Configuration"))
+            .json(&cfg)
+            .send()
+            .await?;
+        check(resp, "jellyfin Users/{id}/Configuration")
+            .await
+            .map(|_| ())
+    }
+
+    /// Items (GET /Items) avec les paramètres donnés ; renvoie le tableau `Items`.
+    pub async fn items(&self, query: &[(&str, &str)]) -> Result<Vec<Value>> {
+        let resp = self.req(Method::GET, "Items").query(query).send().await?;
+        Ok(json(resp, "jellyfin Items")
+            .await?
+            .get("Items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// `POST /Items/{id}/PlaybackInfo` avec un profil d'appareil : Jellyfin renvoie l'URL de transcodage.
+    pub async fn playback_info(&self, item_id: &str, user_id: &str, body: &Value) -> Result<Value> {
+        let resp = self
+            .req(Method::POST, &format!("Items/{item_id}/PlaybackInfo"))
+            .query(&[("UserId", user_id)])
+            .json(body)
+            .send()
+            .await?;
+        json(resp, "jellyfin PlaybackInfo").await
+    }
+
+    /// GET brut d'un chemin relatif (playlist HLS, segment) : (durée, octets).
+    pub async fn get_bytes(&self, path: &str) -> Result<(std::time::Duration, Vec<u8>)> {
+        let t0 = std::time::Instant::now();
+        let resp = self.req(Method::GET, path).send().await?;
+        let status = resp.status();
+        let body = resp.bytes().await?;
+        if !status.is_success() {
+            bail!(
+                "jellyfin GET {}: HTTP {status}",
+                path.split('?').next().unwrap_or(path)
+            );
+        }
+        Ok((t0.elapsed(), body.to_vec()))
+    }
+
+    /// Arrête les transcodages d'un appareil (`DELETE /Videos/ActiveEncodings`).
+    pub async fn stop_encodings(&self, device_id: &str, play_session_id: &str) -> Result<()> {
+        let resp = self
+            .req(Method::DELETE, "Videos/ActiveEncodings")
+            .query(&[("deviceId", device_id), ("playSessionId", play_session_id)])
+            .send()
+            .await?;
+        check(resp, "jellyfin DELETE Videos/ActiveEncodings")
             .await
             .map(|_| ())
     }

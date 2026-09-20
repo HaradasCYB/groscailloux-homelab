@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.18.0](#1180--20092026--abonnement-automatique-et-mon-compte)** | 20/09/2026 | **Abonnement automatique et « Mon compte »** |
+| **[1.19.0](#1190--21092026--suivi-des-demandes-langue-et-canari)** | 21/09/2026 | **Suivi des demandes, langue et canari** |
+| [1.18.0](#1180--20092026--abonnement-automatique-et-mon-compte) | 20/09/2026 | Abonnement automatique et « Mon compte » |
 | [1.17.2](#1172--20092026--de-la-place-sur-les-deux-disques) | 20/09/2026 | De la place sur les deux disques |
 | [1.17.1](#1171--20092026--sauvegarde-corrigée) | 20/09/2026 | Sauvegarde corrigée |
 | [1.17.0](#1170--20092026--les-nouveautés-sur-discord) | 20/09/2026 | Les nouveautés sur Discord |
@@ -45,6 +46,18 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.19.0 — 21/09/2026 — Suivi des demandes, langue et canari
+
+- **Où en est ma demande ?** Dans l'onglet Demandes de Jellyfin, chaque demande en cours affiche une barre
+  d'avancement et une estimation : recherche (prochaine tentative), téléchargement (pourcentage, temps restant),
+  ajout à la médiathèque, disponible.
+- **Langue de lecture** : la piste française est choisie d'office quand elle existe, sous-titres français seulement
+  quand l'audio n'est pas en français. Dans « Mon compte », chacun peut passer en « Toujours en VO, sous-titres
+  français ».
+- **Sous-titres automatiques** : Bazarr (seedbox) complète les sous-titres français manquants des nouveautés.
+- Côté serveur : un canari de lecture vérifie toutes les 15 minutes qu'un transcodage démarre vraiment et prévient
+  l'administrateur avant les membres.
 
 ## 1.18.0 — 20/09/2026 — Abonnement automatique et « Mon compte »
 

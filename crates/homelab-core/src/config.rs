@@ -234,6 +234,14 @@ pub struct Accounts {
     /// Jellyfin met 30 s en avant par défaut, ce qui fait rater une réplique à chaque clic.
     pub skip_forward_ms: i64,
     pub skip_back_ms: i64,
+    /// Langue audio préférée posée sur chaque compte (`AudioLanguagePreference`, ISO 639-2) : Jellyfin choisit
+    /// la piste française d'un MULTi au lieu de la piste « par défaut » du fichier (souvent la VO).
+    pub audio_language: String,
+    /// Langue de sous-titres préférée (`SubtitleLanguagePreference`).
+    pub subtitle_language: String,
+    /// `Smart` = sous-titres seulement quand l'audio n'est pas dans la langue préférée ; `Always`, `OnlyForced`,
+    /// `Default`, `None`.
+    pub subtitle_mode: String,
 }
 
 impl Default for Accounts {
@@ -248,6 +256,9 @@ impl Default for Accounts {
             jellyseerr_view_requests: true,
             skip_forward_ms: 10_000,
             skip_back_ms: 10_000,
+            audio_language: "fre".into(),
+            subtitle_language: "fre".into(),
+            subtitle_mode: "Smart".into(),
         }
     }
 }
@@ -420,9 +431,33 @@ pub struct Tasks {
     pub trending: Trending,
     pub playback_limit: PlaybackLimit,
     #[serde(default)]
+    pub playback_canary: PlaybackCanary,
+    #[serde(default)]
     pub subscription_cycle: Interval3600,
     #[serde(default)]
     pub subscription_reconcile: Interval86400,
+}
+
+/// Canari de lecture : un vrai transcodage de quelques secondes, alerte admin au premier échec
+/// (voir `tasks::playback_canary`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct PlaybackCanary {
+    pub interval_secs: u64,
+    /// Au-delà, le premier segment est jugé trop lent (lecture qui « charge sans fin »).
+    pub max_first_segment_secs: u64,
+    /// Passage sauté si au moins autant de transcodages sont déjà en cours (ne pas gêner les membres).
+    pub skip_if_transcodes_at_least: usize,
+}
+
+impl Default for PlaybackCanary {
+    fn default() -> Self {
+        Self {
+            interval_secs: 900,
+            max_first_segment_secs: 20,
+            skip_if_transcodes_at_least: 2,
+        }
+    }
 }
 
 /// Lectures simultanées par compte : arrêt des lectures en trop (voir `tasks::playback_limit`).
