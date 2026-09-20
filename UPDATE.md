@@ -53,6 +53,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 - **Ménage de la seedbox** (`scripts/seedbox-cleanup.py`) : 62 téléchargements jamais entrés dans la médiathèque
   (ISO, logiciels, musique, journaux, sport…) et 18 entrées de corbeille retirés, ≈ 800 Go libérés ; les torrents
   trop récents pour le tracker sont retirés automatiquement au 7ᵉ jour.
+- **« Mes médias » en haut de l'accueil**, sur tous les appareils et tous les comptes (la rangée des bibliothèques était
+  tout en bas et, sur téléphone, il fallait tout faire défiler pour la voir).
 - Correctif du soir : la lecture restait sur « chargement » pour tout ce qui devait être converti à la volée (un membre,
   quatre essais) — l'espace temporaire de conversion était plein de restes de la veille. Vidé, purge automatique toutes
   les heures, redémarrage de Jellyfin qui fait aussi disparaître les deux entrées « Découvrir » fantômes.

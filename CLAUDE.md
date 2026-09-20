@@ -167,8 +167,11 @@ journalctl -u homelabd -f
      segments **vides** servis en 200 (`[Length 0]` dans le journal NPM) : le lecteur les télécharge à toute vitesse et
      n'affiche jamais rien (« chargement infini », un membre bloqué 4 essais ; la lecture directe passe, tout remux ou
      transcodage échoue). Diagnostic : `docker exec jellyfin df -h /cache/transcodes`. Purge horaire par timer transitoire
-     `jellyfin-transcodes-purge` (`find /cache/transcodes -type f -mmin +60 -delete` dans le conteneur, xx:20) — ne
-     survit pas à un reboot : à porter dans homelabd (`stack_health` ou tâche dédiée).
+     `scripts/jellyfin-transcodes-purge.sh` (unités `systemd/jellyfin-transcodes-purge.{service,timer}`, toutes les
+     5 min, installées par `homelabctl install`) : routine = jobs sans ffmpeg actif vieux de > 30 min ; **urgence**
+     automatique dès 85 % (tout ce qui n'a pas de ffmpeg actif, puis les segments > 10 min des jobs actifs) ;
+     `--check` pour voir, `--urgent` à la main, `--force` refusé tant qu'un ffmpeg tourne. « Chargement infini » sur
+     tout ce qui transcode = `--check` d'abord.
   4. **Jellyfin** : tmpfs 2 Go compté dans `mem_limit 4g` → `ThrottleDelaySeconds 180`, `SegmentKeepSeconds 300`
      (retour arrière 5 min sans relance ffmpeg ; 720 après la sortie du tmpfs, palier B) ; **`cpus: 4` retiré**
      (deux transcodages passaient à 0,82× ; `cpu_shares` arbitre) ; healthcheck explicite `start_period 180s`
@@ -610,8 +613,14 @@ journalctl -u homelabd -f
   même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`). Après le
   redémarrage, les membres ne la voient plus, mais ses `CollectionFolder` restent en base (visibles des **admins**,
   `EnableAllFolders`) et dans la liste Jellyseerr jusqu'à l'analyse complète suivante (vu le 2026-09-20).
-- **Rangée « Mes médias »** (Home Screen Sections `MyMedia`, `OrderIndex 16` = dernière des 16 rangées, chargées 4 par 4
-  au défilement) : sur téléphone elle n'apparaît qu'en bas de page, un membre a cru qu'elle manquait.
+- **Rangée « Mes médias » en tête** (Home Screen Sections `MyMedia`, `OrderIndex 0` depuis le 2026-09-20, demandé par
+  l'admin : jusque-là 17ᵉ et dernière, chargée au défilement, invisible sur téléphone sans tout faire défiler). L'ordre
+  du plugin est **global** (identique pour les 17 comptes, vérifié par `GET /HomeScreen/Sections?userId=`) ; il se
+  modifie par `POST /Plugins/b8298e012697407ab44daa8dc795e850/Configuration` (sans redémarrage). **Contrôler comme
+  l'appli** : `GET /HomeScreen/Sections?UserId=…&Language=fr&Page=1&NumResultsPerPage=4&PageHash=<uuid v4>` — l'appel
+  sans pagination est mis en cache **24 h par compte** (`CacheTimeoutSeconds`) et montre l'ancien ordre après un
+  changement, alors que les applis (nouveau `PageHash` à chaque accueil) voient le nouveau tout de suite. Sauvegarde
+  `backups/jellyfin-ui-20260920-mymedia/`.
   `DELETE /Items/<id>` **efface le disque** (c'est le bouton « Supprimer » de Jellyfin) : jamais pour
   « nettoyer » une vue ou une bibliothèque.
 - **qBittorrent** : ne jamais remettre `172.18.0.0/16` dans `bypass_auth_subnet_whitelist` (NPM y

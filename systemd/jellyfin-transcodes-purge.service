@@ -1,0 +1,9 @@
+[Unit]
+Description=Jellyfin: purge du tmpfs de transcodage (segments abandonnés ; urgence si saturé)
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/homelab
+ExecStart=/opt/homelab/scripts/jellyfin-transcodes-purge.sh
+Nice=10
