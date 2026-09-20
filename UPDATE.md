@@ -11,7 +11,8 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.17.1](#1171--20092026--sauvegarde-corrigée)** | 20/09/2026 | **Sauvegarde corrigée** |
+| **[1.17.2](#1172--20092026--de-la-place-sur-les-deux-disques)** | 20/09/2026 | **De la place sur les deux disques** |
+| [1.17.1](#1171--20092026--sauvegarde-corrigée) | 20/09/2026 | Sauvegarde corrigée |
 | [1.17.0](#1170--20092026--les-nouveautés-sur-discord) | 20/09/2026 | Les nouveautés sur Discord |
 | [1.16.0](#1160--20092026--bienvenue-comme-chez-les-grands) | 20/09/2026 | Bienvenue comme chez les grands |
 | [1.15.1](#1151--19092026--en-français-sur-tous-les-appareils) | 19/09/2026 | En français sur tous les appareils |
@@ -43,6 +44,15 @@ notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.17.2 — 20/09/2026 — De la place sur les deux disques
+
+- **Déménagement VPS → seedbox** (`scripts/move-to-seedbox.py`) : 30 titres (≈ 450 Go) copiés sur la seedbox, vérifiés
+  fichier par fichier, reconnus par Sonarr/Radarr là-bas, puis seulement retirés du serveur ; Jellyfin les affiche
+  depuis la seedbox sans rien perdre (historique de visionnage compris). Un titre en cours de lecture attend.
+- **Ménage de la seedbox** (`scripts/seedbox-cleanup.py`) : 62 téléchargements jamais entrés dans la médiathèque
+  (ISO, logiciels, musique, journaux, sport…) et 18 entrées de corbeille retirés, ≈ 800 Go libérés ; les torrents
+  trop récents pour le tracker sont retirés automatiquement au 7ᵉ jour.
 
 ## 1.17.1 — 20/09/2026 — Sauvegarde corrigée
 

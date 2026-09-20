@@ -460,7 +460,8 @@ journalctl -u homelabd -f
   `systemctl status homelabd` après.
 - `scripts/` ne contient plus que des outils ponctuels (les anciens scripts bash planifiés ont été
   retirés) : `jellyfin-branding-apply.sh`, `jellyfin-ui-rollback.sh` (voir « Interface Jellyfin »),
-  `jellyseerr-rotate-key.py` (voir « Pièges connus ») et `jellyfin-js-apply.py` (scripts JavaScript Injector).
+  `jellyseerr-rotate-key.py` (voir « Pièges connus »), `jellyfin-js-apply.py` (scripts JavaScript Injector),
+  `move-to-seedbox.py` et `seedbox-cleanup.py` (voir « Seedbox »).
 
 ## Interface Jellyfin (« Groscailloux TV », 2026-09-14)
 
@@ -511,6 +512,27 @@ journalctl -u homelabd -f
   plus de bibliothèques « (Seedbox) ». qBittorrent seedbox : `[seedbox] qbit_url` + `SEEDBOX_QBIT_PASSWORD`.
 - Jellyseerr : ne jamais appeler `settings/jellyfin/library?sync=true` sans renvoyer `?enable=`
   avec la liste complète des bibliothèques.
+- **Déménager un titre du VPS vers la seedbox** : `scripts/move-to-seedbox.py` (`--list` numérote, `--titles a-b`,
+  `--worker i/n` pour paralléliser, `--dry-run`), ordre immuable : rsync (`-a --partial`, ssh admin, `nice`/`ionice`)
+  → vérification nom+taille de chaque fichier → fiche de l'Arr seedbox **créée non surveillée** (ou fiche existante,
+  ex. Law & Order S10–13 ajoutées à côté de S1–17) → `RescanSeries`/`RescanMovie`, contrôle du nombre de fichiers,
+  puis surveillance de ce qui a un fichier → **seulement alors** suppression VPS (fiche + fichiers, torrents liés
+  s'ils ont fini de partager depuis 7 j) → `Library/Media/Updated` Deleted/Created. Pièges : rsync ≥ 3.2.4 protège
+  lui-même le chemin distant (**pas de guillemets** : `seedbox:/home/x/y z`, sinon `mkdir ".../'/home/…'"`) ; le
+  montage rclone **ne voit pas un nouveau dossier** tant que le **dossier parent** n'a pas été rafraîchi
+  (`vfs/refresh dir=Movies` puis `dir=Movies/<titre>`) ; `deletion_cleanup` dans `tasks.disabled` pendant toute
+  l'opération (une fiche seedbox fraîche dont le montage ne voit pas encore les fichiers serait « sans fichier ») ;
+  jamais pendant une lecture du titre (`/Sessions`). Jellyfin recrée l'item (nouvel id) : l'état « vu » suit les
+  identifiants TMDB/TVDB. Débit mesuré : ~17 Mo/s par flux, ~25 Mo/s à deux. Deux workers en parallèle ont mis un
+  Sonarr seedbox en « database is locked » (500) : le script réessaie.
+- **Ménage de la seedbox** (`scripts/seedbox-cleanup.py`, 2026-09-20) : les torrents **sans catégorie** (ajoutés à la
+  main les 11–12/09 : ISO, logiciels, musique, PDF, sport, docs) sont repérés par inode — un torrent dont **aucun**
+  fichier n'est relié à `media/` (hors `.recycle`) est retiré avec ses fichiers ; un torrent partiellement relié est
+  laissé ; jamais un torrent de catégorie `sonarr`/`radarr`. Règle C411 : fini depuis < 7 j et ratio < 1 = **reporté**
+  (`deferred.json`, timer transitoire `seedbox-cleanup-deferred` quotidien à 13:05). Les corbeilles Arr (`.recycle`,
+  purge 14 j) peuvent contenir des fichiers **partagés par inode avec la médiathèque** (Attack on Titan, 112 Go
+  affichés, 0 libéré) : toujours mesurer « exclusif / partagé » avant d'annoncer un gain. `du -sh ~` sur la seedbox
+  renvoie 0 (`~` est un lien symbolique) : `du -sh ~/`.
 
 ## Pièges connus
 
