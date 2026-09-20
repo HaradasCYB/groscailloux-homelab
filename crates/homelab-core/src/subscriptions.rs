@@ -125,7 +125,8 @@ pub fn decide(s: &Subscriber, now: i64, cfg: &SubsConfig) -> Vec<Action> {
         return out;
     };
     match s.status {
-        Status::Trial | Status::Active | Status::Grace => {}
+        // « offert » avec une échéance = cadeau limité dans le temps, traité comme un abonnement
+        Status::Trial | Status::Active | Status::Grace | Status::Offered => {}
         _ => return out,
     }
     let grace_end = exp + cfg.grace_days as i64 * DAY;
@@ -672,10 +673,10 @@ fn split_csv(line: &str, sep: char) -> Vec<String> {
 
 /// Texte des mails et messages du cycle.
 pub fn reminder_mail(username: &str, days: i64, status: Status, pay_url: &str) -> (String, String) {
-    let quoi = if status == Status::Trial {
-        "ton essai gratuit"
-    } else {
-        "ton abonnement"
+    let quoi = match status {
+        Status::Trial => "ton essai gratuit",
+        Status::Offered => "ton accès offert",
+        _ => "ton abonnement",
     };
     let quand = match days {
         0 | 1 => "demain".to_string(),
@@ -781,17 +782,21 @@ mod tests {
     }
 
     #[test]
-    fn offered_exempt_unknown_suspended_are_never_touched() {
+    fn exempt_unknown_suspended_never_touched_offered_only_with_expiry() {
         let c = cfg();
-        for st in [
-            Status::Offered,
-            Status::Exempt,
-            Status::Unknown,
-            Status::Suspended,
-        ] {
+        for st in [Status::Exempt, Status::Unknown, Status::Suspended] {
             assert_eq!(decide(&sub(st, Some(-30.0)), NOW, &c), vec![], "{st:?}");
         }
         assert_eq!(decide(&sub(Status::Active, None), NOW, &c), vec![]);
+        assert_eq!(decide(&sub(Status::Offered, None), NOW, &c), vec![]);
+        assert_eq!(
+            decide(&sub(Status::Offered, Some(-30.0)), NOW, &c),
+            vec![Action::Suspend]
+        );
+        assert_eq!(
+            decide(&sub(Status::Offered, Some(0.5)), NOW, &c),
+            vec![Action::Remind(1)]
+        );
     }
 
     #[test]

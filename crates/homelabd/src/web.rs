@@ -285,7 +285,9 @@ async fn accounts_subs(
                 "error"
             }
         }
-    } else if let Some(status) = SubStatus::parse(&f.action) {
+    } else if let Some(status) = SubStatus::parse(f.action.trim_end_matches("_days")) {
+        // « offered » = sans limite (N ignoré) ; « offered_days » = offert pour N jours
+        let days = if f.action == "offered" { None } else { days };
         match subscription_ops::admin_set(&st.ctx, &f.user_id, status, days, "admin").await {
             Ok(s) => {
                 until = s

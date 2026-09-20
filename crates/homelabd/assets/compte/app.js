@@ -76,11 +76,11 @@
     var line = h('div', { class: 'row' }, [h('span', { text: 'Abonnement' }), st]);
     box.appendChild(line);
     if (d.expires_text) {
-      var lbl = d.status === 'trial' ? 'Fin de l’essai' : (d.status === 'grace' ? 'Échéance dépassée le' : 'Actif jusqu’au');
+      var lbl = d.status === 'trial' ? 'Fin de l\u2019essai' : (d.status === 'grace' ? '\u00c9ch\u00e9ance d\u00e9pass\u00e9e le' : (d.status === 'offered' ? 'Offert jusqu\u2019au' : 'Actif jusqu\u2019au'));
       box.appendChild(h('div', { class: 'row' }, [h('span', { text: lbl }), h('span', { text: d.expires_text + (d.days_left != null ? ' (' + daysText(d.days_left) + ')' : '') })]));
     }
     if (d.status === 'grace') box.appendChild(h('p', { class: 'note', text: 'Ton accès reste ouvert ' + d.grace_days + ' jours après l’échéance. Renouvelle pour éviter la coupure.' }));
-    if (d.status === 'offered' || d.status === 'exempt') box.appendChild(h('p', { class: 'note', text: 'Ton accès est offert : rien à faire.' }));
+    if ((d.status === 'offered' && !d.expires_text) || d.status === 'exempt') box.appendChild(h('p', { class: 'note', text: 'Ton accès est offert : rien à faire.' }));
     if (d.status === 'unknown') box.appendChild(h('p', { class: 'note', text: 'Ton compte est actif. Pour qu’il le reste sans intervention, tu peux enregistrer un abonnement ci-dessous.' }));
 
     if (d.can_pay && !(d.status === 'offered' || d.status === 'exempt')) {

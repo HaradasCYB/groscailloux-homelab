@@ -412,6 +412,8 @@ pub async fn admin_set(
                 base + days.unwrap_or(ctx.cfg.subscriptions.period_days as i64) * DAY,
             ))
         }
+        // offert : sans limite (pas de jours) ou pour N jours à partir de maintenant
+        Status::Offered => Some(days.map(|d| t + d * DAY)),
         Status::Grace => None,
         _ => Some(None),
     };
