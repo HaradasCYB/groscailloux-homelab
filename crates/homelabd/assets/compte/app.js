@@ -173,6 +173,7 @@
     var right = document.querySelector('.skinHeader .headerRight');
     if (!right) return;
     if (!token()) return;
+    css(); // sinon le SVG n'a ni taille ni couleur avant le premier clic (icône invisible après un rechargement)
     var b = h('button', { type: 'button', class: 'headerButton headerButtonRight paper-icon-button-light gc-acc-btn', title: 'Mon compte', 'aria-label': 'Mon compte', onclick: toggle }, [icon()]);
     var user = right.querySelector('.headerUserButton');
     if (user) right.insertBefore(b, user); else right.appendChild(b);

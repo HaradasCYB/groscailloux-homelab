@@ -44,6 +44,7 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   chemin normal de toute nouveauté) et affichait « recherche, prochaine tentative dans 7 jours » pendant que le titre
   se téléchargeait (*Black Clover* à 46 %). Elle lit maintenant aussi les téléchargements de qBittorrent. Sur
   téléphone, la barre chevauchait la ligne « membre • date » : elle est passée en dessous, sur toute la largeur.
+  L'icône « Mon compte » de l'en-tête restait invisible après un rechargement tant qu'on n'avait pas cliqué dessus.
 
 ## 1.18.0 — 20/09/2026 — Abonnement automatique, « Mon compte », Discord et bienvenue
 
