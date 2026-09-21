@@ -186,7 +186,7 @@
     if (document.getElementById('gc-req-css')) return;
     var st = document.createElement('style'); st.id = 'gc-req-css';
     st.textContent = [
-      '.gc-req{margin:.45em 0 .2em;font-size:.86em;color:#c9d4df}',
+      '.gc-req{display:block;width:100%;flex:0 0 100%;box-sizing:border-box;margin:.45em 0 .2em;font-size:.86em;color:#c9d4df}',
       '.gc-req .bar{height:6px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;margin:.3em 0}',
       '.gc-req .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#3b8fd9,#6fd0ff);transition:width .6s}',
       '.gc-req.search .bar i{background:linear-gradient(90deg,#8a8f99,#b9c0cc)}.gc-req.import .bar i{background:linear-gradient(90deg,#3fae6b,#7ee0a2)}.gc-req.available .bar i{background:#3fae6b}',
@@ -229,7 +229,9 @@
         box.className = 'gc-req ' + r.stage;
         box.querySelector('.bar i').style.width = r.percent + '%';
         box.querySelector('.txt').textContent = TV ? (r.percent + ' %') : r.label;
-        if (!old) { var anchor = card.querySelector('.je-request-meta') || card.querySelector('.je-request-header') || card; anchor.appendChild(box); }
+        // sous la ligne « membre • date » (.je-request-meta est une rangée flex : y entrer la superposerait au texte),
+        // dans la colonne .je-request-info
+        if (!old) { var meta = card.querySelector('.je-request-meta'); if (meta) meta.insertAdjacentElement('afterend', box); else (card.querySelector('.je-request-info') || card).appendChild(box); }
       });
     }).catch(function () {});
   }

@@ -42,7 +42,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   commande (`homelabctl chat announce`).
 - Correctif du jour : la barre d'avancement ignorait tout téléchargement lancé par la plateforme sur la seedbox (le
   chemin normal de toute nouveauté) et affichait « recherche, prochaine tentative dans 7 jours » pendant que le titre
-  se téléchargeait (*Black Clover* à 46 %). Elle lit maintenant aussi les téléchargements de qBittorrent.
+  se téléchargeait (*Black Clover* à 46 %). Elle lit maintenant aussi les téléchargements de qBittorrent. Sur
+  téléphone, la barre chevauchait la ligne « membre • date » : elle est passée en dessous, sur toute la largeur.
 
 ## 1.18.0 — 20/09/2026 — Abonnement automatique, « Mon compte », Discord et bienvenue
 
