@@ -51,6 +51,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   toutes sur la seedbox, à côté de la vidéo, **dans leur format d'origine** (l'ASS des animés garde ses couleurs et ses
   panneaux ; la piste malentendants reste à part), et Jellyfin les lit instantanément. Les titres récents passent en
   premier, les nouveautés sont traitées à l'arrivée.
+- **Guide des membres à jour** : connexion détaillée appareil par appareil (dont la connexion rapide par code sur
+  téléviseur), deux nouvelles étapes « Sous-titres et langues » et « Mon compte », suivi des demandes avec barre
+  d'avancement, et mot de passe en libre-service.
 - **Taille des sous-titres** : dans « Mon compte », choix Normale / Grande / Très grande pour l'appareil en cours,
   appliqué **aussitôt, même en pleine lecture** (sous-titres SRT ; les sous-titres stylés des animés gardent leur
   taille propre). « Grande » par défaut.
