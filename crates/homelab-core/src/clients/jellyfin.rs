@@ -131,6 +131,22 @@ impl JellyfinClient {
         check(resp, "jellyfin Items/Refresh").await.map(|_| ())
     }
 
+    /// Relit les flux d'un item (fichiers annexes compris : un `.fr.srt` déposé à côté de la vidéo n'est vu
+    /// **que** par un FullRefresh, ni par `Library/Media/Updated` ni par un Refresh « Default » — vérifié le
+    /// 2026-09-21). Métadonnées et images conservées ; ~0 octet lu sur le lien seedbox.
+    pub async fn refresh_streams(&self, item_id: &str) -> Result<()> {
+        let resp = self
+            .req(
+                Method::POST,
+                &format!("Items/{item_id}/Refresh?Recursive=false&MetadataRefreshMode=FullRefresh&ImageRefreshMode=None&ReplaceAllMetadata=false&ReplaceAllImages=false"),
+            )
+            .send()
+            .await?;
+        check(resp, "jellyfin Items/Refresh (streams)")
+            .await
+            .map(|_| ())
+    }
+
     pub async fn item_paths(&self) -> Result<std::collections::HashSet<String>> {
         let resp = self
             .req(Method::GET, "Items")

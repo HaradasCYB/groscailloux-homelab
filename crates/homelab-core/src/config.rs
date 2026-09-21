@@ -294,6 +294,9 @@ pub struct Seedbox {
     pub sonarr_root: String,
     /// Profil de qualité des fiches ajoutées sur la seedbox.
     pub quality_profile_id: i64,
+    /// Bazarr de la seedbox (proxy HTTPS de l'hébergeur), vide = pas de `subtitle_sync`.
+    /// Clé : `SEEDBOX_BAZARR_API_KEY`.
+    pub bazarr_url: String,
 }
 
 impl Default for Seedbox {
@@ -314,6 +317,7 @@ impl Default for Seedbox {
             radarr_root: String::new(),
             sonarr_root: String::new(),
             quality_profile_id: 7,
+            bazarr_url: String::new(),
         }
     }
 }
@@ -436,6 +440,27 @@ pub struct Tasks {
     pub subscription_cycle: Interval3600,
     #[serde(default)]
     pub subscription_reconcile: Interval86400,
+    #[serde(default)]
+    pub subtitle_sync: SubtitleSync,
+}
+
+/// Sous-titres extraits par le Bazarr de la seedbox → rafraîchissement des fiches Jellyfin
+/// (voir `tasks::subtitle_sync`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SubtitleSync {
+    pub interval_secs: u64,
+    /// Fiches Jellyfin rafraîchies au plus par passage.
+    pub max_per_run: usize,
+}
+
+impl Default for SubtitleSync {
+    fn default() -> Self {
+        Self {
+            interval_secs: 300,
+            max_per_run: 60,
+        }
+    }
 }
 
 /// Canari de lecture : un vrai transcodage de quelques secondes, alerte admin au premier échec
@@ -1213,6 +1238,7 @@ pub struct Secrets {
     pub seedbox_radarr_api_key: Option<Secret>,
     pub seedbox_sonarr_api_key: Option<Secret>,
     pub seedbox_qbit_password: Option<Secret>,
+    pub seedbox_bazarr_api_key: Option<Secret>,
     pub jellyfin_public_url: String,
     pub jellyseerr_public_url: String,
     /// Adresse publique de l'onboarder (`ONBOARD_PUBLIC_URL`) : lien vers `/guide` dans le mail de
@@ -1357,6 +1383,7 @@ impl Secrets {
             seedbox_radarr_api_key: opt("SEEDBOX_RADARR_API_KEY").map(Secret::new),
             seedbox_sonarr_api_key: opt("SEEDBOX_SONARR_API_KEY").map(Secret::new),
             seedbox_qbit_password: opt("SEEDBOX_QBIT_PASSWORD").map(Secret::new),
+            seedbox_bazarr_api_key: opt("SEEDBOX_BAZARR_API_KEY").map(Secret::new),
             jellyfin_public_url: req("JELLYFIN_PUBLIC_URL")?,
             jellyseerr_public_url: req("JELLYSEERR_PUBLIC_URL")?,
             onboard_public_url: opt("ONBOARD_PUBLIC_URL")

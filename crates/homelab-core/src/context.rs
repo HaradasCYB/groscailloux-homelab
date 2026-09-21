@@ -5,7 +5,8 @@ use anyhow::{Context, Result};
 use tokio::sync::Mutex;
 
 use crate::clients::{
-    ArrClient, JellyfinClient, JellyseerrClient, PayPalClient, ProwlarrClient, QbitClient,
+    ArrClient, BazarrClient, JellyfinClient, JellyseerrClient, PayPalClient, ProwlarrClient,
+    QbitClient,
 };
 use crate::config::{Config, Secrets};
 use crate::state::StateStore;
@@ -23,6 +24,8 @@ pub struct TaskContext {
     pub seedbox_radarr: Option<ArrClient>,
     /// qBittorrent de la seedbox, si `[seedbox] qbit_url` est défini.
     pub seedbox_qbit: Option<QbitClient>,
+    /// Bazarr de la seedbox, si `[seedbox] bazarr_url` et `SEEDBOX_BAZARR_API_KEY` sont définis.
+    pub bazarr: Option<BazarrClient>,
     pub qbit: QbitClient,
     pub jellyfin: JellyfinClient,
     pub jellyseerr: JellyseerrClient,
@@ -89,10 +92,24 @@ impl TaskContext {
         } else {
             None
         };
+        let bazarr = if cfg.seedbox.enabled && !cfg.seedbox.bazarr_url.is_empty() {
+            let key = secrets
+                .seedbox_bazarr_api_key
+                .clone()
+                .context("[seedbox] bazarr_url défini mais SEEDBOX_BAZARR_API_KEY absent")?;
+            Some(BazarrClient::new(
+                &with_slash(&cfg.seedbox.bazarr_url),
+                key,
+                http.clone(),
+            )?)
+        } else {
+            None
+        };
         Ok(Self {
             seedbox_sonarr,
             seedbox_radarr,
             seedbox_qbit,
+            bazarr,
             sonarr: ArrClient::new(
                 "sonarr",
                 &cfg.urls.sonarr,

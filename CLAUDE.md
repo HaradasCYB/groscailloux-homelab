@@ -281,6 +281,14 @@ journalctl -u homelabd -f
   `unknown_series` = `<arr>:<seriesId>:<saison>`, `movie_search` = `<arr>:<movieId>` avec `<arr>` = `sonarr`,
   `radarr`, `sonarr-seedbox`, `radarr-seedbox`, Jellyseerr `serviceId` 0 = VPS, 1 = seedbox, `externalServiceId` =
   id Arr ; **sous-titres** = Bazarr de la seedbox (profil « Français (+anglais) », `subsync` off), rien sur le VPS.
+  **Sous-titres incrustés = 2 minutes d'extraction par le lien** (2026-09-21) : Jellyfin lit tout le fichier seedbox
+  pour extraire une piste incrustée (111 s pour 1,6 Go), le lecteur web abandonne (499) et le membre n'a rien. Bazarr
+  (seedbox) a `use_embedded_subs = false` et extrait chaque piste française en `.fr.srt` externe sur place ; ne pas
+  remettre ce réglage à `true`. La tâche **`subtitle_sync`** (5 min, historique Bazarr → `vfs/refresh` → FullRefresh de
+  la fiche) est ce qui fait apparaître ces fichiers dans Jellyfin : ni l'analyse de 05 h, ni `Library/Media/Updated`
+  ne voient un fichier annexe déposé à côté d'une vidéo existante. Un membre qui bascule l'audio en VO **en cours de lecture** garde la piste de
+  sous-titres choisie au départ (« Forcé » en mode Smart) : c'est jellyfin-web, pas une panne ; « Toujours en VO »
+  dans Mon compte sélectionne la piste complète d'office.
   **Les grabs côté seedbox ne passent jamais par la file de Sonarr/Radarr** (pas de Prowlarr là-bas : ajout direct au
   qBittorrent avec l'étiquette `homelab:`) : la barre lit aussi les torrents étiquetés des deux qBittorrent
   (`requests_progress::homelab_tag`/`from_torrent`), sinon Black Clover à 46 % s'affichait « recherche, prochaine

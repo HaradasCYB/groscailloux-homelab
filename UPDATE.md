@@ -45,6 +45,11 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   se téléchargeait (*Black Clover* à 46 %). Elle lit maintenant aussi les téléchargements de qBittorrent. Sur
   téléphone, la barre chevauchait la ligne « membre • date » : elle est passée en dessous, sur toute la largeur.
   L'icône « Mon compte » de l'en-tête restait invisible après un rechargement tant qu'on n'avait pas cliqué dessus.
+- **Les sous-titres arrivent tout de suite sur les titres de la seedbox.** Jusqu'ici, à la première lecture d'un épisode
+  en VOSTFR, Jellyfin devait extraire les sous-titres en relisant tout le fichier à distance (près de deux minutes) et
+  le lecteur abandonnait avant : « pas de sous-titres ». Les sous-titres sont désormais extraits une fois pour toutes
+  sur la seedbox, à côté de la vidéo (1 653 fichiers rattrapés le 21/09, les nouveautés à l'arrivée), et Jellyfin les
+  lit instantanément (tâche `subtitle_sync` : Jellyfin est prévenu de chaque sous-titre écrit, en quelques minutes).
 
 ## 1.18.0 — 20/09/2026 — Abonnement automatique, « Mon compte », Discord et bienvenue
 

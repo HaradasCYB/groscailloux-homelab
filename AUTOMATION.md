@@ -520,11 +520,35 @@ détecte les cartes `.je-request-card` de Jellyfin Enhanced et y insère une bar
 ## Sous-titres (Bazarr, seedbox)
 
 Bazarr tourne **sur la seedbox** (conteneur usbx, `https://kakaouette.tofino.usbx.me/bazarr`, relié aux Sonarr/Radarr
-de la seedbox) : profil « Français (+anglais) » par défaut sur séries et films, recherche des manquants toutes les
-6 h, amélioration 12 h, providers `embeddedsubtitles`, `podnapisi`, `gestdown`, `yifysubtitles`, `tvsubtitles` ;
-`subsync` désactivé (il lirait l'audio complet). Rien ne tourne sur le VPS : les `.fr.srt` écrits sur la seedbox
-apparaissent dans Jellyfin au passage de `seedbox_refresh`. Compte OpenSubtitles.com à saisir dans l'interface
-Bazarr (Settings → Providers), jamais dans le dépôt.
+de la seedbox) : profil « Français (+anglais) » par défaut sur séries et films (français voulu **même quand l'audio est
+français** : `audio_exclude = False`, pour les MULTi lus en VO), recherche des manquants toutes les 6 h, amélioration
+12 h, providers `embeddedsubtitles`, `podnapisi`, `gestdown`, `yifysubtitles`, `tvsubtitles`, `opensubtitlescom` ;
+`subsync` désactivé (il lirait l'audio complet). Rien ne tourne sur le VPS.
+
+**Les sous-titres incrustés ne comptent pas** (`use_embedded_subs = false`, 2026-09-21) : Jellyfin extrait un
+sous-titre incrusté en lisant **tout le fichier** par le lien seedbox (1,6 Go = 106 à 111 s mesurés), le lecteur web
+abandonne avant (499 dans le journal NPM) et le membre n'a « pas de sous-titres » à la première lecture — 1 653
+fichiers seedbox sur 1 901 n'avaient que des pistes incrustées. Bazarr extrait donc chaque piste française vers un
+fichier externe `<vidéo>.fr.srt` **sur le disque de la seedbox** (fournisseur `embeddedsubtitles`, ffmpeg local à
+~46 Mo/s, pistes forcées ignorées), que Jellyfin lit instantanément. Nouveaux imports : à l'arrivée (Bazarr est
+prévenu par Sonarr/Radarr) ; le rattrapage des fichiers existants a tourné le 21/09 (`backups/bazarr-20260921/` :
+config et base d'avant). Jellyfin voit les fichiers externes à l'analyse quotidienne de 05 h (le montage rclone
+relit un dossier après 1 h, `--dir-cache-time`) ; pour un titre précis : `vfs/refresh` du dossier puis `Refresh` de
+la série. Compte OpenSubtitles.com saisi dans l'interface Bazarr (Settings → Providers), jamais dans le dépôt.
+
+### subtitle_sync — 5 min
+
+Lit l'historique du Bazarr de la seedbox (`[seedbox] bazarr_url` + `SEEDBOX_BAZARR_API_KEY`, client
+`clients::bazarr`, listes `episodes` et `movies`, `action == 1` = sous-titre écrit) depuis le dernier horodatage traité
+(`state.bazarr_history`, premier passage = tout l'historique par lots de `max_per_run` 60), relit les dossiers dans
+rclone (`vfs/refresh`, mêmes helpers que `seedbox_refresh`), retrouve la fiche Jellyfin par chemin de vidéo sans
+extension (`video_stem` retire `.fr`, `.fr.hi`, `.fre.forced`…) et, si elle n'a pas encore de sous-titre **externe** dans
+cette langue, lance `jellyfin::refresh_streams` (`Items/{id}/Refresh?MetadataRefreshMode=FullRefresh&ReplaceAllMetadata=
+false&ImageRefreshMode=None`, ~0 octet lu sur le lien, métadonnées et images conservées) — **seul moyen** pour qu'un
+fichier annexe apparaisse (ni `Library/Media/Updated`, ni Refresh « Default », vérifié le 21/09). Jamais un item en
+cours de lecture (la passe s'arrête dessus, le curseur ne le dépasse pas). Dry-run respecté (`homelabctl run
+subtitle_sync --dry-run`) ; un vrai passage se fait dans le daemon (curseur dans l'état). Premier passage réel le
+21/09 14:43 : 37 fiches rafraîchies, 22 déjà pourvues, 1 inconnue de Jellyfin.
 
 ## Abonnés et cycle premium (v1.18, 2026-09-20)
 

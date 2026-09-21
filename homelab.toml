@@ -118,6 +118,13 @@ size = 10
 min_minutes = 10        # visionnage minimal par spectateur et par titre
 collection_name = "Tendances cette semaine"
 
+[tasks.subtitle_sync]
+# Sous-titres extraits ou téléchargés par le Bazarr de la seedbox (historique Bazarr) → vfs/refresh du dossier puis
+# FullRefresh de la fiche Jellyfin (seul moyen pour qu'un .fr.srt déposé à côté de la vidéo apparaisse) ; jamais
+# pendant une lecture de l'item. Premier passage : tout l'historique, par lots.
+interval_secs = 300
+max_per_run = 60
+
 [tasks.playback_canary]
 # Canari de lecture : toutes les 15 min, un transcodage réel de deux segments (un fichier VPS, un seedbox en
 # alternance) ; alerte admin (mail + Discord) au premier échec ou si le premier segment met plus de 20 s.
@@ -395,3 +402,4 @@ qbit_user = "kakaouette"
 radarr_root = "/home/kakaouette/media/Movies"
 sonarr_root = "/home/kakaouette/media/TV Shows"
 quality_profile_id = 7      # « FR-friendly H.264 »
+bazarr_url = "https://kakaouette.tofino.usbx.me/bazarr"   # clé : SEEDBOX_BAZARR_API_KEY

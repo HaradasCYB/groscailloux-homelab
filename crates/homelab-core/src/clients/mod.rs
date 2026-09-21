@@ -3,6 +3,7 @@
 //! typées là où l'on filtre/décide.
 
 mod arr;
+pub mod bazarr;
 pub mod jellyfin;
 mod jellyseerr;
 pub mod paypal;
@@ -10,6 +11,7 @@ mod prowlarr;
 mod qbit;
 
 pub use arr::{ArrClient, QueueItem};
+pub use bazarr::{BazarrClient, HistoryRow};
 pub use jellyfin::JellyfinClient;
 pub use jellyseerr::JellyseerrClient;
 pub use paypal::PayPalClient;

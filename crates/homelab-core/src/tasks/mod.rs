@@ -22,6 +22,7 @@ pub mod stack_health;
 pub mod stuck_handler;
 pub mod subscription_cycle;
 pub mod subscription_reconcile;
+pub mod subtitle_sync;
 pub mod tba_bypass;
 pub mod torrent_import;
 pub mod tracker_ratio;
@@ -79,6 +80,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(trending::Trending),
         Box::new(playback_limit::PlaybackLimit),
         Box::new(playback_canary::PlaybackCanary),
+        Box::new(subtitle_sync::SubtitleSync),
         Box::new(subscription_cycle::SubscriptionCycle),
         Box::new(subscription_reconcile::SubscriptionReconcile),
         Box::new(monitor_sync::MonitorSync),

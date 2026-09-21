@@ -27,6 +27,10 @@ pub struct State {
     /// seedbox_refresh : dernier id d'historique d'import traité, par Arr.
     #[serde(default)]
     pub seedbox_history: BTreeMap<String, i64>,
+    /// subtitle_sync : horodatage (secondes, heure locale de Bazarr) de la dernière ligne d'historique
+    /// Bazarr traitée, par liste (`episodes`, `movies`).
+    #[serde(default)]
+    pub bazarr_history: BTreeMap<String, i64>,
     /// torrent_import : décision par torrent, clé `côté:hash` (`vps:…`, `seedbox:…`).
     #[serde(default)]
     pub torrent_import: BTreeMap<String, TorrentImportRecord>,
