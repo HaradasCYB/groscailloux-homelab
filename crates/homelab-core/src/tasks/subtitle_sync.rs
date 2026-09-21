@@ -165,9 +165,20 @@ impl Task for SubtitleSync {
             return Ok(Report::new("nothing mappable", 0));
         }
 
+        // `Items` SANS UserId renvoie une liste incomplète (le 21/09 : 2 064 items, aucun des 13 épisodes
+        // importés le matin ; avec l'id d'un admin : 2 004 items, les 13 présents) : toujours passer par un compte.
+        let admin = ctx
+            .jellyfin
+            .users()
+            .await?
+            .iter()
+            .find(|u| crate::accounts::is_admin(u))
+            .and_then(|u| u.get("Id").and_then(Value::as_str).map(str::to_string))
+            .context("aucun compte admin Jellyfin")?;
         let items = ctx
             .jellyfin
             .items(&[
+                ("UserId", admin.as_str()),
                 ("Recursive", "true"),
                 ("IncludeItemTypes", "Episode,Movie"),
                 ("Fields", "Path,MediaStreams"),
@@ -224,6 +235,7 @@ impl Task for SubtitleSync {
         let (mut refreshed, mut already, mut unknown, mut skipped, mut failed) =
             (0u32, 0u32, 0u32, 0u32, 0u32);
         let mut last_at: HashMap<&'static str, i64> = HashMap::new();
+        let mut first_skipped: HashMap<&'static str, i64> = HashMap::new();
         for (list, r, stem) in &wanted {
             let Some(item) = by_stem.get(stem) else {
                 unknown += 1;
@@ -237,9 +249,13 @@ impl Task for SubtitleSync {
                 continue;
             }
             if playing.contains(id) {
-                // on reviendra dessus : le curseur ne dépasse pas cette ligne
+                // on reviendra dessus : le curseur ne dépassera pas cette ligne, les autres continuent
                 skipped += 1;
-                break;
+                first_skipped
+                    .entry(list)
+                    .and_modify(|v| *v = (*v).min(r.at))
+                    .or_insert(r.at);
+                continue;
             }
             match ctx.jellyfin.refresh_streams(id).await {
                 Ok(()) => {
@@ -254,7 +270,12 @@ impl Task for SubtitleSync {
             }
         }
         for (list, at) in &last_at {
-            let (list, at) = (list.to_string(), *at);
+            // une ligne sautée (lecture en cours) borne le curseur : elle sera rejouée, les autres sont idempotentes
+            let at = match first_skipped.get(list) {
+                Some(sk) => (*at).min(*sk),
+                None => *at,
+            };
+            let list = list.to_string();
             ctx.state
                 .update(|s| {
                     let e = s.bazarr_history.entry(list).or_insert(0);

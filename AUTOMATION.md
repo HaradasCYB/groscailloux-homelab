@@ -548,7 +548,13 @@ false&ImageRefreshMode=None`, ~0 octet lu sur le lien, métadonnées et images c
 fichier annexe apparaisse (ni `Library/Media/Updated`, ni Refresh « Default », vérifié le 21/09). Jamais un item en
 cours de lecture (la passe s'arrête dessus, le curseur ne le dépasse pas). Dry-run respecté (`homelabctl run
 subtitle_sync --dry-run`) ; un vrai passage se fait dans le daemon (curseur dans l'état). Premier passage réel le
-21/09 14:43 : 37 fiches rafraîchies, 22 déjà pourvues, 1 inconnue de Jellyfin.
+21/09 14:43 : 37 fiches rafraîchies, 22 déjà pourvues, 1 inconnue de Jellyfin. Un item en cours de lecture est
+sauté (les autres continuent) et borne le curseur : il est rejoué au passage suivant. **Nouveaux imports** : les
+Sonarr/Radarr de la seedbox ont une connexion « Bazarr » (Webhook `…/bazarr/api/webhooks/<app>?apikey=…`, sur import et
+amélioration, créée le 21/09, sauvegardes `backups/bazarr-20260921/*-notifications-before.json`) : Bazarr extrait dans
+la foulée, `subtitle_sync` prévient Jellyfin dans les 5 min. Rattrapage prioritaire du 21/09 : séries puis films du
+plus récent au plus ancien, par vagues de 4 (`search-missing` par fiche), pendant que la recherche générale finit le
+reste.
 
 ## Abonnés et cycle premium (v1.18, 2026-09-20)
 

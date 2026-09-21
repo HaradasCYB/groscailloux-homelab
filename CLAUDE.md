@@ -601,6 +601,9 @@ journalctl -u homelabd -f
   `homelabctl accounts delete`), et pour les captures, réponses d'API simulées **dans le navigateur de test**
   (interception, voir `backups/chat-tests-20260915/chatshots.js`). Une session ouverte par l'API compte dans
   la limite de 2 appareils : supprimer puis recréer le compte de test plutôt que toucher aux appareils.
+- **`GET /Items` sans `UserId` renvoie une liste incomplète** (2026-09-21 : 2 064 items, aucun des 13 épisodes importés le
+  matin ; avec l'id d'un admin : 2 004 items, tous présents). Toute lecture de la médiathèque par l'API passe par un
+  compte (`UserId=<admin>`), comme `subtitle_sync` et le canari.
 - **`GET /Devices?userId=` ignore le filtre** et renvoie **tous** les appareils : le 2026-09-15, une boucle
   `DELETE /Devices` dessus a déconnecté tous les membres de toutes leurs applis. Aucune suppression en boucle
   sans vérifier le nombre et le propriétaire (`LastUserId`) de chaque élément.
