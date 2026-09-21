@@ -14,7 +14,7 @@ pub use jellyfin::JellyfinClient;
 pub use jellyseerr::JellyseerrClient;
 pub use paypal::PayPalClient;
 pub use prowlarr::ProwlarrClient;
-pub use qbit::{QbitClient, Torrent, TorrentFile};
+pub use qbit::{QbitClient, Torrent, TorrentFile, ETA_UNKNOWN};
 
 use anyhow::{bail, Context, Result};
 use reqwest::Response;

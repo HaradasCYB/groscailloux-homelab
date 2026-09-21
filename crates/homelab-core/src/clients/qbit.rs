@@ -56,6 +56,18 @@ pub struct Torrent {
     /// Étiquettes séparées par des virgules (`homelab:series=50:season=4` posé par series_search).
     #[serde(default)]
     pub tags: String,
+    /// Secondes restantes estimées par qBittorrent ; 8640000 = inconnu.
+    #[serde(default = "eta_unknown")]
+    pub eta: i64,
+    #[serde(default)]
+    pub dlspeed: i64,
+}
+
+/// Valeur que qBittorrent renvoie quand il n'a pas d'estimation.
+pub const ETA_UNKNOWN: i64 = 8_640_000;
+
+fn eta_unknown() -> i64 {
+    ETA_UNKNOWN
 }
 
 #[derive(Debug, Clone, Deserialize)]

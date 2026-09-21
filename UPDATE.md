@@ -40,6 +40,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - Journal des versions compacté : les versions publiées le même jour sont regroupées sous la dernière d'entre elles
   (les tags git intermédiaires existent toujours), et une annonce peut être publiée sur le tchat depuis la ligne de
   commande (`homelabctl chat announce`).
+- Correctif du jour : la barre d'avancement ignorait tout téléchargement lancé par la plateforme sur la seedbox (le
+  chemin normal de toute nouveauté) et affichait « recherche, prochaine tentative dans 7 jours » pendant que le titre
+  se téléchargeait (*Black Clover* à 46 %). Elle lit maintenant aussi les téléchargements de qBittorrent.
 
 ## 1.18.0 — 20/09/2026 — Abonnement automatique, « Mon compte », Discord et bienvenue
 

@@ -507,8 +507,12 @@ Dans « Mon compte », le membre choisit « Français quand il existe » ou « T
 `GET /compte/api/requests` (jeton Jellyfin, cache 20 s) : pour chaque demande Jellyseerr approuvée, l'**étape** et
 l'**avancement** (`homelab_core::requests_progress`, pur et testé) : *recherche* (état `unknown_series` /
 `movie_search`, prochaine tentative d'après les délais de `series_search`/`movie_search`, « introuvable » si des
-épisodes sont sans release), *téléchargement* (files des 4 Arrs par `externalServiceId` : `%` = 1 −
-Σ sizeleft / Σ size, ETA = `timeleft` max + 2 min d'import + un passage de `seedbox_refresh`), *ajout* (fichier
+épisodes sont sans release), *téléchargement* (files des 4 Arrs par `externalServiceId` **et** torrents étiquetés
+`homelab:series=<id>[:season=<n>]` / `homelab:movie=<id>` des deux qBittorrent — côté seedbox c'est le seul chemin,
+`series_search`/`movie_search` n'y passent jamais par la file de Sonarr/Radarr ; un hash déjà en file Arr ne compte
+qu'une fois, un torrent fini attend `torrent_import` (« ajout »), un torrent que `torrent_import` a rejeté affiche
+« pas rangé » : `%` = 1 − Σ sizeleft / Σ size, ETA = `timeleft`/`eta` max + 2 min d'import + un passage de
+`seedbox_refresh`), *ajout* (fichier
 présent côté Arr, pas encore vu par Jellyfin), *disponible* (statut média Jellyseerr). Le script « Mon compte »
 détecte les cartes `.je-request-card` de Jellyfin Enhanced et y insère une barre + texte, rafraîchis toutes les
 30 s ; sur téléviseur, pourcentage seul.

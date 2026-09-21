@@ -408,6 +408,9 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
         }
         v
     };
+    // hashs déjà suivis par un Arr : un torrent étiqueté `homelab:` qui serait aussi dans une file Arr
+    // ne doit pas compter deux fois
+    let mut arr_hashes: HashSet<String> = HashSet::new();
     for (side, arr, kind) in &sides {
         let recs = match arr.queue_records().await {
             Ok(r) => r,
@@ -417,6 +420,9 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
             }
         };
         for r in recs {
+            if let Some(h) = r.get("downloadId").and_then(Value::as_str) {
+                arr_hashes.insert(h.to_ascii_lowercase());
+            }
             let id = if *kind == "tv" {
                 r.get("seriesId")
             } else {
@@ -444,6 +450,43 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                         .unwrap_or("")
                         .to_string(),
                 });
+        }
+    }
+    // torrents lancés par la plateforme elle-même (étiquette `homelab:`) : côté seedbox, c'est le SEUL chemin
+    // (pas de Prowlarr là-bas, series_search/movie_search ajoutent au qBittorrent), et Sonarr/Radarr ne les
+    // voient pas dans leur file ; `torrent_import` les range une fois finis
+    let import_records = ctx.state.read(|s| s.torrent_import.clone()).await;
+    let mut qbits: Vec<(&'static str, &homelab_core::clients::QbitClient)> =
+        vec![("vps", &ctx.qbit)];
+    if let Some(q) = ctx.seedbox_qbit.as_ref() {
+        qbits.push(("seedbox", q));
+    }
+    for (side, qbit) in qbits {
+        let torrents = match qbit.torrents().await {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(task = "subs", side, error = %e, "qbittorrent unreadable");
+                continue;
+            }
+        };
+        for t in torrents {
+            let Some((movie, id, season)) = rp::homelab_tag(&t.tags) else {
+                continue;
+            };
+            if arr_hashes.contains(&t.hash.to_ascii_lowercase()) {
+                continue;
+            }
+            let outcome = import_records
+                .get(&homelab_core::tasks::torrent_import::state_key(
+                    side, &t.hash,
+                ))
+                .map(|r| r.outcome.as_str());
+            if let Some(q) = rp::from_torrent(season, t.size, t.progress, t.eta, outcome) {
+                queues
+                    .entry((side, if movie { "movie" } else { "tv" }, id))
+                    .or_default()
+                    .push(q);
+            }
         }
     }
     // fichiers déjà présents côté Arr (séries : par saison)
@@ -526,6 +569,8 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
         .await;
     let vps_id = cfg.seedbox.jellyseerr_vps_sonarr_id;
     let scan_delay = cfg.tasks.seedbox_refresh.interval_secs as i64;
+    // import Arr (~2 min) ou passage de torrent_import pour un torrent étiqueté
+    let import_allowance = (cfg.tasks.torrent_import.interval_secs as i64).max(120);
     let mut out = Vec::new();
     for r in &requests {
         let status = r.get("status").and_then(Value::as_i64).unwrap_or(0);
@@ -634,7 +679,7 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
             available,
             search.as_ref().map(|r| (r, retry_h, grabbed_h, error_h)),
             t,
-            120,
+            import_allowance,
             scan_delay,
             uncovered,
         );

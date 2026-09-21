@@ -281,6 +281,10 @@ journalctl -u homelabd -f
   `unknown_series` = `<arr>:<seriesId>:<saison>`, `movie_search` = `<arr>:<movieId>` avec `<arr>` = `sonarr`,
   `radarr`, `sonarr-seedbox`, `radarr-seedbox`, Jellyseerr `serviceId` 0 = VPS, 1 = seedbox, `externalServiceId` =
   id Arr ; **sous-titres** = Bazarr de la seedbox (profil « Français (+anglais) », `subsync` off), rien sur le VPS.
+  **Les grabs côté seedbox ne passent jamais par la file de Sonarr/Radarr** (pas de Prowlarr là-bas : ajout direct au
+  qBittorrent avec l'étiquette `homelab:`) : la barre lit aussi les torrents étiquetés des deux qBittorrent
+  (`requests_progress::homelab_tag`/`from_torrent`), sinon Black Clover à 46 % s'affichait « recherche, prochaine
+  tentative dans 7 j » (2026-09-21).
 - **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
   la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).

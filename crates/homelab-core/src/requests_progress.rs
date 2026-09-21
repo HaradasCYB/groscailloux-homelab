@@ -38,6 +38,63 @@ pub struct QueueSummary {
     pub tracked_state: String,
 }
 
+/// Étiquette qBittorrent posée par `series_search`/`movie_search` (`homelab:series=<id>[:season=<n>…]`,
+/// `homelab:movie=<id>`) → (film ?, id Arr, saison). Les grabs côté seedbox ne passent **jamais** par la file
+/// de Sonarr/Radarr (pas de Prowlarr là-bas) : sans cette lecture, la barre n'affichait aucun téléchargement.
+pub fn homelab_tag(tags: &str) -> Option<(bool, i64, Option<i64>)> {
+    tags.split(',').map(str::trim).find_map(|t| {
+        let rest = t.strip_prefix("homelab:")?;
+        let (kind, tail) = rest.split_once('=')?;
+        let movie = match kind {
+            "series" => false,
+            "movie" => true,
+            _ => return None,
+        };
+        let mut parts = tail.split(':');
+        let id: i64 = parts.next()?.parse().ok()?;
+        let season = parts
+            .filter_map(|p| p.strip_prefix("season="))
+            .find_map(|v| v.parse::<i64>().ok());
+        Some((movie, id, season))
+    })
+}
+
+/// Élément de file construit d'après un torrent étiqueté : `progress` 0–1, `eta` de qBittorrent
+/// (`ETA_UNKNOWN` = pas d'estimation), `record_outcome` = issue enregistrée par `torrent_import` pour ce torrent.
+/// `None` quand le torrent a déjà été rangé (`imported`, `arr_managed`) : les fichiers de l'Arr font foi.
+pub fn from_torrent(
+    season: Option<i64>,
+    size: i64,
+    progress: f64,
+    eta: i64,
+    record_outcome: Option<&str>,
+) -> Option<QueueSummary> {
+    let size = size.max(0) as f64;
+    if progress < 1.0 {
+        return Some(QueueSummary {
+            season,
+            size,
+            size_left: size * (1.0 - progress.max(0.0)),
+            time_left_secs: (0..crate::clients::ETA_UNKNOWN)
+                .contains(&eta)
+                .then_some(eta),
+            tracked_state: "downloading".into(),
+        });
+    }
+    let state = match record_outcome {
+        None | Some("retry") => "importPending",
+        Some("imported") | Some("arr_managed") => return None,
+        Some(_) => "importBlocked",
+    };
+    Some(QueueSummary {
+        season,
+        size,
+        size_left: 0.0,
+        time_left_secs: Some(0),
+        tracked_state: state.into(),
+    })
+}
+
 /// `hh:mm:ss` ou `d.hh:mm:ss` (format Sonarr/Radarr) → secondes.
 pub fn parse_timeleft(s: &str) -> Option<i64> {
     let s = s.trim();
@@ -141,6 +198,14 @@ pub fn progress(
                 "importPending" | "importing" | "imported" | "importBlocked"
             )
         });
+        if queue.iter().all(|q| q.tracked_state == "importBlocked") {
+            return Progress {
+                stage: Stage::Import,
+                percent: 92,
+                eta_secs: None,
+                label: "Téléchargé mais pas rangé : l'administrateur est prévenu".into(),
+            };
+        }
         if importing || (size > 0.0 && left <= 0.0) {
             return Progress {
                 stage: Stage::Import,
@@ -191,6 +256,14 @@ pub fn progress(
         };
     }
     match search {
+        // pris mais aucun torrent visible (qBittorrent injoignable, torrent retiré) : ce n'est pas une
+        // « prochaine tentative dans 7 j »
+        Some((rec, _, _, _)) if rec.outcome.starts_with("grabbed") => Progress {
+            stage: Stage::Download,
+            percent: 5,
+            eta_secs: None,
+            label: "Téléchargement lancé, en attente de qBittorrent".into(),
+        },
         Some((rec, retry_h, grabbed_h, error_h)) => {
             let in_secs = next_search_in(rec, now, retry_h, grabbed_h, error_h);
             Progress {
@@ -291,6 +364,86 @@ mod tests {
         assert!(p.label.contains("~23 h"));
         let p = progress(&[], false, false, None, 0, 120, 300, true);
         assert!(p.label.contains("Introuvable"));
+    }
+
+    #[test]
+    fn homelab_tags_are_read() {
+        assert_eq!(
+            homelab_tag("homelab:series=79:season=1"),
+            Some((false, 79, Some(1)))
+        );
+        assert_eq!(
+            homelab_tag("autre,homelab:series=60:season=17:offset=26:eps=27-40"),
+            Some((false, 60, Some(17)))
+        );
+        assert_eq!(homelab_tag("homelab:movie=66"), Some((true, 66, None)));
+        assert_eq!(homelab_tag("homelab:series=abc"), None);
+        assert_eq!(homelab_tag("homelab:truc=1"), None);
+        assert_eq!(homelab_tag(""), None);
+    }
+
+    #[test]
+    fn torrent_becomes_queue_item() {
+        let d = from_torrent(Some(1), 1000, 0.459, 207, None).unwrap();
+        assert_eq!(d.tracked_state, "downloading");
+        assert!((d.size_left - 541.0).abs() < 0.01);
+        assert_eq!(d.time_left_secs, Some(207));
+        let unknown = from_torrent(None, 1000, 0.5, 8_640_000, None).unwrap();
+        assert_eq!(unknown.time_left_secs, None);
+        assert_eq!(
+            from_torrent(None, 1000, 1.0, 0, None)
+                .unwrap()
+                .tracked_state,
+            "importPending"
+        );
+        assert_eq!(
+            from_torrent(None, 1000, 1.0, 0, Some("retry"))
+                .unwrap()
+                .tracked_state,
+            "importPending"
+        );
+        assert!(from_torrent(None, 1000, 1.0, 0, Some("imported")).is_none());
+        assert!(from_torrent(None, 1000, 1.0, 0, Some("arr_managed")).is_none());
+        assert_eq!(
+            from_torrent(None, 1000, 1.0, 0, Some("nothing_importable"))
+                .unwrap()
+                .tracked_state,
+            "importBlocked"
+        );
+        let p = progress(
+            &[from_torrent(None, 1000, 1.0, 0, Some("no_match")).unwrap()],
+            false,
+            false,
+            None,
+            0,
+            120,
+            300,
+            false,
+        );
+        assert!(p.label.contains("pas rangé"));
+    }
+
+    #[test]
+    fn grabbed_without_torrent_is_not_a_search() {
+        let rec = SeasonSearchRecord {
+            at: 1000,
+            outcome: "grabbed".into(),
+            detail: String::new(),
+            title: String::new(),
+            uncovered: vec![],
+        };
+        let p = progress(
+            &[],
+            false,
+            false,
+            Some((&rec, 24, 168, 1)),
+            2000,
+            120,
+            300,
+            false,
+        );
+        assert_eq!(p.stage, Stage::Download);
+        assert!(p.label.contains("lancé"));
     }
 
     #[test]

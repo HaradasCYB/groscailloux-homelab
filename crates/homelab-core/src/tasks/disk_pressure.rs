@@ -136,6 +136,8 @@ mod tests {
             ratio: 0.0,
             seeding_time: 0,
             tags: String::new(),
+            eta: crate::clients::ETA_UNKNOWN,
+            dlspeed: 0,
         };
         let ts = vec![
             mk("a", "stoppedUP", 30),
