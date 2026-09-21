@@ -119,6 +119,17 @@
     box.appendChild(h('p', null, [langSel]));
     box.appendChild(h('p', { class: 'muted', text: 'Appliqu\u00e9 \u00e0 la prochaine lecture, sur tous tes appareils.' }));
 
+    // Taille des sous-titres : réglage jellyfin-web propre à CET appareil (localStorage
+    // `<userId>-localplayersubtitleappearance3`, champ textSize) ; l'ASS garde ses propres styles.
+    box.appendChild(h('h3', { text: 'Taille des sous-titres' }));
+    var sizeSel = h('select', { class: 'btn', 'aria-label': 'Taille des sous-titres', onchange: function () { setSubtitleSize(this.value); } });
+    var cur = subtitleSize();
+    [['normal', 'Normale'], ['large', 'Grande'], ['extralarge', 'Tr\u00e8s grande']].forEach(function (o) {
+      var op = h('option', { value: o[0], text: o[1] }); if (cur === o[0]) op.selected = true; sizeSel.appendChild(op);
+    });
+    box.appendChild(h('p', null, [sizeSel]));
+    box.appendChild(h('p', { class: 'muted', text: 'Pour cet appareil, sous-titres SRT ; les sous-titres ASS des anim\u00e9s gardent leur propre style.' }));
+
     if (d.history && d.history.length) {
       box.appendChild(h('h3', { text: 'Historique' }));
       var ul = h('ul');
@@ -138,6 +149,48 @@
     api('DELETE', '/api/devices/' + encodeURIComponent(dev.device_id)).then(function () { note('Appareil déconnecté.', 'ok'); return load(); })
       .catch(function (e) { btn.disabled = false; note(e.message, 'err'); });
   }
+  var SUB_KEY = 'localplayersubtitleappearance3';
+  function userId() {
+    try { var c = JSON.parse(localStorage.getItem('jellyfin_credentials') || '{}'); var s = (c.Servers || []).find(function (x) { return x.AccessToken; }); return s && s.UserId; } catch (e) { return null; }
+  }
+  function subtitleAppearance() {
+    var u = userId(); if (!u) return {};
+    try { return JSON.parse(localStorage.getItem(u + '-' + SUB_KEY) || '{}') || {}; } catch (e) { return {}; }
+  }
+  function subtitleSize() { return subtitleAppearance().textSize || 'normal'; }
+  // Tailles de jellyfin-web (htmlVideoPlayer) : elles sont posées en style **inline** sur .videoSubtitlesInner au
+  // moment où le lecteur crée l'élément de sous-titres. Changer le réglage pendant une lecture ne bougeait donc
+  // rien tant qu'on ne changeait pas de piste (d'où le détour par le sous-titre secondaire, qui en affiche deux).
+  // Une règle de feuille de style `!important` l'emporte sur un style inline : la taille s'applique aussitôt.
+  var SIZE_EM = { smaller: '.8em', small: 'inherit', normal: '1.36em', large: '1.72em', larger: '2em', extralarge: '2.2em' };
+  function applySubtitleSize() {
+    var em = SIZE_EM[subtitleSize()], el = document.getElementById('gc-sub-size');
+    if (!em) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
+    var css = '.videoSubtitlesInner,.videoSecondarySubtitlesInner{font-size:' + em + ' !important}'
+      + 'video::cue{font-size:' + em + ' !important}';
+    if (!el) { el = document.createElement('style'); el.id = 'gc-sub-size'; (document.head || document.documentElement).appendChild(el); }
+    if (el.textContent !== css) el.textContent = css;
+  }
+  function setSubtitleSize(v) {
+    var u = userId(); if (!u) { note('Appareil non reconnu.', 'err'); return; }
+    var a = subtitleAppearance(); a.textSize = v;
+    try {
+      localStorage.setItem(u + '-' + SUB_KEY, JSON.stringify(a));
+      applySubtitleSize();
+      note('Taille appliqu\u00e9e, m\u00eame en cours de lecture.', 'ok');
+    } catch (e) { note('Impossible d\u2019enregistrer sur cet appareil.', 'err'); }
+  }
+  // Par défaut « Grande » sur un appareil qui n'a jamais choisi (le SRT est petit dans jellyfin-web) ; un choix
+  // existant, y compris dans Réglages → Sous-titres de Jellyfin, n'est jamais touché.
+  (function defaultSubtitleSize() {
+    var u = userId(); if (!u) return;
+    try {
+      var k = u + '-' + SUB_KEY, raw = localStorage.getItem(k);
+      if (raw !== null && raw !== '') return;
+      localStorage.setItem(k, JSON.stringify({ textSize: 'large' }));
+    } catch (e) { /* stockage indisponible : rien */ }
+  })();
+  applySubtitleSize();
   function setLanguage(mode, sel) {
     sel.disabled = true;
     api('POST', '/api/language', { mode: mode }).then(function () { note('Langue enregistr\u00e9e.', 'ok'); sel.disabled = false; })
@@ -179,7 +232,8 @@
     if (user) right.insertBefore(b, user); else right.appendChild(b);
   }
   mount();
-  setInterval(mount, TV ? 3000 : 1000);
+  // la taille est aussi relue à chaque tour : un changement fait dans Réglages → Sous-titres de Jellyfin suit
+  setInterval(function () { mount(); applySubtitleSize(); }, TV ? 3000 : 1000);
 
   // ---- Onglet Demandes (Jellyfin Enhanced) : barre d'avancement sous chaque demande en cours -------------
   var REQ = { data: null, at: 0, timer: null };

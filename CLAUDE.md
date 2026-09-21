@@ -281,14 +281,23 @@ journalctl -u homelabd -f
   `unknown_series` = `<arr>:<seriesId>:<saison>`, `movie_search` = `<arr>:<movieId>` avec `<arr>` = `sonarr`,
   `radarr`, `sonarr-seedbox`, `radarr-seedbox`, Jellyseerr `serviceId` 0 = VPS, 1 = seedbox, `externalServiceId` =
   id Arr ; **sous-titres** = Bazarr de la seedbox (profil « Français (+anglais) », `subsync` off), rien sur le VPS.
-  **Sous-titres incrustés = 2 minutes d'extraction par le lien** (2026-09-21) : Jellyfin lit tout le fichier seedbox
-  pour extraire une piste incrustée (111 s pour 1,6 Go), le lecteur web abandonne (499) et le membre n'a rien. Bazarr
-  (seedbox) a `use_embedded_subs = false` et extrait chaque piste française en `.fr.srt` externe sur place ; ne pas
-  remettre ce réglage à `true`. La tâche **`subtitle_sync`** (5 min, historique Bazarr → `vfs/refresh` → FullRefresh de
-  la fiche) est ce qui fait apparaître ces fichiers dans Jellyfin : ni l'analyse de 05 h, ni `Library/Media/Updated`
-  ne voient un fichier annexe déposé à côté d'une vidéo existante. Un membre qui bascule l'audio en VO **en cours de lecture** garde la piste de
-  sous-titres choisie au départ (« Forcé » en mode Smart) : c'est jellyfin-web, pas une panne ; « Toujours en VO »
-  dans Mon compte sélectionne la piste complète d'office.
+  **Sous-titres incrustés = 2 à 12 minutes d'extraction par le lien** (mesuré du 19 au 21/09) : Jellyfin relit tout le
+  fichier seedbox pour sortir une piste incrustée ; le lecteur attend ou abandonne (499). Réglé par `subtitle_sync` :
+  extraction **sur la seedbox** à codec identique (`.fr.default.ass`, `.fr.forced.ass`, `.fr.hi.ass`, `.fr.srt`, SRT
+  sans panneaux dérivé de l'ASS), puis FullRefresh de la fiche (seul moyen de voir un fichier annexe). **Ne jamais
+  convertir l'ASS en SRT pour l'usage principal** : les lignes de panneaux (titre d'épisode, « PROCHAIN ÉPISODE ») se
+  retrouvent en bas de l'image comme des mentions malentendants (vu le 21/09). Bazarr reste à `use_embedded_subs =
+  true` (rôle d'origine). Un membre qui bascule l'audio en VO **en cours de lecture** garde la piste de sous-titres
+  choisie au départ (« Forcé » en mode Smart) : c'est jellyfin-web, pas une panne ; « Toujours en VO » dans Mon compte
+  sélectionne la piste complète d'office. Taille des sous-titres SRT : réglage jellyfin-web **par appareil**
+  (`<userId>-localplayersubtitleappearance3`, `textSize` : smaller .8em, small inherit, normal 1.36em, large 1.72em,
+  larger 2em, extralarge 2.2em), posé « large » par défaut par le script Mon compte et modifiable dans Mon compte ;
+  l'ASS a ses propres styles. **jellyfin-web pose ces tailles en style INLINE sur `.videoSubtitlesInner`, une seule
+  fois, à la création de l'élément de sous-titres** : changer le réglage pendant une lecture ne bougeait rien tant
+  qu'on ne changeait pas de piste (le détour par le « sous-titre secondaire » affiche deux pistes à la fois). Le
+  script pose donc une règle `#gc-sub-size` en `!important` (une règle importante de feuille de style l'emporte sur
+  un style inline) sur `.videoSubtitlesInner`, `.videoSecondarySubtitlesInner` et `video::cue`, relue à chaque tour
+  de boucle : la taille s'applique aussitôt, y compris si elle est changée dans Réglages → Sous-titres de Jellyfin.
   **Les grabs côté seedbox ne passent jamais par la file de Sonarr/Radarr** (pas de Prowlarr là-bas : ajout direct au
   qBittorrent avec l'étiquette `homelab:`) : la barre lit aussi les torrents étiquetés des deux qBittorrent
   (`requests_progress::homelab_tag`/`from_torrent`), sinon Black Clover à 46 % s'affichait « recherche, prochaine

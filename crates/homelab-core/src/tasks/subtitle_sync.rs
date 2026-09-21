@@ -1,12 +1,17 @@
-//! Fait voir à Jellyfin les sous-titres que le Bazarr de la seedbox vient d'écrire à côté des vidéos
-//! (`<vidéo>.fr.srt`, extraits des pistes incrustées ou téléchargés). Sans ça, Jellyfin extrait lui-même
-//! une piste incrustée en relisant tout le fichier par le lien seedbox (111 s pour 1,6 Go, mesuré le
-//! 2026-09-21) et le lecteur abandonne avant : « pas de sous-titres ». Un fichier annexe n'est vu que par un
-//! **FullRefresh** de l'item (ni `Library/Media/Updated`, ni Refresh « Default », vérifié) : on lit
-//! l'historique Bazarr depuis le dernier horodatage traité, on invalide les dossiers dans rclone, on retrouve
-//! la fiche Jellyfin par chemin et on la rafraîchit, jamais pendant une lecture.
+//! Sous-titres incrustés des fichiers de la **seedbox** → fichiers externes à côté de la vidéo, **à codec
+//! identique**, extraits **sur la seedbox** (disque local, rien sur le lien VPS), puis fiche Jellyfin relue.
+//!
+//! Pourquoi : Jellyfin extrait une piste incrustée en relisant tout le fichier par le lien (108 à 757 s mesurés
+//! du 19 au 21/09) ; les membres attendaient plusieurs minutes, ou abandonnaient. Un fichier externe est lu
+//! instantanément, et l'ASS externe est rendu exactement comme l'ASS incrusté (libass), panneaux à leur place.
+//! Un fichier annexe n'est vu que par un **FullRefresh** de l'item (ni `Library/Media/Updated`, ni Refresh
+//! « Default », vérifié le 21/09) : `jellyfin::refresh_streams` après chaque extraction.
+//!
+//! Sorties : `.fr.default.ass` (piste complète, passe devant), `.fr.forced.ass`, `.fr.hi.ass` (malentendants,
+//! à part), `.fr.srt` pour une piste SRT ; pour une piste ASS, un `.fr.srt` **sans les panneaux** est dérivé
+//! (AirPlay, téléviseurs). Les plus récents d'abord, `max_per_run` items par passage, jamais pendant une lecture.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -15,93 +20,136 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tracing::{info, warn};
 
-use super::seedbox_refresh::{map_path, refresh_params};
+use super::seedbox_refresh::refresh_params;
 use super::{Report, Task};
-use crate::clients::HistoryRow;
-use crate::config::Config;
+use crate::config::{Config, Seedbox};
 use crate::context::TaskContext;
+use crate::docker;
 
 pub struct SubtitleSync;
 
-const SUB_EXTS: [&str; 5] = ["srt", "ass", "ssa", "vtt", "sub"];
-const FLAGS: [&str; 6] = ["hi", "sdh", "cc", "forced", "default", "foreign"];
-
-/// Chemin d'un sous-titre externe → chemin de la vidéo **sans extension** :
-/// `X.fr.srt`, `X.fr.hi.srt`, `X.fre.forced.ass` → `X`. `None` si ce n'est pas un fichier de sous-titres.
-pub fn video_stem(subtitle_path: &str) -> Option<String> {
-    let p = Path::new(subtitle_path);
-    let ext = p.extension()?.to_str()?.to_ascii_lowercase();
-    if !SUB_EXTS.contains(&ext.as_str()) {
-        return None;
-    }
-    let mut stem = p.with_extension("").to_string_lossy().to_string();
-    // drapeaux puis langue (2 ou 3 lettres), dans l'ordre inverse d'écriture
-    for _ in 0..3 {
-        let Some((base, last)) = stem.rsplit_once('.') else {
-            break;
-        };
-        let l = last.to_ascii_lowercase();
-        // un drapeau (« hi », « cc »…) avant une langue : on continue ; une langue : on s'arrête là
-        if FLAGS.contains(&l.as_str()) {
-            stem = base.to_string();
-        } else if (2..=3).contains(&l.len()) && l.chars().all(|c| c.is_ascii_alphabetic()) {
-            stem = base.to_string();
-            break;
-        } else {
-            break;
-        }
-    }
-    Some(stem)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Job {
+    /// `ass` ou `subrip` (nom de codec ffmpeg, tel que Jellyfin le rapporte).
+    pub codec: String,
+    /// `full`, `forced` ou `hi`.
+    pub kind: String,
+    /// Chemin de sortie **côté Jellyfin** (`/seedbox/media/...`).
+    pub out: String,
+    /// SRT sans panneaux à dériver (piste ASS complète seulement).
+    pub srt: Option<String>,
 }
 
-/// Lignes à traiter : sous-titre écrit (`action == 1`), pas avant le curseur, du plus ancien au plus récent.
-pub fn pending(rows: &[HistoryRow], cursor: i64) -> Vec<HistoryRow> {
-    let mut out: Vec<HistoryRow> = rows
-        .iter()
-        .filter(|r| r.action == 1 && !r.subtitles_path.is_empty() && r.at >= cursor)
-        .cloned()
-        .collect();
-    out.sort_by_key(|r| r.at);
-    out
+fn is_french(s: &Value) -> bool {
+    matches!(
+        s.get("Language").and_then(Value::as_str),
+        Some("fre") | Some("fra") | Some("fr")
+    )
 }
 
-/// L'item Jellyfin liste-t-il déjà un sous-titre **externe** dans cette langue (code 2 lettres de Bazarr) ?
-pub fn has_external(item: &Value, lang2: &str) -> bool {
-    let wanted: Vec<&str> = match lang2 {
-        "fr" => vec!["fre", "fra", "fr"],
-        "en" => vec!["eng", "en"],
-        other => vec![other],
+fn flag(s: &Value, key: &str) -> bool {
+    s.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// Kind d'une piste d'après ses drapeaux Jellyfin (titre en secours : « Malentendants », « SDH », « Forced »).
+fn kind_of(s: &Value) -> &'static str {
+    let title = s
+        .get("Title")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if flag(s, "IsForced") || title.contains("forc") {
+        "forced"
+    } else if flag(s, "IsHearingImpaired")
+        || title.contains("malentendant")
+        || title.contains("sdh")
+        || title.contains("[cc]")
+    {
+        "hi"
+    } else {
+        "full"
+    }
+}
+
+/// Chemin de la vidéo sans extension → nom du fichier externe pour (codec, kind).
+pub fn out_name(stem: &str, codec: &str, kind: &str) -> String {
+    let ext = if codec == "subrip" { "srt" } else { "ass" };
+    match kind {
+        "forced" => format!("{stem}.fr.forced.{ext}"),
+        "hi" => format!("{stem}.fr.hi.{ext}"),
+        _ if ext == "ass" => format!("{stem}.fr.default.ass"),
+        _ => format!("{stem}.fr.srt"),
+    }
+}
+
+/// Extractions à faire pour un item Jellyfin : une par piste française incrustée texte (`ass`/`ssa`/`subrip`)
+/// dont le fichier externe attendu n'est pas encore listé. Une piste ASS complète entraîne aussi le SRT dérivé.
+pub fn plan_jobs(item: &Value) -> Vec<Job> {
+    let Some(path) = item.get("Path").and_then(Value::as_str) else {
+        return vec![];
     };
-    item.get("MediaStreams")
+    let stem = Path::new(path)
+        .with_extension("")
+        .to_string_lossy()
+        .to_string();
+    let streams: Vec<&Value> = item
+        .get("MediaStreams")
         .and_then(Value::as_array)
         .map(|a| {
-            a.iter().any(|s| {
-                s.get("Type").and_then(Value::as_str) == Some("Subtitle")
-                    && s.get("IsExternal")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                    && s.get("Language")
-                        .and_then(Value::as_str)
-                        .map(|l| wanted.iter().any(|w| w.eq_ignore_ascii_case(l)))
-                        .unwrap_or(false)
-            })
+            a.iter()
+                .filter(|s| s.get("Type").and_then(Value::as_str) == Some("Subtitle"))
+                .collect()
         })
-        .unwrap_or(false)
+        .unwrap_or_default();
+    let external: HashSet<String> = streams
+        .iter()
+        .filter(|s| flag(s, "IsExternal"))
+        .filter_map(|s| s.get("Path").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    let mut jobs: Vec<Job> = Vec::new();
+    for s in streams
+        .iter()
+        .filter(|s| !flag(s, "IsExternal") && is_french(s))
+    {
+        let codec = match s.get("Codec").and_then(Value::as_str) {
+            Some("ass") | Some("ssa") => "ass",
+            Some("subrip") | Some("srt") => "subrip",
+            _ => continue, // PGS/VobSub : images, rien à extraire en texte
+        };
+        let kind = kind_of(s);
+        let out = out_name(&stem, codec, kind);
+        if external.contains(&out) || jobs.iter().any(|j| j.out == out) {
+            continue;
+        }
+        let srt = (codec == "ass" && kind == "full").then(|| format!("{stem}.fr.srt"));
+        jobs.push(Job {
+            codec: codec.into(),
+            kind: kind.into(),
+            out,
+            srt,
+        });
+    }
+    jobs
 }
 
-/// Index des items Jellyfin (épisodes et films) par chemin de vidéo sans extension.
-pub fn index_by_stem(items: &[Value]) -> HashMap<String, &Value> {
-    items
-        .iter()
-        .filter_map(|i| {
-            let p = i.get("Path").and_then(Value::as_str)?;
-            let stem = Path::new(p)
-                .with_extension("")
-                .to_string_lossy()
-                .to_string();
-            Some((stem, i))
-        })
-        .collect()
+/// Chemin vu par Jellyfin (`/seedbox/media/...`) → chemin sur la seedbox (`/home/x/media/...`) et dossier
+/// relatif pour rclone.
+pub fn seedbox_path(sb: &Seedbox, jf: &str) -> Option<(String, String)> {
+    let root = sb.jellyfin_root.trim_end_matches('/');
+    let rel = jf.strip_prefix(root)?.trim_start_matches('/');
+    let dir = Path::new(rel)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    Some((
+        format!("{}/{}", sb.media_root.trim_end_matches('/'), rel),
+        dir,
+    ))
+}
+
+/// Argument sûr pour le shell distant.
+pub fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
 
 #[async_trait]
@@ -116,57 +164,15 @@ impl Task for SubtitleSync {
 
     async fn run(&self, ctx: &TaskContext) -> Result<Report> {
         let sb = &ctx.cfg.seedbox;
-        let Some(bazarr) = ctx.bazarr.as_ref() else {
-            return Ok(Report::new("bazarr not configured", 0));
-        };
+        let cfg = &ctx.cfg.tasks.subtitle_sync;
+        if !sb.enabled || cfg.extract_script.is_empty() {
+            return Ok(Report::new("disabled", 0));
+        }
         if !sb.mount_point.is_dir() {
             warn!(task = "subtitle_sync", mount = %sb.mount_point.display(), "seedbox mount unavailable, retry next run");
             return Ok(Report::new("mount unavailable", 0));
         }
-        let max = ctx.cfg.tasks.subtitle_sync.max_per_run.max(1);
-        // historique : assez profond pour le rattrapage initial (curseur 0), petit en régime normal
-        let mut todo: Vec<(&'static str, HistoryRow)> = Vec::new();
-        for (list, rows) in [
-            ("episodes", bazarr.history_episodes(3000).await?),
-            ("movies", bazarr.history_movies(1000).await?),
-        ] {
-            let cursor = ctx
-                .state
-                .read(|s| s.bazarr_history.get(list).copied())
-                .await
-                .unwrap_or(0);
-            for r in pending(&rows, cursor) {
-                todo.push((list, r));
-            }
-        }
-        if todo.is_empty() {
-            return Ok(Report::new("nothing new", 0));
-        }
-        todo.sort_by_key(|(_, r)| r.at);
-        let batch: Vec<(&'static str, HistoryRow)> = todo.into_iter().take(max).collect();
-
-        // dossiers à relire dans rclone, chemins Jellyfin attendus
-        let mut dirs: Vec<String> = Vec::new();
-        let mut wanted: Vec<(&'static str, HistoryRow, String)> = Vec::new();
-        for (list, r) in batch {
-            let Some((dir, jf)) = map_path(sb, &r.subtitles_path) else {
-                warn!(task = "subtitle_sync", path = %r.subtitles_path, "chemin hors media_root, ignoré");
-                continue;
-            };
-            let Some(stem) = video_stem(&jf) else {
-                continue;
-            };
-            dirs.push(dir);
-            wanted.push((list, r, stem));
-        }
-        dirs.sort();
-        dirs.dedup();
-        if wanted.is_empty() {
-            return Ok(Report::new("nothing mappable", 0));
-        }
-
-        // `Items` SANS UserId renvoie une liste incomplète (le 21/09 : 2 064 items, aucun des 13 épisodes
-        // importés le matin ; avec l'id d'un admin : 2 004 items, les 13 présents) : toujours passer par un compte.
+        // `Items` SANS UserId renvoie une liste incomplète (21/09 : les 13 épisodes du matin absents) : compte admin.
         let admin = ctx
             .jellyfin
             .users()
@@ -175,18 +181,30 @@ impl Task for SubtitleSync {
             .find(|u| crate::accounts::is_admin(u))
             .and_then(|u| u.get("Id").and_then(Value::as_str).map(str::to_string))
             .context("aucun compte admin Jellyfin")?;
-        let items = ctx
+        let mut items = ctx
             .jellyfin
             .items(&[
                 ("UserId", admin.as_str()),
                 ("Recursive", "true"),
                 ("IncludeItemTypes", "Episode,Movie"),
-                ("Fields", "Path,MediaStreams"),
+                ("Fields", "Path,MediaStreams,DateCreated"),
                 ("EnableImages", "false"),
             ])
             .await
             .context("jellyfin Items")?;
-        let by_stem = index_by_stem(&items);
+        let root = format!("{}/", sb.jellyfin_root.trim_end_matches('/'));
+        items.retain(|i| {
+            i.get("Path")
+                .and_then(Value::as_str)
+                .map(|p| p.starts_with(&root))
+                .unwrap_or(false)
+        });
+        // les plus récents d'abord (ce que les membres vont lancer)
+        items.sort_by(|a, b| {
+            let da = a.get("DateCreated").and_then(Value::as_str).unwrap_or("");
+            let db = b.get("DateCreated").and_then(Value::as_str).unwrap_or("");
+            db.cmp(da)
+        });
         let playing: HashSet<String> = ctx
             .jellyfin
             .sessions()
@@ -199,105 +217,134 @@ impl Task for SubtitleSync {
                     .map(str::to_string)
             })
             .collect();
-
+        let mut todo: Vec<(&Value, Vec<Job>)> = Vec::new();
+        let mut pending_total = 0usize;
+        for it in &items {
+            let jobs = plan_jobs(it);
+            if jobs.is_empty() {
+                continue;
+            }
+            pending_total += 1;
+            if todo.len() < cfg.max_per_run.max(1) {
+                todo.push((it, jobs));
+            }
+        }
+        if todo.is_empty() {
+            return Ok(Report::new("nothing to extract", 0));
+        }
         if ctx.dry_run {
-            let n = wanted
-                .iter()
-                .filter(|(_, r, stem)| {
-                    by_stem
-                        .get(stem)
-                        .map(|i| !has_external(i, &r.language))
-                        .unwrap_or(false)
-                })
-                .count();
-            info!(
-                task = "subtitle_sync",
-                rows = wanted.len(),
-                to_refresh = n,
-                ?dirs,
-                "dry-run"
-            );
+            for (it, jobs) in &todo {
+                let name = it.get("Name").and_then(Value::as_str).unwrap_or("?");
+                let kinds: Vec<String> = jobs
+                    .iter()
+                    .map(|j| format!("{}/{}", j.codec, j.kind))
+                    .collect();
+                info!(task = "subtitle_sync", item = %name, ?kinds, "dry-run");
+            }
             return Ok(Report::new(
-                format!("dry_run rows={} refresh={n}", wanted.len()),
-                n as u32,
+                format!("dry_run items={} pending={pending_total}", todo.len()),
+                todo.len() as u32,
             ));
         }
-
-        let rc = format!("{}/vfs/refresh", sb.rclone_rc.trim_end_matches('/'));
-        match ctx.http.post(&rc).json(&refresh_params(&dirs)).send().await {
-            Ok(resp) if !resp.status().is_success() => {
-                warn!(task = "subtitle_sync", status = %resp.status(), "rclone vfs/refresh failed")
+        let host = ctx.cfg.tasks.indexer_unblock.ssh_host.as_str();
+        let (mut extracted, mut refreshed, mut skipped, mut failed) = (0u32, 0u32, 0u32, 0u32);
+        let mut dirs: Vec<String> = Vec::new();
+        let mut to_refresh: Vec<String> = Vec::new();
+        // une extraction lit tout le fichier sur le disque de la seedbox (~30 s) : on s'arrête avant que le
+        // planificateur ne coupe la tâche, le reste est repris au passage suivant (tout est idempotent)
+        let started = std::time::Instant::now();
+        let budget = Duration::from_secs(cfg.max_seconds.max(60));
+        let mut out_of_time = false;
+        for (it, jobs) in &todo {
+            if started.elapsed() >= budget {
+                out_of_time = true;
+                break;
             }
-            Err(e) => warn!(task = "subtitle_sync", error = %e, "rclone rc injoignable"),
-            _ => {}
-        }
-
-        let (mut refreshed, mut already, mut unknown, mut skipped, mut failed) =
-            (0u32, 0u32, 0u32, 0u32, 0u32);
-        let mut last_at: HashMap<&'static str, i64> = HashMap::new();
-        let mut first_skipped: HashMap<&'static str, i64> = HashMap::new();
-        for (list, r, stem) in &wanted {
-            let Some(item) = by_stem.get(stem) else {
-                unknown += 1;
-                last_at.insert(list, r.at);
-                continue;
-            };
-            let id = item.get("Id").and_then(Value::as_str).unwrap_or("");
-            if has_external(item, &r.language) {
-                already += 1;
-                last_at.insert(list, r.at);
-                continue;
-            }
+            let id = it.get("Id").and_then(Value::as_str).unwrap_or("");
+            let path = it.get("Path").and_then(Value::as_str).unwrap_or("");
             if playing.contains(id) {
-                // on reviendra dessus : le curseur ne dépassera pas cette ligne, les autres continuent
                 skipped += 1;
-                first_skipped
-                    .entry(list)
-                    .and_modify(|v| *v = (*v).min(r.at))
-                    .or_insert(r.at);
                 continue;
             }
-            match ctx.jellyfin.refresh_streams(id).await {
-                Ok(()) => {
-                    refreshed += 1;
-                    last_at.insert(list, r.at);
+            let Some((video, dir)) = seedbox_path(sb, path) else {
+                continue;
+            };
+            let mut ok_any = false;
+            for j in jobs {
+                let Some((out, _)) = seedbox_path(sb, &j.out) else {
+                    continue;
+                };
+                let mut cmd = format!(
+                    "{} {} {} {} {}",
+                    cfg.extract_script,
+                    sh_quote(&video),
+                    j.codec,
+                    j.kind,
+                    sh_quote(&out)
+                );
+                if let Some(srt) = &j.srt {
+                    if let Some((srt_sb, _)) = seedbox_path(sb, srt) {
+                        cmd.push(' ');
+                        cmd.push_str(&sh_quote(&srt_sb));
+                    }
                 }
-                Err(e) => {
-                    warn!(task = "subtitle_sync", item = id, error = %e, "refresh failed");
-                    failed += 1;
-                    break;
+                match docker::run(
+                    "ssh",
+                    &["-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host, &cmd],
+                    None,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        extracted += 1;
+                        ok_any = true;
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        warn!(task = "subtitle_sync", item = %path, kind = %j.kind, error = %e, "extraction failed");
+                    }
                 }
             }
+            if ok_any {
+                dirs.push(dir);
+                to_refresh.push(id.to_string());
+            }
         }
-        for (list, at) in &last_at {
-            // une ligne sautée (lecture en cours) borne le curseur : elle sera rejouée, les autres sont idempotentes
-            let at = match first_skipped.get(list) {
-                Some(sk) => (*at).min(*sk),
-                None => *at,
-            };
-            let list = list.to_string();
-            ctx.state
-                .update(|s| {
-                    let e = s.bazarr_history.entry(list).or_insert(0);
-                    if at > *e {
-                        *e = at;
-                    }
-                })
-                .await?;
+        dirs.sort();
+        dirs.dedup();
+        if !dirs.is_empty() {
+            let rc = format!("{}/vfs/refresh", sb.rclone_rc.trim_end_matches('/'));
+            match ctx.http.post(&rc).json(&refresh_params(&dirs)).send().await {
+                Ok(resp) if !resp.status().is_success() => {
+                    warn!(task = "subtitle_sync", status = %resp.status(), "rclone vfs/refresh failed")
+                }
+                Err(e) => warn!(task = "subtitle_sync", error = %e, "rclone rc injoignable"),
+                _ => {}
+            }
+        }
+        for id in &to_refresh {
+            match ctx.jellyfin.refresh_streams(id).await {
+                Ok(()) => refreshed += 1,
+                Err(e) => {
+                    failed += 1;
+                    warn!(task = "subtitle_sync", item = %id, error = %e, "refresh failed");
+                }
+            }
         }
         info!(
             task = "subtitle_sync",
+            extracted,
             refreshed,
-            already,
-            unknown,
             skipped,
             failed,
-            dirs = dirs.len(),
+            pending = pending_total,
+            out_of_time,
             "done"
         );
         Ok(Report::new(
-            format!("refreshed={refreshed} already={already} unknown={unknown} playing={skipped} failed={failed}"),
-            refreshed,
+            format!("extracted={extracted} refreshed={refreshed} playing={skipped} failed={failed} pending={pending_total}{}",
+                if out_of_time { " (budget atteint)" } else { "" }),
+            extracted,
         ))
     }
 }
@@ -307,70 +354,69 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn row(path: &str, at: i64, action: i64) -> HistoryRow {
-        HistoryRow {
-            subtitles_path: path.into(),
-            at,
-            action,
-            provider: "embeddedsubtitles".into(),
-            language: "fr".into(),
-        }
-    }
-
     #[test]
-    fn stems_drop_language_and_flags() {
-        assert_eq!(
-            video_stem("/m/A/S1/A - S01E01.fr.srt").as_deref(),
-            Some("/m/A/S1/A - S01E01")
-        );
-        assert_eq!(video_stem("/m/A/A.fr.hi.srt").as_deref(), Some("/m/A/A"));
-        assert_eq!(
-            video_stem("/m/A/A.fre.forced.ass").as_deref(),
-            Some("/m/A/A")
-        );
-        assert_eq!(video_stem("/m/A/A.srt").as_deref(), Some("/m/A/A"));
-        // un point dans le titre n'est pas une langue
-        assert_eq!(
-            video_stem("/m/Mr. Robot/Mr. Robot - S01E01.fr.srt").as_deref(),
-            Some("/m/Mr. Robot/Mr. Robot - S01E01")
-        );
-        assert_eq!(
-            video_stem("/m/Dr.Who/ep.2024.fr.srt").as_deref(),
-            Some("/m/Dr.Who/ep.2024")
-        );
-        assert_eq!(video_stem("/m/A/A.mkv"), None);
-    }
-
-    #[test]
-    fn pending_filters_and_orders() {
-        let rows = vec![
-            row("/m/b.fr.srt", 300, 1),
-            row("/m/a.fr.srt", 100, 1),
-            row("", 400, 1),
-            row("/m/c.fr.srt", 500, 2),
-            row("/m/d.fr.srt", 50, 1),
-        ];
-        let p = pending(&rows, 100);
-        assert_eq!(
-            p.iter()
-                .map(|r| r.subtitles_path.as_str())
-                .collect::<Vec<_>>(),
-            vec!["/m/a.fr.srt", "/m/b.fr.srt"]
-        );
-    }
-
-    #[test]
-    fn external_detection_matches_codes() {
-        let item = json!({"MediaStreams": [
-            {"Type": "Subtitle", "Language": "fra", "IsExternal": false},
-            {"Type": "Subtitle", "Language": "fre", "IsExternal": true}
+    fn jobs_follow_flags_and_codecs() {
+        let item = json!({"Path": "/seedbox/media/Anime/A/Season 1/A - S01E01.mkv", "MediaStreams": [
+            {"Type": "Video"},
+            {"Type": "Subtitle", "Language": "fra", "Codec": "ass", "IsForced": true, "Title": "Forced"},
+            {"Type": "Subtitle", "Language": "fra", "Codec": "ass", "IsDefault": true},
+            {"Type": "Subtitle", "Language": "fra", "Codec": "ass", "IsHearingImpaired": true},
+            {"Type": "Subtitle", "Language": "eng", "Codec": "ass"},
+            {"Type": "Subtitle", "Language": "fra", "Codec": "PGSSUB"}
         ]});
-        assert!(has_external(&item, "fr"));
-        assert!(!has_external(&item, "en"));
-        let only_embedded = json!({"MediaStreams": [{"Type": "Subtitle", "Language": "fra"}]});
-        assert!(!has_external(&only_embedded, "fr"));
-        let items = vec![json!({"Id": "1", "Path": "/seedbox/media/A/A - S01E01.mkv"})];
-        let idx = index_by_stem(&items);
-        assert!(idx.contains_key("/seedbox/media/A/A - S01E01"));
+        let jobs = plan_jobs(&item);
+        let outs: Vec<&str> = jobs.iter().map(|j| j.out.as_str()).collect();
+        assert_eq!(
+            outs,
+            vec![
+                "/seedbox/media/Anime/A/Season 1/A - S01E01.fr.forced.ass",
+                "/seedbox/media/Anime/A/Season 1/A - S01E01.fr.default.ass",
+                "/seedbox/media/Anime/A/Season 1/A - S01E01.fr.hi.ass"
+            ]
+        );
+        assert_eq!(jobs[0].srt, None);
+        assert_eq!(
+            jobs[1].srt.as_deref(),
+            Some("/seedbox/media/Anime/A/Season 1/A - S01E01.fr.srt")
+        );
+        assert_eq!(jobs[1].kind, "full");
+    }
+
+    #[test]
+    fn existing_external_files_are_skipped() {
+        let item = json!({"Path": "/seedbox/media/Movies/M (2020)/M (2020).mkv", "MediaStreams": [
+            {"Type": "Subtitle", "Language": "fra", "Codec": "subrip", "IsExternal": true, "Path": "/seedbox/media/Movies/M (2020)/M (2020).fr.srt"},
+            {"Type": "Subtitle", "Language": "fra", "Codec": "subrip"},
+            {"Type": "Subtitle", "Language": "fra", "Codec": "ass", "Title": "Malentendants"}
+        ]});
+        let jobs = plan_jobs(&item);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].kind, "hi");
+        assert!(jobs[0].out.ends_with("M (2020).fr.hi.ass"));
+        let none = json!({"Path": "/seedbox/media/x.mkv", "MediaStreams": [{"Type": "Subtitle", "Language": "fra", "Codec": "ass", "IsExternal": true, "Path": "/seedbox/media/x.fr.default.ass"}]});
+        assert!(plan_jobs(&none).is_empty());
+    }
+
+    #[test]
+    fn paths_and_quotes() {
+        let sb = Seedbox {
+            media_root: "/home/u/media".into(),
+            jellyfin_root: "/seedbox/media".into(),
+            ..Seedbox::default()
+        };
+        let (p, d) = seedbox_path(
+            &sb,
+            "/seedbox/media/Anime/A/Season 1/A - S01E01.fr.default.ass",
+        )
+        .unwrap();
+        assert_eq!(
+            p,
+            "/home/u/media/Anime/A/Season 1/A - S01E01.fr.default.ass"
+        );
+        assert_eq!(d, "Anime/A/Season 1");
+        assert!(seedbox_path(&sb, "/media/tvshows/x.mkv").is_none());
+        assert_eq!(sh_quote("l'été (2020)"), "'l'\"'\"'été (2020)'");
+        assert_eq!(out_name("/x/a", "subrip", "full"), "/x/a.fr.srt");
+        assert_eq!(out_name("/x/a", "ass", "forced"), "/x/a.fr.forced.ass");
     }
 }

@@ -46,10 +46,14 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   téléphone, la barre chevauchait la ligne « membre • date » : elle est passée en dessous, sur toute la largeur.
   L'icône « Mon compte » de l'en-tête restait invisible après un rechargement tant qu'on n'avait pas cliqué dessus.
 - **Les sous-titres arrivent tout de suite sur les titres de la seedbox.** Jusqu'ici, à la première lecture d'un épisode
-  en VOSTFR, Jellyfin devait extraire les sous-titres en relisant tout le fichier à distance (près de deux minutes) et
-  le lecteur abandonnait avant : « pas de sous-titres ». Les sous-titres sont désormais extraits une fois pour toutes
-  sur la seedbox, à côté de la vidéo (1 653 fichiers rattrapés le 21/09, les nouveautés à l'arrivée), et Jellyfin les
-  lit instantanément (tâche `subtitle_sync` : Jellyfin est prévenu de chaque sous-titre écrit, en quelques minutes).
+  en VOSTFR, Jellyfin devait extraire les sous-titres en relisant tout le fichier à distance (2 à 12 minutes) : ils
+  arrivaient en retard, ou jamais si l'on changeait de piste entre-temps. Ils sont désormais extraits une fois pour
+  toutes sur la seedbox, à côté de la vidéo, **dans leur format d'origine** (l'ASS des animés garde ses couleurs et ses
+  panneaux ; la piste malentendants reste à part), et Jellyfin les lit instantanément. Les titres récents passent en
+  premier, les nouveautés sont traitées à l'arrivée.
+- **Taille des sous-titres** : dans « Mon compte », choix Normale / Grande / Très grande pour l'appareil en cours,
+  appliqué **aussitôt, même en pleine lecture** (sous-titres SRT ; les sous-titres stylés des animés gardent leur
+  taille propre). « Grande » par défaut.
 
 ## 1.18.0 — 20/09/2026 — Abonnement automatique, « Mon compte », Discord et bienvenue
 

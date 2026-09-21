@@ -450,15 +450,21 @@ pub struct Tasks {
 #[serde(deny_unknown_fields, default)]
 pub struct SubtitleSync {
     pub interval_secs: u64,
-    /// Fiches Jellyfin rafraîchies au plus par passage.
+    /// Items (épisodes/films) traités au plus par passage — un ffmpeg à la fois sur la seedbox.
     pub max_per_run: usize,
+    /// Budget d'un passage : la boucle s'arrête au-delà et reprend au suivant (le planificateur coupe à 600 s).
+    pub max_seconds: u64,
+    /// Script d'extraction **sur la seedbox** (`scripts/seedbox/gc-extract-sub.sh`), vide = tâche inactive.
+    pub extract_script: String,
 }
 
 impl Default for SubtitleSync {
     fn default() -> Self {
         Self {
             interval_secs: 300,
-            max_per_run: 60,
+            max_per_run: 40,
+            max_seconds: 420,
+            extract_script: "~/bin/gc-extract-sub.sh".into(),
         }
     }
 }

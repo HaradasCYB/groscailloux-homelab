@@ -119,11 +119,14 @@ min_minutes = 10        # visionnage minimal par spectateur et par titre
 collection_name = "Tendances cette semaine"
 
 [tasks.subtitle_sync]
-# Sous-titres extraits ou téléchargés par le Bazarr de la seedbox (historique Bazarr) → vfs/refresh du dossier puis
-# FullRefresh de la fiche Jellyfin (seul moyen pour qu'un .fr.srt déposé à côté de la vidéo apparaisse) ; jamais
-# pendant une lecture de l'item. Premier passage : tout l'historique, par lots.
+# Pistes françaises incrustées (ASS/SRT) des fichiers de la seedbox → fichiers externes à codec identique, extraits SUR
+# la seedbox (scripts/seedbox/gc-extract-sub.sh par ssh, un ffmpeg à la fois, rien sur le lien), SRT sans panneaux
+# dérivé de l'ASS pour AirPlay/TV, puis FullRefresh de la fiche Jellyfin (seul moyen de voir un fichier annexe).
+# Les plus récents d'abord ; jamais pendant une lecture de l'item.
 interval_secs = 300
-max_per_run = 60
+max_per_run = 40
+max_seconds = 420          # le planificateur coupe une tâche à 600 s : on s'arrête avant et on reprend au passage suivant
+extract_script = "~/bin/gc-extract-sub.sh"
 
 [tasks.playback_canary]
 # Canari de lecture : toutes les 15 min, un transcodage réel de deux segments (un fichier VPS, un seedbox en
