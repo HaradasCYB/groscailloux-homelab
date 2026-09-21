@@ -124,6 +124,65 @@ pub fn validate_body(raw: &str, max_chars: usize) -> std::result::Result<String,
     Ok(out)
 }
 
+/// Découpe une annonce longue en messages d'au plus `max_chars`, de préférence entre deux paragraphes
+/// (ligne vide), sinon entre deux lignes, sinon au caractère. Chaque partie est déjà nettoyée.
+pub fn split_parts(text: &str, max_chars: usize) -> Vec<String> {
+    let max = max_chars.max(1);
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let flush = |cur: &mut String, parts: &mut Vec<String>| {
+        let t = cur.trim().to_string();
+        if !t.is_empty() {
+            parts.push(t);
+        }
+        cur.clear();
+    };
+    for para in text.split("\n\n") {
+        let para = para.trim_end();
+        if para.trim().is_empty() {
+            continue;
+        }
+        let joined = if cur.is_empty() {
+            para.to_string()
+        } else {
+            format!("{cur}\n\n{para}")
+        };
+        if joined.chars().count() <= max {
+            cur = joined;
+            continue;
+        }
+        flush(&mut cur, &mut parts);
+        if para.chars().count() <= max {
+            cur = para.to_string();
+            continue;
+        }
+        // paragraphe trop long à lui seul : ligne par ligne, puis au caractère
+        for line in para.lines() {
+            let joined = if cur.is_empty() {
+                line.to_string()
+            } else {
+                format!("{cur}\n{line}")
+            };
+            if joined.chars().count() <= max {
+                cur = joined;
+                continue;
+            }
+            flush(&mut cur, &mut parts);
+            let mut chunk = String::new();
+            for c in line.chars() {
+                if chunk.chars().count() == max {
+                    parts.push(chunk.clone());
+                    chunk.clear();
+                }
+                chunk.push(c);
+            }
+            cur = chunk;
+        }
+    }
+    flush(&mut cur, &mut parts);
+    parts
+}
+
 /// Jeton Jellyfin envoyé par l'interface : `X-Emby-Token`, ou `Token="…"` de l'en-tête
 /// `Authorization: MediaBrowser …`.
 pub fn token_from_headers(
@@ -557,6 +616,21 @@ mod tests {
             id: id.into(),
             name: id.to_uppercase(),
             moderator,
+        }
+    }
+
+    #[test]
+    fn split_parts_prefers_paragraphs() {
+        assert_eq!(split_parts("court", 100), vec!["court"]);
+        let long = "aaa\n\nbbb\n\nccc";
+        assert_eq!(split_parts(long, 8), vec!["aaa\n\nbbb", "ccc"]);
+        assert_eq!(split_parts(long, 4), vec!["aaa", "bbb", "ccc"]);
+        // paragraphe trop long : ligne par ligne, puis au caractère
+        assert_eq!(split_parts("l1\nl2\nl3", 5), vec!["l1\nl2", "l3"]);
+        assert_eq!(split_parts("abcdefgh", 3), vec!["abc", "def", "gh"]);
+        assert!(split_parts("\n\n  \n", 10).is_empty());
+        for p in split_parts(&"mot ".repeat(1000), 200) {
+            assert!(p.chars().count() <= 200);
         }
     }
 

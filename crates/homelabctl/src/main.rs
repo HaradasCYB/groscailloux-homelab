@@ -44,6 +44,23 @@ enum Cmd {
         #[arg(value_parser = ["apply", "test", "remove"])]
         action: String,
     },
+    /// Tchat : announce [fichier] (annonce dans le salon Annonces au nom d'un modérateur, texte lu dans le
+    /// fichier ou sur l'entrée standard ; découpée si elle dépasse `[chat] max_chars`)
+    Chat {
+        #[arg(value_parser = ["announce"])]
+        action: String,
+        /// Fichier texte de l'annonce (sinon entrée standard)
+        file: Option<PathBuf>,
+        /// Compte modérateur auteur (défaut : le premier de `[chat] moderators`)
+        #[arg(long)]
+        author: Option<String>,
+        /// Envoyer aussi l'annonce par mail aux membres
+        #[arg(long)]
+        mail: bool,
+        /// Ne pas relayer sur le salon Discord des membres
+        #[arg(long)]
+        no_discord: bool,
+    },
     /// Envoie le mail de bienvenue en exemple (lien de démonstration, aucun compte touché)
     MailTest {
         /// Adresse destinataire
@@ -174,6 +191,63 @@ async fn main() -> Result<()> {
             for l in r.lines {
                 println!("{dry}{l}");
             }
+        }
+        Cmd::Chat {
+            action: _,
+            file,
+            author,
+            mail,
+            no_discord,
+        } => {
+            let text = match file {
+                Some(f) => std::fs::read_to_string(&f)
+                    .with_context(|| format!("lecture de {}", f.display()))?,
+                None => {
+                    let mut s = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+                        .context("lecture de l'entrée standard")?;
+                    s
+                }
+            };
+            let author = author
+                .or_else(|| ctx.cfg.chat.moderators.first().cloned())
+                .context("aucun modérateur dans [chat] moderators : préciser --author")?;
+            let parts = homelab_core::chat::split_parts(text.trim(), ctx.cfg.chat.max_chars);
+            if parts.is_empty() {
+                bail!("annonce vide");
+            }
+            if ctx.dry_run {
+                println!(
+                    "DRY-RUN : annonce de {author} en {} message(s), {} caractères, discord={}, mail={}",
+                    parts.len(),
+                    text.trim().chars().count(),
+                    !no_discord,
+                    mail
+                );
+                return Ok(());
+            }
+            let v = daemon_post(
+                &ctx,
+                "/admin/chat/announce",
+                json!({ "author": author, "body": text, "email_members": mail, "discord": !no_discord }),
+            )
+            .await?;
+            println!(
+                "annonce publiée par {author} : {} message(s) (ids {}), discord={}, mail={}",
+                v.get("parts").and_then(Value::as_u64).unwrap_or(0),
+                v.get("message_ids")
+                    .and_then(Value::as_array)
+                    .map(|a| a
+                        .iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "))
+                    .unwrap_or_default(),
+                v.get("discord").and_then(Value::as_bool).unwrap_or(false),
+                v.get("email_members")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            );
         }
         Cmd::MailTest { to } => {
             let v = daemon_post(&ctx, "/admin/mail-test", json!({ "to": to })).await?;

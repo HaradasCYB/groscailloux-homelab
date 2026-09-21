@@ -82,6 +82,7 @@ pub fn router(ctx: Arc<TaskContext>) -> anyhow::Result<Router> {
         .route("/chat/api/private", get(private_threads))
         .route("/chat/api/members", get(members))
         .route("/chat/api/direct", post(direct))
+        .route("/admin/chat/announce", post(admin_announce))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .with_state(st))
 }
@@ -296,8 +297,31 @@ async fn send(
     let (uc, chc, t) = (u.clone(), ch.clone(), text.clone());
     let msg = db(&st, move |s| s.insert(&chc, &uc, &t, now())).await?;
     info!(task = "chat", channel = %msg.channel, author = %u.name, chars = text.chars().count(), "message posted");
-    if u.moderator && ch == Channel::Annonces && st.ctx.cfg.discord.announcements {
-        // l'annonce part aussi sur le salon Discord des membres (si un webhook est configuré)
+    announce_side_effects(
+        &st,
+        &u,
+        &ch,
+        text,
+        st.ctx.cfg.discord.announcements,
+        b.email_members,
+    );
+    Ok(Json(json!({ "message": msg })))
+}
+
+/// Une annonce d'un modérateur part aussi sur le salon Discord des membres (si un webhook est configuré)
+/// et, sur demande, par mail aux membres. Rien pour les autres salons ni les autres auteurs.
+fn announce_side_effects(
+    st: &ChatState,
+    u: &ChatUser,
+    ch: &Channel,
+    text: String,
+    discord: bool,
+    email_members: bool,
+) {
+    if !u.moderator || *ch != Channel::Annonces {
+        return;
+    }
+    if discord {
         let st3 = st.clone();
         let (author, body) = (u.name.clone(), text.clone());
         tokio::spawn(async move {
@@ -310,11 +334,75 @@ async fn send(
             .await;
         });
     }
-    if b.email_members && u.moderator && ch == Channel::Annonces {
-        let st2 = st.clone();
-        tokio::spawn(async move { mail_members(st2, u, text).await });
+    if email_members {
+        let (st2, u2) = (st.clone(), u.clone());
+        tokio::spawn(async move { mail_members(st2, u2, text).await });
     }
-    Ok(Json(json!({ "message": msg })))
+}
+
+#[derive(Deserialize)]
+struct AnnounceBody {
+    /// Compte modérateur au nom duquel l'annonce est publiée (`[chat] moderators`).
+    author: String,
+    body: String,
+    #[serde(default)]
+    email_members: bool,
+    /// `false` pour ne pas relayer sur Discord (défaut : le réglage `[discord] announcements`).
+    discord: Option<bool>,
+}
+
+/// POST /admin/chat/announce (hors du préfixe `/gc-chat/` publié par NPM ; jeton `HOMELABD_ONBOARD_TOKEN` en en-tête `x-onboard-token`, utilisé par
+/// `homelabctl chat announce`) : publie une annonce dans le salon Annonces au nom d'un modérateur, découpée
+/// en plusieurs messages si elle dépasse `[chat] max_chars`. Discord et mail reçoivent le texte entier, une fois.
+async fn admin_announce(
+    State(st): State<ChatState>,
+    headers: HeaderMap,
+    Json(b): Json<AnnounceBody>,
+) -> ApiResult<Json<Value>> {
+    let given = headers
+        .get("x-onboard-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    match &st.ctx.secrets.onboard_token {
+        Some(t) if !given.is_empty() && given == t.expose() => {}
+        _ => return Err(err(StatusCode::UNAUTHORIZED, "jeton manquant ou invalide")),
+    }
+    let cfg = &st.ctx.cfg.chat;
+    if !chat::is_listed(&b.author, &cfg.moderators) {
+        return Err(err(StatusCode::FORBIDDEN, "l'auteur n'est pas modérateur"));
+    }
+    let jf = st.ctx.jellyfin.find_user(&b.author).await.map_err(|e| {
+        warn!(task = "chat", error = %e, "announce: jellyfin unreachable");
+        err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
+    })?;
+    let Some(jf) = jf else {
+        return Err(err(StatusCode::NOT_FOUND, "compte modérateur introuvable"));
+    };
+    let u = ChatUser {
+        id: chat::normalize_id(jf.get("Id").and_then(Value::as_str).unwrap_or("")),
+        name: jf
+            .get("Name")
+            .and_then(Value::as_str)
+            .unwrap_or(&b.author)
+            .to_string(),
+        moderator: true,
+    };
+    // même nettoyage que pour un message ordinaire, sans le plafond de taille (découpage ensuite)
+    let text =
+        chat::validate_body(&b.body, usize::MAX).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    let parts = chat::split_parts(&text, cfg.max_chars);
+    let mut ids = Vec::new();
+    for p in &parts {
+        let (uc, t) = (u.clone(), p.clone());
+        let msg = db(&st, move |s| s.insert(&Channel::Annonces, &uc, &t, now())).await?;
+        ids.push(msg.id);
+    }
+    info!(task = "chat", author = %u.name, parts = parts.len(), chars = text.chars().count(), "announcement posted by CLI");
+    let discord = b.discord.unwrap_or(st.ctx.cfg.discord.announcements);
+    announce_side_effects(&st, &u, &Channel::Annonces, text, discord, b.email_members);
+    Ok(Json(
+        json!({ "success": true, "message_ids": ids, "parts": parts.len(), "discord": discord, "email_members": b.email_members }),
+    ))
 }
 
 async fn remove(

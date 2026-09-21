@@ -21,7 +21,7 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test
 cargo build --release --target x86_64-unknown-linux-musl -j4      # laisser 2 vCPU à Jellyfin
 sudo install target/x86_64-unknown-linux-musl/release/homelab{d,ctl} /usr/local/bin/ && sudo systemctl restart homelabd
 
-homelabctl check | list | status | run <task> --dry-run | onboard | vpn | backup
+homelabctl check | list | status | run <task> --dry-run | onboard | vpn | backup | chat announce <fichier>
 journalctl -u homelabd -f
 ```
 

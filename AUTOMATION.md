@@ -476,6 +476,12 @@ LG webOS). Salons `annonces` (modérateurs seulement), `entraide`, `discussion`,
   l'annonce), qui disparaît une fois le message lu ou quand il répond.
 - **Client** : rafraîchi toutes les 5 s panneau ouvert, 60 s fermé, rien onglet caché ; bulle masquée pendant
   la lecture ; bannière de la dernière annonce non lue sur l'accueil ; aucun HTML de message interprété.
+- **Annonce depuis la ligne de commande** : `homelabctl chat announce [fichier] [--author <modérateur>] [--mail]
+  [--no-discord]` (texte lu dans le fichier ou sur l'entrée standard) → `POST /admin/chat/announce` (jeton
+  `HOMELABD_ONBOARD_TOKEN`, hors du préfixe `/gc-chat/` publié par NPM). L'auteur doit être dans `[chat] moderators`
+  et exister dans Jellyfin ; le texte est nettoyé comme un message ordinaire puis **découpé** en messages ≤ `max_chars`
+  entre deux paragraphes (`chat::split_parts`, testé) ; Discord (salon des membres) et le mail facultatif reçoivent le
+  texte entier, une fois. `--dry-run` affiche le nombre de messages sans rien publier.
 - **Couper** : `[chat] enabled = false` (+ restart homelabd) et désactiver le script dans JavaScript Injector.
 
 ### playback_canary — 15 min
