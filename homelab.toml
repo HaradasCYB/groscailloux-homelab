@@ -212,6 +212,10 @@ only_tmdb = []
 # l'identifiant de Sonarr/Radarr, qui fait foi, et on corrige (RemoteSearch + Apply + métadonnées).
 interval_secs = 1800
 max_fixes_per_run = 3
+# Les groupes de release écrivent leur nom dans la métadonnée « title » du fichier ; les bibliothèques ont été
+# passées à EnableEmbeddedTitles = false le 2026-09-22, mais les fiches déjà créées gardent ce nom tant qu'elles
+# ne sont pas ré-identifiées (un simple refresh ne suffit pas, mesuré). Une fiche est réessayée au plus tous les 30 j.
+fix_release_names = true
 
 [tasks.indexer_unblock]
 # Indexeurs mis en pause par Sonarr/Radarr (429, délais) : pause levée dans leur base (application

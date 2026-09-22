@@ -412,9 +412,33 @@ impl JellyfinClient {
         check(resp, "jellyfin Users/{id}/Policy").await.map(|_| ())
     }
 
+    /// Identifiants des bibliothèques d'un type donné (`movies`, `tvshows`, `boxsets`…).
+    pub async fn library_ids_of_type(&self, kind: &str) -> Result<Vec<String>> {
+        let resp = self
+            .req(Method::GET, "Library/VirtualFolders")
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin Library/VirtualFolders").await?;
+        Ok(v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|l| l.get("CollectionType").and_then(Value::as_str) == Some(kind))
+                    .filter_map(|l| l.get("ItemId").and_then(Value::as_str).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     /// Ordre des bibliothèques dans le menu d'un compte (`OrderedViews`) ; sans lui, Jellyfin les trie par nom
-    /// et « Anime » passerait avant « Films ».
-    pub async fn set_view_order(&self, user_id: &str, libraries: &[String]) -> Result<()> {
+    /// et « Anime » passerait avant « Films ». `latest_excludes` : bibliothèques retirées des rangées
+    /// « Récemment ajouté » (la bibliothèque Collections y répète les titres de Films et Séries, très visible
+    /// sur l'accueil des applis TV natives, qui n'ont que ces rangées).
+    pub async fn set_view_order(
+        &self,
+        user_id: &str,
+        libraries: &[String],
+        latest_excludes: &[String],
+    ) -> Result<()> {
         let resp = self
             .req(Method::GET, &format!("Users/{user_id}"))
             .send()
@@ -425,6 +449,7 @@ impl JellyfinClient {
             .cloned()
             .context("compte Jellyfin sans Configuration")?;
         cfg["OrderedViews"] = json!(libraries);
+        cfg["LatestItemsExcludes"] = json!(latest_excludes);
         let resp = self
             .req(Method::POST, &format!("Users/{user_id}/Configuration"))
             .json(&cfg)

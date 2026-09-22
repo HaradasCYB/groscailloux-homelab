@@ -157,7 +157,16 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
     {
         warn!(task = "onboard", username = %req.username, error = %e, "policy not applied, fix in Jellyfin dashboard");
     }
-    if let Err(e) = ctx.jellyfin.set_view_order(&jf_id, &libraries).await {
+    let latest_excludes = ctx
+        .jellyfin
+        .library_ids_of_type("boxsets")
+        .await
+        .unwrap_or_default();
+    if let Err(e) = ctx
+        .jellyfin
+        .set_view_order(&jf_id, &libraries, &latest_excludes)
+        .await
+    {
         warn!(task = "onboard", username = %req.username, error = %e, "library order not applied");
     }
     let skip = &ctx.cfg.accounts;

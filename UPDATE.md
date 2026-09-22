@@ -51,6 +51,12 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   toutes sur la seedbox, à côté de la vidéo, **dans leur format d'origine** (l'ASS des animés garde ses couleurs et ses
   panneaux ; la piste malentendants reste à part), et Jellyfin les lit instantanément. Les titres récents passent en
   premier, les nouveautés sont traitées à l'arrivée.
+- **Les films retrouvent leur vrai titre.** Trente films s'affichaient sous le nom du fichier téléchargé
+  (« Matrix.Reloaded.2003.MULTi.VFF.1080p… »), parce que Jellyfin préférait le titre inscrit dans le fichier par celui
+  qui l'a publié. C'est corrigé pour ceux-là et pour les suivants. Très visible sur une télé, où il n'y a que les
+  titres et les affiches à l'écran.
+- **Trois collections sans affiche** (Anime, Tendances, Univers Marvel) en ont une, et la rangée « Récemment ajouté »
+  ne répète plus les mêmes titres deux fois.
 - **Guide des membres à jour** : connexion détaillée appareil par appareil (dont la connexion rapide par code sur
   téléviseur), deux nouvelles étapes « Sous-titres et langues » et « Mon compte », suivi des demandes avec barre
   d'avancement, et mot de passe en libre-service.

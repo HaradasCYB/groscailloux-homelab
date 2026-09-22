@@ -725,6 +725,8 @@ pub struct IdentityCheck {
     pub interval_secs: u64,
     /// Corrections au plus par passage (chacune relance les métadonnées du titre).
     pub max_fixes_per_run: usize,
+    /// Ré-identifier aussi les fiches affichées sous un nom de release (« Matrix.Reloaded.2003.MULTi… »).
+    pub fix_release_names: bool,
 }
 
 impl Default for IdentityCheck {
@@ -732,6 +734,7 @@ impl Default for IdentityCheck {
         Self {
             interval_secs: 1800,
             max_fixes_per_run: 3,
+            fix_release_names: true,
         }
     }
 }

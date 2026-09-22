@@ -8,6 +8,14 @@
 //! Pour chaque fiche des Arrs, on compare son identifiant à celui de l'élément Jellyfin qui porte le même
 //! chemin. En cas d'écart : `RemoteSearch` avec le bon identifiant, `Apply`, puis rafraîchissement complet.
 //! Au plus `max_fixes_per_run` corrections par passage, jamais pendant une lecture du titre, `dry_run` respecté.
+//!
+//! Même passage, deuxième défaut (2026-09-22) : une fiche peut porter le **nom de la release** au lieu de son
+//! titre (« Matrix.Reloaded.2003.MULTi.VFF.1080p… »), parce que les groupes écrivent leur nom dans la métadonnée
+//! `title` du fichier et que les bibliothèques étaient en `EnableEmbeddedTitles`. Sur une télé (Fire TV, Android
+//! TV) c'est la moitié de l'écran, l'appli native n'ayant que les titres et les affiches à montrer. L'option est
+//! désormais à `false`, mais une fiche déjà créée garde ce nom : **seule une ré-identification le remplace**
+//! (un `Refresh`, même complet avec `ReplaceAllMetadata`, ne suffit pas — mesuré). Une fiche n'est réessayée
+//! qu'une fois par mois (`state.renamed_items`).
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -55,6 +63,22 @@ pub fn mismatched(item: &Value, exp: &Expected) -> bool {
         (exp.tvdb > 0 && tvdb > 0 && tvdb != exp.tvdb)
             || (exp.tmdb > 0 && tmdb > 0 && tmdb != exp.tmdb)
     }
+}
+
+/// Marqueurs qu'on ne trouve que dans un nom de release.
+const RELEASE_TOKENS: [&str; 34] = [
+    "1080p", "720p", "2160p", "480p", "540p", "4klight", "hdlight", "webrip", "web-dl", "webdl",
+    "bluray", "brrip", "dvdrip", "hdtv", "x264", "x265", "h264", "h265", "hevc", "xvid", "aac",
+    "ac3", "eac3", "dts", "ddp", "10bit", "multi", "vostfr", "vff", "vfi", "vf2", "vfq", "remux",
+    "proper",
+];
+
+/// Le nom affiché est-il un nom de release plutôt qu'un titre ? (Découpage sur les séparateurs des noms de
+/// fichiers ; il faut un marqueur entier, pour ne pas confondre avec un vrai titre.)
+pub fn looks_like_release(name: &str) -> bool {
+    name.to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|t| RELEASE_TOKENS.contains(&t))
 }
 
 /// Chemin d'un élément Jellyfin ramené au dossier du titre (un film pointe sur son fichier).
@@ -120,27 +144,53 @@ impl Task for IdentityCheck {
             .filter_map(|i| item_folder(i).map(|p| (p, i)))
             .collect();
         let playing = ctx.jellyfin.playing_paths().await.unwrap_or_default();
+        let tried = ctx.state.read(|s| s.renamed_items.clone()).await;
+        let now = crate::state::now();
         let mut fixed = 0u32;
         let mut names = Vec::new();
         for exp in &expected {
             let Some(item) = by_path.get(&exp.jellyfin_path) else {
                 continue;
             };
-            if !mismatched(item, exp) {
+            let wrong = item.get("Name").and_then(Value::as_str).unwrap_or("?");
+            let id = item.get("Id").and_then(Value::as_str).unwrap_or_default();
+            let bad_id = mismatched(item, exp);
+            // nom de release : une seule tentative par mois, la ré-identification peut rendre le même nom
+            let bad_name = !bad_id
+                && cfg.fix_release_names
+                && looks_like_release(wrong)
+                && tried
+                    .get(id)
+                    .map(|at| now - at > 30 * 86_400)
+                    .unwrap_or(true);
+            if !bad_id && !bad_name {
                 continue;
             }
-            let wrong = item.get("Name").and_then(Value::as_str).unwrap_or("?");
             if is_playing(&exp.jellyfin_path, &playing) {
                 info!(task = "identity_check", title = %exp.name, "en lecture : corrigé au prochain passage");
                 continue;
             }
-            warn!(task = "identity_check", title = %exp.name, wrong = %wrong, tvdb = exp.tvdb, tmdb = exp.tmdb, "jellyfin a la mauvaise fiche");
+            if bad_id {
+                warn!(task = "identity_check", title = %exp.name, wrong = %wrong, tvdb = exp.tvdb, tmdb = exp.tmdb, "jellyfin a la mauvaise fiche");
+            } else {
+                info!(task = "identity_check", title = %exp.name, wrong = %wrong, "fiche affichée sous un nom de release");
+            }
             if ctx.dry_run {
                 names.push(format!("{} (vu « {wrong} »)", exp.name));
                 fixed += 1;
+                if fixed as usize >= cfg.max_fixes_per_run {
+                    break;
+                }
                 continue;
             }
-            let id = item.get("Id").and_then(Value::as_str).unwrap_or_default();
+            if bad_name {
+                let (key, t) = (id.to_string(), now);
+                ctx.state
+                    .update(|s| {
+                        s.renamed_items.insert(key, t);
+                    })
+                    .await?;
+            }
             let kind = if exp.movie { "Movie" } else { "Series" };
             let ids = if exp.movie {
                 json!({ "Tmdb": exp.tmdb.to_string() })
@@ -214,6 +264,33 @@ mod tests {
             &json!({"ProviderIds": {"Tvdb": "417549"}}),
             &exp(true, 0, 1402)
         ));
+    }
+
+    #[test]
+    fn release_names_are_recognised() {
+        for n in [
+            "Matrix.Reloaded.2003.MULTi.VFF.1080p.10bit.BluRay.x265.DDP.5.1",
+            "A Quiet Place - 2018 - BluRay Rip 1080p - PARISTOCAT",
+            "8 Mile (2002) [1080p] MULTi BluRay x264-PopHD",
+            "Saturn.3.1980.MULTi.1080p.x265.BluRay.AC3-Se12",
+            "Caterina.Va.En.Ville.2003.VOSTFR.540p.WEBRip.E-AC-3.5.1.x264-LOLOPC",
+            "Tom.Clancys.Without.Remorse.2021.MULTi.2160p.HDR.WEB",
+        ] {
+            assert!(looks_like_release(n), "{n}");
+        }
+        for n in [
+            "Saturn 3",
+            "Le Parrain 2",
+            "Blade Runner 2049",
+            "Re:ZERO -Starting Life in Another World- Director's Cut",
+            "Mr. Robot",
+            "The Walking Dead",
+            "8 Mile",
+            "Bleach",
+            "L'Attaque des Titans",
+        ] {
+            assert!(!looks_like_release(n), "{n}");
+        }
     }
 
     #[test]

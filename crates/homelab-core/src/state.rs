@@ -76,6 +76,10 @@ pub struct State {
     /// Dernier résultat du canari de lecture (`tasks::playback_canary`).
     #[serde(default)]
     pub canary: CanaryState,
+    /// identity_check : dernière tentative de renommage d'une fiche au nom de release (id Jellyfin → date),
+    /// pour ne pas réessayer sans fin un titre que TMDB nomme ainsi.
+    #[serde(default)]
+    pub renamed_items: BTreeMap<String, i64>,
     /// Dates (secondes) des inscriptions par la page publique : plafond journalier.
     #[serde(default)]
     pub signups: Vec<i64>,

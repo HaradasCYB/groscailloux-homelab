@@ -393,6 +393,25 @@ journalctl -u homelabd -f
   `NO_INJECT=1` après déploiement).
   Google Cast ne marche que dans Chrome et l'appli Android (« non pris en charge » dans Safari et Jellyfin
   Desktop, c'est normal) ; AirPlay passe par le bouton du lecteur dans Safari/iPhone.
+- **Applis TV natives (Android TV, Fire TV Stick)** : 2ᵉ usage de la maison (133 lectures, 72 h sur 30 j au
+  2026-09-22, dont un Fire TV Stick en appli 0.19.10, plus un membre sur le client tiers JellyWatch), **100 % en
+  lecture directe**. Elles ne chargent **pas** jellyfin-web : ni calque CSS, ni script injecté (tchat, Mon compte,
+  AirPlay, aide à la qualité, `gc-tv.js`), ni rangées Home Screen Sections. Tout ce qui les améliore passe par les
+  **métadonnées et les réglages de compte**. L'appli ne stocke pas sa disposition d'accueil côté serveur
+  (`DisplayPreferences` client `jellyfin-androidtv` : `TvHome` vide) : rien à pré-régler de ce côté. Les segments
+  d'Intro Skipper leur donnent déjà « Passer l'intro » (**38 épisodes sur 40** en ont, mesuré) : inutile d'ajouter
+  TheIntroDB, dont les versions compatibles 10.x s'arrêtent d'ailleurs à l'ABI 10.9.
+- **`EnableEmbeddedTitles` : à laisser à `false`** (2026-09-22). Les groupes de release écrivent leur nom dans la
+  métadonnée `title` du MKV ; avec cette option, Jellyfin l'affichait à la place du titre — **30 films** s'appelaient
+  `Matrix.Reloaded.2003.MULTi.VFF.1080p…` ou `A Quiet Place - 2018 - BluRay Rip 1080p - PARISTOCAT`, ce qui remplit
+  l'écran d'une télé. Option remise à `false` sur Films, Séries, Anime et Films d'animation (sauvegarde
+  `backups/jellyfin-libs-20260922/virtualfolders-before.json`). **Une fiche déjà créée garde ce nom** : ni un
+  `Refresh`, même `FullRefresh` + `ReplaceAllMetadata`, ni un rafraîchissement d'images ne le remplacent — **seul
+  `RemoteSearch` + `Apply` renomme** (vérifié sur deux titres). C'est ce que fait `identity_check`
+  (`fix_release_names`, `looks_like_release`, une tentative par fiche et par mois via `state.renamed_items`).
+- **Images manquantes** : 22 titres sans logo et 24 sans vignette au 2026-09-22 ; un rafraîchissement d'images
+  ciblé (`ImageRefreshMode=FullRefresh`, `MetadataRefreshMode=None`) n'a rien ramené — TMDB n'en a pas pour ces
+  titres obscurs. Ne pas relancer la chasse sans changer de fournisseur d'images.
 - **Adresses des clients** : `KnownProxies = 172.18.0.0/16` (réseau Docker entier) dans la configuration
   réseau de Jellyfin, lu **au démarrage seulement**. Avant le 2026-09-15 il valait l'ancienne IP de NPM
   (`.15`, NPM est passé en `.16`) : Jellyfin voyait tout le monde comme NPM, donc comme réseau local.

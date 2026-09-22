@@ -227,6 +227,12 @@ vers `/data/media/anime*`), `~/media/Anime` et `~/media/Anime Movies` sur la see
   `animeTags` des serveurs Sonarr) ; la tâche rattrape le reste et les films.
 
 ### identity_check — 30 min
+
+Deuxième motif depuis le 2026-09-22 : une fiche affichée sous un **nom de release** (`looks_like_release`, marqueurs
+entiers `1080p`, `WEBRip`, `x265`, `MULTi`…). Les bibliothèques sont passées à `EnableEmbeddedTitles = false`, mais
+les fiches déjà créées gardent ce nom : seul `RemoteSearch` + `Apply` le remplace. Une fiche n'est réessayée qu'une
+fois par mois (`state.renamed_items`), interrupteur `[tasks.identity_check] fix_release_names`. 30 films réparés le
+jour même (Matrix Reloaded, Harry Potter, A Quiet Place…).
 Jellyfin identifie un dossier **d'après son nom** : un titre proche de celui d'un spin-off part sur la mauvaise
 fiche (*Attack on Titan* → *Junior High School*, *Slime* → *Slime Diaries*, *The Walking Dead* → *Dead City*).
 La tâche compare, pour chaque fiche des 4 Arrs, l'identifiant (TVDB pour les séries, TMDB pour les films) à
