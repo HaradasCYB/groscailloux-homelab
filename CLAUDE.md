@@ -391,8 +391,15 @@ journalctl -u homelabd -f
   `backups/cast-tests-20260919/airplay_test.js` (puppeteer, compte temporaire, script candidat injecté par
   interception de `/JavaScriptInjector/private.js` ; UA iPhone + simulateur du sélecteur, 22 cas dont accueil, fiche et page sans titre ; relance avec
   `NO_INJECT=1` après déploiement).
-  Google Cast ne marche que dans Chrome et l'appli Android (« non pris en charge » dans Safari et Jellyfin
-  Desktop, c'est normal) ; AirPlay passe par le bouton du lecteur dans Safari/iPhone.
+  Google Cast ne marche que dans **Chrome sur ordinateur** et dans l'**appli Android du Play Store** (celle de
+  F-Droid n'a pas le Cast, licence). **Chrome sur Android n'a pas le SDK Cast web** : jellyfin-web y écrit
+  « (Google Cast non pris en charge) » et notre script, qui retirait cette note, laissait « Aucun autre appareil
+  connecté avec ce compte » — un membre a cru à une restriction de notre part (2026-09-22, Abdou sur Chrome
+  Android, TV sans appli Jellyfin). Depuis, `gc-airplay.js` (VERSION 4) affiche sur Android « installe l'appli
+  Jellyfin du Play Store ». Rien chez nous ne bloque le Cast : `gc-cast-filter.js` ne filtre que les **sessions
+  Jellyfin** (`getSessions`), jamais les cibles Cast ou AirPlay du navigateur. Récepteur Cast du serveur :
+  `CastReceiverApplications` = Stable `F007D354`, posé sur les comptes. AirPlay passe par le bouton du lecteur
+  dans Safari/iPhone.
 - **Applis TV natives (Android TV, Fire TV Stick)** : 2ᵉ usage de la maison (133 lectures, 72 h sur 30 j au
   2026-09-22, dont un Fire TV Stick en appli 0.19.10, plus un membre sur le client tiers JellyWatch), **100 % en
   lecture directe**. Elles ne chargent **pas** jellyfin-web : ni calque CSS, ni script injecté (tchat, Mon compte,

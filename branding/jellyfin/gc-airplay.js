@@ -24,6 +24,11 @@
   var HIDE_MS = 7000;
   var VIDEO_WAIT_MS = 8000;
   var EMPTY_NOTE = 'Aucun autre appareil connecté avec ce compte.';
+  // Chrome sur Android n'a pas le SDK Cast web (il n'existe que sur ordinateur) : jellyfin-web écrit
+  // « (Google Cast non pris en charge) », qu'on retirait pour laisser « aucun autre appareil » — message
+  // trompeur, un membre a cru à une restriction de notre part (2026-09-22). On dit quoi faire à la place.
+  var EMPTY_ANDROID = 'Depuis le navigateur Android, la diffusion n\u2019est pas possible. Installe l\u2019appli '
+    + 'Jellyfin du Play Store : elle propose la diffusion vers une TV Chromecast ou Google TV.';
 
   function isApple(nav) {
     nav = nav || root.navigator || {};
@@ -37,12 +42,29 @@
     return /\(.+\)/.test(String(text || ''));
   }
 
+  function isAndroid(nav) {
+    nav = nav || root.navigator || {};
+    return /Android/.test(String(nav.userAgent || '')) && !isApple(nav);
+  }
+
+  /// Note affichée quand la feuille « Lire sur » est vide.
+  function emptyNote(castUnsupportedHere, nav) {
+    return castUnsupportedHere && isAndroid(nav) ? EMPTY_ANDROID : EMPTY_NOTE;
+  }
+
   function currentVideo(doc) {
     var v = (doc || document).querySelector('video');
     return v && typeof v.webkitShowPlaybackTargetPicker === 'function' ? v : null;
   }
 
-  root.__gcAirPlay = { isApple: isApple, castUnsupported: castUnsupported, EMPTY_NOTE: EMPTY_NOTE };
+  root.__gcAirPlay = {
+    isApple: isApple,
+    isAndroid: isAndroid,
+    castUnsupported: castUnsupported,
+    emptyNote: emptyNote,
+    EMPTY_NOTE: EMPTY_NOTE,
+    EMPTY_ANDROID: EMPTY_ANDROID
+  };
   if (typeof window === 'undefined' || root !== window) return; // tests
 
   /* --- journal : ce qui s'est passé, lisible côté serveur (jellyfin/config/log/upload_*.log) --- */
@@ -245,7 +267,7 @@
     return b;
   }
 
-  var VERSION = 3;
+  var VERSION = 4;
   /* « Jouer sur » = la feuille qui suit un appui sur le bouton Cast de l'en-tête (indépendant de la langue) */
   var lastCastTap = 0;
   document.addEventListener('click', function (e) {
@@ -280,7 +302,7 @@
     if (scroller && !scroller.querySelector('.actionSheetMenuItem') && !sheet.querySelector('.gc-ap-empty')) {
       var p = document.createElement('p');
       p.className = 'actionSheetText gc-ap-empty';
-      p.textContent = EMPTY_NOTE;
+      p.textContent = emptyNote(unsupported);
       scroller.parentNode.insertBefore(p, scroller);
     }
   }

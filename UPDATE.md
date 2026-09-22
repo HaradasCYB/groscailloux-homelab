@@ -51,6 +51,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   toutes sur la seedbox, à côté de la vidéo, **dans leur format d'origine** (l'ASS des animés garde ses couleurs et ses
   panneaux ; la piste malentendants reste à part), et Jellyfin les lit instantanément. Les titres récents passent en
   premier, les nouveautés sont traitées à l'arrivée.
+- **Diffuser vers la télé depuis un téléphone Android** : le menu « Lire sur » disait seulement « aucun autre
+  appareil connecté », ce qui laissait croire à un blocage. Il explique maintenant la vraie raison : le navigateur
+  Android ne sait pas diffuser, l'appli Jellyfin du Play Store si.
 - **Les films retrouvent leur vrai titre.** Trente films s'affichaient sous le nom du fichier téléchargé
   (« Matrix.Reloaded.2003.MULTi.VFF.1080p… »), parce que Jellyfin préférait le titre inscrit dans le fichier par celui
   qui l'a publié. C'est corrigé pour ceux-là et pour les suivants. Très visible sur une télé, où il n'y a que les
