@@ -33,6 +33,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   tâches les plus récentes (lectures simultanées, test de lecture, sous-titres extraits, cycle des abonnements,
   contrôle PayPal, lectures qui bouclent). Chaque tâche porte désormais son nom dans son propre code, et une tâche
   sans nom ne compile plus. Leurs résumés sont écrits en français lisible.
+- **Fiabilité** : une tâche qui rencontre une erreur imprévue ne s'arrête plus pour de bon, elle repasse à
+  l'intervalle suivant ; un paiement PayPal dont le traitement échoue est rejoué à la relance de PayPal au lieu
+  d'attendre le contrôle du lendemain ; une simple coupure réseau sur un film dont l'identifiant contient « 429 »
+  ne met plus une clé C411 au repos pour rien.
 - **Maintenance de nuit** : Jellyfin était bloqué depuis la veille sur la lecture d'un sous-titre de 43,8 Mo à
   travers le montage seedbox, ce qui empêchait l'analyse de la médiathèque. Redémarrage du serveur programmé hors
   lecture, avec contrôles automatiques au retour ; l'extraction des sous-titres est en pause en attendant son

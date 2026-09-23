@@ -581,6 +581,17 @@ impl SubStore {
         )?;
         Ok(n == 1)
     }
+
+    /// Oublie un événement dont le traitement a échoué, pour que la relance de PayPal le rejoue. Sans ça,
+    /// la relance répondait « déjà traité » et le paiement n'était appliqué qu'au rapprochement du lendemain
+    /// (audit du 2026-09-23).
+    pub fn forget_paypal_event(&self, event_id: &str) -> Result<()> {
+        self.db().execute(
+            "DELETE FROM paypal_events WHERE event_id = ?1",
+            params![event_id],
+        )?;
+        Ok(())
+    }
 }
 
 /// Une ligne d'export CSV des abonnements PayPal (colonnes reconnues à la volée, en-tête libre).
@@ -917,5 +928,28 @@ mod tests {
         );
         assert!(valid_paypal_sub_id("I-ABCDEFGHIJ12"));
         assert!(!valid_paypal_sub_id("ABCDEFGHIJ12"));
+    }
+
+    #[test]
+    fn a_failed_webhook_can_be_replayed() {
+        let st = SubStore::open_in_memory().unwrap();
+        assert!(st
+            .record_paypal_event(
+                "WH-1",
+                "PAYMENT.SALE.COMPLETED",
+                Some("I-ABCDEFGHIJ"),
+                "",
+                1
+            )
+            .unwrap());
+        // relance pendant le traitement : ignorée
+        assert!(!st
+            .record_paypal_event("WH-1", "PAYMENT.SALE.COMPLETED", None, "", 2)
+            .unwrap());
+        // le traitement échoue : l'événement est oublié, la relance suivante est rejouée
+        st.forget_paypal_event("WH-1").unwrap();
+        assert!(st
+            .record_paypal_event("WH-1", "PAYMENT.SALE.COMPLETED", None, "", 3)
+            .unwrap());
     }
 }

@@ -34,9 +34,13 @@ pub fn ceiling(max: usize, reserve: usize, manual: bool) -> usize {
 }
 
 /// Réponse de l'indexer signalant une limite atteinte (429, « request limit »).
+///
+/// On cherche le **code HTTP** tel que `clients::check` le formate (« HTTP 429 … »), jamais un « 429 » nu :
+/// une erreur réseau cite l'URL de la requête, et un identifiant TMDB comme 4291 ou 14290 mettait une clé
+/// C411 saine au repos 15 min (audit du 2026-09-23).
 pub fn is_limit(err: &anyhow::Error) -> bool {
     let s = format!("{err:#}").to_ascii_lowercase();
-    s.contains("429") || s.contains("too many requests") || s.contains("request limit")
+    s.contains("http 429") || s.contains("too many requests") || s.contains("request limit")
 }
 
 /// Choisit une clé et consomme une requête : la moins chargée, hors temps mort, sous son plafond.
@@ -168,5 +172,15 @@ mod tests {
             "API Request Limit reached for C411"
         )));
         assert!(!is_limit(&anyhow::anyhow!("connection refused")));
+        // Un identifiant qui contient « 429 » dans l'URL d'une simple coupure n'est pas une limite.
+        assert!(!is_limit(&anyhow::anyhow!(
+            "error sending request for url (http://prowlarr:9696/api/v1/search?query=%7BTmdbId:4291%7D): operation timed out"
+        )));
+        assert!(!is_limit(&anyhow::anyhow!(
+            "prowlarr search 14290 → HTTP 500 Internal Server Error"
+        )));
+        assert!(is_limit(&anyhow::anyhow!(
+            "prowlarr search → HTTP 429 Too Many Requests"
+        )));
     }
 }

@@ -9,7 +9,7 @@ use homelab_core::tasks::{registry, Task};
 use homelab_core::TaskContext;
 use rand::Rng;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 const RUN_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_JITTER: Duration = Duration::from_secs(30);
@@ -40,10 +40,43 @@ async fn run_loop(ctx: Arc<TaskContext>, task: Box<dyn Task>, interval: Duration
     let jitter =
         Duration::from_millis(rand::thread_rng().gen_range(0..MAX_JITTER.as_millis() as u64));
     tokio::time::sleep(jitter).await;
+    let task: Arc<dyn Task> = Arc::from(task);
+    let name = task.name();
     loop {
-        run_once(&ctx, task.as_ref()).await;
+        let (c, t) = (ctx.clone(), task.clone());
+        if contained(async move { run_once(&c, t.as_ref()).await }).await {
+            // Jusqu'au 2026-09-23, une panique tuait la boucle : la tâche ne repassait plus jamais,
+            // le service restait « actif » et systemd ne relançait rien.
+            error!(
+                task = name,
+                "run_panicked: passage abandonné, la tâche repassera à l'intervalle suivant"
+            );
+            record_panic(&ctx, name).await;
+        }
         tokio::time::sleep(interval).await;
     }
+}
+
+/// Exécute un passage dans sa propre tâche tokio : une panique y reste confinée. `true` si elle a paniqué.
+async fn contained<F>(fut: F) -> bool
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    matches!(tokio::spawn(fut).await, Err(e) if e.is_panic())
+}
+
+async fn record_panic(ctx: &TaskContext, name: &'static str) {
+    let _ = ctx
+        .state
+        .update(|s| {
+            if let Some(e) = s.task_runs.get_mut(name) {
+                e.last_end = Some(now());
+                e.last_ok = Some(false);
+                e.last_summary = "panique : passage abandonné (voir le journal)".into();
+                e.errors += 1;
+            }
+        })
+        .await;
 }
 
 pub async fn run_once(ctx: &TaskContext, task: &dyn Task) {
@@ -97,4 +130,15 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) {
             }
         })
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contained;
+
+    #[tokio::test]
+    async fn a_panicking_run_is_contained() {
+        assert!(contained(async { panic!("passage qui plante") }).await);
+        assert!(!contained(async {}).await);
+    }
 }

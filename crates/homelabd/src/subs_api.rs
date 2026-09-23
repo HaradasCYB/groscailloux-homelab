@@ -894,6 +894,7 @@ async fn webhook(State(st): State<SubsState>, headers: HeaderMap, body: Bytes) -
         }
     }
     info!(task = "subs", %summary, "webhook PayPal");
+    let event_id = facts.event_id.clone();
     let r: anyhow::Result<()> = match facts.event_type.as_str() {
         "BILLING.SUBSCRIPTION.ACTIVATED"
         | "BILLING.SUBSCRIPTION.RE-ACTIVATED"
@@ -909,7 +910,10 @@ async fn webhook(State(st): State<SubsState>, headers: HeaderMap, body: Bytes) -
     match r {
         Ok(_) => StatusCode::OK.into_response(),
         Err(e) => {
-            warn!(task = "subs", error = %e, "webhook : traitement en échec");
+            warn!(task = "subs", error = %e, "webhook : traitement en échec, relance de PayPal attendue");
+            if let Err(e) = st.ctx.subs.forget_paypal_event(&event_id) {
+                warn!(task = "subs", error = %e, "webhook : événement non oublié, la relance sera ignorée");
+            }
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
