@@ -608,6 +608,8 @@ journalctl -u homelabd -f
   Docker sur la seedbox (Radarr 16127, Sonarr 16126, Jackett 16129, FlareSolverr 16111 sur
   `172.17.0.1`), qBittorrent natif `127.0.0.1:16141`, autobrr natif `127.0.0.1:16123`. API
   publiques : `https://kakaouette.tofino.usbx.me/<app>`.
+- **Espace seedbox = le quota du compte** (`quota -s` sur la seedbox : 3,7 To, 2,9 To utilisés au 2026-09-23), pas le
+  `df` du disque partagé (20 To, 5,7 To libres, 234 comptes).
 - Montage : rclone dans **`/mnt/seedbox/media`**, Jellyfin lie le **parent** `/mnt/seedbox`
   (rslave). Lier le point de montage FUSE lui-même casse la reprise après coupure.
 - Nouvelles demandes Jellyseerr → Arrs seedbox (id 1). Ne rien importer côté seedbox qui existe
