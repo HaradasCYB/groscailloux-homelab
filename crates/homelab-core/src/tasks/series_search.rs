@@ -1470,6 +1470,10 @@ impl Task for SeriesSearch {
         "series_search"
     }
 
+    fn label(&self) -> &'static str {
+        "Recherche des séries (TMDB)"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.series_search.interval_secs)
     }

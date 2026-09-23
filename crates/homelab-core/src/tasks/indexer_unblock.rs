@@ -291,6 +291,10 @@ impl Task for IndexerUnblock {
         "indexer_unblock"
     }
 
+    fn label(&self) -> &'static str {
+        "Déblocage des indexeurs"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.indexer_unblock.interval_secs)
     }

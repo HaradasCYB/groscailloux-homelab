@@ -603,7 +603,7 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
     }
     Ok((
         format!(
-            "fiches={} créées={created} actions={actions}{} à_qualifier={unknown}",
+            "{} fiche(s), {created} créée(s), {actions} action(s){}, {unknown} à qualifier",
             ctx.subs.list()?.len(),
             if dry { " (observation)" } else { "" }
         ),

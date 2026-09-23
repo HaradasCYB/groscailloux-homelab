@@ -969,6 +969,10 @@ impl Task for DeletionCleanup {
         "deletion_cleanup"
     }
 
+    fn label(&self) -> &'static str {
+        "Suppressions Jellyfin"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.deletion_cleanup.interval_secs)
     }

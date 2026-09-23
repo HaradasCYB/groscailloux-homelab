@@ -61,6 +61,10 @@ impl Task for TrackerRatio {
         "tracker_ratio"
     }
 
+    fn label(&self) -> &'static str {
+        "Limites de partage"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.tracker_ratio.interval_secs)
     }

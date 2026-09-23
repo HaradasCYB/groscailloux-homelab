@@ -239,6 +239,10 @@ impl Task for MonitorSync {
         "monitor_sync"
     }
 
+    fn label(&self) -> &'static str {
+        "Saisons demandées"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.monitor_sync.interval_secs)
     }

@@ -21,6 +21,10 @@ impl Task for SubscriptionCycle {
         "subscription_cycle"
     }
 
+    fn label(&self) -> &'static str {
+        "Cycle des abonnements"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.subscription_cycle.interval_secs)
     }

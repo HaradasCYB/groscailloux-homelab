@@ -148,6 +148,10 @@ impl Task for Trending {
         "trending"
     }
 
+    fn label(&self) -> &'static str {
+        "Tendances de l'accueil"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.trending.interval_secs)
     }

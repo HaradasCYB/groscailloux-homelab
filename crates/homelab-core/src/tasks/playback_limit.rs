@@ -151,6 +151,10 @@ impl Task for PlaybackLimit {
         "playback_limit"
     }
 
+    fn label(&self) -> &'static str {
+        "Lectures simultanées"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.playback_limit.interval_secs)
     }

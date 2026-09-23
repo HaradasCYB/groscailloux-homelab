@@ -66,6 +66,10 @@ impl Task for UserPoller {
         "user_poller"
     }
 
+    fn label(&self) -> &'static str {
+        "Comptes Jellyseerr"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.user_poller.interval_secs)
     }

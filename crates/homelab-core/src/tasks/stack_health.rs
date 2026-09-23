@@ -169,6 +169,10 @@ impl Task for StackHealth {
         "stack_health"
     }
 
+    fn label(&self) -> &'static str {
+        "Santé des services"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.stack_health.interval_secs)
     }

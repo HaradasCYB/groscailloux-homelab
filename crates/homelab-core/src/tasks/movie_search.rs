@@ -176,6 +176,10 @@ impl Task for MovieSearch {
         "movie_search"
     }
 
+    fn label(&self) -> &'static str {
+        "Rattrapage des films (TMDB)"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.movie_search.interval_secs)
     }

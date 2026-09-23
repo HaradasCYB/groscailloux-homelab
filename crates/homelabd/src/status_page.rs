@@ -117,30 +117,6 @@ pub fn unmatched(
     v.into_iter().take(max).map(|(_, s)| s).collect()
 }
 
-fn label(task: &str) -> &'static str {
-    match task {
-        "stack_health" => "Santé des services",
-        "seedbox_refresh" => "Imports seedbox → Jellyfin",
-        "tracker_ratio" => "Limites de partage",
-        "stuck_handler" => "Téléchargements bloqués",
-        "disk_pressure" => "Disque plein",
-        "tba_bypass" => "Épisodes « TBA »",
-        "id_match_import" => "Imports « matched by ID »",
-        "torrent_import" => "Torrents ajoutés à la main",
-        "series_search" => "Recherche des séries (TMDB)",
-        "movie_search" => "Rattrapage des films (TMDB)",
-        "indexer_unblock" => "Déblocage des indexeurs",
-        "anime_library" => "Rangement des animés",
-        "identity_check" => "Contrôle des identifications",
-        "deletion_cleanup" => "Suppressions Jellyfin",
-        "trending" => "Tendances de l'accueil",
-        "monitor_sync" => "Saisons demandées",
-        "user_poller" => "Comptes Jellyseerr",
-        "cleanup" => "Nettoyage",
-        _ => "Tâche",
-    }
-}
-
 /// « il y a 4 min », « il y a 2 h », « il y a 3 j ».
 pub fn ago(now: i64, t: i64) -> String {
     let d = (now - t).max(0);
@@ -203,7 +179,7 @@ pub fn render(d: &PageData<'_>) -> String {
             .unwrap_or_default();
         rows.push_str(&format!(
             r#"<tr><td><i class="dot {st}"></i>{name}</td><td class="w">{when}</td><td class="s" title="{full}">{sum}</td></tr>"#,
-            name = esc(label(t)),
+            name = esc(&homelab_core::tasks::label_of(t)),
             when = esc(&when),
             full = esc(&summary),
             sum = esc(&summary)

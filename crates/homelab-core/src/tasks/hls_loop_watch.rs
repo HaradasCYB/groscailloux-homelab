@@ -197,6 +197,10 @@ impl Task for HlsLoopWatch {
         "hls_loop_watch"
     }
 
+    fn label(&self) -> &'static str {
+        "Lectures qui bouclent"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.hls_loop_watch.interval_secs)
     }

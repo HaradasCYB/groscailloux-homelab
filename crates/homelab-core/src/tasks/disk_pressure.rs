@@ -51,6 +51,10 @@ impl Task for DiskPressure {
         "disk_pressure"
     }
 
+    fn label(&self) -> &'static str {
+        "Disque plein"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.disk_pressure.interval_secs)
     }

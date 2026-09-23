@@ -185,6 +185,10 @@ impl Task for PlaybackCanary {
         "playback_canary"
     }
 
+    fn label(&self) -> &'static str {
+        "Test de lecture"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.playback_canary.interval_secs)
     }
@@ -238,7 +242,10 @@ impl Task for PlaybackCanary {
                     .await;
                 }
                 info!(task = "playback_canary", side, detail, "ok");
-                Ok(Report::new(format!("{side} ok ({detail})"), 0))
+                Ok(Report::new(
+                    format!("{side} : lecture OK, premier segment en {detail}"),
+                    0,
+                ))
             }
             Err(e) => {
                 let msg = format!("{side} : {e:#}");

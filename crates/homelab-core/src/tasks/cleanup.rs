@@ -79,6 +79,10 @@ impl Task for Cleanup {
         "cleanup"
     }
 
+    fn label(&self) -> &'static str {
+        "Nettoyage"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.cleanup.interval_secs)
     }

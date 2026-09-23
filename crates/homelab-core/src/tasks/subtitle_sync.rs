@@ -158,6 +158,10 @@ impl Task for SubtitleSync {
         "subtitle_sync"
     }
 
+    fn label(&self) -> &'static str {
+        "Sous-titres extraits"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.subtitle_sync.interval_secs)
     }
@@ -342,8 +346,10 @@ impl Task for SubtitleSync {
             "done"
         );
         Ok(Report::new(
-            format!("extracted={extracted} refreshed={refreshed} playing={skipped} failed={failed} pending={pending_total}{}",
-                if out_of_time { " (budget atteint)" } else { "" }),
+            format!(
+                "{extracted} extrait(s), {refreshed} rafraîchi(s), {skipped} en lecture, {failed} échec(s), {pending_total} en attente{}",
+                if out_of_time { " (budget atteint)" } else { "" }
+            ),
             extracted,
         ))
     }

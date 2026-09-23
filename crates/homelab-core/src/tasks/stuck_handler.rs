@@ -162,6 +162,10 @@ impl Task for StuckHandler {
         "stuck_handler"
     }
 
+    fn label(&self) -> &'static str {
+        "Téléchargements bloqués"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.stuck_handler.interval_secs)
     }

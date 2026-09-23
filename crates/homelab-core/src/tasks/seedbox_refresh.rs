@@ -87,6 +87,10 @@ impl Task for SeedboxRefresh {
         "seedbox_refresh"
     }
 
+    fn label(&self) -> &'static str {
+        "Imports seedbox → Jellyfin"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         if cfg.seedbox.enabled {
             Duration::from_secs(cfg.tasks.seedbox_refresh.interval_secs)

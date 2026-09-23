@@ -20,6 +20,10 @@ impl Task for SubscriptionReconcile {
         "subscription_reconcile"
     }
 
+    fn label(&self) -> &'static str {
+        "Contrôle PayPal"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.subscription_reconcile.interval_secs)
     }

@@ -56,6 +56,10 @@ impl Report {
 #[async_trait]
 pub trait Task: Send + Sync {
     fn name(&self) -> &'static str;
+    /// Nom affiché sur `/status.html` et dans le panneau Automatisation de Homarr. Obligatoire, sans valeur
+    /// par défaut : jusqu'au 2026-09-23, une liste tenue à la main dans `status_page.rs` affichait « Tâche »
+    /// pour les six tâches ajoutées après elle.
+    fn label(&self) -> &'static str;
     fn interval(&self, cfg: &Config) -> Duration;
     async fn run(&self, ctx: &TaskContext) -> Result<Report>;
 }
@@ -96,4 +100,32 @@ pub fn find(name: &str) -> Option<Box<dyn Task>> {
 
 pub fn names() -> Vec<&'static str> {
     registry().iter().map(|t| t.name()).collect()
+}
+
+/// Nom affiché d'une tâche, à partir de son identifiant ; l'identifiant lui-même si la tâche est inconnue.
+pub fn label_of(name: &str) -> String {
+    registry()
+        .iter()
+        .find(|t| t.name() == name)
+        .map(|t| t.label().to_string())
+        .unwrap_or_else(|| name.to_string())
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn every_task_has_its_own_label() {
+        let tasks = registry();
+        let mut seen = std::collections::HashSet::new();
+        for t in &tasks {
+            let l = t.label().trim();
+            assert!(!l.is_empty(), "{} n'a pas de nom affiché", t.name());
+            assert_ne!(l, "Tâche", "{} garde le nom générique", t.name());
+            assert!(seen.insert(l.to_string()), "nom affiché en double : {l}");
+        }
+        assert_eq!(label_of("playback_canary"), "Test de lecture");
+        assert_eq!(label_of("inconnue"), "inconnue");
+    }
 }

@@ -12,7 +12,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.19.0](#1190--21092026--suivi-des-demandes-langue-et-canari)** | 21/09/2026 | **Suivi des demandes, langue et canari** |
+| **[1.19.1](#1191--23092026--audit--fiabilité-et-sécurité)** | 23/09/2026 | **Audit : fiabilité et sécurité** |
+| [1.19.0](#1190--21092026--suivi-des-demandes-langue-et-canari) | 21/09/2026 | Suivi des demandes, langue et canari |
 | [1.18.0](#1180--20092026--abonnement-automatique--mon-compte--discord-et-bienvenue) | 20/09/2026 | Abonnement automatique, « Mon compte », Discord et bienvenue |
 | [1.15.1](#1151--19092026--télé-français-partout-airplay-et--lire-sur-) | 19/09/2026 | Télé, français partout, AirPlay et « Lire sur » |
 | [1.14.0](#1140--18092026--animés-complets-tout-par-la-seedbox-lecture-qui-tient-la-nuit) | 18/09/2026 | Animés complets, tout par la seedbox, lecture qui tient la nuit |
@@ -25,6 +26,17 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.19.1 — 23/09/2026 — Audit : fiabilité et sécurité
+
+- **Noms des tâches** : le panneau Automatisation de Homarr et la page d'état n'affichent plus « Tâche » pour les six
+  tâches les plus récentes (lectures simultanées, test de lecture, sous-titres extraits, cycle des abonnements,
+  contrôle PayPal, lectures qui bouclent). Chaque tâche porte désormais son nom dans son propre code, et une tâche
+  sans nom ne compile plus. Leurs résumés sont écrits en français lisible.
+- **Maintenance de nuit** : Jellyfin était bloqué depuis la veille sur la lecture d'un sous-titre de 43,8 Mo à
+  travers le montage seedbox, ce qui empêchait l'analyse de la médiathèque. Redémarrage du serveur programmé hors
+  lecture, avec contrôles automatiques au retour ; l'extraction des sous-titres est en pause en attendant son
+  correctif.
 
 ## 1.19.0 — 21/09/2026 — Suivi des demandes, langue et canari
 

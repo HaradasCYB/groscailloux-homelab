@@ -160,6 +160,10 @@ impl Task for IdMatchImport {
         "id_match_import"
     }
 
+    fn label(&self) -> &'static str {
+        "Imports « matched by ID »"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.id_match_import.interval_secs)
     }

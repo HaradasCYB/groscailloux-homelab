@@ -926,6 +926,10 @@ impl Task for TorrentImport {
         "torrent_import"
     }
 
+    fn label(&self) -> &'static str {
+        "Torrents ajoutés à la main"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.torrent_import.interval_secs)
     }

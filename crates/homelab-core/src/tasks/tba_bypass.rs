@@ -88,6 +88,10 @@ impl Task for TbaBypass {
         "tba_bypass"
     }
 
+    fn label(&self) -> &'static str {
+        "Épisodes « TBA »"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.tba_bypass.interval_secs)
     }

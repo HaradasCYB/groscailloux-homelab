@@ -299,6 +299,10 @@ impl Task for AnimeLibrary {
         "anime_library"
     }
 
+    fn label(&self) -> &'static str {
+        "Rangement des animés"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.anime_library.interval_secs)
     }

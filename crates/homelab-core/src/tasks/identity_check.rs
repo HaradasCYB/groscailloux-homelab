@@ -128,6 +128,10 @@ impl Task for IdentityCheck {
         "identity_check"
     }
 
+    fn label(&self) -> &'static str {
+        "Contrôle des identifications"
+    }
+
     fn interval(&self, cfg: &Config) -> Duration {
         Duration::from_secs(cfg.tasks.identity_check.interval_secs)
     }
