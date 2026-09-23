@@ -80,6 +80,10 @@ pub struct State {
     /// pour ne pas réessayer sans fin un titre que TMDB nomme ainsi.
     #[serde(default)]
     pub renamed_items: BTreeMap<String, i64>,
+    /// subtitle_sync : dernier essai par item Jellyfin (id → essai). Sans ça, un item que Jellyfin ne liste pas
+    /// encore était repris toutes les 5 min (22/09 : 7 700 appels ssh et 6 000 rafraîchissements pour rien).
+    #[serde(default)]
+    pub subtitle_tries: BTreeMap<String, SubtitleTry>,
     /// Dates (secondes) des inscriptions par la page publique : plafond journalier.
     #[serde(default)]
     pub signups: Vec<i64>,
@@ -184,6 +188,15 @@ pub struct WelcomeLink {
 pub struct OnboardRecord {
     pub at: i64,
     pub outcome: String,
+}
+
+/// Dernier essai d'extraction de sous-titres pour un item (`tasks::subtitle_sync`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubtitleTry {
+    pub at: i64,
+    /// Aucune piste extractible (code 3 du script) : on ne retente qu'une fois par `failed_retry_days`.
+    #[serde(default)]
+    pub no_track: bool,
 }
 
 /// État du canari de lecture.

@@ -25,6 +25,7 @@ use super::{Report, Task};
 use crate::config::{Config, Seedbox};
 use crate::context::TaskContext;
 use crate::docker;
+use crate::state::SubtitleTry;
 
 pub struct SubtitleSync;
 
@@ -118,7 +119,11 @@ pub fn plan_jobs(item: &Value) -> Vec<Job> {
         };
         let kind = kind_of(s);
         let out = out_name(&stem, codec, kind);
-        if external.contains(&out) || jobs.iter().any(|j| j.out == out) {
+        // un ASS complet trop lourd est rangé sans « .default. » par le script (`max_default_ass_mb`)
+        let heavy = format!("{stem}.fr.ass");
+        let present = external.contains(&out)
+            || (out.ends_with(".fr.default.ass") && external.contains(&heavy));
+        if present || jobs.iter().any(|j| j.out == out) {
             continue;
         }
         let srt = (codec == "ass" && kind == "full").then(|| format!("{stem}.fr.srt"));
@@ -130,6 +135,20 @@ pub fn plan_jobs(item: &Value) -> Vec<Job> {
         });
     }
     jobs
+}
+
+/// Un item doit-il être (re)traité maintenant ? Jamais essayé : oui. Déjà traité : une fois par `retry` secondes
+/// (Jellyfin peut mettre du temps à lister le fichier). Sans piste extractible : une fois par `failed_retry`.
+pub fn due(last: Option<&SubtitleTry>, now: i64, retry: i64, failed_retry: i64) -> bool {
+    match last {
+        None => true,
+        Some(t) => now - t.at >= if t.no_track { failed_retry } else { retry },
+    }
+}
+
+/// Le script répond « code 3 » quand la vidéo n'a pas de piste extractible : pas la peine d'y revenir avant longtemps.
+fn is_no_track(err: &anyhow::Error) -> bool {
+    format!("{err:#}").contains("exit status: 3")
 }
 
 /// Chemin vu par Jellyfin (`/seedbox/media/...`) → chemin sur la seedbox (`/home/x/media/...`) et dossier
@@ -221,20 +240,47 @@ impl Task for SubtitleSync {
                     .map(str::to_string)
             })
             .collect();
+        let tries = ctx.state.read(|s| s.subtitle_tries.clone()).await;
+        let now = crate::state::now();
+        let retry = (cfg.retry_hours * 3600) as i64;
+        let failed_retry = (cfg.failed_retry_days * 86_400) as i64;
         let mut todo: Vec<(&Value, Vec<Job>)> = Vec::new();
-        let mut pending_total = 0usize;
+        let mut pending_ids: HashSet<String> = HashSet::new();
+        let (mut pending_total, mut waiting, mut no_track) = (0usize, 0usize, 0usize);
         for it in &items {
             let jobs = plan_jobs(it);
             if jobs.is_empty() {
                 continue;
             }
             pending_total += 1;
+            let id = it.get("Id").and_then(Value::as_str).unwrap_or("");
+            pending_ids.insert(id.to_string());
+            let last = tries.get(id);
+            if !due(last, now, retry, failed_retry) {
+                waiting += 1;
+                if last.map(|t| t.no_track).unwrap_or(false) {
+                    no_track += 1;
+                }
+                continue;
+            }
             if todo.len() < cfg.max_per_run.max(1) {
                 todo.push((it, jobs));
             }
         }
+        // l'état ne garde que les items encore en attente : il ne grossit pas sans fin (rien en simulation)
+        if !ctx.dry_run {
+            let _ = ctx
+                .state
+                .update(|s| s.subtitle_tries.retain(|id, _| pending_ids.contains(id)))
+                .await;
+        }
         if todo.is_empty() {
-            return Ok(Report::new("nothing to extract", 0));
+            return Ok(Report::new(
+                format!(
+                    "rien à extraire ({waiting} en attente de relance, dont {no_track} sans piste)"
+                ),
+                0,
+            ));
         }
         if ctx.dry_run {
             for (it, jobs) in &todo {
@@ -274,12 +320,14 @@ impl Task for SubtitleSync {
                 continue;
             };
             let mut ok_any = false;
+            let mut all_no_track = true;
             for j in jobs {
                 let Some((out, _)) = seedbox_path(sb, &j.out) else {
                     continue;
                 };
                 let mut cmd = format!(
-                    "{} {} {} {} {}",
+                    "GC_ASS_DEFAULT_MAX={} {} {} {} {} {}",
+                    cfg.max_default_ass_mb * 1024 * 1024,
                     cfg.extract_script,
                     sh_quote(&video),
                     j.codec,
@@ -305,9 +353,27 @@ impl Task for SubtitleSync {
                     }
                     Err(e) => {
                         failed += 1;
+                        if !is_no_track(&e) {
+                            all_no_track = false;
+                        }
                         warn!(task = "subtitle_sync", item = %path, kind = %j.kind, error = %e, "extraction failed");
                     }
                 }
+            }
+            // réussite ou « aucune piste » : on n'y revient qu'après le délai ; erreur passagère (ssh, délai) :
+            // rien n'est noté, l'item est repris au passage suivant
+            if ok_any || all_no_track {
+                let entry = SubtitleTry {
+                    at: crate::state::now(),
+                    no_track: !ok_any,
+                };
+                let key = id.to_string();
+                let _ = ctx
+                    .state
+                    .update(move |s| {
+                        s.subtitle_tries.insert(key, entry);
+                    })
+                    .await;
             }
             if ok_any {
                 dirs.push(dir);
@@ -347,7 +413,7 @@ impl Task for SubtitleSync {
         );
         Ok(Report::new(
             format!(
-                "{extracted} extrait(s), {refreshed} rafraîchi(s), {skipped} en lecture, {failed} échec(s), {pending_total} en attente{}",
+                "{extracted} extrait(s), {refreshed} rafraîchi(s), {skipped} en lecture, {failed} échec(s), {pending_total} en attente dont {waiting} en relance différée{}",
                 if out_of_time { " (budget atteint)" } else { "" }
             ),
             extracted,
@@ -424,5 +490,36 @@ mod tests {
         assert_eq!(sh_quote("l'été (2020)"), "'l'\"'\"'été (2020)'");
         assert_eq!(out_name("/x/a", "subrip", "full"), "/x/a.fr.srt");
         assert_eq!(out_name("/x/a", "ass", "forced"), "/x/a.fr.forced.ass");
+    }
+
+    #[test]
+    fn retries_are_spaced_out() {
+        let (retry, failed) = (6 * 3600, 7 * 86_400);
+        assert!(due(None, 1_000_000, retry, failed));
+        let done = SubtitleTry {
+            at: 1_000_000,
+            no_track: false,
+        };
+        assert!(!due(Some(&done), 1_000_000 + 300, retry, failed));
+        assert!(due(Some(&done), 1_000_000 + retry, retry, failed));
+        let none = SubtitleTry {
+            at: 1_000_000,
+            no_track: true,
+        };
+        assert!(!due(Some(&none), 1_000_000 + retry, retry, failed));
+        assert!(due(Some(&none), 1_000_000 + failed, retry, failed));
+    }
+
+    #[test]
+    fn a_heavy_ass_kept_without_default_counts_as_present() {
+        let item = serde_json::json!({
+            "Path": "/seedbox/media/Anime/B/B - S01E18.mkv",
+            "MediaStreams": [
+                {"Type": "Subtitle", "Codec": "ass", "Language": "fre", "IsExternal": false},
+                {"Type": "Subtitle", "Codec": "ass", "Language": "fre", "IsExternal": true,
+                 "Path": "/seedbox/media/Anime/B/B - S01E18.fr.ass"}
+            ]
+        });
+        assert!(plan_jobs(&item).is_empty());
     }
 }

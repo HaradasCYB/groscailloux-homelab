@@ -6,9 +6,17 @@
 #   Sortie écrite via un fichier temporaire puis renommée. Si un 5e argument (.srt) est donné et que la sortie est un
 #   .ass, gc-ass2srt.py en dérive un SRT sans les lignes de panneaux (AirPlay, téléviseurs).
 # Idempotent : sortie déjà présente et non vide → rien (code 0). Codes : 2 vidéo absente, 3 piste introuvable/vide.
+# ASS complet (.fr.default.ass) plus lourd que GC_ASS_DEFAULT_MAX octets (8 Mio par défaut) : rangé en .fr.ass, sans
+# « default », pour que le SRT soit choisi d'office (2026-09-23 : un ASS de 43,8 Mo a figé l'analyse de Jellyfin).
 set -euo pipefail
 video=$1; codec=$2; kind=$3; out=$4; srt=${5:-}
+max=${GC_ASS_DEFAULT_MAX:-8388608}
 [ -f "$video" ] || { echo "vidéo absente : $video" >&2; exit 2; }
+heavy=""
+case "$out" in *.fr.default.ass) heavy="${out%.fr.default.ass}.fr.ass" ;; esac
+# déjà extrait et trop lourd pour être par défaut : on le range (fichiers extraits avant ce seuil)
+if [ -n "$heavy" ] && [ -s "$out" ] && [ "$(stat -c %s "$out")" -gt "$max" ]; then mv -f "$out" "$heavy"; fi
+if [ -n "$heavy" ] && [ -s "$heavy" ] && [ ! -s "$out" ]; then out=$heavy; fi
 fresh=0
 if [ ! -s "$out" ]; then
   fresh=1
@@ -37,6 +45,7 @@ print(best[1] if best else "")' "$codec" "$kind")
   nice -n 19 ionice -c 3 ffmpeg -nostdin -hide_banner -loglevel error -y -i "$video" -map "0:$idx" -an -vn -c:s copy "$tmp"
   [ -s "$tmp" ] || { rm -f "$tmp"; echo "extraction vide : $video flux $idx" >&2; exit 3; }
   mv -f "$tmp" "$out"
+  if [ -n "$heavy" ] && [ "$(stat -c %s "$out")" -gt "$max" ]; then mv -f "$out" "$heavy"; out=$heavy; fi
 fi
 # SRT dérivé : (re)généré quand l'ASS vient d'être extrait (remplace un SRT converti ailleurs, avec panneaux)
 if [ -n "$srt" ] && { [ "$fresh" = 1 ] || [ ! -s "$srt" ]; }; then

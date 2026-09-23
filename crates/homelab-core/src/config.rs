@@ -456,6 +456,12 @@ pub struct SubtitleSync {
     pub max_seconds: u64,
     /// Script d'extraction **sur la seedbox** (`scripts/seedbox/gc-extract-sub.sh`), vide = tâche inactive.
     pub extract_script: String,
+    /// Un item déjà traité n'est revu qu'après ce délai.
+    pub retry_hours: u64,
+    /// Item sans piste extractible (code 3 du script) : nouvel essai après ce délai.
+    pub failed_retry_days: u64,
+    /// Au-delà de cette taille, l'ASS complet n'est pas marqué `.default` (le SRT dérivé l'est).
+    pub max_default_ass_mb: u64,
 }
 
 impl Default for SubtitleSync {
@@ -465,6 +471,9 @@ impl Default for SubtitleSync {
             max_per_run: 40,
             max_seconds: 420,
             extract_script: "~/bin/gc-extract-sub.sh".into(),
+            retry_hours: 6,
+            failed_retry_days: 7,
+            max_default_ass_mb: 8,
         }
     }
 }

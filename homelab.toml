@@ -127,6 +127,9 @@ interval_secs = 300
 max_per_run = 40
 max_seconds = 420          # le planificateur coupe une tâche à 600 s : on s'arrête avant et on reprend au passage suivant
 extract_script = "~/bin/gc-extract-sub.sh"
+retry_hours = 6            # un item déjà traité n'est revu qu'après ce délai (le 22/09, Jellyfin bloqué : 157 passages à vide)
+failed_retry_days = 7      # item sans piste extractible (code 3 : aucune piste, extraction vide) : un essai par semaine
+max_default_ass_mb = 8     # au-delà, l'ASS complet n'est pas marqué par défaut, le SRT l'est (Blue Box : ASS de 43,8 Mo)
 
 [tasks.playback_canary]
 # Canari de lecture : toutes les 15 min, un transcodage réel de deux segments (un fichier VPS, un seedbox en
