@@ -105,8 +105,9 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) {
             (true, rep.summary)
         }
         Ok(Err(e)) => {
-            warn!(task = name, error = %e, "run_failed");
-            (false, format!("error: {e}"))
+            // `{:#}` : toute la chaîne de causes (« jellyfin Items: … operation timed out »), pas seulement le contexte
+            warn!(task = name, error = format!("{e:#}"), "run_failed");
+            (false, format!("error: {e:#}"))
         }
         Err(_) => {
             warn!(

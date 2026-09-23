@@ -206,13 +206,18 @@ impl Task for SubtitleSync {
             .context("aucun compte admin Jellyfin")?;
         let mut items = ctx
             .jellyfin
-            .items(&[
-                ("UserId", admin.as_str()),
-                ("Recursive", "true"),
-                ("IncludeItemTypes", "Episode,Movie"),
-                ("Fields", "Path,MediaStreams,DateCreated"),
-                ("EnableImages", "false"),
-            ])
+            .items_paged(
+                &[
+                    ("UserId", admin.as_str()),
+                    ("Recursive", "true"),
+                    ("IncludeItemTypes", "Episode,Movie"),
+                    ("Fields", "Path,MediaStreams,DateCreated"),
+                    ("EnableImages", "false"),
+                    ("SortBy", "DateCreated,SortName"),
+                    ("SortOrder", "Descending"),
+                ],
+                300,
+            )
             .await
             .context("jellyfin Items")?;
         let root = format!("{}/", sb.jellyfin_root.trim_end_matches('/'));

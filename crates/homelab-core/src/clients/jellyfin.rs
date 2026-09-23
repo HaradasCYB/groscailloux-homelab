@@ -506,6 +506,33 @@ impl JellyfinClient {
             .unwrap_or_default())
     }
 
+    /// `items` page par page (`StartIndex`/`Limit`) : une requête lourde (pistes de toute la médiathèque, ~15 Mo en
+    /// 8 s) dépassait parfois à elle seule le délai de 30 s du client quand Jellyfin était occupé (2026-09-23).
+    pub async fn items_paged(&self, query: &[(&str, &str)], page: usize) -> Result<Vec<Value>> {
+        let page = page.max(1);
+        let limit = page.to_string();
+        let mut out = Vec::new();
+        loop {
+            let start = out.len().to_string();
+            let mut q: Vec<(&str, &str)> = query.to_vec();
+            q.push(("StartIndex", start.as_str()));
+            q.push(("Limit", limit.as_str()));
+            let resp = self.req(Method::GET, "Items").query(&q).send().await?;
+            let v = json(resp, "jellyfin Items (page)").await?;
+            let batch = v
+                .get("Items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let total = v.get("TotalRecordCount").and_then(Value::as_u64);
+            let n = batch.len();
+            out.extend(batch);
+            if n < page || total.is_some_and(|t| out.len() as u64 >= t) {
+                return Ok(out);
+            }
+        }
+    }
+
     /// `POST /Items/{id}/PlaybackInfo` avec un profil d'appareil : Jellyfin renvoie l'URL de transcodage.
     pub async fn playback_info(&self, item_id: &str, user_id: &str, body: &Value) -> Result<Value> {
         let resp = self
