@@ -9,6 +9,9 @@
 //! - Avec la session, la couche réinjecte le jeton dans la requête **en interne** (requête, ou en-tête
 //!   `X-Onboard-Token` pour `POST /onboard`) : les pages et leurs formulaires n'ont pas changé.
 //! - Échecs limités par adresse (`MAX_FAILS` par `FAIL_WINDOW`) et au total.
+//! - IP de la maison (`HOMELABD_ADMIN_TRUSTED_IPS`) : session admin d'office, sans formulaire, et cookie posé au
+//!   passage (si l'IP de la box change, le navigateur reste connecté). Demandé le 2026-09-23 : la connexion gênait
+//!   la gestion depuis Homarr (iframe État comprise).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +28,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 pub const COOKIE: &str = "gc_admin";
-const SESSION_SECS: u64 = 30 * 24 * 3600;
+const SESSION_SECS: u64 = 365 * 24 * 3600;
 const MAX_FAILS: usize = 10;
 const MAX_FAILS_TOTAL: usize = 100;
 const FAIL_WINDOW: Duration = Duration::from_secs(15 * 60);
@@ -203,6 +206,12 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// L'adresse (dernier saut de `X-Forwarded-For`, posé par NPM) est-elle une adresse de confiance ? Une requête sans
+/// cet en-tête (`local`) ne l'est jamais.
+fn trusted(ip: &str, list: &[String]) -> bool {
+    ip != "local" && list.iter().any(|t| t == ip)
+}
+
 /// Adresse du client : le **dernier** élément de `X-Forwarded-For` (celui que NPM ajoute ; les précédents viennent
 /// du client et se falsifient).
 fn client_ip(headers: &axum::http::HeaderMap) -> String {
@@ -325,9 +334,10 @@ form{{background:var(--card);border:1px solid var(--line);border-radius:12px;pad
 h1{{font-size:1.2rem;margin:0 0 16px}}label{{display:block;font-size:.9rem;margin-bottom:6px}}
 input{{width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;font:inherit}}
 button{{margin-top:16px;width:100%;padding:10px;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;cursor:pointer}}
-.err{{color:var(--err);margin:0 0 12px}}</style></head><body>
-<form method="post" action="/connexion"><h1>Administration</h1>{flash}<input type="hidden" name="next" value="{next}"><label for="t">Jeton d'accès</label><input id="t" type="password" name="token" autocomplete="current-password" required autofocus><button type="submit">Ouvrir la session</button></form></body></html>"#,
-        next = esc(next)
+.err{{color:var(--err);margin:0 0 12px}}.alt{{font-size:.85rem;margin:12px 0 0;opacity:.8}}.alt a{{color:var(--acc)}}</style></head><body>
+<form method="post" action="/connexion"><h1>Administration</h1>{flash}<input type="hidden" name="next" value="{next}"><label for="t">Jeton d'accès</label><input id="t" type="password" name="token" autocomplete="current-password" required autofocus><button type="submit">Ouvrir la session</button><p class="alt"><a href="/connexion?next={next_url}" target="_blank" rel="noopener">Ouvrir dans un onglet</a> (si ce formulaire est dans un cadre, comme le tableau Homarr)</p></form></body></html>"#,
+        next = esc(next),
+        next_url = esc(&encode(next))
     );
     let mut r = (status, Html(html)).into_response();
     r.headers_mut()
@@ -441,7 +451,19 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
         };
     }
 
-    let session = cookie_of(&req).and_then(|c| auth.verify(&c, now()));
+    let cookie = cookie_of(&req).and_then(|c| auth.verify(&c, now()));
+    let from_home = trusted(&ip, &auth.ctx.secrets.admin_trusted_ips);
+    let session = if from_home {
+        Some(Scope::Admin)
+    } else {
+        cookie
+    };
+    // IP de la maison sans cookie admin : on le pose au passage
+    let new_cookie = if from_home && cookie != Some(Scope::Admin) {
+        auth.set_cookie(Scope::Admin)
+    } else {
+        None
+    };
     match session {
         Some(scope) if scope.covers(need) => {
             // réinjecte le jeton attendu par la page, en interne seulement
@@ -467,6 +489,9 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
             strip_location(&mut resp);
             resp.headers_mut()
                 .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            if let Some(c) = new_cookie {
+                resp.headers_mut().append(header::SET_COOKIE, c);
+            }
             resp
         }
         // Pas de session : une page s'ouvre sur le formulaire ; un POST garde son propre contrôle (jeton du
@@ -570,6 +595,15 @@ mod tests {
         // jeton renouvelé : les anciennes sessions tombent
         assert_eq!(check_cookie(&a, 1_000, |_| Some("new".to_string())), None);
         assert_eq!(check_cookie("garbage", 1_000, tok), None);
+    }
+
+    #[test]
+    fn trusted_ips() {
+        let list = vec!["203.0.113.9".to_string()];
+        assert!(trusted("203.0.113.9", &list));
+        assert!(!trusted("203.0.113.10", &list));
+        assert!(!trusted("local", &["local".to_string()]));
+        assert!(!trusted("203.0.113.9", &[]));
     }
 
     #[test]

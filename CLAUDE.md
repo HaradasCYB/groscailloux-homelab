@@ -524,12 +524,14 @@ journalctl -u homelabd -f
 - **Pages d'administration de homelabd = session par cookie** (2026-09-23, `crates/homelabd/src/admin_auth.rs`) :
   `/`, `/onboard`, `/accounts*`, `/recherche*` (jeton d'onboarding) et `/status*` (jeton d'état ou d'onboarding)
   passent par une couche commune. `/connexion` (POST, jeton dans le corps) pose le cookie `gc_admin` (HMAC du jeton,
-  30 j, `HttpOnly; Secure; SameSite=Lax`, sans état : survit aux redémarrages, **renouveler un jeton ferme les
+  **1 an**, `HttpOnly; Secure; SameSite=Lax`, sans état : survit aux redémarrages, **renouveler un jeton ferme les
   sessions**) ; un vieux lien `?token=` ouvre la session puis redirige sans jeton. La couche réinjecte le jeton **en
   interne** (requête, ou `X-Onboard-Token` pour `POST /onboard`) : les pages n'ont pas bougé. **Jamais de `token=`
   dans un lien, une redirection ou un mail** (il finissait en clair dans les journaux NPM, ~5 000 fois ; purgés le
   2026-09-23, jetons renouvelés). La CLI garde l'en-tête. 10 échecs / 15 min par IP (dernier `X-Forwarded-For`),
-  100 au total. `/accounts` et `/recherche` gardent **en plus** l'auth HTTP NPM « admin-outils ». Les journaux NPM des
+  100 au total. **IP de la maison** (`HOMELABD_ADMIN_TRUSTED_IPS` dans `.env`, dernier `X-Forwarded-For`) : session
+  admin d'office, sans formulaire, cookie posé au passage — demandé par l'admin, la connexion gênait la gestion depuis
+  Homarr. `/accounts` et `/recherche` gardent **en plus** l'auth HTTP NPM « admin-outils ». Les journaux NPM des
   Arrs contiennent leur clé API (`access_token=` des websockets de leur interface) : normal, journaux en 750.
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
   `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.

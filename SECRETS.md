@@ -48,6 +48,8 @@ seedbox, pas dans `.env`.
   changer via `ALTER USER` puis `.env`).
 - `HOMELABD_ONBOARD_TOKEN` / `HOMELABD_STATUS_TOKEN` : `.env`, restart homelabd — toutes les sessions `/connexion`
   tombent (cookie signé avec le jeton) ; se reconnecter avec le nouveau. Aucun lien à changer (plus de `?token=`).
+- `HOMELABD_ADMIN_TRUSTED_IPS` (une IP, donc hors dépôt) : IP de la maison, pages d'admin sans connexion. Si la box
+  change d'IP : mettre la nouvelle, restart homelabd (le cookie d'un an couvre l'entre-deux).
 
 ## Où sont les autres secrets
 

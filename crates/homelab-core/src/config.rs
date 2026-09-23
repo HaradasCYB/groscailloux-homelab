@@ -1275,8 +1275,11 @@ pub struct Secrets {
     pub discord_role_members: Option<String>,
     pub quality_profile_id: i64,
     pub onboard_token: Option<Secret>,
-    /// Protège `/status` et `/status.html` de homelabd (`?token=`).
+    /// Protège `/status` et `/status.html` de homelabd (session `/connexion`).
     pub status_token: Option<Secret>,
+    /// Adresses de l'admin (IP de la maison) ouvertes sans connexion sur les pages d'administration
+    /// (`HOMELABD_ADMIN_TRUSTED_IPS`, virgules). Dans `.env` : jamais d'IP dans le dépôt public.
+    pub admin_trusted_ips: Vec<String>,
     /// Page de don `/don` (bouton PayPal) : identifiants publics mais propres au compte PayPal,
     /// gardés hors du dépôt. Absents = pas de page.
     pub donation: Option<Donation>,
@@ -1422,6 +1425,14 @@ impl Secrets {
                 .unwrap_or(6),
             onboard_token: opt("HOMELABD_ONBOARD_TOKEN").map(Secret::new),
             status_token: opt("HOMELABD_STATUS_TOKEN").map(Secret::new),
+            admin_trusted_ips: opt("HOMELABD_ADMIN_TRUSTED_IPS")
+                .map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
             donation: Donation::from_parts(
                 opt("DONATION_PAYPAL_CLIENT_ID"),
                 opt("DONATION_PAYPAL_PLAN_ID"),

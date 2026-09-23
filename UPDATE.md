@@ -58,8 +58,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   correctif (Bleach, Blue Box, Erased) ne sont plus choisis d'office.
 - **Pages d'administration** : le jeton ne passe plus dans l'adresse des pages Comptes, Recherche, Créer un compte
   et État (il était recopié en clair dans les journaux du proxy à chaque chargement). On se connecte une fois
-  (`/connexion`), la session tient 30 jours ; un ancien lien avec jeton ouvre la session puis l'efface de l'adresse.
-  Essais limités, jetons renouvelés, anciens journaux nettoyés, liens du tableau Homarr mis à jour.
+  (`/connexion`), la session tient un an ; un ancien lien avec jeton ouvre la session puis l'efface de l'adresse.
+  Essais limités, jetons renouvelés, anciens journaux nettoyés, liens du tableau Homarr mis à jour. Depuis la
+  maison, aucune connexion n'est demandée.
 - **Réseau** : les ports d'administration des services (Sonarr, Radarr, Prowlarr, Jellyseerr, qBittorrent, Homarr,
   Grafana…) ne sont plus joignables directement depuis Internet ; tout passe par le proxy, comme avant.
 
