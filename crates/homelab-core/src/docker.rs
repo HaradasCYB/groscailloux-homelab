@@ -23,7 +23,9 @@ pub async fn exec_in(container: &str, cmd: &[&str]) -> Result<String> {
 
 pub async fn run(program: &str, args: &[&str], cwd: Option<&Path>) -> Result<String> {
     let mut c = Command::new(program);
+    // une commande abandonnée (délai de 600 s du planificateur) est tuée au lieu de rester orpheline
     c.args(args)
+        .kill_on_drop(true)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

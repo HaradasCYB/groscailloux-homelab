@@ -342,7 +342,19 @@ impl Task for SubtitleSync {
                 }
                 match docker::run(
                     "ssh",
-                    &["-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host, &cmd],
+                    &[
+                        "-o",
+                        "BatchMode=yes",
+                        "-o",
+                        "ConnectTimeout=20",
+                        // connexion morte détectée en une minute au lieu de bloquer le passage
+                        "-o",
+                        "ServerAliveInterval=15",
+                        "-o",
+                        "ServerAliveCountMax=4",
+                        host,
+                        &cmd,
+                    ],
                     None,
                 )
                 .await

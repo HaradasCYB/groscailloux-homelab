@@ -79,6 +79,11 @@ pub async fn send(smtp: &Smtp, msg: &Outgoing<'_>) -> Result<()> {
     let mut child = Command::new("curl")
         .args([
             "-fsS",
+            // un serveur SMTP muet ne bloque plus une page web ou une tâche indéfiniment
+            "--connect-timeout",
+            "20",
+            "--max-time",
+            "60",
             "--url",
             &url,
             "--ssl-reqd",
@@ -94,6 +99,7 @@ pub async fn send(smtp: &Smtp, msg: &Outgoing<'_>) -> Result<()> {
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .context("lancement de curl")?;
     let mut stdin = child.stdin.take().context("stdin curl")?;
