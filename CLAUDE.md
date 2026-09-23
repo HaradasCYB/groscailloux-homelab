@@ -519,7 +519,7 @@ journalctl -u homelabd -f
   filtre vraiment `GET history`).
 - **Ports Docker publiés sur `127.0.0.1` seulement** (2026-09-23) : tout passe par NPM (noms de conteneurs) ou par
   `localhost` (homelabd, telegraf en `network_mode: host`). Restent ouverts à Internet : 80/443 (NPM), 6881 (torrent),
-  8096 (Jellyfin, compteur à relire le 25/09 avant de le fermer) et 81 (admin NPM, décision de l'utilisateur). Un
+  8096 (Jellyfin, compteur à relire le 25/09 avant de le fermer) et 81 (admin NPM : limité à l'IP de l'admin en amont + identifiants, **on n'y touche pas**, décision de l'utilisateur). Un
   nouveau service : `"127.0.0.1:<port>:<port>"`. Recréer gluetun impose de recréer qbittorrent (voir plus bas).
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
   `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
