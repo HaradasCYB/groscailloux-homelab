@@ -50,7 +50,10 @@ fn allowed(st: &SearchState, given: &str) -> bool {
 fn denied() -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        Html("<p>Jeton manquant ou invalide : ouvrir la page avec ?token=…</p>".to_string()),
+        Html(
+            "<p>Session expirée : <a href=\"/connexion?next=/recherche\">se reconnecter</a>.</p>"
+                .to_string(),
+        ),
     )
         .into_response()
 }
@@ -125,7 +128,7 @@ pub fn render_home(token: &str, query: &str, found: &[Found], msg: Option<&str>)
     let t = esc(token);
     let mut body = format!(
         r#"<h1>Recherche manuelle</h1><p class="sub">Par identifiant TMDB chez C411 (une requête, plafond horaire), plus Nyaa pour un animé. À utiliser à la place de la recherche de Sonarr/Radarr pour un animé.</p>
-<form class="q" method="get" action="/recherche"><input type="hidden" name="token" value="{t}"><input type="text" name="q" value="{q}" placeholder="Titre (français, anglais ou japonais)" autofocus><button type="submit">Chercher</button></form>"#,
+<form class="q" method="get" action="/recherche"><input type="text" name="q" value="{q}" placeholder="Titre (français, anglais ou japonais)" autofocus><button type="submit">Chercher</button></form>"#,
         q = esc(query)
     );
     if let Some(m) = msg {
@@ -233,14 +236,12 @@ pub fn render_results(token: &str, job: &Job, msg: Option<(&str, &str)>, now: i6
         String::new()
     } else {
         format!(
-            r#"<meta http-equiv="refresh" content="4;url=/recherche/resultats?token={}&amp;job={}">"#,
-            urlencode(token),
+            r#"<meta http-equiv="refresh" content="4;url=/recherche/resultats?job={}">"#,
             urlencode(&job.id)
         )
     };
     let mut body = format!(
-        r#"<p><a href="/recherche?token={tu}">← Nouvelle recherche</a></p><h1>{label}</h1><p class="sub">{arr} · {state}</p>"#,
-        tu = urlencode(token),
+        r#"<p><a href="/recherche">← Nouvelle recherche</a></p><h1>{label}</h1><p class="sub">{arr} · {state}</p>"#,
         label = esc(&job.label),
         arr = esc(job.arr),
         state = if job.done {
@@ -387,12 +388,7 @@ async fn start(State(st): State<SearchState>, Form(f): Form<StartForm>) -> Respo
             info!(task = "manual_search", service = arr_name, label = %j.label, releases = j.rows.len(), "search done");
         }
     });
-    Redirect::to(&format!(
-        "/recherche/resultats?token={}&job={}",
-        urlencode(&f.token),
-        urlencode(&id)
-    ))
-    .into_response()
+    Redirect::to(&format!("/recherche/resultats?job={}", urlencode(&id))).into_response()
 }
 
 #[derive(Deserialize)]
@@ -461,8 +457,7 @@ async fn download(State(st): State<SearchState>, Form(f): Form<DownloadForm>) ->
         },
     };
     Redirect::to(&format!(
-        "/recherche/resultats?token={}&job={}&ok={}&msg={}",
-        urlencode(&f.token),
+        "/recherche/resultats?job={}&ok={}&msg={}",
         urlencode(&f.job),
         if ok { "1" } else { "0" },
         urlencode(&text)

@@ -109,7 +109,8 @@ gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-updat
 - qBittorrent (VPS) : dispense d'authentification limitée à `127.0.0.0/8` et `172.18.0.1/32`
   (homelabd depuis l'hôte). **Jamais `172.18.0.0/16`** : NPM est dans ce réseau, qBittorrent était
   ouvert à Internet sans mot de passe jusqu'au 2026-09-12.
-- homelabd : `/status` et `/status.html` exigent `HOMELABD_STATUS_TOKEN` (le sous-domaine d'onboarding est public).
+- homelabd : `/status` et `/status.html` exigent une session (`/connexion`, jeton `HOMELABD_STATUS_TOKEN` ou
+  d'onboarding) ; le sous-domaine d'onboarding est public.
 - Page de don : sous-domaine `don.` → homelabd ; la config avancée NPM ne laisse passer que `/don`
   (`/` redirige, tout le reste renvoie 404). Sans lien avec le service (ni Jellyfin, ni Homarr, ni mail).
 - Page « Comptes » (`/accounts` de l'hôte onboarding) : liste « admin-outils » dans la config avancée

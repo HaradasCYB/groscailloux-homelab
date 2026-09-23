@@ -2,6 +2,7 @@
 //! watcher du dossier de téléchargement, UI web d'onboarding.
 
 mod accounts_page;
+mod admin_auth;
 mod chat_api;
 mod guide;
 mod scheduler;

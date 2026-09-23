@@ -54,6 +54,14 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   relancé 144 fois, et chaque essai a laissé une session ouverte : 138 sessions se disputaient le clavier. Les
   sessions en trop sont fermées, le service démarre maintenant du premier coup, et une seule session peut
   s'ouvrir par écran.
+- **Sous-titres, suite** : l'extraction a repris ; les 61 sous-titres complets trop lourds extraits avant le
+  correctif (Bleach, Blue Box, Erased) ne sont plus choisis d'office.
+- **Pages d'administration** : le jeton ne passe plus dans l'adresse des pages Comptes, Recherche, Créer un compte
+  et État (il était recopié en clair dans les journaux du proxy à chaque chargement). On se connecte une fois
+  (`/connexion`), la session tient 30 jours ; un ancien lien avec jeton ouvre la session puis l'efface de l'adresse.
+  Essais limités, jetons renouvelés, anciens journaux nettoyés, liens du tableau Homarr mis à jour.
+- **Réseau** : les ports d'administration des services (Sonarr, Radarr, Prowlarr, Jellyseerr, qBittorrent, Homarr,
+  Grafana…) ne sont plus joignables directement depuis Internet ; tout passe par le proxy, comme avant.
 
 ## 1.19.0 — 21/09/2026 — Suivi des demandes, langue et canari
 

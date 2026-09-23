@@ -608,8 +608,8 @@ Premium = compte Jellyfin actif ; non-premium = `Policy.IsDisabled = true` (fonc
 Jellyfin : connexion refusée, jetons existants rejetés, rien n'est supprimé). La politique Jellyfin est
 la seule source de vérité ; les comptes admin ne sont jamais listés ni modifiés.
 
-- **Page** `onboarder.<domaine>/accounts?token=<HOMELABD_ONBOARD_TOKEN>`, derrière la connexion NPM
-  « admin-outils » : un interrupteur par compte, compteur « N premium / max ». Formulaires POST sans
+- **Page** `onboarder.<domaine>/accounts` (session `/connexion`, voir « Pages d'administration »), derrière la
+  connexion NPM « admin-outils » : un interrupteur par compte, compteur « N premium / max ». Formulaires POST sans
   JavaScript, jeton en champ caché (anti-CSRF). Lien « Comptes » dans le tableau Homarr Opérations.
 - **CLI** : `homelabctl accounts list | on <compte> | off <compte> | limits` (`--dry-run` respecté).
 - **Suspension** : politique relue puis seuls `IsDisabled` et `MaxActiveSessions` changent (bibliothèques

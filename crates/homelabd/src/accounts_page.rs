@@ -196,7 +196,7 @@ pub fn render(d: &PageData<'_>) -> String {
                 format!("Activer {}", a.name)
             };
             format!(
-                r#"<div class="acts"><form method="post" action="/accounts/premium"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><input type="hidden" name="on" value="{action}"><button class="sw {state}" type="submit" role="switch" aria-checked="{checked}" title="{title}"{dis}><i></i><span>{label}</span></button></form><a class="del" href="/accounts/delete?token={token}&amp;user_id={id}" title="Supprimer {name}">Supprimer</a></div>"#,
+                r#"<div class="acts"><form method="post" action="/accounts/premium"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><input type="hidden" name="on" value="{action}"><button class="sw {state}" type="submit" role="switch" aria-checked="{checked}" title="{title}"{dis}><i></i><span>{label}</span></button></form><a class="del" href="/accounts/delete?user_id={id}" title="Supprimer {name}">Supprimer</a></div>"#,
                 id = esc(&a.id),
                 name = esc(&a.name),
                 checked = a.premium,
@@ -256,7 +256,7 @@ pub fn render(d: &PageData<'_>) -> String {
     shell(
         "Comptes Groscailloux",
         &format!(
-            r#"<header><div><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><a class="new" href="/?token={token}">Créer un compte</a></header>
+            r#"<header><div><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><a class="new" href="/">Créer un compte</a></header>
 <section class="cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} lectures simultanées par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
 {flash}
 <div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th>Abonnement</th><th>Lien de bienvenue</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
@@ -280,7 +280,7 @@ pub fn render_confirm(a: &Account, token: &str) -> String {
 <p>Seront supprimés :</p>
 <ul><li>le compte Jellyfin <b>{name}</b> (historique, favoris, reprise de lecture) ;</li><li>son compte Jellyseerr et ses demandes. Ce qui est déjà téléchargé reste dans la bibliothèque.</li></ul>
 <p class="sub">Pour bloquer l'accès sans rien perdre, suspends plutôt le compte.</p>
-<div class="row"><form method="post" action="/accounts/delete"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><button class="btn danger" type="submit">Supprimer définitivement</button></form><a class="btn ghost" href="/accounts?token={token}">Annuler</a></div>
+<div class="row"><form method="post" action="/accounts/delete"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><button class="btn danger" type="submit">Supprimer définitivement</button></form><a class="btn ghost" href="/accounts">Annuler</a></div>
 </section>"#,
             id = esc(&a.id),
         ),
@@ -321,7 +321,8 @@ mod tests {
         assert!(html.contains("&lt;bob&gt;"));
         assert!(!html.contains("<bob>"));
         assert!(html.contains(r#"value="t&quot;k""#));
-        assert!(html.contains(r#"href="/?token=t&quot;k""#));
+        assert!(html.contains(r#"href="/""#));
+        assert!(!html.contains("?token="));
         assert!(html.contains("il y a 1 min"));
         assert!(!html.contains(" disabled>"));
         assert_eq!(html.matches(r#"class="del""#).count(), 2);
@@ -382,6 +383,7 @@ mod tests {
         assert!(html.contains(r#"action="/accounts/delete""#));
         assert!(html.contains(r#"value="id-bob""#));
         assert!(html.contains("Supprimer définitivement"));
-        assert!(html.contains(r#"href="/accounts?token=t""#));
+        assert!(html.contains(r#"href="/accounts""#));
+        assert!(!html.contains("?token="));
     }
 }

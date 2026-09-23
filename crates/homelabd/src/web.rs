@@ -55,6 +55,13 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
     let chat = crate::chat_api::router(ctx.clone())?;
     let search = crate::search_page::router(ctx.clone());
     let subs = crate::subs_api::router(ctx.clone());
+    let auth = crate::admin_auth::AdminAuth::new(ctx.clone());
+    let login = Router::new()
+        .route(
+            "/connexion",
+            get(crate::admin_auth::login_get).post(crate::admin_auth::login_post),
+        )
+        .with_state(auth.clone());
     let state = AppState {
         ctx,
         last_request: Arc::new(Mutex::new(HashMap::new())),
@@ -91,7 +98,12 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .with_state(state)
         .merge(chat)
         .merge(search)
-        .merge(subs);
+        .merge(subs)
+        .merge(login)
+        .layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::admin_auth::layer,
+        ));
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
         .with_context(|| format!("bind {listen}"))?;
@@ -306,8 +318,7 @@ async fn accounts_subs(
     };
     info!(task = "subs", %ip, user = %who, action = %f.action, days = ?days, %until, result = code, "subscription action via web");
     Redirect::to(&format!(
-        "/accounts?token={}&msg={code}&who={}&until={}",
-        urlencode(&f.token),
+        "/accounts?msg={code}&who={}&until={}",
         urlencode(&who),
         urlencode(&until)
     ))
@@ -401,10 +412,7 @@ fn activation_mail_body(
         .map(|d| format!("Plan PayPal {} · 3,50 €/mois", d.paypal_plan_id))
         .unwrap_or_else(|| "Plan PayPal non configuré côté serveur".to_string());
     let activation = match onboard_token {
-        Some(t) => format!(
-            "\n\nActiver le compte depuis la page Comptes :\nhttps://onboarder.groscaillouxmovie.duckdns.org/accounts?token={}\n",
-            t.expose()
-        ),
+        Some(_) => "\n\nActiver le compte depuis la page Comptes :\nhttps://onboarder.groscaillouxmovie.duckdns.org/accounts\n".to_string(),
         None => String::new(),
     };
     format!(
@@ -536,7 +544,7 @@ fn accounts_allowed(st: &AppState, given: Option<&str>) -> bool {
 fn denied() -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        Html("<p>Jeton manquant ou invalide : ouvrir la page avec ?token=…</p>".to_string()),
+        Html("<p>Session expirée : <a href=\"/connexion\">se reconnecter</a>.</p>".to_string()),
     )
         .into_response()
 }
@@ -683,11 +691,7 @@ async fn accounts_toggle(
         }
     };
     info!(task = "accounts", %ip, user = %who, on, result = code, "premium toggle via web");
-    let url = format!(
-        "/accounts?token={}&msg={code}&who={}",
-        urlencode(&f.token),
-        urlencode(&who)
-    );
+    let url = format!("/accounts?msg={code}&who={}", urlencode(&who));
     Redirect::to(&url).into_response()
 }
 
@@ -697,13 +701,8 @@ struct DeleteForm {
     user_id: String,
 }
 
-fn back_to_list(token: &str, code: &str, who: &str) -> Response {
-    Redirect::to(&format!(
-        "/accounts?token={}&msg={code}&who={}",
-        urlencode(token),
-        urlencode(who)
-    ))
-    .into_response()
+fn back_to_list(_token: &str, code: &str, who: &str) -> Response {
+    Redirect::to(&format!("/accounts?msg={code}&who={}", urlencode(who))).into_response()
 }
 
 /// Page de confirmation (GET) : rien n'est supprimé ici.
