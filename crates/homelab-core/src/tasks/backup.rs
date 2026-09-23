@@ -28,8 +28,14 @@ pub async fn run(cfg: &Config) -> Result<BackupOutput> {
     mysqldump(&cfg.backup.mysql_container, &dump).await?;
     files.push(dump);
 
+    // Les bases SQLite de homelabd (abonnés, tchat) tournent en WAL : une copie brute par tar peut être
+    // incohérente. On en prend d'abord une copie propre par l'API de sauvegarde SQLite, incluse dans l'archive.
+    let snap_dir = cfg.paths.base.join("state/backup-snapshots");
+    snapshot_sqlite(&cfg.paths.base.join("state"), &snap_dir).await?;
     let archive = out_dir.join(format!("homelab-state-{ts}.tar.zst"));
-    tar_state(&cfg.paths.base, &cfg.backup.excludes, &archive).await?;
+    let tarred = tar_state(&cfg.paths.base, &cfg.backup.excludes, &archive).await;
+    let _ = std::fs::remove_dir_all(&snap_dir);
+    tarred?;
     files.push(archive.clone());
 
     let sha = format!("{}.sha256", archive.display());
@@ -84,12 +90,33 @@ pub async fn run(cfg: &Config) -> Result<BackupOutput> {
 }
 
 async fn mysqldump(container: &str, out: &Path) -> Result<()> {
-    let pw = docker::exec_in(container, &["printenv", "MYSQL_ROOT_PASSWORD"]).await?;
+    // Le mot de passe reste dans le conteneur (sa propre variable d'environnement) : il n'apparaît plus dans
+    // la liste des processus de l'hôte, et une apostrophe dans sa valeur ne casse plus la commande.
     let cmd = format!(
-        "docker exec -e MYSQL_PWD='{pw}' {container} mysqldump --all-databases --single-transaction --routines --triggers | gzip -6 > '{}'",
+        "set -o pipefail; docker exec {container} sh -c 'export MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\"; exec mysqldump -uroot --all-databases --single-transaction --routines --triggers' | gzip -6 > '{}'",
         out.display()
     );
     sh(&cmd).await.map(|_| ())
+}
+
+/// Copie cohérente de chaque `*.db` de `state/` dans `dest` (`VACUUM INTO`, lecture seule, WAL compris).
+async fn snapshot_sqlite(state: &Path, dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for e in std::fs::read_dir(state)?.flatten() {
+        let src = e.path();
+        if src.extension().and_then(|x| x.to_str()) != Some("db") {
+            continue;
+        }
+        let out = dest.join(e.file_name());
+        let _ = std::fs::remove_file(&out);
+        let c =
+            rusqlite::Connection::open_with_flags(&src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .with_context(|| format!("ouverture de {}", src.display()))?;
+        c.busy_timeout(std::time::Duration::from_secs(30))?;
+        c.execute("VACUUM INTO ?1", [out.to_string_lossy().as_ref()])
+            .with_context(|| format!("copie de {}", src.display()))?;
+    }
+    Ok(())
 }
 
 async fn tar_state(base: &Path, excludes: &[String], out: &Path) -> Result<()> {
@@ -102,11 +129,14 @@ async fn tar_state(base: &Path, excludes: &[String], out: &Path) -> Result<()> {
     for e in excludes {
         ex.push_str(&format!(" --exclude='{name}/{e}'"));
     }
-    // tar rc 1 = "file changed as we read it" sur un système vivant : toléré ; rc 2 = fatal
+    // tar rc 1 = "file changed as we read it" sur un système vivant : toléré ; rc 2 = fatal. zstd doit réussir
+    // (jusqu'au 2026-09-23 seul tar était vérifié : un disque plein laissait une archive tronquée « réussie »),
+    // puis l'archive entière est relue avant qu'on accepte de supprimer les anciennes.
     let cmd = format!(
-        "set -o pipefail; tar --numeric-owner --warning=no-file-changed -cpf - -C '{}'{ex} '{name}' | zstd -T4 -3 -q -f -o '{}'; rc=${{PIPESTATUS[0]}}; [ \"$rc\" -le 1 ]",
+        "tar --numeric-owner --warning=no-file-changed -cpf - -C '{}'{ex} '{name}' | zstd -T4 -3 -q -f -o '{out}'; \
+         st=(\"${{PIPESTATUS[@]}}\"); [ \"${{st[0]}}\" -le 1 ] && [ \"${{st[1]}}\" -eq 0 ] && zstd -t -q '{out}'",
         parent.display(),
-        out.display()
+        out = out.display()
     );
     sh(&cmd).await.map(|_| ())
 }
@@ -159,4 +189,30 @@ async fn sh(cmd: &str) -> Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snapshot_sqlite;
+
+    #[tokio::test]
+    async fn sqlite_snapshot_is_a_readable_copy() {
+        let base = std::env::temp_dir().join(format!("hl-backup-test-{}", std::process::id()));
+        let (state, dest) = (base.join("state"), base.join("state/backup-snapshots"));
+        std::fs::create_dir_all(&state).unwrap();
+        {
+            let c = rusqlite::Connection::open(state.join("chat.db")).unwrap();
+            c.execute_batch(
+                "PRAGMA journal_mode=WAL; CREATE TABLE m(x); INSERT INTO m VALUES (42);",
+            )
+            .unwrap();
+            std::fs::write(state.join("notes.txt"), "pas une base").unwrap();
+            snapshot_sqlite(&state, &dest).await.unwrap();
+        }
+        let copy = rusqlite::Connection::open(dest.join("chat.db")).unwrap();
+        let x: i64 = copy.query_row("SELECT x FROM m", [], |r| r.get(0)).unwrap();
+        assert_eq!(x, 42);
+        assert!(!dest.join("notes.txt").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

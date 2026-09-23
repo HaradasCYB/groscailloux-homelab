@@ -40,6 +40,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Sous-titres extraits** : un épisode déjà traité n'est revu qu'au bout de 6 h, et une vidéo sans piste
   extractible une fois par semaine, au lieu de toutes les 5 minutes. Un sous-titre ASS de plus de 8 Mo n'est plus
   choisi par défaut : le SRT l'est, les lecteurs web ne peinent plus.
+- **Sauvegardes** : l'archive est relue en entier avant qu'on supprime les anciennes (une compression ratée
+  passait pour une réussite), les bases des abonnés et du tchat sont copiées proprement même en service, le mot
+  de passe MySQL n'apparaît plus dans la liste des processus, et les vignettes et photos d'acteurs, régénérables,
+  ne sont plus sauvegardées : l'archive redescend d'environ 8 Go à 3.
 - **Maintenance de nuit** : Jellyfin était bloqué depuis la veille sur la lecture d'un sous-titre de 43,8 Mo à
   travers le montage seedbox, ce qui empêchait l'analyse de la médiathèque. Redémarrage du serveur programmé hors
   lecture, avec contrôles automatiques au retour ; l'extraction des sous-titres est en pause en attendant son

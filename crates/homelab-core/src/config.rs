@@ -1134,6 +1134,8 @@ impl Default for Backup {
                 "jellyfin/config/log",
                 "target",
                 "logs",
+                "jellyfin/config/data/trickplay",
+                "jellyfin/config/metadata/People",
             ]
             .iter()
             .map(|s| s.to_string())
