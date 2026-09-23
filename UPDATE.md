@@ -49,6 +49,11 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   travers le montage seedbox, ce qui empêchait l'analyse de la médiathèque. Redémarrage du serveur programmé hors
   lecture, avec contrôles automatiques au retour ; l'extraction des sous-titres est en pause en attendant son
   correctif.
+- **Bureau à distance (Guacamole)** : après ce redémarrage, le clavier ne répondait presque plus dans le bureau.
+  Le service du bureau croyait chaque démarrage raté (il cherchait son fichier de suivi sous un autre nom), s'est
+  relancé 144 fois, et chaque essai a laissé une session ouverte : 138 sessions se disputaient le clavier. Les
+  sessions en trop sont fermées, le service démarre maintenant du premier coup, et une seule session peut
+  s'ouvrir par écran.
 
 ## 1.19.0 — 21/09/2026 — Suivi des demandes, langue et canari
 

@@ -539,7 +539,12 @@ journalctl -u homelabd -f
   une archive de **149 Go** (au lieu de 3) et poussé le disque à 92 %. Après un nouveau dossier de cache ou de données
   massives : l'ajouter aux exclusions, puis contrôler la taille de l'archive suivante et son manifeste (`.list.gz`).
 - **Reboot** : `homelab-stack.service` relance compose ; vérifier `docker compose ps` et
-  `systemctl status homelabd` après.
+  `systemctl status homelabd` après, et `pgrep -cx xfce4-session` = 1 (bureau VNC).
+- **Bureau VNC (Guacamole, noVNC)** : unité `systemd/vncserver@.service` (`-fg`, **sans PIDFile** : TigerVNC nomme
+  son PID d'après `hostname -f`, l'ancienne unité l'attendait sous `%H`) et session `systemd/vnc-xstartup` →
+  `~/.config/tigervnc/xstartup` (verrou `flock` par écran, boucle XFCE qui s'arrête avec le serveur X ; installer
+  par fichier neuf + `mv`, bash relit un script en cours). Le 2026-09-23, l'ancienne unité a relancé 144 fois au
+  boot et laissé **138 sessions XFCE** sur `:1` (frappes perdues) ; sauvegarde `backups/vnc-20260923/`.
 - `scripts/` ne contient plus que des outils ponctuels (les anciens scripts bash planifiés ont été
   retirés) : `jellyfin-branding-apply.sh`, `jellyfin-ui-rollback.sh` (voir « Interface Jellyfin »),
   `jellyseerr-rotate-key.py` (voir « Pièges connus »), `jellyfin-js-apply.py` (scripts JavaScript Injector, dont

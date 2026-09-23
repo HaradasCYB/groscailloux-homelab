@@ -1,0 +1,28 @@
+#!/bin/bash
+# Session XFCE du bureau VNC. Installé en ~/.config/tigervnc/xstartup (utilisateur deploy) :
+#   install -m 755 systemd/vnc-xstartup ~/.config/tigervnc/xstartup
+# Voir systemd/vncserver@.service.
+
+# Une seule session par écran. Le 2026-09-23, les essais ratés du service ont laissé 138 boucles
+# `while true; do startxfce4; done` qui se sont toutes branchées sur le serveur X suivant.
+exec 9>"$HOME/.config/tigervnc/xstartup-${DISPLAY//[^0-9]/}.lock"
+flock -n 9 || exit 0
+
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+export XKL_XMODMAP_DISABLE=1
+export XDG_SESSION_TYPE=x11
+export XDG_CURRENT_DESKTOP=XFCE
+export XDG_CONFIG_DIRS=/etc/xdg/xdg-xfce:/etc/xdg
+
+# Start dbus if not running
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+    eval $(dbus-launch --sh-syntax --exit-with-session)
+fi
+
+# Relance XFCE s'il est quitté, mais seulement tant que CE serveur X répond : serveur arrêté =
+# boucle finie, jamais d'orpheline. `9>&-` : les applications ne gardent pas le verrou.
+while xset -display "$DISPLAY" q >/dev/null 2>&1; do
+    startxfce4 9>&-
+    sleep 1
+done

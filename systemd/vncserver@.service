@@ -1,0 +1,27 @@
+# Bureau VNC de l'hôte (écran :%i, port 5900+%i), joint par Guacamole via 172.18.0.1 et par noVNC.
+# Exposition : `localhost=no` dans ~/.config/tigervnc/config ; le pare-feu (ufw) n'ouvre 5901 qu'à
+# 127.0.0.1 et 172.18.0.0/16.
+#
+# Premier plan (`-fg`) et pas de PIDFile : TigerVNC nomme son fichier PID d'après le nom **complet**
+# (`hostname -f`), l'ancienne unité l'attendait sous `%H` (nom court). Au redémarrage du 2026-09-23,
+# chaque démarrage réussi était déclaré raté (« Can't open PID file »), relancé 144 fois en 11 min, et
+# chaque essai laissait une boucle XFCE orpheline : 138 sessions sur le même écran, frappes perdues.
+# Le verrou de ~/.config/tigervnc/xstartup (source : systemd/vnc-xstartup) est le second garde-fou.
+[Unit]
+Description=Bureau distant VNC :%i
+After=network.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=deploy
+PAMName=login
+ExecStartPre=-/bin/sh -c "/usr/bin/vncserver -kill :%i > /dev/null 2>&1 || :"
+ExecStart=/usr/bin/vncserver :%i -fg -geometry 1920x1080 -depth 24 -localhost no
+ExecStop=/usr/bin/vncserver -kill :%i
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
