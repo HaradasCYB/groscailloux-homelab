@@ -36,7 +36,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Fiabilité** : une tâche qui rencontre une erreur imprévue ne s'arrête plus pour de bon, elle repasse à
   l'intervalle suivant ; un paiement PayPal dont le traitement échoue est rejoué à la relance de PayPal au lieu
   d'attendre le contrôle du lendemain ; une simple coupure réseau sur un film dont l'identifiant contient « 429 »
-  ne met plus une clé C411 au repos pour rien.
+  ne met plus une clé C411 au repos pour rien ; la file des téléchargements est lue en entier, plus seulement ses
+  200 premiers éléments.
 - **Sous-titres extraits** : un épisode déjà traité n'est revu qu'au bout de 6 h, et une vidéo sans piste
   extractible une fois par semaine, au lieu de toutes les 5 minutes. Un sous-titre ASS de plus de 8 Mo n'est plus
   choisi par défaut : le SRT l'est, les lecteurs web ne peinent plus.

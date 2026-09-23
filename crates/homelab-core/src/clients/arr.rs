@@ -7,6 +7,14 @@ use super::{check, json};
 use crate::secret::Secret;
 
 /// Sonarr et Radarr partagent l'API v3 ; `name` sert aux logs et à l'état.
+/// Garde-fou : au plus 20 pages de 500 (10 000 éléments) par lecture de file.
+const MAX_QUEUE_PAGES: usize = 20;
+
+/// Faut-il lire la page suivante ? Oui tant qu'on n'a pas tout (`total`) et que la dernière page n'était pas vide.
+fn more_pages(fetched: usize, total: usize, last_page_len: usize) -> bool {
+    last_page_len > 0 && fetched < total
+}
+
 #[derive(Clone)]
 pub struct ArrClient {
     pub name: &'static str,
@@ -68,9 +76,36 @@ impl ArrClient {
     }
 
     pub async fn queue(&self) -> Result<Vec<QueueItem>> {
-        let v = self.get("api/v3/queue", &[("pageSize", "200")]).await?;
-        let records = v.get("records").cloned().unwrap_or(Value::Array(vec![]));
-        serde_json::from_value(records).context("queue : records invalides")
+        let records = self.queue_all().await?;
+        serde_json::from_value(Value::Array(records)).context("queue : records invalides")
+    }
+
+    /// Toute la file, page par page. Jusqu'au 2026-09-23 seule la première page (200) était lue : au-delà,
+    /// `movie_search` redemandait un film déjà en file et `stuck_handler` remettait son chronomètre à zéro.
+    async fn queue_all(&self) -> Result<Vec<Value>> {
+        const PAGE: usize = 500;
+        let mut all: Vec<Value> = Vec::new();
+        for page in 1..=MAX_QUEUE_PAGES {
+            let (p, size) = (page.to_string(), PAGE.to_string());
+            let v = self
+                .get(
+                    "api/v3/queue",
+                    &[("page", p.as_str()), ("pageSize", size.as_str())],
+                )
+                .await?;
+            let records = v
+                .get("records")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let got = records.len();
+            all.extend(records);
+            let total = v.get("totalRecords").and_then(Value::as_u64).unwrap_or(0) as usize;
+            if !more_pages(all.len(), total, got) {
+                break;
+            }
+        }
+        Ok(all)
     }
 
     /// Retire l'item de la queue ET du client de téléchargement, blocklist la release.
@@ -157,11 +192,7 @@ impl ArrClient {
 
     /// Queue brute (tous les champs), pour les tâches qui lisent statusMessages/trackedDownloadState.
     pub async fn queue_records(&self) -> Result<Vec<Value>> {
-        let v = self.get("api/v3/queue", &[("pageSize", "200")]).await?;
-        Ok(v.get("records")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default())
+        self.queue_all().await
     }
 
     /// Aperçu d'import manuel d'un téléchargement, rattaché à une fiche (`movieId` / `seriesId`).
@@ -420,5 +451,18 @@ impl ArrClient {
             "DownloadedEpisodesScan"
         };
         json!({ "name": name, "path": path, "importMode": "auto" })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::more_pages;
+
+    #[test]
+    fn queue_pages_until_everything_is_read() {
+        assert!(!more_pages(150, 150, 150));
+        assert!(more_pages(500, 730, 500));
+        assert!(!more_pages(730, 730, 230));
+        assert!(!more_pages(500, 900, 0)); // page vide : on s'arrête même si le total annonce plus
     }
 }
