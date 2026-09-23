@@ -61,6 +61,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   (`/connexion`), la session tient un an ; un ancien lien avec jeton ouvre la session puis l'efface de l'adresse.
   Essais limités, jetons renouvelés, anciens journaux nettoyés, liens du tableau Homarr mis à jour. Depuis la
   maison, aucune connexion n'est demandée.
+- **Séries françaises** : un épisode que la base TheTVDB n'a pas encore daté (fréquent pour les séries françaises)
+  est maintenant cherché lui aussi, dès que sa saison a commencé ; et les releases « VOF » (version originale
+  française) sont enfin reconnues comme françaises, au lieu d'être écartées.
 - **Réseau** : les ports d'administration des services (Sonarr, Radarr, Prowlarr, Jellyseerr, qBittorrent, Homarr,
   Grafana…) ne sont plus joignables directement depuis Internet ; tout passe par le proxy, comme avant.
 

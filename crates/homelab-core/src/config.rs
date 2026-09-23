@@ -637,6 +637,10 @@ pub struct SeriesSearch {
     pub cour_packs: bool,
     /// Au-delà de ce nombre de fichiers vidéo, ce n'est plus un cours : on n'y touche pas.
     pub cour_max_files: usize,
+    /// Chercher aussi les épisodes suivis sans date de diffusion d'une saison déjà commencée (retard TheTVDB).
+    pub undated_episodes: bool,
+    /// Seules les saisons dont la dernière diffusion date de moins de N jours sont examinées.
+    pub undated_window_days: i64,
 }
 
 impl Default for SeriesSearch {
@@ -657,6 +661,8 @@ impl Default for SeriesSearch {
             prowlarr_url_for_arrs: "http://prowlarr:9696".into(),
             cour_packs: true,
             cour_max_files: 30,
+            undated_episodes: true,
+            undated_window_days: 730,
         }
     }
 }

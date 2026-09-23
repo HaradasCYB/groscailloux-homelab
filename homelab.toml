@@ -182,6 +182,12 @@ prowlarr_url_for_arrs = "http://prowlarr:9696"  # Prowlarr vu des conteneurs Son
 # déjà pourvu. Animés seulement. La correspondance voyage dans l'étiquette qBittorrent (`offset=`).
 cour_packs = true
 cour_max_files = 30         # au-delà, ce n'est plus un cours
+# Épisodes SANS date de diffusion dans une saison déjà commencée : TheTVDB a souvent des semaines ou des mois de
+# retard sur les séries françaises, et Sonarr ne met pas ces épisodes dans « manquants ». Le 2026-09-23, *Le
+# Voyageur* S04E02-E03 étaient sur C411 mais jamais cherchés (seul E01 était daté). On lit les épisodes des seules
+# séries dont une saison suivie a eu une diffusion dans la fenêtre et n'est pas complète.
+undated_episodes = true
+undated_window_days = 730
 
 [tasks.movie_search]
 # Recherche des films suivis encore manquants, par identifiant TMDB chez C411, dès le passage qui suit

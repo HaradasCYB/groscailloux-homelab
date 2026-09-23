@@ -480,6 +480,13 @@ journalctl -u homelabd -f
   dès qu'un fichier est lu ainsi le torrent bascule en `EpisodeSource::OursOnly` — **sinon Sonarr gagne et un
   seul fichier est rattaché aux 12 épisodes** (vu en production avant le correctif). `no_match` **et**
   `nothing_importable` remontent maintenant dans « Rien ne bouge » sur `/status.html`.
+- **Épisodes sans date / VOF** (2026-09-23, *Le Voyageur*) : TheTVDB date souvent tard les séries françaises et
+  Sonarr **exclut de `wanted/missing` tout épisode sans date** : `series_search` lit donc aussi les épisodes des séries
+  dont une saison suivie, commencée depuis moins de `undated_window_days` (730), est incomplète, et cherche leurs
+  épisodes suivis sans date (`undated_missing`). **« VOF » = version originale française** : compte comme VF dans
+  `langs_of`, et ajouté aux formats n° 4 « No French Marker », « VFF » et « FRENCH » des 4 Arrs (avant : −2000,
+  « sans français » ; sauvegarde `backups/arr-cf-vof-20260923/`). Un nouveau marqueur de langue = code **et** formats
+  des 4 Arrs.
 - **Langue** : `lang_rank` classe VF 4 > MULTi 3 > FRENCH 2 > VOSTFR 1 > **VO 0** ; une release sans français
   n'est prise qu'en dernier recours (`[indexers] allow_no_french`), quand aucune française n'est acceptable.
   Plafonds de taille du choix automatique : `max_gb_per_episode` (6) et `max_gb_per_movie` (25) — sinon un pack

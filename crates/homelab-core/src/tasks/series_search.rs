@@ -69,7 +69,9 @@ pub fn langs_of(title: &str) -> Langs {
         .collect();
     let has = |w: &[&str]| words.iter().any(|x| w.contains(&x.as_str()));
     Langs {
-        vf: has(&["VFF", "TRUEFRENCH", "VFQ", "VFI", "VF2", "VFB"]),
+        // VOF = version originale française (série ou film tourné en français) : audio français, comme une VF.
+        // Absent jusqu'au 2026-09-23 : Le Voyageur S04E04 (VOF) était classé « sans français ».
+        vf: has(&["VFF", "TRUEFRENCH", "VFQ", "VFI", "VF2", "VFB", "VOF"]),
         multi: has(&["MULTI"]),
         french: has(&["FRENCH"]),
         vostfr: has(&["VOSTFR", "SUBFRENCH"]),
@@ -900,6 +902,85 @@ pub async fn send_release(
     to_qbittorrent(ctx, prow, arr, &grab, "accepté mais pas mis en file").await
 }
 
+/// Une série suivie a-t-elle une saison suivie (hors spéciaux) déjà diffusée depuis moins de `window_days`
+/// jours et encore incomplète ? Seules celles-là valent la lecture de leurs épisodes (statistiques de `series`).
+fn open_recent_season(
+    series: &Value,
+    now: chrono::DateTime<chrono::Utc>,
+    window_days: i64,
+) -> bool {
+    if !series
+        .get("monitored")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    series
+        .get("seasons")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|se| {
+            let num = se.get("seasonNumber").and_then(Value::as_i64).unwrap_or(0);
+            let monitored = se
+                .get("monitored")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let st = se.get("statistics");
+            let total = st
+                .and_then(|s| s.get("totalEpisodeCount"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            let files = st
+                .and_then(|s| s.get("episodeFileCount"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            let recent = st
+                .and_then(|s| s.get("previousAiring"))
+                .and_then(Value::as_str)
+                .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+                .map(|d| (now - d.with_timezone(&chrono::Utc)).num_days() <= window_days)
+                .unwrap_or(false);
+            num > 0 && monitored && total > files && recent
+        })
+}
+
+/// Épisodes suivis, sans fichier et SANS date de diffusion, d'une saison dont au moins un épisode est déjà
+/// diffusé : `(saison, épisode, dernière diffusion de la saison)`. Une saison pas encore commencée n'est pas
+/// concernée (ses épisodes n'existent pas encore chez les groupes de release).
+fn undated_missing(episodes: &[Value], now_iso: &str) -> Vec<(i64, i64, String)> {
+    let mut latest: HashMap<i64, String> = HashMap::new();
+    for e in episodes {
+        let season = e.get("seasonNumber").and_then(Value::as_i64).unwrap_or(0);
+        let air = e.get("airDateUtc").and_then(Value::as_str).unwrap_or("");
+        if season > 0 && !air.is_empty() && air <= now_iso {
+            let l = latest.entry(season).or_default();
+            if air > l.as_str() {
+                *l = air.to_string();
+            }
+        }
+    }
+    let mut out: Vec<(i64, i64, String)> = episodes
+        .iter()
+        .filter_map(|e| {
+            let season = e.get("seasonNumber").and_then(Value::as_i64)?;
+            let num = e.get("episodeNumber").and_then(Value::as_i64)?;
+            let undated = e
+                .get("airDateUtc")
+                .and_then(Value::as_str)
+                .map(str::is_empty)
+                .unwrap_or(true);
+            let wanted = e.get("monitored").and_then(Value::as_bool).unwrap_or(false)
+                && !e.get("hasFile").and_then(Value::as_bool).unwrap_or(false);
+            let started = latest.get(&season)?;
+            (season > 0 && undated && wanted).then(|| (season, num, started.clone()))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 struct SeasonTodo {
     series_id: i64,
     season: i64,
@@ -1365,7 +1446,11 @@ async fn process_season(
     Ok(SeasonOutcome::new(&outcome, detail, left))
 }
 
-async fn plan_seasons(ctx: &TaskContext, arr: &ArrClient) -> Result<Vec<SeasonTodo>> {
+async fn plan_seasons(
+    ctx: &TaskContext,
+    arr: &ArrClient,
+    series: &HashMap<i64, Value>,
+) -> Result<Vec<SeasonTodo>> {
     let cfg = &ctx.cfg.tasks.series_search;
     let now_iso = chrono::Utc::now().to_rfc3339();
     let mut by: BTreeMap<(i64, i64), SeasonTodo> = BTreeMap::new();
@@ -1394,6 +1479,34 @@ async fn plan_seasons(ctx: &TaskContext, arr: &ArrClient) -> Result<Vec<SeasonTo
         t.missing_numbers.insert(num);
         if air > t.latest_air {
             t.latest_air = air;
+        }
+    }
+    // épisodes sans date d'une saison commencée : absents de `wanted/missing`, lus série par série
+    if cfg.undated_episodes {
+        let now_dt = chrono::Utc::now();
+        for (sid, ser) in series {
+            if !open_recent_season(ser, now_dt, cfg.undated_window_days) {
+                continue;
+            }
+            let eps = match arr.episodes(*sid).await {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!(task = "series_search", service = arr.name, series_id = sid, error = %e, "episodes unreadable (undated check)");
+                    continue;
+                }
+            };
+            for (season, num, latest) in undated_missing(&eps, &now_iso) {
+                let t = by.entry((*sid, season)).or_insert(SeasonTodo {
+                    series_id: *sid,
+                    season,
+                    latest_air: String::new(),
+                    missing_numbers: HashSet::new(),
+                });
+                t.missing_numbers.insert(num);
+                if latest > t.latest_air {
+                    t.latest_air = latest;
+                }
+            }
         }
     }
     let queued: HashSet<(i64, i64)> = arr
@@ -1497,13 +1610,13 @@ impl Task for SeriesSearch {
             .filter(|a| ctx.cfg.downloads.may_grab(a.name))
         {
             let prepared = async {
-                let todo = plan_seasons(ctx, arr).await?;
                 let series: HashMap<i64, Value> = arr
                     .series()
                     .await?
                     .into_iter()
                     .filter_map(|s| Some((s.get("id").and_then(Value::as_i64)?, s)))
                     .collect();
+                let todo = plan_seasons(ctx, arr, &series).await?;
                 anyhow::Ok((todo, series))
             }
             .await;
@@ -1615,6 +1728,84 @@ impl Task for SeriesSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ep(season: i64, num: i64, air: Option<&str>, monitored: bool, has_file: bool) -> Value {
+        let mut v = serde_json::json!({
+            "seasonNumber": season, "episodeNumber": num, "monitored": monitored, "hasFile": has_file
+        });
+        if let Some(a) = air {
+            v["airDateUtc"] = Value::String(a.into());
+        }
+        v
+    }
+
+    #[test]
+    fn vof_is_french_audio() {
+        assert_eq!(
+            lang_rank("Le.voyageur.S04E04.VOF.1080p.WEB.AAC.2.0.H264-THESYNDiCATE"),
+            4
+        );
+        assert_eq!(lang_rank_for("Show.S01.VOF.1080p.WEB.H264", true), 2);
+        assert_eq!(
+            lang_rank("Show.S01.VOSTFR.1080p"),
+            1,
+            "VOSTFR reste une VO sous-titrée"
+        );
+    }
+
+    #[test]
+    fn undated_episodes_of_a_started_season_are_wanted() {
+        // Le Voyageur (2026-09-23) : S04E01 daté et diffusé, E02-E03 sans date ; S05 pas commencée
+        let eps = vec![
+            ep(4, 1, Some("2025-11-29T20:00:00Z"), true, false),
+            ep(4, 2, None, true, false),
+            ep(4, 3, Some(""), true, false),
+            ep(4, 4, None, false, false), // non suivi
+            ep(3, 5, None, true, true),   // déjà là
+            ep(5, 1, None, true, false),  // saison pas commencée
+            ep(6, 1, Some("2027-01-01T00:00:00Z"), true, false), // à venir, pas commencée
+            ep(6, 2, None, true, false),
+            ep(0, 3, None, true, false), // spéciaux
+        ];
+        let got = undated_missing(&eps, "2026-09-23T12:00:00Z");
+        assert_eq!(
+            got,
+            vec![
+                (4, 2, "2025-11-29T20:00:00Z".to_string()),
+                (4, 3, "2025-11-29T20:00:00Z".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn only_recent_incomplete_monitored_seasons_are_examined() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-23T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let ser = |monitored: bool, files: i64, prev: &str| {
+            serde_json::json!({"monitored": monitored, "seasons": [
+                {"seasonNumber": 4, "monitored": true,
+                 "statistics": {"totalEpisodeCount": 3, "episodeFileCount": files, "previousAiring": prev}}
+            ]})
+        };
+        assert!(open_recent_season(
+            &ser(true, 0, "2025-11-29T20:00:00Z"),
+            now,
+            730
+        ));
+        assert!(
+            !open_recent_season(&ser(true, 3, "2025-11-29T20:00:00Z"), now, 730),
+            "complète"
+        );
+        assert!(
+            !open_recent_season(&ser(false, 0, "2025-11-29T20:00:00Z"), now, 730),
+            "non suivie"
+        );
+        assert!(
+            !open_recent_season(&ser(true, 0, "2020-01-01T00:00:00Z"), now, 730),
+            "trop ancienne"
+        );
+    }
 
     #[test]
     fn stale_uncovered_only_for_complete_seasons_of_this_arr() {
