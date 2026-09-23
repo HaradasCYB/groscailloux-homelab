@@ -60,7 +60,7 @@ services:
     image: ghcr.io/seerr-team/seerr:v3.2.0@sha256:c4cbd5121236ac2f70a843a0b920b68a27976be57917555f1c45b08a1e6b2aad
     container_name: jellyseerr
     ports:
-      - "5055:5055"
+      - "127.0.0.1:5055:5055"
     volumes:
       - /opt/homelab/jellyseerr/config:/app/config
     environment:
@@ -78,7 +78,7 @@ services:
     image: lscr.io/linuxserver/radarr:6.1.1.10360-ls300@sha256:b01097ad2d948c9f5eca39eb60bb529e2e55b0738c4bf7db09383bef0abab59d
     container_name: radarr
     ports:
-      - "7878:7878"
+      - "127.0.0.1:7878:7878"
     volumes:
       - /opt/homelab/radarr/config:/config
       - /opt/homelab/library:/data
@@ -98,7 +98,7 @@ services:
     image: lscr.io/linuxserver/sonarr:4.0.17.2952-ls309@sha256:3580aec3802c915f0f819a88d5099abce61734b925732b8393d176b5dc561020
     container_name: sonarr
     ports:
-      - "8989:8989"
+      - "127.0.0.1:8989:8989"
     volumes:
       - /opt/homelab/sonarr/config:/config
       - /opt/homelab/library:/data
@@ -118,7 +118,7 @@ services:
     image: lscr.io/linuxserver/prowlarr:2.3.5.5327-ls144@sha256:b4204e18666179472225935b443a99cf6c66dcb7bbc2d35034427a3851f13135
     container_name: prowlarr
     ports:
-      - "9696:9696"
+      - "127.0.0.1:9696:9696"
     volumes:
       - /opt/homelab/prowlarr/config:/config
     environment:
@@ -143,7 +143,7 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
       - "6881:6881"
       - "6881:6881/udp"
     environment:
@@ -194,7 +194,7 @@ services:
     image: lscr.io/linuxserver/qbittorrent:5.1.4-r3-ls452@sha256:3679a75dd2304b695525d83a4ff14c458708b5da4a7ce53044240932139590e1
     container_name: qbittorrent-direct
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
       - "6881:6881"
       - "6881:6881/udp"
     volumes:
@@ -216,7 +216,7 @@ services:
     image: lscr.io/linuxserver/pyload-ng:0.5.0b3.dev99-ls232@sha256:e56fc95db70171facd6a61c0e55075a9b75cf99896b111eebc48f3df4b72b47d
     container_name: pyload
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - /opt/homelab/pyload/config:/config
       - /opt/homelab/library/downloads:/downloads
@@ -319,7 +319,7 @@ services:
       MYSQL_USER: ${GUACAMOLE_DB_USER}
       MYSQL_PASSWORD: ${MYSQL_USER_PASSWORD}
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     depends_on:
       guacdb:
         condition: service_healthy
@@ -337,7 +337,7 @@ services:
     image: ghcr.io/homarr-labs/homarr:v1.59.3@sha256:4ffa0d4b24e390fd0050a18103ecfcb009357f6b3a25409fd4dd8cb0b9f3443e
     container_name: homarr
     ports:
-      - "7575:7575"
+      - "127.0.0.1:7575:7575"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/homelab/homarr:/appdata
@@ -356,7 +356,7 @@ services:
     image: portainer/portainer-ce:2.39.1@sha256:1ae8e65d50ca5498cb2c33e617495a1e3ef245b0d2392b4a44c70ae09b822891
     container_name: portainer
     ports:
-      - "9000:9000"
+      - "127.0.0.1:9000:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/homelab/portainer:/data
@@ -369,7 +369,7 @@ services:
     image: influxdb:2.8.0@sha256:71f2bce68b47a3e26c1ed38f7480a9372b008ba9b7c8a35cb2c913d3102d377f
     container_name: influxdb
     ports:
-      - "8086:8086"
+      - "127.0.0.1:8086:8086"
     volumes:
       - /opt/homelab/influxdb/data:/var/lib/influxdb2
       - /opt/homelab/influxdb/config:/etc/influxdb2
@@ -419,7 +419,7 @@ services:
     image: grafana/grafana:13.0.1@sha256:0f86bada30d65ef9d0183b90c1e2682ac92d53d95da8bed322b984ea78a4a73a
     container_name: grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - /opt/homelab/grafana:/var/lib/grafana
     environment:
@@ -444,7 +444,7 @@ services:
     pid: host
     privileged: true
     ports:
-      - "61208:61208"
+      - "127.0.0.1:61208:61208"
     environment:
       - GLANCES_OPT=-w --disable-plugin sensors,raid,wifi,smart,connections,processlist,processcount,ports,ip,amps,folders,alert,diskio,docker,containers,programlist,help,load,memswap,now,percpu,psutilversion
       - TZ=${TZ}
