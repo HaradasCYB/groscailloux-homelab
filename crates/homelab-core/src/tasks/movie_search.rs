@@ -44,6 +44,44 @@ pub fn wanted(movie: &Value, queued: &HashSet<i64>, now_secs: i64, missing_hours
         && now_secs - added >= missing_hours * 3600
 }
 
+/// Film français en attente de sa sortie en VOD : `(date de sortie en salle, date VOD estimée)`, ou `None`.
+///
+/// Sans date numérique, Radarr croit un film disponible 90 jours après la salle ; en France, la chronologie des
+/// médias place la VOD **4 mois** après la salle, et C411 n'a rien avant (*Le Vertige*, 2026-09-25 : 0 release à
+/// 107 jours). Seuls les films en langue originale française, sans date numérique ni physique connue, et sortis en
+/// salle depuis moins de `min_days` jours sont concernés : les films étrangers ont presque toujours une date
+/// numérique (américaine), et Radarr gère déjà ceux-là (`isAvailable`).
+pub fn awaiting_vod(
+    movie: &Value,
+    now: chrono::DateTime<chrono::Utc>,
+    min_days: i64,
+) -> Option<(chrono::NaiveDate, chrono::NaiveDate)> {
+    let french = movie
+        .pointer("/originalLanguage/name")
+        .and_then(Value::as_str)
+        == Some("French");
+    let dated = ["digitalRelease", "physicalRelease"].iter().any(|k| {
+        movie
+            .get(*k)
+            .and_then(Value::as_str)
+            .is_some_and(|d| !d.is_empty())
+    });
+    if !french || dated {
+        return None;
+    }
+    let cinema = movie
+        .get("inCinemas")
+        .and_then(Value::as_str)
+        .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())?
+        .with_timezone(&chrono::Utc);
+    let days = (now - cinema).num_days();
+    if days < 0 || days >= min_days {
+        return None;
+    }
+    let c = cinema.date_naive();
+    Some((c, c.checked_add_months(chrono::Months::new(4))?))
+}
+
 /// Meilleure release d'un film : identifiant TMDB, français, qualité acceptable ; tri langue, résolution,
 /// sources. Le codec ne compte pas (voir `series_search::choose`). `items` : (résultat Prowlarr,
 /// `parsedMovieInfo` Radarr).
@@ -197,6 +235,8 @@ impl Task for MovieSearch {
         let records = ctx.state.read(|s| s.movie_search.clone()).await;
         let t = now();
         let mut todo: Vec<(&ArrClient, Value)> = Vec::new();
+        let mut vod_wait = 0u32;
+        let now_dt = chrono::Utc::now();
         for arr in radarrs {
             let prepared = async {
                 let queued: HashSet<i64> = arr
@@ -212,16 +252,21 @@ impl Task for MovieSearch {
                 Ok((movies, queued)) => {
                     for m in movies {
                         let id = m.get("id").and_then(Value::as_i64).unwrap_or(0);
-                        if wanted(&m, &queued, t, cfg.missing_hours)
-                            && due(
-                                records.get(&format!("{}:{id}", arr.name)),
-                                t,
-                                cfg.retry_after_hours,
-                                cfg.retry_after_hours,
-                                cfg.error_retry_hours,
-                                15,
-                            )
-                        {
+                        if !wanted(&m, &queued, t, cfg.missing_hours) {
+                            continue;
+                        }
+                        if awaiting_vod(&m, now_dt, cfg.min_days_after_cinema).is_some() {
+                            vod_wait += 1;
+                            continue;
+                        }
+                        if due(
+                            records.get(&format!("{}:{id}", arr.name)),
+                            t,
+                            cfg.retry_after_hours,
+                            cfg.retry_after_hours,
+                            cfg.error_retry_hours,
+                            15,
+                        ) {
                             todo.push((arr, m));
                         }
                     }
@@ -274,7 +319,10 @@ impl Task for MovieSearch {
             }
         }
         let grabbed = counts.get("grabbed").copied().unwrap_or(0);
-        let summary: Vec<String> = counts.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let mut summary: Vec<String> = counts.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        if vod_wait > 0 {
+            summary.push(format!("{vod_wait} en attente de la VOD"));
+        }
         let summary = if summary.is_empty() {
             "rien à rattraper".to_string()
         } else {
@@ -287,6 +335,64 @@ impl Task for MovieSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fr_movie(lang: &str, cinema: &str, digital: Option<&str>) -> Value {
+        let mut m = json!({"originalLanguage": {"name": lang}, "inCinemas": cinema});
+        if let Some(d) = digital {
+            m["digitalRelease"] = Value::String(d.into());
+        }
+        m
+    }
+
+    #[test]
+    fn french_films_wait_for_the_vod_window() {
+        let at = |s: &str| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        // Le Vertige : salle le 10/06, 107 jours plus tard, pas de date numérique
+        let m = fr_movie("French", "2026-06-10T00:00:00Z", None);
+        assert_eq!(
+            awaiting_vod(&m, at("2026-09-25T10:00:00Z"), 110),
+            Some((d("2026-06-10"), d("2026-10-10")))
+        );
+        assert_eq!(
+            awaiting_vod(&m, at("2026-10-03T10:00:00Z"), 110),
+            None,
+            "115 jours : on cherche"
+        );
+        assert_eq!(
+            awaiting_vod(
+                &fr_movie("English", "2026-06-10T00:00:00Z", None),
+                at("2026-09-25T10:00:00Z"),
+                110
+            ),
+            None
+        );
+        assert_eq!(
+            awaiting_vod(
+                &fr_movie(
+                    "French",
+                    "2026-06-10T00:00:00Z",
+                    Some("2026-10-12T00:00:00Z")
+                ),
+                at("2026-09-25T10:00:00Z"),
+                110
+            ),
+            None,
+            "date numérique connue : Radarr s'en charge"
+        );
+        assert_eq!(
+            awaiting_vod(
+                &json!({"originalLanguage": {"name": "French"}}),
+                at("2026-09-25T10:00:00Z"),
+                110
+            ),
+            None
+        );
+    }
 
     fn movie(id: i64, monitored: bool, has_file: bool, added: &str) -> Value {
         json!({"id": id, "tmdbId": 100 + id, "monitored": monitored, "hasFile": has_file,

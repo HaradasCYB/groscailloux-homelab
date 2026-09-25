@@ -72,6 +72,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Serveur** : mémoire de secours (swap), vignettes de la barre de lecture plus générées pour les titres de la
   seedbox (la tâche du dimanche ne finissait jamais), fichier d'état plus robuste, commandes d'administration qui
   ne l'écrasent plus.
+- **Films français pas encore sortis en VOD** : l'onglet Demandes l'explique (« au cinéma depuis le …, VOD vers
+  le … ») au lieu d'une recherche qui tourne dans le vide, et le serveur ne cherche plus avant la sortie probable.
 - **Réseau** : les ports d'administration des services (Sonarr, Radarr, Prowlarr, Jellyseerr, qBittorrent, Homarr,
   Grafana…) ne sont plus joignables directement depuis Internet ; tout passe par le proxy, comme avant.
 

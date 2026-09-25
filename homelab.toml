@@ -200,6 +200,10 @@ retry_after_hours = 72
 error_retry_hours = 1
 query_gap_secs = 5
 indexer = "C411"
+# Film FRANÇAIS sans date numérique connue : Radarr le croit disponible 90 jours après la salle, mais en France la
+# VOD arrive 4 mois après (chronologie des médias) et C411 n'a rien avant. On ne le cherche pas avant N jours après
+# la salle ; le membre voit « VOD vers le … » dans l'onglet Demandes (Le Vertige, 2026-09-25). Le RSS reste actif.
+min_days_after_cinema = 110
 
 [tasks.anime_library]
 # Animation japonaise (classement TMDB, tags manuels `anime` / `pas-anime` prioritaires) rangée dans les

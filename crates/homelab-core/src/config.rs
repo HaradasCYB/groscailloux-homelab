@@ -681,6 +681,8 @@ pub struct MovieSearch {
     pub error_retry_hours: i64,
     pub query_gap_secs: u64,
     pub indexer: String,
+    /// Film français sans date numérique : pas de recherche avant N jours après la salle (VOD à 4 mois en France).
+    pub min_days_after_cinema: i64,
 }
 
 impl Default for MovieSearch {
@@ -693,6 +695,7 @@ impl Default for MovieSearch {
             error_retry_hours: 1,
             query_gap_secs: 5,
             indexer: "C411".into(),
+            min_days_after_cinema: 110,
         }
     }
 }

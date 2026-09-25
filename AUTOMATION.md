@@ -156,6 +156,13 @@ RSS seulement) et le RSS ne ramène que les nouveautés — un film ancien ne pe
 sinon qBittorrent + `homelab:movie=<id>`. Au plus `max_per_run` films (3) par passage ; un échec (indexeur en
 panne) est retenté après `error_retry_hours` (1), « aucune release » après `retry_after_hours` (72).
 
+**Films français sans date numérique** (`awaiting_vod`, 2026-09-25) : sans date numérique, Radarr croit un film
+disponible 90 jours après la salle ; en France la VOD arrive 4 mois après (chronologie des médias) et C411 n'a rien
+avant. Un film en langue originale française, sans `digitalRelease` ni `physicalRelease`, sorti en salle depuis
+moins de `min_days_after_cinema` (110) jours n'est pas cherché (résumé : « N en attente de la VOD ») ; l'onglet
+Demandes affiche « Au cinéma depuis le … : la VOD arrive environ 4 mois après (vers le …) ». Le RSS reste actif.
+Les films étrangers (date numérique américaine connue) sont déjà gérés par Radarr (`isAvailable`).
+
 ### indexer_unblock — 10 min
 Après des échecs (429, délais), Sonarr et Radarr mettent un indexeur en pause, jusqu'à 24 h ; aucune API ne
 lève la pause (`indexerstatus` → 404). Lecture seule de la table `IndexerStatus` des 4 Arrs (VPS : `rusqlite`

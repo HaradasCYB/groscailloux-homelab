@@ -495,7 +495,17 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
     let mut season_info: SeasonInfo = HashMap::new();
     let mut movie_files: HashSet<(&'static str, i64)> = HashSet::new();
     // films connus de l'Arr : (côté, id) → (isAvailable, date de sortie numérique/physique la plus proche)
-    let mut movie_info: HashMap<(&'static str, i64), (bool, Option<String>)> = HashMap::new();
+    // (disponible selon Radarr, date numérique/physique, attente de la VOD pour un film français : salle, VOD estimée)
+    #[allow(clippy::type_complexity)]
+    let mut movie_info: HashMap<
+        (&'static str, i64),
+        (
+            bool,
+            Option<String>,
+            Option<(chrono::NaiveDate, chrono::NaiveDate)>,
+        ),
+    > = HashMap::new();
+    let vod_days = ctx.cfg.tasks.movie_search.min_days_after_cinema;
     for (side, arr, kind) in &sides {
         if *kind == "tv" {
             if let Ok(list) = arr.series().await {
@@ -559,7 +569,12 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                     .filter_map(|k| m.get(*k).and_then(Value::as_str))
                     .map(|d| d[..10.min(d.len())].to_string())
                     .min();
-                movie_info.insert((side, id), (avail, release));
+                let vod = homelab_core::tasks::movie_search::awaiting_vod(
+                    &m,
+                    chrono::Utc::now(),
+                    vod_days,
+                );
+                movie_info.insert((side, id), (avail, release, vod));
             }
         }
     }
@@ -691,7 +706,16 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                             "Fiche absente côté téléchargement : l'administrateur doit la refaire"
                                 .into()
                     }
-                    Some((false, release)) => {
+                    Some((true, _, Some((cinema, vod)))) => {
+                        let d =
+                            |n: &chrono::NaiveDate| rp::date_fr(&n.format("%Y-%m-%d").to_string());
+                        p.label = format!(
+                            "Au cinéma depuis le {} : en France, la VOD arrive environ 4 mois après (vers le {}). Il sera récupéré automatiquement dès sa sortie.",
+                            d(cinema),
+                            d(vod)
+                        );
+                    }
+                    Some((false, release, _)) => {
                         p.label = match release {
                             Some(d) => format!(
                                 "Pas encore sorti en numérique (prévu le {})",
@@ -700,7 +724,7 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                             None => "Pas encore sorti en numérique".into(),
                         }
                     }
-                    Some((true, _)) if search.is_none() && t - created > 6 * 3600 => {
+                    Some((true, _, _)) if search.is_none() && t - created > 6 * 3600 => {
                         p.label =
                             "Recherche régulière en cours, rien de trouvé pour l'instant".into();
                     }
