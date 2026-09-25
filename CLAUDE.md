@@ -658,6 +658,14 @@ journalctl -u homelabd -f
   30 Mo/s ; les « 500 Mbit/s » du 18/09 étaient l'agrégat trickplay). Une lecture = un flux ≈ 65 Mbit/s : assez, mais
   sans marge pour un à-coup ; l'hôte seedbox est partagé (charge 45–60, 128 cœurs). Le transfert reprend seul le
   lendemain 08:30 sur ce qui reste (`state-0.json`), `deletion_cleanup` reste coupée jusqu'à la fin.
+- **Supprimer des titres de la seedbox pour de vrai** (2026-09-25, 35 titres jamais regardés, 450 Gio) : fiche
+  Radarr/Sonarr **avec** fichiers, torrents liés (par inode, sauf délai C411), **dossier du titre dans la corbeille
+  Arr** (`media/Movies/.recycle`, `media/TV Shows/.recycle` : sinon rien n'est libéré avant 14 j), fiche média
+  Jellyseerr, puis `vfs/refresh` et `Library/Media/Updated`. Modèle : `backups/seedbox-cleanup-20260925/delete.py`
+  (`--dry-run` d'abord ; fiches sauvegardées). « Jamais regardé » = ni `PlaybackActivity` (depuis le 28/06) ni
+  `Played`/`IsResumable` d'aucun compte. La date d'ajout de Jellyfin n'est pas fiable (items recréés par les
+  déménagements) : prendre `added` de l'Arr. Espace = `quota -s` sur la seedbox. Un `ssh seedbox cmd args` recolle
+  les arguments en une ligne shell : passer les chemins par l'entrée standard.
 - **Ménage de la seedbox** (`scripts/seedbox-cleanup.py`, 2026-09-20) : les torrents **sans catégorie** (ajoutés à la
   main les 11–12/09 : ISO, logiciels, musique, PDF, sport, docs) sont repérés par inode — un torrent dont **aucun**
   fichier n'est relié à `media/` (hors `.recycle`) est retiré avec ses fichiers ; un torrent partiellement relié est
