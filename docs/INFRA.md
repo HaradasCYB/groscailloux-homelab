@@ -1,44 +1,45 @@
 # Infrastructure : fonctionnement complet
 
-Deux machines, un seul Jellyfin. La **seedbox** télécharge et stocke les nouvelles demandes ; le
-**VPS** diffuse, automatise et surveille. Ce document montre qui fait quoi, par où passent les
-fichiers et ce qui se passe quand un élément tombe.
+Deux machines, un seul Jellyfin. La **seedbox** télécharge et stocke tout ce qui est nouveau ; le **VPS**
+diffuse, cherche les releases, automatise, surveille et garde la bibliothèque historique. Ce document montre qui
+fait quoi, par où passent les fichiers et ce qui se passe quand un élément tombe. État au 25/09/2026.
 
-> Version publique : ni adresse, ni nom d'hôte, ni détail d'exposition réseau. Le détail physique
-> complet est tenu à jour dans une page privée, hors dépôt.
+> Version publique : ni adresse, ni nom d'hôte, ni détail d'exposition réseau. Le détail physique complet est
+> tenu à jour dans une page privée, hors dépôt.
 
 | | VPS | Seedbox |
 |---|---|---|
-| Rôle | diffusion, automatisation, pipeline historique | acquisition et stockage des nouvelles demandes |
-| Machine | VPS dédié · Ubuntu 26.04 · 6 vCPU · 17 Go · pas de GPU | seedbox partagée (plateforme Ultra.cc) · pas de root |
-| Stockage | 969 Go ext4 (médias + téléchargements + état des services) | 3,7 To de quota |
-| Services | 23 conteneurs Docker + `homelabd` (Rust) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Jackett, FlareSolverr, Bazarr, Unpackerr (conteneurs) |
+| Rôle | diffusion, recherche, automatisation, bibliothèque historique | tous les téléchargements, stockage des nouveautés |
+| Machine | VPS dédié · Ubuntu 26.04 · 6 vCPU · 17 Go + swap 4 Go · pas de GPU | seedbox partagée (plateforme Ultra.cc) · pas de root |
+| Stockage | 969 Go ext4 (médias historiques, état des services) | quota de 3,7 To (l'espace libre est celui du quota, pas du disque partagé) |
+| Services | 21 conteneurs Docker + `homelabd` (Rust, 24 tâches) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Bazarr, Unpackerr (conteneurs) |
 
-Lien entre les deux : latence ~96 ms, ~12 Mo/s par lecture ; API en HTTPS, fichiers en SFTP lecture seule.
+Lien entre les deux : latence ~97 ms, 8 à 10 Mo/s par connexion (~30 Mo/s à quatre) ; API en HTTPS, fichiers en
+SFTP (lecture + suppression, aucune écriture).
 
 ## Architecture physique
 
 ```mermaid
 flowchart LR
-  users([Utilisateurs]) -- HTTPS --> npm
+  users([Membres]) -- HTTPS --> npm
   dns([DNS dynamique]) -. résout .-> users
 
   subgraph VPS
     direction TB
     subgraph host[Hôte · systemd]
-      homelabd["homelabd<br/>14 tâches + watcher<br/>UI onboarding"]
-      rclone["rclone mount<br/>SFTP lecture seule<br/>cache 10 Go"]
-      stack[homelab-stack<br/>backup hebdo]
+      homelabd["homelabd<br/>24 tâches + watcher<br/>pages membres et admin"]
+      rclone["rclone mount<br/>SFTP · cache 120 Go"]
+      stack["homelab-stack · backup hebdo<br/>purge transcodes (1 min)"]
     end
-    subgraph docker[Docker · réseau « homelab »]
-      npm[Nginx Proxy Manager<br/>TLS · 14 sous-domaines]
+    subgraph docker[Docker · ports sur 127.0.0.1]
+      npm[Nginx Proxy Manager<br/>TLS · 15 hôtes]
       subgraph lecture[Lecture]
         jellyfin[Jellyfin]
         seerr[Jellyseerr]
       end
-      subgraph acq[Acquisition VPS]
-        arrs[Radarr · Sonarr · Prowlarr]
-        jackett[Jackett + FlareSolverr]
+      subgraph biblio[Bibliothèque VPS · ne télécharge plus]
+        arrs[Radarr · Sonarr]
+        prowlarr[Prowlarr · C411 seul]
         pyload[pyLoad]
       end
       subgraph netns[Réseau de gluetun]
@@ -56,185 +57,206 @@ flowchart LR
     sshd[sshd · SFTP]
     sbqbit[qBittorrent]
     autobrr[autobrr]
-    sbarrs[Radarr · Sonarr<br/>Jackett · Bazarr · Unpackerr]
+    sbarrs[Radarr · Sonarr<br/>Bazarr · Unpackerr]
     sbstore[("~/downloads ⇄ ~/media<br/>hardlinks")]
   end
 
   vpn([ProtonVPN])
-  trackers([Trackers BitTorrent<br/>C411 · publics])
+  trackers([C411 · tracker privé])
 
   npm -- proxy --> jellyfin
   rclone -- "/seedbox/media" --> jellyfin
-  rclone -- SFTP ro --> sshd
+  rclone -- SFTP --> sshd
   homelabd -- API HTTPS --> proxy
+  homelabd -- recherche TMDB --> prowlarr
   seerr -- demandes --> proxy
   gluetun -- WireGuard --> vpn
-  vpn <-- BitTorrent --> trackers
   sbqbit <-- BitTorrent --> trackers
   autobrr -- releases C411 --> sbarrs
   sbarrs -- via proxy --> sbqbit
   sbqbit --> sbstore
 ```
 
-- **NPM** est l'entrée prévue : il termine le TLS et renvoie chaque sous-domaine vers un conteneur.
-  Les conteneurs du VPS s'appellent par leur nom (`http://radarr:7878`).
-- **qBittorrent (VPS)** n'a pas de réseau propre : il vit dans celui de gluetun et ne sort que par
-  le tunnel VPN. Un hook de gluetun lui pousse le port attribué par le VPN.
-- **Seedbox** : les applis en conteneurs voient le dossier personnel au même chemin que
-  qBittorrent (natif), ce qui permet les hardlinks ; elles joignent qBittorrent par le proxy HTTPS
-  de l'hébergeur.
+- **NPM** est la seule entrée web : il termine le TLS et renvoie chaque hôte vers un conteneur. Les ports des
+  conteneurs ne sont publiés que sur `127.0.0.1` (sauf 80/443 et le port BitTorrent) ; les conteneurs s'appellent
+  par leur nom (`http://radarr:7878`).
+- **qBittorrent (VPS)** vit dans le réseau de gluetun et ne sort que par le tunnel VPN. Recréer gluetun impose de
+  recréer qBittorrent.
+- **Seedbox** : les applis en conteneurs voient le dossier personnel au même chemin que qBittorrent (natif), ce qui
+  permet les hardlinks ; elles joignent qBittorrent par le proxy HTTPS de l'hébergeur. Les sous-titres incrustés
+  sont extraits sur la seedbox (script lancé par ssh), sans relire la vidéo à travers le lien.
 
 ## Parcours d'une demande
 
-Jellyseerr envoie les nouvelles demandes aux Radarr/Sonarr **de la seedbox** (serveurs par défaut) ;
-ceux du VPS gèrent la bibliothèque existante. Sur les quatre Arrs, **seul C411** sert aux grabs
-automatiques (RSS, recherche à l'ajout) ; les autres indexers ne servent qu'en recherche manuelle.
-Qualité : 1080p au plus, jamais de 4K (le VPS transcode sans GPU).
+Jellyseerr envoie chaque demande aux Radarr/Sonarr **de la seedbox**, en leur interdisant de chercher
+(`preventSearch`). C'est **homelabd** qui cherche, par l'identifiant TMDB, chez **C411** seul, via Prowlarr : une
+recherche d'Arr sur un animé partait en rafale épisode par épisode et bloquait la clé. Le RSS de C411 reste actif
+dans les Arrs de la seedbox pour les sorties du jour. Qualité : 1080p au plus, français d'abord (VF, MULTi, VOF…),
+VO en dernier recours ; pour les animés, MULTi puis VOSTFR.
 
 ```mermaid
 sequenceDiagram
   autonumber
-  actor U as Utilisateur
+  actor U as Membre
   participant JS as Jellyseerr (VPS)
   participant R as Radarr (seedbox)
-  participant C as C411
-  participant Q as qBittorrent (seedbox)
   participant H as homelabd (VPS)
+  participant C as C411 (via Prowlarr)
+  participant Q as qBittorrent (seedbox)
   participant JF as Jellyfin (VPS)
 
   U->>JS: demande un film
-  JS->>R: ajoute la fiche + recherche
-  R->>C: recherche Torznab (id TMDB)
-  C-->>R: releases FR / MULTi
+  JS->>R: crée la fiche, sans recherche
+  H->>C: movie_search : id TMDB
+  C-->>H: releases
+  H->>H: choisit (français, ≤ 1080p, ≤ 15 Go, sources)
+  H->>R: release/push
   R->>Q: .torrent, catégorie « radarr »
+  H-->>Q: si Radarr refuse : ajout direct, étiquette homelab:
   Q->>Q: télécharge, puis seede
-  R->>R: importe par hardlink → ~/media
-  H-->>R: id_match_import (si import bloqué « matched by ID »)
-  H->>R: seedbox_refresh lit l'historique d'imports
-  H->>JF: rclone vfs/refresh + Library/Media/Updated
-  U->>JF: lit le film (via /seedbox/media)
+  R->>R: importe par hardlink → ~/media (ou torrent_import)
+  H->>JF: seedbox_refresh : rclone vfs/refresh + Library/Media/Updated
+  U->>JF: lit le film ; l'onglet Demandes montre chaque étape
 ```
 
-Délai entre la fin du téléchargement et l'apparition dans Jellyfin : 10 minutes au pire (deux tâches
-à 5 minutes). autobrr peut aussi déclencher l'envoi du torrent dès qu'une release C411 sort.
-
-**Pourquoi `id_match_import`** : les releases C411 portent souvent le titre français, que Radarr ne
-relie pas à sa fiche anglaise. L'indexeur ayant fourni l'id TMDB, Radarr sait de quel film il
-s'agit, mais bloque l'import par précaution ; la tâche le débloque pour les seuls fichiers sans
-autre rejet.
+- Un film part dans les 5 minutes qui suivent la demande, une série dans les 10. Sans release : nouvel essai après
+  72 h (films) ou 24 h (séries), dans un budget de 40 requêtes par heure **et par clé C411** (deux clés, 10
+  requêtes réservées à la recherche manuelle `/recherche`). Une clé qui répond 429 est mise de côté 15 min.
+- **Séries** : une release par épisode manquant dans le même lot, ou le pack de saison ; épisodes que TheTVDB n'a
+  pas encore datés ; cours d'animés publiés sous un autre titre (liste des fichiers du .torrent lue avant
+  d'agir) ; œuvres dérivées (mini, OVA, recap) écartées.
+- **Films français** sans date numérique, sortis en salle depuis moins de 110 jours : pas de recherche (la VOD
+  arrive 4 mois après la salle) ; le membre voit « VOD vers le … ».
+- **Imports** : `torrent_import` importe en hardlink tout ce que l'Arr n'a pas demandé lui-même, ne remplace jamais
+  un fichier et refuse un titre présent sur l'autre machine ; `id_match_import` débloque les imports « matched by
+  ID » (titres français).
 
 ## Stockage
 
-Un fichier téléchargé n'existe qu'une fois sur le disque, sous deux chemins (**hardlink**) : le
-dossier de téléchargement, où le torrent seede, et la bibliothèque rangée. Supprimer le torrent ne
-supprime pas le film.
+Un fichier téléchargé n'existe qu'une fois sur le disque, sous deux chemins (**hardlink**) : le dossier de
+téléchargement, où le torrent seede, et la bibliothèque rangée. Supprimer le torrent ne supprime pas le film ;
+pour libérer l'espace, il faut retirer le fichier **et** le torrent (et vider la corbeille de l'Arr).
 
 ```mermaid
 flowchart LR
-  subgraph S[Chaîne seedbox · nouvelles demandes]
+  subgraph S[Chaîne seedbox · tout ce qui est nouveau]
     direction LR
-    sq[qBittorrent] -- écrit --> sd["~/downloads/qbittorrent/radarr/"]
-    sd <-- hardlink --> sm["~/media/Movies · TV Shows"]
+    sq[qBittorrent] -- écrit --> sd["~/downloads/qbittorrent/"]
+    sd <-- hardlink --> sm["~/media/Movies · TV Shows · Anime · Anime Movies"]
   end
-  sm -- SFTP lecture seule --> mnt["/mnt/seedbox/media<br/>FUSE rclone · hôte VPS"]
-  mnt -- bind du parent, rslave --> jfs["Jellyfin<br/>/seedbox/media<br/>2ᵉ dossier de Films · Séries"]
+  sm -- SFTP --> mnt["/mnt/seedbox/media<br/>FUSE rclone · hôte VPS · cache 120 Go"]
+  mnt -- bind du parent, rslave --> jfs["Jellyfin<br/>/seedbox/media"]
 
-  subgraph V[Chaîne VPS · bibliothèque historique]
+  subgraph V[Chaîne VPS · bibliothèque historique, plus aucun ajout]
     direction LR
-    vq[qBittorrent · réseau gluetun] -- écrit --> vd["library/downloads"]
-    vd <-- hardlink --> vm["library/media"]
+    vd["library/downloads"] <-- hardlink --> vm["library/media"]
   end
-  vm -- bind lecture seule --> jfv["Jellyfin<br/>/media<br/>biblios Films, Séries"]
+  vm -- bind (écriture : bouton Supprimer) --> jfv["Jellyfin<br/>/media"]
 ```
 
-- **Dossier parent** : rclone monte dans `/mnt/seedbox/media`, mais Jellyfin lie `/mnt/seedbox`
-  (dossier ordinaire) avec `rslave`. Chaque (re)montage apparaît dans le conteneur sans le recréer ;
-  lier le point de montage lui-même laisserait un montage mort après une coupure.
-- **Sauvegardes** : `homelabctl backup` (dimanche 04:30) archive l'état du VPS (configs, `.env`,
-  dump MySQL de Guacamole, unités systemd), 4 archives gardées. Les médias ne sont pas sauvegardés
-  (trop volumineux, re-téléchargeables), pas plus que la config des applis de la seedbox.
+- **Dossier parent** : rclone monte dans `/mnt/seedbox/media`, mais Jellyfin lie `/mnt/seedbox` (dossier
+  ordinaire) avec `rslave`. Chaque (re)montage apparaît dans le conteneur sans le recréer.
+- **Sauvegardes** : `homelabctl backup` (dimanche 04:40) archive l'état du VPS (configs, `.env`, bases SQLite par
+  `VACUUM INTO`, dump MySQL de Guacamole, unités systemd), ~3 Go ; l'archive est testée avant qu'on supprime les
+  anciennes, 4 sont gardées. Les médias ne sont pas sauvegardés, ni la config des applis de la seedbox. Copie hors
+  site : à l'étude.
 
 ## Autres flux
 
 | Flux | Fonctionnement |
 |---|---|
-| Pipeline historique (VPS) | Radarr/Sonarr du VPS → Jackett (+ FlareSolverr) et C411 → qBittorrent via gluetun → import hardlink dans `library/media`. C411 seul en automatique, les autres indexers en recherche manuelle. |
-| Torrents ajoutés à la main (VPS + seedbox) | `torrent_import` (10 min) : torrent terminé inconnu des Arrs → fiche non surveillée → import manuel en hardlink → Jellyfin. Refusé si le titre a déjà des fichiers sur l'autre machine. |
-| Dépôts directs (VPS) | Fichier dans `library/downloads` (pyLoad, dépôt manuel) → observateur `auto_import` → classement série/film → ajout de la fiche dans l'Arr → import. Archives extraites d'abord. |
-| Onboarding | `homelabctl onboard`, page d'onboarding (jeton) ou compte créé dans Jellyseerr → compte Jellyfin (bibliothèques autorisées), import Jellyseerr, mail de bienvenue. Mot de passe jamais journalisé. Le compte arrive suspendu, à activer. |
-| Comptes premium | Page « Comptes » (admin) ou `homelabctl accounts` : premium = compte Jellyfin actif, sinon suspendu (connexion refusée, rien de supprimé) ; suppression (Jellyfin + Jellyseerr) après confirmation. Comptes protégés intouchables. 25 comptes premium et 2 lectures simultanées par compte au plus. |
-| Interface « Groscailloux TV » | Thème ElegantFin épinglé + calque maison (`branding/jellyfin/`), logo, bannière vedette, rangées d'accueil (Home Screen Sections, collections françaises, « Tendances cette semaine » calculée par `trending`). Retour arrière : `scripts/jellyfin-ui-rollback.sh`. |
-| Suppression depuis Jellyfin | `deletion_cleanup` (5 min) : titre absent du disque et de Jellyfin deux passages de suite → fiche Radarr/Sonarr retirée (ou saison/épisodes non surveillés), média Jellyseerr libéré, torrent retiré avec ses fichiers (C411 : à ratio 1 ou 7 jours de seed). |
-| Observabilité | Telegraf (hôte + Docker) → InfluxDB (30 jours) → Grafana ; Glances en direct. |
-| Mises à jour | Images figées `tag@sha256` ; diun signale chaque jour les nouvelles versions par mail ; la mise à jour reste manuelle. |
+| Bibliothèque historique (VPS) | Ne prend plus aucune release depuis le 18/09 (`[downloads] auto_sides = ["seedbox"]` + RSS C411 coupé). Garde ses fiches, `torrent_import` et le nettoyage des suppressions. Des titres ont été déménagés vers la seedbox (`scripts/move-to-seedbox.py`, hors pic). |
+| Recherche manuelle | Page `/recherche` (admin) : C411 par TMDB dans le budget horaire, Nyaa pour les animés ; toutes les releases sont montrées et marquées, le choix reste à l'admin. |
+| Torrents ajoutés à la main | `torrent_import` (2 min) : import manuel en hardlink vers la bonne fiche. |
+| Dépôts directs (VPS) | Fichier dans `library/downloads` → observateur `auto_import` → classement série/film → fiche → import. |
+| Onboarding | Inscription publique, tuile « Créer un compte » ou `homelabctl onboard` → compte Jellyfin (5 bibliothèques) + Jellyseerr → mail avec lien à usage unique (60 min) pour choisir son mot de passe, puis les premiers pas. Aucun identifiant par mail. Activation à la main. Voir [ONBOARDING.md](ONBOARDING.md). |
+| Comptes et abonnements | Page `/accounts` ou `homelabctl accounts|subs` : premium = compte actif (25 au plus, 2 lectures simultanées), suspendu = connexion refusée sans rien supprimer. Abonnements PayPal (webhook vérifié, contrôle quotidien) ; statut « à qualifier » jamais suspendu automatiquement. |
+| Côté membres | Mon compte (abonnement, appareils, mot de passe, langue VF/VO, taille des sous-titres, avancement des demandes), tchat intégré, Discord (salon des membres et salon admin), thème « Groscailloux TV », interface allégée sur téléviseur. |
+| Suppression depuis Jellyfin | `deletion_cleanup` : fiche Arr, fichiers et torrents (délai C411 respecté), média Jellyseerr libéré ; seulement pour ce qui est en attente ou en cours. |
+| Observabilité | Telegraf (hôte, Docker, cache rclone) → InfluxDB (30 j) → Grafana ; page d'état `/status.html` ; alertes par mail et dans le salon Discord admin. |
+| Mises à jour | Images figées `tag@sha256` ; diun signale les nouvelles versions ; mise à jour manuelle. |
 
 ## Automatisation
 
-Tout passe par `homelabd` (un binaire, un service systemd, `homelab.toml` + `.env`). Chaque tâche
-démarre au lancement du démon puis tourne à son rythme ; un verrou sérialise les modifications de
-qBittorrent. Détail des endpoints : [AUTOMATION.md](../AUTOMATION.md).
+Tout passe par `homelabd` (un binaire, un service systemd, `homelab.toml` + `.env`). Une tâche ne tourne jamais
+deux fois en même temps ; une erreur imprévue n'arrête qu'un passage. L'état n'est écrit que par le démon
+(écriture atomique) : `homelabctl` le lit et lui demande tout changement (`POST /admin/run`, `/admin/accounts`).
+Détail : [AUTOMATION.md](../AUTOMATION.md).
 
 | Tâche | Rythme | Rôle | Garde-fou |
 |---|---|---|---|
-| `stack_health` | 5 min | relance les services arrêtés, redémarre les unhealthy, teste Guacamole | 10 min entre deux redémarrages, attend guacdb |
-| `seedbox_refresh` | 5 min | nouveaux imports seedbox → rclone + Jellyfin | curseur persistant ; rien si montage absent |
-| `id_match_import` | 5 min | débloque les imports « matched by ID » | fichiers sans rejet ; 10 max/passage |
-| `unknown_series_grab` | 6 h | prend les releases C411 au titre traduit que Sonarr ne reconnaît pas | titre identique au titre FR ou original ; ≤ 1080p ; 3 recherches/passage |
-| `torrent_import` | 10 min | importe les torrents ajoutés à la main (VPS + seedbox) | fiches non surveillées, hardlink, pas de doublon entre machines ; 10 max/passage |
-| `tba_bypass` | 5 min | importe les épisodes refusés pour « titre TBA » | seul rejet uniquement |
-| `stuck_handler` | 5 min | remplace les téléchargements bloqués > 8 h | 5 max/passage, ciblé |
-| `disk_pressure` | 15 min | disque VPS ≥ 95 % : supprime les vieux torrents arrêtés | hardlinks préservés ; ≥ 98 % alerte seule |
-| `tracker_ratio` | 30 min | limites de partage par tracker | C411 illimité · publics 2 / 14 j · autres 1 / 7 j |
-| `monitor_sync` | 10 min | saisons surveillées = saisons demandées | routage par serveur Jellyseerr |
-| `user_poller` | 60 s | convertit les comptes créés dans Jellyseerr | une fois par email |
-| `cleanup` | 24 h | transcodages, dossiers vides, corbeilles, logs | chemins existants seulement |
+| `series_search` | 10 min | saisons et épisodes manquants par TMDB | budget horaire par clé ; 60 épisodes au plus par saison ; pas d'œuvre dérivée |
+| `movie_search` | 5 min | films manquants par TMDB | français d'abord, ≤ 1080p, ≤ 15 Go ; attente de la VOD |
+| `torrent_import` | 2 min | torrents étiquetés `homelab:` ou ajoutés à la main | hardlink ; jamais de remplacement ; pas de doublon entre machines |
+| `id_match_import` | 5 min | imports « matched by ID » | fichiers sans autre rejet |
+| `seedbox_refresh` | 5 min | imports seedbox → rclone + Jellyfin | curseur persistant |
+| `stuck_handler` | 5 min | téléchargements bloqués > 8 h | 5 max, ciblé |
+| `indexer_unblock` | 5 min | lève la pause d'un Arr sur C411 | 1 h après le dernier échec ; 3 fois/24 h au plus |
+| `monitor_sync` | 10 min | saisons suivies = saisons demandées | par serveur Jellyseerr |
+| `anime_library` | 30 min | range l'animation japonaise (TMDB), type « anime » | tags anime / pas-anime |
+| `identity_check` | 30 min | corrige les fiches Jellyfin mal identifiées | 3 par passage, jamais pendant une lecture |
+| `subtitle_sync` | 5 min | sous-titres incrustés → fichiers annexes (sur la seedbox) | item revu toutes les 6 h au plus ; gros ASS jamais par défaut |
+| `deletion_cleanup` | 5 min | suppressions Jellyfin / Jellyseerr | seulement en attente ou en cours |
+| `trending` | 6 h | rangée « Tendances » de l'accueil | titres présents seulement |
+| `playback_canary` | 15 min | transcodage réel de deux segments | alerte au premier échec |
+| `playback_limit` | 20 s | arrête la 3ᵉ lecture simultanée | comptes protégés exemptés |
+| `hls_loop_watch` | 5 min | client qui boucle sur un segment | alerte admin |
+| `stack_health` | 5 min | relance les conteneurs arrêtés ou unhealthy | 10 min entre deux relances |
+| `disk_pressure` | 15 min | disque VPS ≥ 95 % : vieux torrents arrêtés | hardlinks préservés ; ≥ 98 % alerte |
+| `tracker_ratio` | 30 min | limites de partage par tracker | C411 (deux domaines) illimité |
+| `cleanup` | 24 h | dossiers vides, corbeilles (14 j), vieux journaux | chemins existants seulement |
+| `user_poller` | 60 s | comptes créés dans Jellyseerr → onboarding | une fois par adresse |
+| `subscription_cycle` | 1 h | échéances des abonnements | jamais « à qualifier » |
+| `subscription_reconcile` | 24 h | abonnements PayPal ↔ base | corrections tracées |
+| `tba_bypass` | — | coupée (inutile depuis `episodeTitleRequired = never`) | — |
 | `auto_import` | continu | observe `library/downloads` | refuse de démarrer sans le dossier |
 
 ## Lecture fluide
 
-Presque toutes les lectures sont directes (les appareils lisent le fichier tel quel) : ce qui compte est
-de livrer le fichier assez vite, et de ne pas faire tourner de tâches lourdes pendant qu'on regarde.
-
 | Levier | Réglage |
 |---|---|
-| Lien seedbox | SFTP en blocs de 255 Ko : ~16 Mo/s par flux (contre 5), ~24 Mo/s reçus par Jellyfin ; cache de 20 Go, sans lecture anticipée |
-| Ajout d'un titre | aucune analyse qui lit la vidéo (Intro Skipper, capture d'image, NFO) : tout passe dans la fenêtre de nuit |
-| Vignettes de navigation (trickplay) | images clés seulement, jamais pendant un scan ; tâche nocturne 05:30 (6 h max) |
-| Tâches Jellyfin lourdes | scan 05:00, segments 05:15, Intro Skipper 06:00, normalisation audio 07:00 : fenêtre sans lecture 05–13 h |
-| Priorité CPU | `cpu_shares` 2048 pour Jellyfin, 512 pour les tâches de fond (n'agit qu'en cas de contention) |
-| Charge de fond | Jellyseerr : disponibilité recalculée une fois par nuit ; supervision toutes les 30 s |
+| Lien seedbox | cache rclone de 120 Go (éviction avant le seuil du disque), blocs de 4 Mo, 32 connexions SFTP |
+| Transcodage | un seul transcodage 1080p tient en temps réel (pas de GPU) ; 98 % des lectures sont directes |
+| tmpfs des transcodages | 4 Go, purgé chaque minute ; urgence à 85 % (sinon segments vides = « chargement infini ») |
+| Tâches Jellyfin lourdes | fenêtre 05–13 h ; vignettes de défilement plus générées pour la seedbox |
+| Ajout d'un titre | aucune analyse qui lit la vidéo à l'ajout |
+| Qualité | bandeau « réduire la qualité » au 3ᵉ blocage, valable pour la seule lecture en cours |
+| Priorité CPU | `cpu_shares` 2048 pour Jellyfin, 512 pour les tâches de fond |
 
 ## Résilience
 
 | Événement | Comportement | Retour à la normale |
 |---|---|---|
-| Redémarrage du VPS | Docker relance les conteneurs ; `homelab-stack` lance Guacamole après guacdb ; passe `stack_health`. | automatique |
-| Seedbox injoignable | Titres venant de la seedbox affichés mais illisibles, sans purge (Jellyfin ignore un dossier inaccessible) ; nouvelles demandes en attente ; VPS intact. | automatique au retour · arrêt définitif : [DEPLOY.md](../DEPLOY.md) |
-| Service unhealthy | Redémarré après 2 min. | automatique |
-| Coupure du VPN | Kill-switch : qBittorrent (VPS) sans réseau, aucune fuite. | automatique |
+| Redémarrage du VPS | Docker relance les conteneurs ; Guacamole après guacdb ; une seule session de bureau VNC. | automatique |
+| Seedbox injoignable | Titres seedbox affichés mais illisibles, sans purge ; demandes en attente ; le test de lecture alerte. | automatique au retour |
+| Service unhealthy | `stack_health` le relance. | automatique |
+| Tâche qui plante | passage noté en échec, la tâche repasse à l'intervalle suivant. | automatique |
+| C411 en 429 | la clé est mise de côté 15 min, la requête repart sur l'autre. | automatique |
+| Coupure du VPN | kill-switch : qBittorrent (VPS) sans réseau. | automatique |
 | Disque VPS ≥ 95 % | `disk_pressure` libère de la place. | manuel à ≥ 98 % |
-| Mauvaise mise à jour | Images figées, config dans git. | `git checkout` + `docker compose up -d` |
+| Mauvaise mise à jour | images figées, config dans git ; une clé ajoutée à `homelab.toml` exige le nouveau binaire avant tout redémarrage. | `git checkout` + `docker compose up -d` |
 
 ## Sécurité
 
-- Secrets uniquement dans `.env` (600, hors git) ; les archives de sauvegarde le contiennent (600).
-- Accès VPS → seedbox : une clé SFTP **lecture seule** pour le montage (`restrict,command="sftp-server -R"`),
-  API en HTTPS avec clés.
-- Outils d'administration derrière une authentification HTTP NPM (liste « admin-outils ») en plus de leur
-  propre connexion ; tableau Homarr d'administration privé (connexion Homarr), tableau public réservé aux spectateurs.
-- Entrée web prévue : NPM en HTTPS. Les ports publiés par Docker contournent le pare-feu de l'hôte
-  (ufw) : toute nouvelle publication de port dans `docker-compose.yml` est joignable depuis Internet.
+- Secrets uniquement dans `.env` (600, hors git) ; `backups/` et `state/` en 700, archives en 600.
+- Pages d'administration de homelabd : session par cookie signé (un an), jeton jamais dans les adresses ; IP de
+  confiance de l'admin sans connexion. `/accounts` et `/recherche` ajoutent l'auth HTTP NPM « admin-outils ».
+- Accès VPS → seedbox : une clé SFTP limitée à la lecture et à la suppression pour le montage ; API en HTTPS avec
+  clés. Deux clés C411 (RSS des Arrs, recherches de homelabd).
+- Entrée web : NPM en HTTPS. Les ports Docker contournent ufw : tout nouveau service se publie sur
+  `127.0.0.1:<port>`.
 
 ## Exploitation
 
 ```bash
-homelabctl check          # services joignables, montage seedbox présent
-homelabctl status         # dernier passage de chaque tâche
-homelabctl accounts list  # comptes premium / suspendus
-docker compose ps         # conteneurs et healthchecks
-journalctl -u homelabd -f # journal des tâches
-homelabctl run <tâche> --dry-run
+homelabctl check            # services joignables, montage seedbox présent
+homelabctl status           # dernier passage de chaque tâche
+homelabctl run <tâche>      # un passage exécuté par le démon (--dry-run : simulation locale)
+homelabctl accounts list    # comptes premium / suspendus
+homelabctl subs list        # abonnements
+docker compose ps           # conteneurs et healthchecks
+journalctl -u homelabd -f   # journal des tâches
 ```
 
-Voir aussi : [ARCHITECTURE.md](../ARCHITECTURE.md) · [AUTOMATION.md](../AUTOMATION.md) ·
-[DEPLOY.md](../DEPLOY.md) · [SECRETS.md](../SECRETS.md).
+Voir aussi : [ONBOARDING.md](ONBOARDING.md) · [ARCHITECTURE.md](../ARCHITECTURE.md) ·
+[AUTOMATION.md](../AUTOMATION.md) · [DEPLOY.md](../DEPLOY.md) · [SECRETS.md](../SECRETS.md).

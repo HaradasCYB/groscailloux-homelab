@@ -6,6 +6,8 @@
   (Jellyfin transcode en logiciel, pas de GPU).
 - Utilisateur `deploy` uid/gid 1000, membre du groupe `docker`, sudo.
 - Paquets : `curl zstd tar unzip unrar p7zip-full`. Pour compiler : `rustup` + `musl-tools`.
+- Un swap de 4 Go en filet (`/swapfile`, `vm.swappiness=10` dans `/etc/sysctl.d/`) : la somme des limites mémoire
+  des conteneurs dépasse la RAM.
 - Un disque unique ext4 : les données vivent en bind mounts sous `/opt/homelab/<service>/`.
 
 ## Hôte neuf
@@ -26,12 +28,15 @@ telegraf.conf, `up -d` du reste, démarre homelabd) ; `homelabctl check`.
 Réglages à faire une fois dans les UIs :
 - Sonarr/Radarr : root folders `/data/media/tvshows` et `/data/media/movies`, download client
   qBittorrent host `gluetun` port 8080, catégories, profil qualité FR (voir ARCHITECTURE.md).
-- Prowlarr : indexers, puis sync vers Sonarr/Radarr (ou indexers directement dans les Arrs).
+- Prowlarr : **C411 seul**, sans application liée (les indexers vivent dans les Arrs) ; il ne sert qu'aux
+  recherches de homelabd (`series_search`, `movie_search`, `/recherche`). Dans les Arrs, C411 est en RSS seulement,
+  avec la seconde clé (`C411_RSS_API_KEY`).
 - qBittorrent : whitelist WebUI `127.0.0.1/8,172.18.0.0/16` (homelabd et les Arrs appellent
   l'API sans auth), chemin `/downloads`, `Session\IPv6Enabled=false` sous VPN.
 - Jellyfin : bibliothèques Films/Séries sur `/media/movies` et `/media/tvshows` ; leurs GUID
   vont dans `.env`. Créer une clé API.
 - Jellyseerr : lier Jellyfin, Sonarr, Radarr ; clé API.
+- Nouveau service dans `docker-compose.yml` : port publié en `"127.0.0.1:<port>:<port>"`.
 - NPM : proxy hosts `<svc>.<domaine>` → `<container>:<port>` ; pour l'onboarder :
   `172.18.0.1:8766` (homelabd tourne sur l'hôte, 172.18.0.1 = passerelle du réseau `homelab`).
   Avec ufw actif, autoriser ce flux conteneur → hôte :
@@ -65,13 +70,14 @@ S03E07). Ne pas déposer directement dans `media/` : le fichier y reste inconnu 
 ## Seedbox (optionnelle)
 
 Mise en place (déjà faite sur la prod, à refaire sur une nouvelle seedbox) :
-1. Sur la seedbox : `app-jackett|radarr|sonarr|bazarr|autobrr install -p <mdp>`, `app-flaresolverr install`,
-   `app-unpackerr install` ; catégories qBittorrent `radarr`/`sonarr` ; clés API et mots de passe
+1. Sur la seedbox : `app-radarr|sonarr|bazarr|autobrr install -p <mdp>`, `app-unpackerr install` ; catégories qBittorrent `radarr`/`sonarr` ; clés API et mots de passe
    dans le `.env` du VPS (`SEEDBOX_*`).
-2. Réglages des Arrs seedbox clonés depuis ceux du VPS (formats personnalisés, profils, indexers
-   via le Jackett seedbox, C411 en automatique complet, client qBittorrent via le proxy HTTPS).
-3. Clé `~/.ssh/seedbox_sftp_ro` ajoutée dans `~/.ssh/authorized_keys` de la seedbox avec
-   `restrict,command="/usr/lib/openssh/sftp-server -R"` ; rclone ≥ 1.68 dans `/usr/local/bin` ;
+2. Réglages des Arrs seedbox clonés depuis ceux du VPS (formats personnalisés, profils — vérifier le **nom** du
+   profil, les numéros diffèrent d'une machine à l'autre —, C411 déclaré directement en RSS seulement, client
+   qBittorrent via le proxy HTTPS). Jackett n'est plus utilisé.
+3. Clé rclone ajoutée dans `~/.ssh/authorized_keys` de la seedbox avec
+   `restrict,command="/usr/lib/openssh/sftp-server -P write,mkdir,rename,…"` (lecture + suppression, aucune écriture :
+   le bouton « Supprimer » de Jellyfin doit pouvoir effacer) ; rclone ≥ 1.68 dans `/usr/local/bin` ;
    `user_allow_other` dans `/etc/fuse.conf` ; `mkdir -p /mnt/seedbox/media`.
 4. `[seedbox] enabled = true` dans `homelab.toml`, `sudo homelabctl install` (active
    `homelab-seedbox-mount.service`) ; Jellyfin : ajouter `/seedbox/media/Movies` comme second dossier
@@ -96,10 +102,13 @@ Les bibliothèques et le pipeline du VPS ne sont jamais touchés par ces étapes
 
 ## Sauvegarde et restauration
 
-`sudo homelabctl backup` (et le timer `homelab-backup.timer`, dimanche 04:30) produit dans
-`backups/` : `homelab-state-<ts>.tar.zst` (tout `/opt/homelab` hors `library/`, `influxdb/`,
-caches et logs), `.sha256`, `.list.gz` (manifeste), `guacdb-<ts>.sql.gz`, `systemd-<ts>.tar.gz`
-(unités, crontab, compose rendu) et `images-<ts>.txt`. Les 4 dernières archives sont gardées.
+`sudo homelabctl backup` (et le timer `homelab-backup.timer`, dimanche 04:40) produit dans
+`backups/` (700) : `homelab-state-<ts>.tar.zst` (tout `/opt/homelab` hors `[backup] excludes` : `library/`,
+`influxdb/`, caches, journaux, vignettes de défilement et photos d'acteurs de Jellyfin ; ~3 Go), `.sha256`,
+`.list.gz` (manifeste), `guacdb-<ts>.sql.gz`, `systemd-<ts>.tar.gz` (unités, crontab, compose rendu) et
+`images-<ts>.txt`. Les bases SQLite de l'état sont copiées par `VACUUM INTO` ; l'archive est relue (`zstd -t`) avant
+qu'on supprime les anciennes ; les 4 dernières sont gardées. Tout nouveau dossier volumineux sous `/opt/homelab`
+doit rejoindre `[backup] excludes`. Les sauvegardes restent sur le même disque (copie hors site à l'étude).
 `library/` (médias, téléchargements) n'est pas sauvegardé : trop gros, re-téléchargeable.
 
 Restaurer un service :

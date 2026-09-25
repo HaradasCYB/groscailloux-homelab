@@ -10,12 +10,10 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 
 | Service | Rôle | État |
 |---|---|---|
-| jellyfin | lecture, transcodage logiciel (x264 ; éviter HEVC) | `jellyfin/config`, cache tmpfs |
+| jellyfin | lecture, transcodage logiciel (un seul 1080p à la fois ; HEVC et H.264 coûtent pareil) | `jellyfin/config`, tmpfs de transcodage 4 Go |
 | jellyseerr (seerr) | demandes utilisateurs → Sonarr/Radarr | `jellyseerr/config` |
 | sonarr / radarr | séries / films : recherche, import, renommage | `*/config`, `library:/data` |
-| jackett | **source des indexers publics** de Sonarr/Radarr (URLs `http://jackett:9117/api/v2.0/indexers/<id>/results/torznab/`) ; ne pas retirer tant que les Arrs pointent dessus | `jackett/config` |
-| flaresolverr | résolution des défis Cloudflare pour Jackett (1337x, eztv) ; pas de port publié | — |
-| prowlarr | gestion d'indexers ; **aucune application synchronisée** aujourd'hui, les indexers publics passent par Jackett et C411 par son API Torznab directement dans les Arrs | `prowlarr/config` |
+| prowlarr | **C411 seul**, sans application liée : sert aux recherches de homelabd (`series_search`, `movie_search`, `/recherche`) ; les indexers des Arrs sont déclarés directement (C411 en RSS) | `prowlarr/config` |
 | gluetun | WireGuard ProtonVPN, port forwarding NAT-PMP, netns de qbittorrent | `gluetun/` |
 | qbittorrent | client torrent dans le netns gluetun (`network_mode: service:gluetun`) | `qbittorrent/config` |
 | qbittorrent-direct | même client sans VPN (profil `novpn`) | idem |
@@ -29,29 +27,28 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 | influxdb / telegraf / grafana | métriques hôte + conteneurs, rétention 30 j | `influxdb/`, `grafana/` (uid 472) |
 | glances | monitoring live | — |
 | diun | notification mail des nouveaux tags d'images (`diun/images.yml`) | `diun/` |
-| homelabd (hôte, pas un conteneur) | automatisation + UI d'onboarding sur `:8766` | `state/` |
+| homelabd (hôte, pas un conteneur) | automatisation (24 tâches) + pages web sur `:8766` (onboarding, comptes, recherche, état, Mon compte, tchat, premium) | `state/` |
 
 Trois conteneurs montent `docker.sock` en lecture (homarr, portainer, glances/telegraf) ;
 glances tourne `privileged`. Toutes les images sont pinnées `tag@sha256`.
 
 ## Flux
 
-**Acquisition → lecture.** Jellyseerr → Sonarr/Radarr → indexers → qBittorrent (via gluetun)
-ou pyLoad. Tout descend dans `library/downloads` (`/downloads` dans les conteneurs). Sonarr et
-Radarr importent par hardlink vers `library/media/{tvshows,movies}` (`/data/media/...` chez
-eux, `/media` en lecture seule chez Jellyfin). Le hardlink permet de supprimer un torrent et ses
-fichiers sans toucher à la bibliothèque.
+**Bibliothèque VPS.** Historique : Sonarr et Radarr du VPS importaient par hardlink de `library/downloads` vers
+`library/media/{tvshows,movies}` (`/media` chez Jellyfin, en écriture pour le bouton « Supprimer »). Depuis le
+18/09, le VPS ne prend plus aucune release (`auto_sides = ["seedbox"]` + RSS coupé) ; il garde ses fiches et ses
+fichiers. Le hardlink permet de supprimer un torrent sans toucher à la bibliothèque.
 
 **Dépôts directs.** `homelabd` surveille `library/downloads` (inotify) : nouvelle vidéo →
 classification série/film → parse + lookup Arr → ajout si absent → `DownloadedEpisodesScan` /
 `DownloadedMoviesScan`. Archives zip/rar extraites puis supprimées.
 
-**Seedbox (acquisition + stockage déportés).** Une seedbox partagée (`tofino.usbx.me`, Toronto,
-3,7 To, outillage Ultra.cc `app-*`) héberge qBittorrent, Radarr, Sonarr, Jackett (+ FlareSolverr),
-Bazarr, Unpackerr et autobrr. Les Arrs y rangent par hardlink dans `~/media/{Movies,TV Shows}`.
-Jellyseerr envoie les **nouvelles demandes** à ces Arrs (serveurs par défaut, id 1) ; ceux du VPS
-(id 0) gardent la bibliothèque existante. Le VPS monte `~/media` en **lecture seule** (rclone SFTP,
-clé restreinte à `sftp-server -R`) sur `/mnt/seedbox/media` ; Jellyfin le voit sous
+**Seedbox (tous les téléchargements).** Une seedbox partagée (quota de 3,7 To, outillage Ultra.cc `app-*`)
+héberge qBittorrent, Radarr, Sonarr, Bazarr, Unpackerr et autobrr. Les Arrs y rangent par hardlink dans
+`~/media/{Movies,TV Shows,Anime,Anime Movies}`. Jellyseerr leur envoie **toutes les demandes** (serveurs par
+défaut, id 1, `preventSearch`) ; homelabd cherche les releases (C411 par TMDB) et les leur pousse, ou les ajoute
+directement au qBittorrent de la seedbox avec une étiquette `homelab:`. Le VPS monte `~/media` (rclone SFTP, clé
+limitée à la lecture et à la suppression) sur `/mnt/seedbox/media` ; Jellyfin le voit sous
 `/seedbox/media` : `/seedbox/media/Movies` et `/seedbox/media/TV Shows` sont un **second dossier**
 des bibliothèques « Films » et « Séries » (une seule bibliothèque par type pour les utilisateurs).
 `seedbox_refresh` (homelabd) signale chaque nouvel import à rclone puis à Jellyfin.
@@ -59,21 +56,19 @@ Si la seedbox tombe : les titres venant de la seedbox restent affichés mais ne 
 Jellyfin ne les purge pas (« Library folder … is inaccessible or empty, skipping », vérifié en
 10.11.8 sur scan de bibliothèque et scan global) ; le reste de Jellyfin et le pipeline VPS ne sont
 pas affectés.
-Lien mesuré : RTT 96 ms, ~12 Mo/s par lecture (1080p et 4K WEB OK, remux 4K limite) ; pas de
-transcodage 4K HEVC (VPS sans GPU). Sur la seedbox, les apps tournent en conteneurs Docker et
-joignent qBittorrent (natif, `127.0.0.1` seulement) via `https://kakaouette.tofino.usbx.me/qbittorrent`
-et Jackett/FlareSolverr via `172.17.0.1:<port>`.
+Lien mesuré : RTT ~97 ms, 8 à 10 Mo/s par connexion (~30 Mo/s à quatre). Sur la seedbox, les apps tournent en
+conteneurs Docker et joignent qBittorrent (natif, `127.0.0.1` seulement) par le proxy HTTPS de l'hébergeur.
 
 **Lecture fluide.** 98 % des lectures sont en lecture directe (Playback Reporting, 30 j) : le
 buffering vient de l'acheminement, pas du transcodage. Donc :
-- rclone : `chunk_size = 255k` (SFTP ; 5 → 16 Mo/s par flux, 22–24 Mo/s via le montage), blocs de
-  lecture de 8 Mo (reprise après un saut : 20 Mo en ~3 s au lieu de 4), cache VFS 20 Go, **pas** de `--vfs-read-ahead` (il fait télécharger 256 Mo à chaque ouverture, analyses comprises) ;
+- rclone : `chunk_size = 255k` (SFTP), 32 connexions, blocs de lecture de 4 Mo, cache VFS 120 Go avec 80 Go
+  d'espace libre gardé (éviction avant le seuil de `disk_pressure`), **pas** de `--vfs-read-ahead` ;
 - **rien ne lit la vidéo à l'ajout d'un titre** : Intro Skipper `AutoDetectIntros=false`, pas de
   « Screen Grabber » dans les sources d'images, `SaveLocalMetadata=false` (pas de NFO ni d'images à
-  côté des médias, la seedbox est en lecture seule) ; normalisation audio (LUFS) à 07:00 ;
-- Jellyfin : trickplay en images clés seulement et **jamais pendant un scan** ; tâches lourdes
-  (scan 05:00, segments 05:15, trickplay 05:30 max 6 h, Intro Skipper 06:00 max 3 h) dans la fenêtre
-  sans lecture 05–13 h ; `cpu_shares` 2048 pour jellyfin, 512 pour les tâches de fond ;
+  côté des médias) ; normalisation audio (LUFS) à 07:00 ;
+- Jellyfin : trickplay **plus généré** (sans déclencheur depuis le 25/09 : tout arrive sur la seedbox) ; tâches
+  lourdes (scan 05:00, segments, Intro Skipper 05:30) dans la fenêtre sans lecture 05–13 h ; `cpu_shares` 2048
+  pour jellyfin, 512 pour les tâches de fond ; tmpfs de transcodage purgé chaque minute ;
 - Jellyseerr `availability-sync` quotidien (05:00) ; Telegraf toutes les 30 s.
 
 **Santé du stack.** `stack_health` (homelabd) relance les services arrêtés, redémarre les
@@ -84,9 +79,10 @@ buffering vient de l'acheminement, pas du transcodage. Donc :
 des téléchargements bloqués > 8 h, suppression des torrents arrêtés les plus anciens quand le
 disque dépasse 95 %.
 
-**Utilisateurs.** Un compte = Jellyfin (mot de passe) + import Jellyseerr + mail. Trois
-entrées : `homelabctl onboard`, l'UI web homelabd (`/onboard`, token), et le poller qui
-convertit les users créés dans l'UI Jellyseerr.
+**Utilisateurs.** Un compte = Jellyfin + import Jellyseerr + mail avec un lien à usage unique (`/bienvenue/<jeton>`,
+60 min) où le membre choisit son mot de passe, puis les premiers pas. Entrées : `/inscription` (publique, compte à
+activer), `homelabctl onboard`, la page « Créer un compte » (`/`, session admin) et le poller qui convertit les
+comptes créés dans l'UI Jellyseerr. Procédure : [docs/ONBOARDING.md](docs/ONBOARDING.md).
 
 **Observabilité.** Telegraf (hôte via `/hostfs`, Docker via socket) → InfluxDB bucket
 `metrics` (30 j) → Grafana.
@@ -101,7 +97,7 @@ gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-updat
 ## Sécurité des accès web
 
 - NPM : liste d'accès **« admin-outils »** (authentification HTTP, utilisateur `groscailloux`) devant
-  Sonarr, Radarr, qBittorrent, Prowlarr, Jackett, Grafana, Portainer, pyLoad, Guacamole (y compris le
+  Sonarr, Radarr, qBittorrent, Prowlarr, Grafana, Portainer, pyLoad, Guacamole (y compris le
   `location /guacamole/` de sa config avancée). Restent directs : Jellyfin, Jellyseerr, Homarr,
   Filebrowser (sa propre connexion), onboarding (jeton). Grafana : `/public-dashboards/`,
   `/api/public/`, `/public/` (statiques) et `/apis/` (authentifié par Grafana) sont exemptés, pour le
@@ -109,22 +105,38 @@ gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-updat
 - qBittorrent (VPS) : dispense d'authentification limitée à `127.0.0.0/8` et `172.18.0.1/32`
   (homelabd depuis l'hôte). **Jamais `172.18.0.0/16`** : NPM est dans ce réseau, qBittorrent était
   ouvert à Internet sans mot de passe jusqu'au 2026-09-12.
-- homelabd : `/status` et `/status.html` exigent une session (`/connexion`, jeton `HOMELABD_STATUS_TOKEN` ou
-  d'onboarding) ; le sous-domaine d'onboarding est public.
+- homelabd : les pages d'administration (`/`, `/accounts*`, `/recherche*`, `/status*`) passent par une couche
+  commune (`crates/homelabd/src/admin_auth.rs`) : session par cookie signé (HMAC du jeton, un an), ouverte par
+  `/connexion` ou d'office depuis `HOMELABD_ADMIN_TRUSTED_IPS` ; le jeton ne passe jamais dans une adresse. Les
+  routes `/admin/*` (CLI) exigent le jeton en en-tête. Le sous-domaine d'onboarding est public.
 - Page de don : sous-domaine `don.` → homelabd ; la config avancée NPM ne laisse passer que `/don`
   (`/` redirige, tout le reste renvoie 404). Sans lien avec le service (ni Jellyfin, ni Homarr, ni mail).
 - Page « Comptes » (`/accounts` de l'hôte onboarding) : liste « admin-outils » dans la config avancée
-  NPM (`location /accounts`) **et** `HOMELABD_ONBOARD_TOKEN` exigé par homelabd (fermée s'il n'est pas défini).
+  NPM (`location /accounts`) **et** session d'administration homelabd.
+
+## homelabd en bref
+
+- `homelab-core` : la logique (clients Jellyfin/Arrs/qBittorrent/Prowlarr/Jellyseerr, tâches, état, abonnements,
+  tchat, `html::esc`), testée par des fonctions pures ; `homelabd` : le démon (planificateur, pages web, API
+  « Mon compte » `/compte/api/*`, tchat `/chat/*`, webhook PayPal) ; `homelabctl` : la CLI.
+- Planificateur : une boucle par tâche, jamais deux passages simultanés d'une même tâche, une panique n'arrête
+  qu'un passage. L'état (`state/homelabd.json`) n'est écrit que par le démon (fichier temporaire, `fsync`,
+  renommage) ; `homelabctl` l'ouvre en lecture seule et passe par `POST /admin/run` et `/admin/accounts`.
+- Configuration : `homelab.toml` refuse les clés inconnues ; un test vérifie que les défauts du code sont ceux du
+  fichier.
 
 ## Contraintes d'exploitation
 
-- **C411 seul en automatique** sur les 4 Arrs (RSS + recherche auto) ; tous les autres indexers en
-  recherche interactive seulement (toujours proposés quand on cherche à la main).
+- **C411 est le seul indexeur**, en **RSS seulement** dans les 4 Arrs (seconde clé) ; aucune recherche depuis
+  les Arrs : homelabd cherche par TMDB via Prowlarr, dans un budget horaire par clé. Le VPS ne prend plus aucune
+  release (`[downloads] auto_sides = ["seedbox"]`, RSS coupé).
 - Profils « FR-friendly H.264 » (VPS 6, seedbox 7) : **1080p au plus, jamais de 2160p** (CPU du VPS) ;
-  VFF > MULTi > FRENCH, H.264 préféré ; VO/VOSTFR en dernier recours (`No French Marker` -2000,
-  `minFormatScore` -9999) ; rejets durs (langues étrangères, CAM/TS, sample, 3D) à -100000.
+  VFF/VOF > MULTi > FRENCH, codec neutre (HEVC et H.264 à 0) ; VO/VOSTFR en dernier recours (`No French Marker`
+  -2000, `minFormatScore` -9999) ; rejets durs (langues étrangères, CAM/TS, sample, 3D) à -100000. Animés : profil
+  « Anime - MULTi/VOSTFR » (MULTi > VOSTFR > VF). Toujours viser un profil par son **nom** : les numéros diffèrent.
 - Jamais de purge globale de queue : chaque suppression est ciblée par id/titre.
 - Arrêter qBittorrent avant d'éditer `qBittorrent.conf` (sinon il l'écrase à l'arrêt).
-- Pas d'accélération matérielle : préférer x264 à x265 pour les releases FR/MULTi.
+- Pas d'accélération matérielle : un seul transcodage 1080p tient en temps réel ; le codec source ne change pas
+  le coût (c'est l'encodage x264 qui coûte), donc jamais écarter une release parce qu'elle est en x265.
 - Ne jamais `chown -R /opt/homelab` : npm, homarr (root), grafana (472), mysql (999).
 - `SECRET_ENCRYPTION_KEY` ne sert qu'à Homarr.
