@@ -279,7 +279,12 @@ journalctl -u homelabd -f
   admin au premier échec, `state.canary`) ; **langue par compte** posée à l'onboarding (`[accounts] audio_language
   = "fre"`, `subtitle_language = "fre"`, `subtitle_mode = "Smart"`, `PlayDefaultAudioTrack = false`) et rattrapée le
   21/09 sur 16 comptes (sauvegarde `backups/jellyfin-language-20260921/`), choix « VO sous-titrée » dans « Mon
-  compte » ; **avancement des demandes** dans l'onglet Demandes de Jellyfin Enhanced (`/compte/api/requests`,
+  compte » (**refait le 2026-09-25** : l'ancien mode ne choisissait pas la VO, il lisait la piste « par défaut » du
+  fichier, la française dans la plupart des MULTi — JoJo en VF. Désormais `[accounts] vo_audio_language = "jpn"`
+  côté serveur (animés, tous appareils) + script Mon compte qui, au démarrage d'un titre parti en français, bascule
+  sur la piste de la **langue d'origine** (TMDB via Jellyseerr, `GET /compte/api/original`, anglais si inconnue ;
+  rien pour une origine française ni l'audiodescription) par `SetAudioStreamIndex` envoyé à sa propre session, une
+  fois par titre ; applis TV natives : japonais seulement ; banc `backups/jellyfin-vo-20260925/`) ; **avancement des demandes** dans l'onglet Demandes de Jellyfin Enhanced (`/compte/api/requests`,
   `homelab_core::requests_progress`, cartes `.je-request-card` + `data-tmdb-id`) — clés d'état
   `unknown_series` = `<arr>:<seriesId>:<saison>`, `movie_search` = `<arr>:<movieId>` avec `<arr>` = `sonarr`,
   `radarr`, `sonarr-seedbox`, `radarr-seedbox`, Jellyseerr `serviceId` 0 = VPS, 1 = seedbox, `externalServiceId` =
@@ -558,7 +563,9 @@ journalctl -u homelabd -f
   `registry()`, section `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run respecté,
   tests unitaires de la décision, paragraphe dans AUTOMATION.md.
 - **Changement de comportement** = changement de `homelab.toml` (seuils, intervalles) avant
-  changement de code. Les valeurs par défaut du code doivent rester égales à celles du TOML : c'est vérifié par le
+  changement de code. **Attention** : `Config` refuse tout champ inconnu (`deny_unknown_fields`) — dès qu'une clé
+  nouvelle est dans `homelab.toml`, l'ancien `homelabctl` échoue et l'ancien homelabd **ne redémarrerait plus** :
+  installer le nouveau binaire dans la foulée (vu le 2026-09-25 avec `vo_audio_language`). Les valeurs par défaut du code doivent rester égales à celles du TOML : c'est vérifié par le
   test `config::toml_matches_defaults` (seuls `paths`, `urls`, `seedbox.*` et `tasks.disabled` sont exemptés).
 - **Recréer `gluetun` = recréer `qbittorrent`** : qBittorrent est en `network_mode: service:gluetun` ; quand gluetun
   est recréé (changement de compose, `cpu_shares`…), compose laisse qbittorrent « Up » **sur l'espace réseau de

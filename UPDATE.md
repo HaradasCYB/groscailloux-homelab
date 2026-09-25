@@ -74,6 +74,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   ne l'écrasent plus.
 - **Films français pas encore sortis en VOD** : l'onglet Demandes l'explique (« au cinéma depuis le …, VOD vers
   le … ») au lieu d'une recherche qui tourne dans le vide, et le serveur ne cherche plus avant la sortie probable.
+- **« Toujours en VO » (Mon compte) fonctionne vraiment** : les animés démarrent en japonais sur tous les appareils,
+  et sur le web, Jellyfin Desktop et l'iPhone, les films et séries basculent sur leur langue d'origine (anglais,
+  coréen…) au lancement, sous-titres français toujours affichés. Un film français reste en français. Avant, le
+  réglage suivait la piste « par défaut » du fichier, souvent la VF.
 - **Réseau** : les ports d'administration des services (Sonarr, Radarr, Prowlarr, Jellyseerr, qBittorrent, Homarr,
   Grafana…) ne sont plus joignables directement depuis Internet ; tout passe par le proxy, comme avant.
 
