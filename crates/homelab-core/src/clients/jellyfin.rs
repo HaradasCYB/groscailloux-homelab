@@ -485,9 +485,31 @@ impl JellyfinClient {
         cfg["SubtitleLanguagePreference"] = json!(subtitles);
         cfg["SubtitleMode"] = json!(mode);
         cfg["PlayDefaultAudioTrack"] = json!(play_default_audio);
+        self.post_user_config(user_id, &cfg).await
+    }
+
+    /// « Mémoriser les choix de pistes audio / sous-titres » : une piste retenue pour un titre passe AVANT la
+    /// langue du compte (Harry Potter resté en anglais après le passage en VF, 2026-09-25). Coupé quand le membre
+    /// choisit un mode dans Mon compte.
+    pub async fn set_remember_selections(&self, user_id: &str, remember: bool) -> Result<()> {
+        let resp = self
+            .req(Method::GET, &format!("Users/{user_id}"))
+            .send()
+            .await?;
+        let user = json(resp, "jellyfin Users/{id}").await?;
+        let mut cfg = user
+            .get("Configuration")
+            .cloned()
+            .context("compte Jellyfin sans Configuration")?;
+        cfg["RememberAudioSelections"] = json!(remember);
+        cfg["RememberSubtitleSelections"] = json!(remember);
+        self.post_user_config(user_id, &cfg).await
+    }
+
+    async fn post_user_config(&self, user_id: &str, cfg: &Value) -> Result<()> {
         let resp = self
             .req(Method::POST, &format!("Users/{user_id}/Configuration"))
-            .json(&cfg)
+            .json(cfg)
             .send()
             .await?;
         check(resp, "jellyfin Users/{id}/Configuration")

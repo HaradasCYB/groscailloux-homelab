@@ -312,6 +312,11 @@ async fn set_language(
         }
         _ => return Err(err(StatusCode::BAD_REQUEST, "mode inconnu")),
     };
+    // sinon une piste retenue pour un titre déjà lancé l'emporte sur le mode choisi
+    let r = match r {
+        Ok(()) => st.ctx.jellyfin.set_remember_selections(&u.id, false).await,
+        Err(e) => Err(e),
+    };
     r.map_err(|e| {
         warn!(task = "subs", user = %u.name, error = %e, "language prefs failed");
         err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")

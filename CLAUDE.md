@@ -284,7 +284,10 @@ journalctl -u homelabd -f
   côté serveur (animés, tous appareils) + script Mon compte qui, au démarrage d'un titre parti en français, bascule
   sur la piste de la **langue d'origine** (TMDB via Jellyseerr, `GET /compte/api/original`, anglais si inconnue ;
   rien pour une origine française ni l'audiodescription) par `SetAudioStreamIndex` envoyé à sa propre session, une
-  fois par titre ; applis TV natives : japonais seulement ; banc `backups/jellyfin-vo-20260925/`) ; **avancement des demandes** dans l'onglet Demandes de Jellyfin Enhanced (`/compte/api/requests`,
+  fois par titre ; applis TV natives : japonais seulement ; banc `backups/jellyfin-vo-20260925/`). Choisir un mode
+  coupe aussi `RememberAudioSelections`/`RememberSubtitleSelections` du compte : une piste retenue pour un titre
+  (table `UserData.AudioStreamIndex`, invisible par l'API) passait avant la langue du compte — Harry Potter resté
+  en anglais après le passage en VF ; **avancement des demandes** dans l'onglet Demandes de Jellyfin Enhanced (`/compte/api/requests`,
   `homelab_core::requests_progress`, cartes `.je-request-card` + `data-tmdb-id`) — clés d'état
   `unknown_series` = `<arr>:<seriesId>:<saison>`, `movie_search` = `<arr>:<movieId>` avec `<arr>` = `sonarr`,
   `radarr`, `sonarr-seedbox`, `radarr-seedbox`, Jellyseerr `serviceId` 0 = VPS, 1 = seedbox, `externalServiceId` =
