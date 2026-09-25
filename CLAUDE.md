@@ -113,8 +113,8 @@ journalctl -u homelabd -f
   indexers publics passant par Jackett ont été retirés, Jackett et FlareSolverr arrêtés et sortis du compose ;
   ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes et remplissaient le
   journal d'erreurs — sauvegarde `backups/indexers-20260917-204443/`). Un seul compteur horaire pour tout ce
-  qui l'interroge : `[indexers] c411_max_per_hour` (20), dont `manual_reserve` (6) gardées pour `/recherche`
-  (les tâches s'arrêtent à 14/h) ; Prowlarr coupe à 30/h, C411 vers 50/h. **Profils** FR-friendly : 1080p max (jamais 2160p), `minFormatScore=-9999`, FR d'abord,
+  qui l'interroge : `[indexers] c411_max_per_hour` (40 **par clé**, deux clés), dont `manual_reserve` (10) gardées pour
+  `/recherche` (voir « Deux clés C411 » plus haut). **Profils** FR-friendly : 1080p max (jamais 2160p), `minFormatScore=-9999`, FR d'abord,
   VO/VOSTFR en dernier recours.
 - **Le codec source n'est PAS un critère de charge** (mesuré le 2026-09-18, à corriger dans les têtes) : avec les
   réglages réels de Jellyfin (`superfast`, 4 threads, pas de GPU), un transcodage 1080p tourne à **1,85×
@@ -154,7 +154,10 @@ journalctl -u homelabd -f
   1. **Trickplay tournait 6 h chaque matin sans jamais finir** (« Cancelled after 360 minutes » à 11:30, 256 items
      sur ~1 840) et Intro Skipper jusqu'à 3 h : **506–521 Mbit/s entrants de 05 h à 08 h**, ~1,2 To/matin à
      travers un cache rclone de 20 Go → cache vidé chaque matin, tout repartait sur le réseau le soir. Trickplay
-     passé **hebdomadaire (dimanche 05:30, butée 6 h)**, Intro Skipper à 05:30 (`ProcessThreads 2`,
+     passé **hebdomadaire (dimanche 05:30, butée 6 h)** — puis **déclencheur retiré le 2026-09-25** : tout ce qui
+     arrive va sur la seedbox, la tâche ne lisait plus que des titres seedbox par le lien et s'arrêtait à 6 h sans
+     finir ; les vignettes existantes (3,3 Go, surtout le VPS) restent affichées ; retour : `POST
+     /ScheduledTasks/<id>/Triggers` avec `backups/jellyfin-trickplay-20260925/triggers-before.json`. Intro Skipper à 05:30 (`ProcessThreads 2`,
      `MaxParallelism 1`, `ScanCommercial false`), images de chapitre 06:30 en `P480` (extraction désactivée par
      bibliothèque : tâche vide), `LibraryScanFanoutConcurrency 2`. Fenêtre en semaine : tout est fini à 08:30.
   2. **rclone** (`systemd/homelab-seedbox-mount.service`) : cache **120G** avec `--vfs-cache-min-free-space 80G`
@@ -361,7 +364,11 @@ journalctl -u homelabd -f
   Injector, « Groscailloux Qualité ») surveille la progression de l'image — les événements `waiting` ne suffisent
   pas, hls.js les absorbe — et propose au 3ᵉ blocage de passer au palier sous 2 Mbit/s **par le menu du lecteur**
   (roue crantée → Qualité) : la commande `SetMaxStreamingBitrate` n'est pas gérée par le client web
-  (« does not recognize ») et écrire `maxbitrate-Video-*` ne change pas la lecture en cours.
+  (« does not recognize ») et écrire `maxbitrate-Video-*` ne change pas la lecture en cours. **Ce palier ne vaut que
+  pour la lecture en cours** (2026-09-25) : jellyfin-web le mémorise par appareil (`maxbitrate-Video-<réseau>` +
+  `enableautobitratebitrate-Video-<réseau>` à `false` dans `localStorage`) et ~60 lectures en 10 jours restaient
+  réencodées à 1–3 Mbit/s ; le script note ce qu'il a posé (`gc-quality-lowered`) et remet « Auto » à la sortie du
+  lecteur, sauf si le membre a changé la qualité entre-temps (banc : `backups/quality-tests-20260916/`, phases 5–6).
 - **« Lire sur » (diffuser vers un autre appareil)** : filtré par `branding/jellyfin/gc-cast-filter.js`
   (JavaScript Injector, déployé avec `scripts/jellyfin-js-apply.py`) : **seulement ses propres appareils
   connectés**, quel que soit le réseau. Jusqu'au 2026-09-19 il exigeait aussi la même adresse publique que
@@ -489,7 +496,7 @@ journalctl -u homelabd -f
   des 4 Arrs.
 - **Langue** : `lang_rank` classe VF 4 > MULTi 3 > FRENCH 2 > VOSTFR 1 > **VO 0** ; une release sans français
   n'est prise qu'en dernier recours (`[indexers] allow_no_french`), quand aucune française n'est acceptable.
-  Plafonds de taille du choix automatique : `max_gb_per_episode` (6) et `max_gb_per_movie` (25) — sinon un pack
+  Plafonds de taille du choix automatique : `max_gb_per_episode` (3) et `max_gb_per_movie` (15) — sinon un pack
   de 134 Go à une seule source peut gagner contre un 27,8 Go bien partagé. Un refus « blocked till … » compte
   comme une **erreur** (nouvelle tentative dans l'heure), plus comme « aucun candidat » (24 h).
 - **Titre supprimé puis redemandé : le torrent est réutilisé, pas retéléchargé** (2026-09-18). `deletion_cleanup`
@@ -549,7 +556,8 @@ journalctl -u homelabd -f
   `registry()`, section `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run respecté,
   tests unitaires de la décision, paragraphe dans AUTOMATION.md.
 - **Changement de comportement** = changement de `homelab.toml` (seuils, intervalles) avant
-  changement de code. Les valeurs par défaut du code doivent rester égales à celles du TOML.
+  changement de code. Les valeurs par défaut du code doivent rester égales à celles du TOML : c'est vérifié par le
+  test `config::toml_matches_defaults` (seuls `paths`, `urls`, `seedbox.*` et `tasks.disabled` sont exemptés).
 - **Recréer `gluetun` = recréer `qbittorrent`** : qBittorrent est en `network_mode: service:gluetun` ; quand gluetun
   est recréé (changement de compose, `cpu_shares`…), compose laisse qbittorrent « Up » **sur l'espace réseau de
   l'ancien conteneur** : injoignable de partout (Homarr, NPM, homelabd `localhost:8080`), alors que son healthcheck
@@ -707,6 +715,12 @@ journalctl -u homelabd -f
   saison) a été lu S01E01 et la saison 1 d'une série écrasée ; réparé en réimportant les fichiers d'origine
   (toujours présents dans le dossier du torrent, hardlink) avec la correspondance de Sonarr, et vérifié saison
   par saison. Vérifier l'historique (`episodeFileDeleted`, raison `Upgrade`) après tout import manuel.
+- **`homelabctl` n'écrit jamais le fichier d'état** (2026-09-25, E9) : il l'ouvre en lecture seule
+  (`TaskContext::new_read_only`). `homelabctl run <tâche>` demande le passage au daemon (`POST /admin/run`, jeton
+  d'onboarding en en-tête, réponse à la fin du passage, 409 si la tâche tourne déjà) ; `--dry-run` reste local et
+  n'écrit rien ; `accounts on|off|delete` passent par `POST /admin/accounts` (les droits Jellyseerr à restaurer sont
+  dans l'état). Avant, la CLI écrasait l'état du daemon et inversement. Écriture d'état : `fsync` avant le renommage.
+  Une tâche ne tourne jamais deux fois en même temps (verrou dans `scheduler::run_once`).
 - **Deux sessions dans le dépôt** : le binaire installé doit être construit depuis **l'arbre de travail tel quel**
   (`cargo build … -j4` dans `/opt/homelab`), jamais depuis un arbre indexé/worktree qui exclut les fichiers non
   validés d'une autre session — le 2026-09-19, cinq installs ainsi construits ont retiré les routes `/premium`

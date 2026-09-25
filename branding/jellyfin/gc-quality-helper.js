@@ -3,7 +3,10 @@
 // lecteur relance le flux en boucle (constaté le 2026-09-15 : 4,7 Mbit/s demandés, 2 à 4 Mbit/s disponibles).
 // Ce script surveille la progression de l'image et, au troisième blocage en trois minutes, propose dans la
 // page de passer en qualité réduite (2 Mbit/s). Le changement passe par le menu du lecteur (roue crantée →
-// Qualité) : la lecture continue au même endroit et le réglage est mémorisé par l'appareil.
+// Qualité) : la lecture continue au même endroit. Jellyfin mémorise ce palier par appareil : sans rien faire, le
+// membre y restait bloqué ensuite, même sur une bonne connexion (≈ 60 lectures réencodées à 1–3 Mbit/s en 10 jours,
+// relevé du 2026-09-23). Le palier posé par ce script ne vaut donc que pour la lecture en cours : à la fin de la
+// lecture (ou au chargement suivant), « Auto » est rétabli, sauf si le membre a changé la qualité lui-même entre-temps.
 // Sur téléviseur, le bandeau se ferme seul et à la touche Retour, et les relevés sont espacés.
 // Jamais de window.confirm/alert/prompt : ignorés par la WebView iPhone et Jellyfin Desktop.
 // Déposé dans JavaScript Injector (« Groscailloux Qualité ») par scripts/jellyfin-js-apply.py.
@@ -58,10 +61,47 @@
     return nums.length ? nums[nums.length - 1] : null;
   }
 
+  /* Mémoire du palier posé par ce script (localStorage de jellyfin-web, clés `maxbitrate-Video-<réseau>` et
+     `enableautobitratebitrate-Video-<réseau>`). `snap` = valeurs juste après notre choix ; `restore` remet « Auto »
+     pour chaque clé encore identique (le membre n'y a pas touché) et oublie la note. (testable sans navigateur) */
+  var MARK = 'gc-quality-lowered';
+  function bitrateKeys(store) {
+    var out = [];
+    for (var i = 0; i < store.length; i++) {
+      var k = store.key(i);
+      if (k && /^maxbitrate-Video-/.test(k)) out.push(k);
+    }
+    return out;
+  }
+  function snap(store) {
+    var keys = bitrateKeys(store), m = {};
+    keys.forEach(function (k) { m[k] = store.getItem(k); });
+    store.setItem(MARK, JSON.stringify(m));
+    return m;
+  }
+  function restore(store) {
+    var raw = store.getItem(MARK);
+    if (!raw) return 0;
+    var m, n = 0;
+    try { m = JSON.parse(raw) || {}; } catch (e) { m = {}; }
+    Object.keys(m).forEach(function (k) {
+      if (store.getItem(k) !== m[k]) return; // changé depuis : choix du membre, on n'y touche pas
+      var auto = k.replace(/^maxbitrate-/, 'enableautobitratebitrate-');
+      if (store.getItem(auto) !== 'true') { store.setItem(auto, 'true'); n++; }
+    });
+    store.removeItem(MARK);
+    return n;
+  }
+
   root.__gcQuality = { isStall: isStall, prune: prune, shouldOffer: shouldOffer, pickBitrate: pickBitrate,
-    WINDOW_MS: WINDOW_MS, MIN_STALLS: MIN_STALLS, BITRATE: BITRATE };
+    snap: snap, restore: restore, WINDOW_MS: WINDOW_MS, MIN_STALLS: MIN_STALLS, BITRATE: BITRATE };
 
   if (typeof window === 'undefined' || root !== window || !window.document) return; // tests
+
+  function restoreAuto() {
+    try { window.__gcQualityRestored = restore(window.localStorage); } catch (e) { /* stockage bloqué */ }
+  }
+  restoreAuto(); // un palier laissé par une lecture précédente (onglet fermé en pleine lecture)
 
   var stalls = [], offered = false, banner = null, hideTimer = null, keyHandler = null,
     watched = null, last = null, lastCount = 0;
@@ -160,6 +200,8 @@
       setBitrate().then(function (choice) {
         stalls = [];
         window.__gcQualityApplied = choice;
+        // jellyfin-web écrit ses clés juste après le clic : on relève un peu plus tard
+        setTimeout(function () { try { snap(window.localStorage); } catch (e) { /* stockage bloqué */ } }, 1500);
         close();
       }).catch(function (e) {
         window.__gcQualityError = String((e && e.message) || e);
@@ -210,7 +252,7 @@
   setInterval(function () {
     var video = document.querySelector('video');
     if (!video) {
-      if (watched) { watched = null; stalls = []; offered = false; last = null; close(); }
+      if (watched) { watched = null; stalls = []; offered = false; last = null; close(); restoreAuto(); }
       return;
     }
     watch(video);

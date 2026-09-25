@@ -64,6 +64,14 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Séries françaises** : un épisode que la base TheTVDB n'a pas encore daté (fréquent pour les séries françaises)
   est maintenant cherché lui aussi, dès que sa saison a commencé ; et les releases « VOF » (version originale
   française) sont enfin reconnues comme françaises, au lieu d'être écartées.
+- **Qualité réduite, seulement le temps d'une lecture** : quand l'aide à la lecture a baissé la qualité sur une
+  connexion faible, la lecture suivante repart en « Auto » (avant, l'appareil restait bloqué en basse qualité,
+  image dégradée même sur une bonne connexion).
+- **Pages studio et réseau** de l'onglet Découvrir (Netflix, Ghibli…) et « Où le voir ailleurs » : elles
+  fonctionnent (il manquait une clé TMDB, ~7 000 erreurs par jour).
+- **Serveur** : mémoire de secours (swap), vignettes de la barre de lecture plus générées pour les titres de la
+  seedbox (la tâche du dimanche ne finissait jamais), fichier d'état plus robuste, commandes d'administration qui
+  ne l'écrasent plus.
 - **Réseau** : les ports d'administration des services (Sonarr, Radarr, Prowlarr, Jellyseerr, qBittorrent, Homarr,
   Grafana…) ne sont plus joignables directement depuis Internet ; tout passe par le proxy, comme avant.
 
