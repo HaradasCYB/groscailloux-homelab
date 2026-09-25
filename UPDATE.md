@@ -78,6 +78,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   et sur le web, Jellyfin Desktop et l'iPhone, les films et séries basculent sur leur langue d'origine (anglais,
   coréen…) au lancement, sous-titres français toujours affichés. Un film français reste en français. Avant, le
   réglage suivait la piste « par défaut » du fichier, souvent la VF.
+- **Arrivée des nouveaux membres** : après le choix du mot de passe, une page « Premiers pas » guide pas à pas (quelle
+  appli installer sur chaque écran, connexion à la télé par un code Quick Connect, langue, première demande, où poser
+  une question), aussi disponible à tout moment et depuis « Mon compte ». Les mails de bienvenue disent quoi
+  installer, et le guide commence par « Démarrer en 5 minutes », avec la connexion présentée appareil par appareil.
 - **Réseau** : les ports d'administration des services (Sonarr, Radarr, Prowlarr, Jellyseerr, qBittorrent, Homarr,
   Grafana…) ne sont plus joignables directement depuis Internet ; tout passe par le proxy, comme avant.
 

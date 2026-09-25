@@ -332,9 +332,37 @@ pub fn render(kind: &str, username: &str, link: &str, ttl_mins: u64, premium: bo
         ),
     };
     let validity = format!("Ce lien est valable {ttl_mins} minutes et ne sert qu'une fois. Passé ce délai, la page te proposera d'en recevoir un nouveau.");
+    // « Sur quel écran ? » : quoi installer, sans identifiant ; le détail est sur /premiers-pas (même hôte que le lien)
+    let steps_url = format!(
+        "{}/premiers-pas",
+        link.split("/bienvenue/")
+            .next()
+            .unwrap_or(link)
+            .trim_end_matches('/')
+    );
+    let screens = [
+        ("Télé", "l'appli « Jellyfin » du store de la télé (ou d'une clé Fire TV / Google TV) ; connexion par un code « Quick Connect » validé depuis ton téléphone."),
+        ("Téléphone", "« Jellyfin Mobile » sur iPhone, « Jellyfin » sur le Play Store."),
+        ("Ordinateur", "ton navigateur, ou l'appli « Jellyfin Desktop »."),
+    ];
+    let screens_text = screens
+        .iter()
+        .map(|(k, v)| format!("- {k} : {v}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let screens_html = screens
+        .iter()
+        .map(|(k, v)| {
+            format!(
+                r#"<li style="margin:0 0 6px;"><b>{}</b> : {}</li>"#,
+                esc(k),
+                esc(v)
+            )
+        })
+        .collect::<String>();
     let footer = "Tu reçois ce mail parce qu'un compte a été créé pour cette adresse sur Groscailloux, un service privé de streaming entre amis. Si ce n'est pas toi, ignore-le : rien ne sera activé sans le lien.";
     let text = format!(
-        "{heading}\n\n{intro}\n\n{button} : {link}\n\n{validity}\n\n{outro}\n\n— Groscailloux\n{footer}\n"
+        "{heading}\n\n{intro}\n\n{button} : {link}\n\n{validity}\n\nSur quel écran ?\n{screens_text}\nTout est expliqué pas à pas : {steps_url}\n\n{outro}\n\n— Groscailloux\n{footer}\n"
     );
     let html = MAIL_HTML
         .replace("{{title}}", &esc(&subject))
@@ -343,6 +371,8 @@ pub fn render(kind: &str, username: &str, link: &str, ttl_mins: u64, premium: bo
         .replace("{{button}}", &esc(&button))
         .replace("{{validity}}", &esc(&validity))
         .replace("{{outro}}", &esc(&outro))
+        .replace("{{screens}}", &screens_html)
+        .replace("{{steps_url}}", &esc(&steps_url))
         .replace("{{footer}}", footer)
         .replace("{{link}}", &esc(link));
     Rendered {
@@ -443,6 +473,11 @@ mod mail_tests {
             assert!(!r.text.contains(bad) && !r.html.contains(bad), "{bad}");
         }
         assert!(!r.html.contains("{{"));
+        // quoi installer, avec le lien vers les premiers pas (même hôte que le lien)
+        assert!(
+            r.text.contains("Sur quel écran ?") && r.text.contains("https://x.test/premiers-pas")
+        );
+        assert!(r.html.contains("Quick Connect") && r.html.contains("https://x.test/premiers-pas"));
     }
 
     #[test]

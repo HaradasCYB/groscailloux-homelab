@@ -130,6 +130,15 @@
     box.appendChild(h('p', null, [sizeSel]));
     box.appendChild(h('p', { class: 'muted', text: 'Pour cet appareil, sous-titres SRT ; les sous-titres ASS des anim\u00e9s gardent leur propre style.' }));
 
+    if (d.steps_url || d.guide_url) {
+      box.appendChild(h('h3', { text: 'Aide' }));
+      var help = h('p');
+      if (d.steps_url) help.appendChild(h('a', { href: d.steps_url, target: '_blank', rel: 'noopener', text: 'Premiers pas (installer une appli, se connecter sur la t\u00e9l\u00e9)' }));
+      if (d.steps_url && d.guide_url) help.appendChild(document.createTextNode(' \u00b7 '));
+      if (d.guide_url) help.appendChild(h('a', { href: d.guide_url, target: '_blank', rel: 'noopener', text: 'Guide complet' }));
+      box.appendChild(help);
+    }
+
     if (d.history && d.history.length) {
       box.appendChild(h('h3', { text: 'Historique' }));
       var ul = h('ul');

@@ -241,6 +241,8 @@ async fn me(State(st): State<SubsState>, headers: HeaderMap) -> ApiResult<Json<V
         "history": history,
         "devices": devices,
         "signup_url": st.ctx.secrets.premium_public_url.as_ref().map(|b| format!("{b}/inscription")),
+        "guide_url": st.ctx.secrets.onboard_public_url.as_ref().map(|b| format!("{}/guide", b.trim_end_matches('/'))),
+        "steps_url": st.ctx.secrets.onboard_public_url.as_ref().map(|b| format!("{}/premiers-pas", b.trim_end_matches('/'))),
         "language": language_mode(&st, &u.id).await,
     })))
 }

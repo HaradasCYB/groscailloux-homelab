@@ -76,6 +76,7 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/guide", get(guide_html))
         .route("/guide/icon.png", get(guide_icon))
         .route("/bienvenue/renouveler", post(welcome_renew))
+        .route("/premiers-pas", get(first_steps_page))
         .route("/bienvenue/{token}", get(welcome_get).post(welcome_post))
         .route("/inscription", get(signup_get).post(signup_post))
         .route("/accounts/link", post(accounts_link))
@@ -822,19 +823,56 @@ fn public_page(tpl: &str, heading: &str, body: &str, status: StatusCode) -> Resp
     resp
 }
 
-/// Boutons vers les services + guide + tchat, après la définition du mot de passe.
-fn access_block(st: &AppState, username: &str, premium: bool) -> String {
-    let s = &st.ctx.secrets;
+/// Adresse de Jellyfin sans le schéma (ce que le membre tape dans une appli).
+fn jellyfin_host(s: &homelab_core::config::Secrets) -> String {
+    s.jellyfin_public_url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// Premiers pas d'un membre (2026-09-25) : l'écran et l'appli à installer, la langue, la première demande, le
+/// tchat, le guide. Servi après le choix du mot de passe (`access_block`) et tel quel sur `/premiers-pas`.
+/// Blocs dépliables plutôt qu'onglets : aucun JavaScript nécessaire (téléviseurs, WebView).
+fn first_steps(s: &homelab_core::config::Secrets) -> String {
+    let host = page_esc(&jellyfin_host(s));
+    let jf = page_esc(&s.jellyfin_public_url);
+    let js = page_esc(&s.jellyseerr_public_url);
     let guide = s
         .onboard_public_url
         .as_deref()
-        .map(|u| {
-            format!(
-                r#"<a class="btn ghost" href="{}/guide">Lire le guide de démarrage</a>"#,
-                page_esc(u.trim_end_matches('/'))
-            )
-        })
+        .map(|u| format!("{}/guide", page_esc(u.trim_end_matches('/'))))
+        .unwrap_or_else(|| "/guide".into());
+    let discord = s
+        .guide_contact_discord
+        .as_deref()
+        .map(|d| format!(" Sur Discord, écris à <b>{}</b>.", page_esc(d)))
         .unwrap_or_default();
+    let quick = r#"<p class="qc"><b>Connexion sans clavier :</b> sur la télé, choisis <b>Quick Connect</b>. Un code s'affiche ; sur ton téléphone déjà connecté, touche ton profil (en haut à droite) → <b>Quick Connect</b> → saisis le code.</p>"#;
+    format!(
+        r#"<section class="steps" aria-label="Premiers pas">
+<div class="step"><div class="n">1</div><div class="sc"><h2>Ton écran</h2>
+<p class="dim">Adresse du serveur, à saisir une seule fois dans l'appli :</p>
+<div class="addr"><code id="gc-host">{host}</code><button type="button" class="copy" data-copy="{host}">Copier</button></div>
+<details><summary>Télé Android, Google TV, Fire TV, Shield</summary><p>Installe <b>Jellyfin</b> depuis le Play Store ou l'Appstore Amazon, puis saisis l'adresse.</p>{quick}</details>
+<details><summary>Télé LG</summary><p>Installe <b>Jellyfin</b> depuis le LG Content Store, puis saisis l'adresse.</p>{quick}</details>
+<details><summary>Télé Samsung</summary><p>Cherche <b>Jellyfin</b> dans le store de la télé. S'il n'y est pas, le plus simple est une clé Fire TV ou Google TV, ou de diffuser depuis ton téléphone.</p></details>
+<details><summary>iPhone, iPad</summary><p>Installe <b>Jellyfin Mobile</b> (App Store), saisis l'adresse, puis ton identifiant et ton mot de passe. Pour la télé : bouton AirPlay du lecteur.</p></details>
+<details><summary>Téléphone Android</summary><p>Installe <b>Jellyfin</b> depuis le <b>Play Store</b> (la version F-Droid n'a pas Chromecast), saisis l'adresse, puis tes identifiants.</p></details>
+<details><summary>Ordinateur</summary><p>Ouvre simplement <a href="{jf}">{host}</a> dans ton navigateur, ou installe <b>Jellyfin Desktop</b> (Windows, Mac, Linux) depuis jellyfin.org.</p></details>
+</div></div>
+<div class="step"><div class="n">2</div><div class="sc"><h2>Ta langue</h2><p>En haut de Groscailloux, bouton <b>Mon compte</b> → <b>Langue de lecture</b> : la VF quand elle existe, ou <b>toujours en VO</b> avec sous-titres français (les animés en japonais). Tu y règles aussi la taille des sous-titres.</p></div></div>
+<div class="step"><div class="n">3</div><div class="sc"><h2>Ta première demande</h2><p>Il manque un film ou une série ? Onglet <b>Découvrir</b> dans Groscailloux, ou le <a href="{js}">site des demandes</a>. Tu suis chaque demande dans l'onglet <b>Demandes</b>. Un film encore au cinéma arrive à sa sortie en VOD, environ 4 mois après la salle.</p></div></div>
+<div class="step"><div class="n">4</div><div class="sc"><h2>Une question ?</h2><p>Le tchat est dans Groscailloux, bulle en haut à droite (sur ordinateur et téléphone).{discord}</p></div></div>
+<div class="step"><div class="n">5</div><div class="sc"><h2>Le guide complet</h2><p>Tout le reste, écran par écran : <a href="{guide}">le guide Groscailloux</a>.</p></div></div>
+</section>"#
+    )
+}
+
+/// Boutons vers les services + premiers pas, après la définition du mot de passe.
+fn access_block(st: &AppState, username: &str, premium: bool) -> String {
+    let s = &st.ctx.secrets;
     let pending = if premium {
         String::new()
     } else {
@@ -842,18 +880,26 @@ fn access_block(st: &AppState, username: &str, premium: bool) -> String {
     };
     format!(
         r#"{pending}<p class="dim">Ton identifiant (le même partout) :</p><div class="who">{user}</div>
-<div class="links"><a class="btn" href="{jf}">Regarder : ouvrir Groscailloux</a><a class="btn ghost" href="{js}">Demander un film ou une série</a>{guide}</div>
-<p class="foot">Applis : « Jellyfin » sur le store de ton téléphone, de ta TV ou de ton ordinateur, avec l'adresse <b>{jfhost}</b>. Une question ? Le tchat est dans Groscailloux (bulle en haut à droite), ou réponds au mail.</p>"#,
+<div class="links"><a class="btn" href="{jf}">Regarder : ouvrir Groscailloux</a><a class="btn ghost" href="{js}">Demander un film ou une série</a></div>
+{steps}"#,
         user = page_esc(username),
         jf = page_esc(&s.jellyfin_public_url),
         js = page_esc(&s.jellyseerr_public_url),
-        jfhost = page_esc(
-            s.jellyfin_public_url
-                .trim_start_matches("https://")
-                .trim_start_matches("http://")
-                .trim_end_matches('/')
-        ),
+        steps = first_steps(s),
     )
+}
+
+/// `GET /premiers-pas` : les mêmes premiers pas, sans compte (lien du guide, de Mon compte et des mails).
+async fn first_steps_page(State(st): State<AppState>) -> Response {
+    let s = &st.ctx.secrets;
+    let body = format!(
+        r#"<p>Quatre minutes pour tout installer : ton écran, ta langue, ta première demande.</p>
+<div class="links"><a class="btn" href="{jf}">Regarder : ouvrir Groscailloux</a></div>
+{steps}"#,
+        jf = page_esc(&s.jellyfin_public_url),
+        steps = first_steps(s),
+    );
+    public_page(BIENVENUE_HTML, "Premiers pas", &body, StatusCode::OK)
 }
 
 fn password_form(username: &str, token: &str, demo: bool) -> String {
