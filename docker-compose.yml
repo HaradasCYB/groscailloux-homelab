@@ -27,7 +27,7 @@ services:
     container_name: jellyfin
     user: 1000:1000
     ports:
-      - "8096:8096"
+      - "127.0.0.1:8096:8096"   # 2026-09-25 : fermé à Internet (0 paquet direct en 7 jours), tout passe par NPM
     volumes:
       - /opt/homelab/jellyfin/config:/config
       - /opt/homelab/jellyfin/cache:/cache
@@ -43,7 +43,7 @@ services:
       - /cache/transcodes:rw,size=4g,uid=1000,gid=1000,mode=1777
     environment:
       - TZ=${TZ}
-      - JELLYFIN_PublishedServerUrl=http://${HOST_IP}:8096
+      - JELLYFIN_PublishedServerUrl=${JELLYFIN_PUBLIC_URL}   # adresse publique (le :8096 direct est fermé)
     mem_limit: 6g               # 4g + 2 Go de tmpfs supplémentaires (VPS : 17 Go, ~10 disponibles)
     cpu_shares: 2048          # priorité CPU en cas de contention (défaut 1024)
     # Pas de quota dur `cpus:` (audit lecture 2026-09-18) : il plafonnait Jellyfin à 4 vCPU sur 6 même serveur
