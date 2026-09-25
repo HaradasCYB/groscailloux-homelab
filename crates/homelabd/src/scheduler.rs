@@ -12,6 +12,30 @@ use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
 const RUN_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Tâches en cours : une tâche lancée à la main (`homelabctl run` → `POST /admin/run`) ne double pas le passage
+/// planifié, et inversement.
+static RUNNING: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+struct Running(&'static str);
+
+impl Running {
+    fn take(name: &'static str) -> Option<Self> {
+        let mut r = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+        if r.contains(&name) {
+            return None;
+        }
+        r.push(name);
+        Some(Self(name))
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let mut r = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+        r.retain(|n| *n != self.0);
+    }
+}
 const MAX_JITTER: Duration = Duration::from_secs(30);
 
 pub fn spawn_all(ctx: Arc<TaskContext>) -> Vec<JoinHandle<()>> {
@@ -44,7 +68,11 @@ async fn run_loop(ctx: Arc<TaskContext>, task: Box<dyn Task>, interval: Duration
     let name = task.name();
     loop {
         let (c, t) = (ctx.clone(), task.clone());
-        if contained(async move { run_once(&c, t.as_ref()).await }).await {
+        if contained(async move {
+            run_once(&c, t.as_ref()).await;
+        })
+        .await
+        {
             // Jusqu'au 2026-09-23, une panique tuait la boucle : la tâche ne repassait plus jamais,
             // le service restait « actif » et systemd ne relançait rien.
             error!(
@@ -54,6 +82,45 @@ async fn run_loop(ctx: Arc<TaskContext>, task: Box<dyn Task>, interval: Duration
             record_panic(&ctx, name).await;
         }
         tokio::time::sleep(interval).await;
+    }
+}
+
+/// Résultat d'un passage demandé à la main (`POST /admin/run`, utilisé par `homelabctl run`).
+pub enum RunNow {
+    Unknown,
+    Busy,
+    Panicked,
+    Done { ok: bool, summary: String },
+}
+
+/// Lance tout de suite un passage de la tâche `name` dans le daemon (état enregistré comme un passage planifié).
+pub async fn run_now(ctx: Arc<TaskContext>, name: &str) -> RunNow {
+    let Some(task) = registry().into_iter().find(|t| t.name() == name) else {
+        return RunNow::Unknown;
+    };
+    let task: Arc<dyn Task> = Arc::from(task);
+    let tname = task.name();
+    let (c, t) = (ctx.clone(), task.clone());
+    let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = started.clone();
+    if contained(async move {
+        flag.store(
+            run_once(&c, t.as_ref()).await,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    })
+    .await
+    {
+        record_panic(&ctx, tname).await;
+        return RunNow::Panicked;
+    }
+    if !started.load(std::sync::atomic::Ordering::SeqCst) {
+        return RunNow::Busy;
+    }
+    let info = ctx.state.read(|s| s.task_runs.get(tname).cloned()).await;
+    RunNow::Done {
+        ok: info.as_ref().and_then(|i| i.last_ok).unwrap_or(false),
+        summary: info.map(|i| i.last_summary).unwrap_or_default(),
     }
 }
 
@@ -79,8 +146,13 @@ async fn record_panic(ctx: &TaskContext, name: &'static str) {
         .await;
 }
 
-pub async fn run_once(ctx: &TaskContext, task: &dyn Task) {
+/// Un passage de la tâche. `false` : elle tournait déjà, rien n'a été lancé.
+pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
     let name = task.name();
+    let Some(_running) = Running::take(name) else {
+        info!(task = name, "already running, pass skipped");
+        return false;
+    };
     let start = now();
     let _ = ctx
         .state
@@ -131,6 +203,7 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) {
             }
         })
         .await;
+    true
 }
 
 #[cfg(test)]

@@ -140,14 +140,35 @@ async fn main() -> Result<()> {
         return install(&cfg).await;
     }
     let secrets = Secrets::load(Some(&args.env_file)).context("chargement des secrets")?;
-    let ctx = TaskContext::new(cfg, secrets, args.dry_run)?;
+    // état en lecture seule : le daemon en est seul propriétaire ; les changements durables passent par son API
+    let ctx = TaskContext::new_read_only(cfg, secrets, args.dry_run)?;
 
     match args.cmd {
         Cmd::Run { task } => {
             let t = tasks::find(&task)
                 .with_context(|| format!("tâche inconnue : {task} (voir `homelabctl list`)"))?;
-            let rep = t.run(&ctx).await?;
-            println!("{}: {} (actions={})", t.name(), rep.summary, rep.actions);
+            if ctx.dry_run {
+                // simulation : ici même, rien n'est écrit (état en lecture seule, tâches en dry-run)
+                let rep = t.run(&ctx).await?;
+                println!(
+                    "DRY-RUN {}: {} (actions={})",
+                    t.name(),
+                    rep.summary,
+                    rep.actions
+                );
+            } else {
+                let v = daemon_post_long(&ctx, "/admin/run", json!({ "task": t.name() })).await?;
+                println!(
+                    "{}: {}{}",
+                    t.name(),
+                    v.get("summary").and_then(Value::as_str).unwrap_or(""),
+                    if v.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                        ""
+                    } else {
+                        " (ÉCHEC)"
+                    }
+                );
+            }
         }
         Cmd::Onboard {
             username,
@@ -304,12 +325,31 @@ async fn main() -> Result<()> {
                 if !yes && !ctx.dry_run {
                     bail!("suppression définitive de {} (Jellyfin + Jellyseerr) : relancer avec --yes", a.name);
                 }
-                let d = accounts::delete(&ctx, &a.id).await?;
+                let (name, jellyseerr) = if ctx.dry_run {
+                    let d = accounts::delete(&ctx, &a.id).await?;
+                    (d.name, d.jellyseerr)
+                } else {
+                    let v = daemon_post(
+                        &ctx,
+                        "/admin/accounts",
+                        json!({ "action": "delete", "user_id": a.id }),
+                    )
+                    .await?;
+                    (
+                        v.get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or(&a.name)
+                            .to_string(),
+                        v.get("jellyseerr")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    )
+                };
                 println!(
                     "{}{} supprimé{}",
                     if ctx.dry_run { "DRY-RUN : " } else { "" },
-                    d.name,
-                    if d.jellyseerr {
+                    name,
+                    if jellyseerr {
                         " (Jellyfin + Jellyseerr)"
                     } else {
                         " (Jellyfin)"
@@ -321,7 +361,35 @@ async fn main() -> Result<()> {
                     who.context("préciser le compte : homelabctl accounts on|off <compte>")?;
                 let a = accounts::resolve(&ctx, &who).await?;
                 let dry = if ctx.dry_run { "DRY-RUN : " } else { "" };
-                match accounts::set_premium(&ctx, &a.id, on_off == "on").await? {
+                let outcome = if ctx.dry_run {
+                    accounts::set_premium(&ctx, &a.id, on_off == "on").await?
+                } else {
+                    if on_off != "on" && on_off != "off" {
+                        bail!("action inconnue : {on_off} (link | limits | delete | on | off)");
+                    }
+                    let v = daemon_post(
+                        &ctx,
+                        "/admin/accounts",
+                        json!({ "action": on_off, "user_id": a.id }),
+                    )
+                    .await?;
+                    match v.get("outcome").and_then(Value::as_str).unwrap_or("") {
+                        "activated" => Outcome::Activated,
+                        "suspended" => Outcome::Suspended,
+                        "cap_reached" => Outcome::CapReached {
+                            premium: v
+                                .pointer("/detail/premium")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0) as usize,
+                            max: v
+                                .pointer("/detail/max")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0) as usize,
+                        },
+                        _ => Outcome::Unchanged,
+                    }
+                };
+                match outcome {
                     Outcome::Activated => println!("{dry}{} activé (premium)", a.name),
                     Outcome::Suspended => println!("{dry}{} suspendu", a.name),
                     Outcome::Unchanged => println!("{} déjà dans cet état", a.name),
@@ -546,7 +614,21 @@ async fn install(cfg: &Config) -> Result<()> {
 /// Appel de l'API locale de homelabd (jeton `HOMELABD_ONBOARD_TOKEN`) : l'état des liens de bienvenue
 /// appartient au daemon, la CLI ne l'écrit jamais elle-même (un lien émis ici serait invisible du daemon
 /// et écrasé à sa prochaine sauvegarde).
+/// `daemon_post` pour un passage de tâche : jusqu'à 11 min (le daemon coupe une tâche à 10 min).
+async fn daemon_post_long(ctx: &TaskContext, path: &str, body: Value) -> Result<Value> {
+    daemon_post_with(ctx, path, body, std::time::Duration::from_secs(660)).await
+}
+
 async fn daemon_post(ctx: &TaskContext, path: &str, body: Value) -> Result<Value> {
+    daemon_post_with(ctx, path, body, std::time::Duration::from_secs(30)).await
+}
+
+async fn daemon_post_with(
+    ctx: &TaskContext,
+    path: &str,
+    body: Value,
+    timeout: std::time::Duration,
+) -> Result<Value> {
     let token = ctx
         .secrets
         .onboard_token
@@ -558,6 +640,7 @@ async fn daemon_post(ctx: &TaskContext, path: &str, body: Value) -> Result<Value
         .http
         .post(&url)
         .header("x-onboard-token", token.expose())
+        .timeout(timeout)
         .json(&body)
         .send()
         .await

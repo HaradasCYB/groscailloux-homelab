@@ -46,12 +46,25 @@ pub struct TaskContext {
 
 impl TaskContext {
     pub fn new(cfg: Config, secrets: Secrets, dry_run: bool) -> Result<Self> {
+        Self::build(cfg, secrets, dry_run, false)
+    }
+
+    /// Contexte de `homelabctl` : l'état est lu mais jamais écrit (le daemon en est seul propriétaire).
+    pub fn new_read_only(cfg: Config, secrets: Secrets, dry_run: bool) -> Result<Self> {
+        Self::build(cfg, secrets, dry_run, true)
+    }
+
+    fn build(cfg: Config, secrets: Secrets, dry_run: bool, read_only_state: bool) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(5))
             .user_agent(concat!("homelabd/", env!("CARGO_PKG_VERSION")))
             .build()?;
-        let state = StateStore::load(&cfg.paths.state_file)?;
+        let state = if read_only_state {
+            StateStore::load_read_only(&cfg.paths.state_file)?
+        } else {
+            StateStore::load(&cfg.paths.state_file)?
+        };
         let (seedbox_sonarr, seedbox_radarr) = if cfg.seedbox.enabled {
             let s = secrets
                 .seedbox_sonarr_api_key

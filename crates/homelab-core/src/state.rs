@@ -230,6 +230,9 @@ pub struct RunInfo {
 pub struct StateStore {
     path: PathBuf,
     inner: Arc<Mutex<State>>,
+    /// Copie de `homelabctl` : jamais écrite. Le daemon est seul propriétaire du fichier (une CLI qui l'écrivait
+    /// écrasait l'état du daemon, qui l'écrasait en retour à sa sauvegarde suivante — audit du 2026-09-23, E9).
+    read_only: bool,
 }
 
 impl StateStore {
@@ -244,7 +247,20 @@ impl StateStore {
         Ok(Self {
             path: path.to_path_buf(),
             inner: Arc::new(Mutex::new(state)),
+            read_only: false,
         })
+    }
+
+    /// Même lecture, mais les mutations restent en mémoire : pour `homelabctl`, qui passe par le daemon pour
+    /// tout changement durable.
+    pub fn load_read_only(path: &Path) -> Result<Self> {
+        let mut s = Self::load(path)?;
+        s.read_only = true;
+        Ok(s)
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     pub async fn read<R>(&self, f: impl FnOnce(&State) -> R) -> R {
@@ -261,6 +277,9 @@ impl StateStore {
     }
 
     fn persist(&self, state: &State) -> Result<()> {
+        if self.read_only {
+            return Ok(());
+        }
         let dir = self
             .path
             .parent()
@@ -269,8 +288,13 @@ impl StateStore {
         let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
         serde_json::to_writer_pretty(&mut tmp, state)?;
         tmp.write_all(b"\n")?;
+        // sur disque AVANT le renommage : sinon une coupure peut laisser un fichier d'état vide
+        tmp.as_file().sync_all()?;
         tmp.persist(&self.path)
             .map_err(|e| anyhow::anyhow!("écriture {} : {}", self.path.display(), e.error))?;
+        if let Ok(d) = std::fs::File::open(dir) {
+            let _ = d.sync_all(); // le renommage lui-même
+        }
         Ok(())
     }
 
@@ -309,5 +333,23 @@ mod tests {
         let reloaded = StateStore::load(&path).unwrap();
         assert_eq!(reloaded.read(|s| s.stuck.len()).await, 1);
         assert!(std::fs::read_dir(path.parent().unwrap()).unwrap().count() == 1);
+    }
+
+    #[tokio::test]
+    async fn read_only_store_never_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let ro = StateStore::load_read_only(&path).unwrap();
+        ro.update(|s| {
+            s.renamed_items.insert("x".into(), 1);
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            ro.read(|s| s.renamed_items.len()).await,
+            1,
+            "visible en mémoire"
+        );
+        assert!(!path.exists(), "rien d'écrit sur disque");
     }
 }

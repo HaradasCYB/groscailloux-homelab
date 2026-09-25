@@ -81,6 +81,8 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/accounts/link", post(accounts_link))
         .route("/admin/link", post(admin_link))
         .route("/admin/mail-test", post(admin_mail_test))
+        .route("/admin/run", post(admin_run))
+        .route("/admin/accounts", post(admin_accounts))
         .route("/don", get(don_redirect))
         .route("/premium", get(premium))
         .route("/premium/merci", get(premium_merci))
@@ -1355,6 +1357,94 @@ struct MailTestBody {
 }
 
 /// POST /admin/mail-test (jeton en en-tête) : mail de bienvenue d'exemple, lien de démonstration.
+#[derive(Deserialize)]
+struct RunBody {
+    task: String,
+}
+
+/// `POST /admin/run` (`homelabctl run <tâche>`) : un passage lancé DANS le daemon, seul propriétaire du fichier
+/// d'état (la CLI l'écrasait avant le 2026-09-25). Répond quand le passage est fini (10 min au plus).
+async fn admin_run(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<RunBody>,
+) -> Response {
+    if !accounts_allowed(&st, header_token(&headers)) {
+        return fail(StatusCode::UNAUTHORIZED, "jeton manquant ou invalide").into_response();
+    }
+    use crate::scheduler::RunNow;
+    info!(task = %b.task, "manual run requested via CLI");
+    match crate::scheduler::run_now(st.ctx.clone(), &b.task).await {
+        RunNow::Unknown => fail(
+            StatusCode::NOT_FOUND,
+            format!("tâche inconnue : {}", b.task),
+        )
+        .into_response(),
+        RunNow::Busy => fail(
+            StatusCode::CONFLICT,
+            "tâche déjà en cours, réessayer à la fin du passage",
+        )
+        .into_response(),
+        RunNow::Panicked => fail(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "la tâche a paniqué (voir journalctl -u homelabd)",
+        )
+        .into_response(),
+        RunNow::Done { ok, summary } => {
+            Json(json!({ "success": true, "ok": ok, "summary": summary })).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct AdminAccountBody {
+    action: String,
+    user_id: String,
+}
+
+/// `POST /admin/accounts` (`homelabctl accounts on|off|delete`) : ces actions notent dans l'état les droits
+/// Jellyseerr à restaurer ; elles passent donc par le daemon.
+async fn admin_accounts(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<AdminAccountBody>,
+) -> Response {
+    if !accounts_allowed(&st, header_token(&headers)) {
+        return fail(StatusCode::UNAUTHORIZED, "jeton manquant ou invalide").into_response();
+    }
+    match b.action.as_str() {
+        "on" | "off" => match accounts::set_premium(&st.ctx, &b.user_id, b.action == "on").await {
+            Ok(o) => {
+                let (outcome, extra) = match o {
+                    Outcome::Activated => ("activated", json!({})),
+                    Outcome::Suspended => ("suspended", json!({})),
+                    Outcome::Unchanged => ("unchanged", json!({})),
+                    Outcome::CapReached { premium, max } => {
+                        ("cap_reached", json!({ "premium": premium, "max": max }))
+                    }
+                };
+                info!(task = "accounts", user_id = %b.user_id, outcome, "premium toggle via CLI");
+                Json(json!({ "success": true, "outcome": outcome, "detail": extra }))
+                    .into_response()
+            }
+            Err(e) => fail(StatusCode::BAD_GATEWAY, format!("{e:#}")).into_response(),
+        },
+        "delete" => match accounts::delete(&st.ctx, &b.user_id).await {
+            Ok(d) => {
+                info!(task = "accounts", user = %d.name, jellyseerr = d.jellyseerr, "account deleted via CLI");
+                Json(json!({ "success": true, "name": d.name, "jellyseerr": d.jellyseerr }))
+                    .into_response()
+            }
+            Err(e) => fail(StatusCode::BAD_GATEWAY, format!("{e:#}")).into_response(),
+        },
+        other => fail(
+            StatusCode::BAD_REQUEST,
+            format!("action inconnue : {other}"),
+        )
+        .into_response(),
+    }
+}
+
 async fn admin_mail_test(
     State(st): State<AppState>,
     headers: HeaderMap,
