@@ -710,7 +710,7 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                         let d =
                             |n: &chrono::NaiveDate| rp::date_fr(&n.format("%Y-%m-%d").to_string());
                         p.label = format!(
-                            "Au cinéma depuis le {} : en France, la VOD arrive environ 4 mois après (vers le {}). Il sera récupéré automatiquement dès sa sortie.",
+                            "En salle depuis le {} · VOD vers le {}, récupéré dès sa sortie",
                             d(cinema),
                             d(vod)
                         );

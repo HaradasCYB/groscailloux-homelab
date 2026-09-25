@@ -245,7 +245,8 @@
       '.gc-req .bar{height:6px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;margin:.3em 0}',
       '.gc-req .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#3b8fd9,#6fd0ff);transition:width .6s}',
       '.gc-req.search .bar i{background:linear-gradient(90deg,#8a8f99,#b9c0cc)}.gc-req.import .bar i{background:linear-gradient(90deg,#3fae6b,#7ee0a2)}.gc-req.available .bar i{background:#3fae6b}',
-      '.gc-req .txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+      // jusqu'à 3 lignes (un libellé explicatif était coupé à « … » sur une seule ligne, 2026-09-25)
+      '.gc-req .txt{white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.3}'
     ].join('\n');
     document.head.appendChild(st);
   }
@@ -284,6 +285,7 @@
         box.className = 'gc-req ' + r.stage;
         box.querySelector('.bar i').style.width = r.percent + '%';
         box.querySelector('.txt').textContent = TV ? (r.percent + ' %') : r.label;
+        box.querySelector('.txt').title = r.label; // texte complet au survol
         // sous la ligne « membre • date » (.je-request-meta est une rangée flex : y entrer la superposerait au texte),
         // dans la colonne .je-request-info
         if (!old) { var meta = card.querySelector('.je-request-meta'); if (meta) meta.insertAdjacentElement('afterend', box); else (card.querySelector('.je-request-info') || card).appendChild(box); }
