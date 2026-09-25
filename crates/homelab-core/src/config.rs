@@ -242,6 +242,8 @@ pub struct Accounts {
     /// `Smart` = sous-titres seulement quand l'audio n'est pas dans la langue préférée ; `Always`, `OnlyForced`,
     /// `Default`, `None`.
     pub subtitle_mode: String,
+    /// Langue audio du mode « VO » de Mon compte (japonais : les animés ; films et séries basculés côté client).
+    pub vo_audio_language: String,
 }
 
 impl Default for Accounts {
@@ -259,6 +261,7 @@ impl Default for Accounts {
             audio_language: "fre".into(),
             subtitle_language: "fre".into(),
             subtitle_mode: "Smart".into(),
+            vo_audio_language: "jpn".into(),
         }
     }
 }

@@ -193,7 +193,7 @@
   applySubtitleSize();
   function setLanguage(mode, sel) {
     sel.disabled = true;
-    api('POST', '/api/language', { mode: mode }).then(function () { note('Langue enregistr\u00e9e.', 'ok'); sel.disabled = false; })
+    api('POST', '/api/language', { mode: mode }).then(function () { rememberMode(mode); note('Langue enregistr\u00e9e.', 'ok'); sel.disabled = false; })
       .catch(function (e) { note(e.message, 'err'); sel.disabled = false; });
   }
   function passwordLink() {
@@ -203,7 +203,7 @@
     }).catch(function (e) { note(e.message, 'err'); });
   }
   function load() {
-    return api('GET', '/api/me').then(function (d) { S.data = d; render(d); })
+    return api('GET', '/api/me').then(function (d) { S.data = d; rememberMode(d.language); render(d); })
       .catch(function (e) { S.el.box.innerHTML = ''; S.el.box.appendChild(h('button', { class: 'close', type: 'button', onclick: close }, ['×'])); S.el.box.appendChild(h('p', { text: 'Mon compte indisponible : ' + e.message })); });
   }
   function open() {
@@ -231,6 +231,82 @@
     var user = right.querySelector('.headerUserButton');
     if (user) right.insertBefore(b, user); else right.appendChild(b);
   }
+  /* Mode « VO » (2026-09-25). Jellyfin n'accepte qu'une langue audio préférée par compte : le serveur pose le
+     japonais (animés, sur tous les appareils) ; ici, pour un film ou une série qui n'est PAS un animé, si la
+     lecture part sur la piste française alors qu'une piste d'origine existe (anglais d'abord, jamais
+     l'audiodescription, jamais pour un titre d'origine française), on bascule dessus par la commande SetAudioStreamIndex envoyée à sa propre session.
+     Une seule tentative par titre : un changement manuel du membre est respecté. (JoJo, parti en VF.) */
+  var LANG_KEY = 'gc-lang-mode';
+  function rememberMode(m) { try { if (m) localStorage.setItem(LANG_KEY, m); } catch (e) { /* stockage bloqué */ } }
+  function langMode() { try { return localStorage.getItem(LANG_KEY); } catch (e) { return null; } }
+  var FR = /^(fre|fra|fr)$/i;
+  // TMDB donne la langue d'origine en ISO 639-1, les pistes sont en ISO 639-2 (deux formes pour certaines)
+  var ISO2 = { en: ['eng'], ja: ['jpn'], ko: ['kor'], es: ['spa'], de: ['ger', 'deu'], it: ['ita'], zh: ['chi', 'zho'],
+    cn: ['chi', 'zho'], pt: ['por'], ru: ['rus'], hi: ['hin'], nl: ['dut', 'nld'], sv: ['swe'], da: ['dan'],
+    no: ['nor', 'nob'], pl: ['pol'], tr: ['tur'], ar: ['ara'], th: ['tha'], fi: ['fin'], he: ['heb'], id: ['ind'] };
+  /* Piste à prendre si la lecture est partie en français (testable sans navigateur). `orig` = langue d'origine
+     ISO 639-1 (null si inconnue). Origine française → rien ; origine connue → sa piste, sinon rien (un doublage
+     anglais d'un film coréen n'est pas une VO) ; origine inconnue → l'anglais. Jamais l'audiodescription. */
+  function pickOriginal(streams, current, orig) {
+    if (orig && FR.test(orig)) return null;
+    var audio = (streams || []).filter(function (x) { return x.Type === 'Audio'; });
+    var cur = audio.filter(function (x) { return x.Index === current; })[0];
+    if (!cur || !FR.test(cur.Language || '')) return null;
+    var ok = audio.filter(function (x) {
+      var t = ((x.Title || '') + ' ' + (x.DisplayTitle || '')).toLowerCase();
+      return !FR.test(x.Language || '') && !/descript|audiodesc|\bad\b/.test(t);
+    });
+    var want = orig ? (ISO2[orig] || [orig]).concat([orig]) : ['eng', 'en'];
+    var pick = ok.filter(function (x) { return want.indexOf((x.Language || '').toLowerCase()) >= 0; })[0];
+    return pick ? pick.Index : null;
+  }
+  window.__gcVo = { pickOriginal: pickOriginal };
+  var VO = { done: {}, busy: false, asked: false };
+  function voTick() {
+    if (VO.busy || !document.querySelector('video')) return;
+    var mode = langMode();
+    if (!mode) {
+      if (!VO.asked && token()) { VO.asked = true; api('GET', '/api/me').then(function (d) { rememberMode(d.language); }).catch(function () {}); }
+      return;
+    }
+    if (mode !== 'vo') return;
+    var AC = window.ApiClient;
+    if (!AC || !AC.getCurrentUserId || !AC.deviceId) return;
+    VO.busy = true;
+    var uid = AC.getCurrentUserId(), hdr = { 'X-Emby-Token': AC.accessToken(), 'Content-Type': 'application/json' };
+    fetch(AC.getUrl('Sessions', { ControllableByUserId: uid }), { headers: hdr }).then(function (r) { return r.json(); })
+      .then(function (ss) {
+        var me = (ss || []).filter(function (x) { return x.DeviceId === AC.deviceId() && x.NowPlayingItem; })[0];
+        if (!me || me.PlayState == null || me.PlayState.AudioStreamIndex == null) return;
+        var id = me.NowPlayingItem.Id;
+        if (VO.done[id]) return;
+        VO.done[id] = true;
+        var getJson = function (path) { return fetch(AC.getUrl(path), { headers: hdr }).then(function (r) { return r.json(); }); };
+        return getJson('Users/' + uid + '/Items/' + id).then(function (it) {
+          // langue d'origine : fiche du film, ou de la série pour un épisode
+          var tmdbOf = function (x) { return x && x.ProviderIds && (x.ProviderIds.Tmdb || x.ProviderIds.tmdb); };
+          var withSeries = it.SeriesId ? getJson('Users/' + uid + '/Items/' + it.SeriesId) : Promise.resolve(it);
+          return withSeries.then(function (owner) {
+            var tmdb = tmdbOf(owner);
+            if (!tmdb) return null;
+            return api('GET', '/api/original?kind=' + (it.SeriesId ? 'tv' : 'movie') + '&tmdb=' + encodeURIComponent(tmdb))
+              .then(function (r) { return r.lang || null; }).catch(function () { return null; });
+          }).then(function (orig) {
+            window.__gcVoOrig = orig;
+            var src = (it.MediaSources || []).filter(function (m) { return m.Id === me.PlayState.MediaSourceId; })[0] || (it.MediaSources || [])[0] || {};
+            var target = pickOriginal(src.MediaStreams, me.PlayState.AudioStreamIndex, orig);
+            if (target == null) return;
+            window.__gcVoSwitched = target;
+            return fetch(AC.getUrl('Sessions/' + me.Id + '/Command'), { method: 'POST', headers: hdr,
+              body: JSON.stringify({ Name: 'SetAudioStreamIndex', Arguments: { Index: String(target) } }) });
+          });
+        });
+      })
+      .catch(function (e) { window.__gcVoError = String(e && e.message || e); })
+      .then(function () { VO.busy = false; });
+  }
+  setInterval(voTick, TV ? 5000 : 2500);
+
   mount();
   // la taille est aussi relue à chaque tour : un changement fait dans Réglages → Sous-titres de Jellyfin suit
   setInterval(function () { mount(); applySubtitleSize(); }, TV ? 3000 : 1000);

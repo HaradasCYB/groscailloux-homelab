@@ -338,6 +338,11 @@ skip_back_ms = 10000
 audio_language = "fre"
 subtitle_language = "fre"
 subtitle_mode = "Smart"
+# Mode « VO » de Mon compte (2026-09-25) : Jellyfin n'accepte qu'UNE langue audio préférée par compte. Le japonais
+# couvre les animés sur tous les appareils (applis TV comprises) ; pour les films et séries, le script Mon compte
+# bascule sur la piste d'origine (anglais d'abord) dans les clients web. Avant : langue vide + piste « par défaut »
+# du fichier, qui est la française dans la plupart des MULTi (JoJo parti en VF).
+vo_audio_language = "jpn"
 
 [indexers]
 # C411 est le SEUL indexer, dans les 4 Arrs comme dans Prowlarr (les indexers publics et Jackett ont été

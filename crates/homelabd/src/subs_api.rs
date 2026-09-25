@@ -76,6 +76,7 @@ pub fn router(ctx: Arc<TaskContext>) -> Router {
         .route("/compte/api/devices/{id}", delete(logout_device))
         .route("/compte/api/password", post(password_link))
         .route("/compte/api/language", post(set_language))
+        .route("/compte/api/original", get(original_language))
         .route("/compte/api/requests", get(requests_progress))
         .with_state(st)
 }
@@ -245,7 +246,8 @@ async fn me(State(st): State<SubsState>, headers: HeaderMap) -> ApiResult<Json<V
 }
 
 /// `fr` (piste française d'abord) ou `vo` (audio d'origine, sous-titres français toujours), lu dans la
-/// configuration Jellyfin du compte.
+/// configuration Jellyfin du compte. VO = sous-titres `Always` et langue audio vide (ancien mode, avant le
+/// 2026-09-25) ou `[accounts] vo_audio_language`.
 async fn language_mode(st: &SubsState, user_id: &str) -> &'static str {
     match st.ctx.jellyfin.user(user_id).await {
         Ok(u) => {
@@ -258,7 +260,9 @@ async fn language_mode(st: &SubsState, user_id: &str) -> &'static str {
                 .get("SubtitleMode")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            if audio.is_empty() && mode == "Always" {
+            if mode == "Always"
+                && (audio.is_empty() || audio == st.ctx.cfg.accounts.vo_audio_language)
+            {
                 "vo"
             } else {
                 "fr"
@@ -297,7 +301,13 @@ async fn set_language(
         "vo" => {
             st.ctx
                 .jellyfin
-                .set_language_prefs(&u.id, "", &a.subtitle_language, "Always", true)
+                .set_language_prefs(
+                    &u.id,
+                    &a.vo_audio_language,
+                    &a.subtitle_language,
+                    "Always",
+                    true,
+                )
                 .await
         }
         _ => return Err(err(StatusCode::BAD_REQUEST, "mode inconnu")),
@@ -376,9 +386,12 @@ async fn details(st: &SubsState, kind: &str, tmdb: i64) -> Value {
                 "original_title": original,
                 "year": date.get(..4).unwrap_or(""),
                 "poster": d.get("posterPath").and_then(Value::as_str).unwrap_or(""),
+                "lang": d.get("originalLanguage").and_then(Value::as_str).unwrap_or(""),
             })
         }
-        Err(_) => json!({ "title": "", "original_title": "", "year": "", "poster": "" }),
+        Err(_) => {
+            json!({ "title": "", "original_title": "", "year": "", "poster": "", "lang": "" })
+        }
     };
     st.details_cache
         .lock()
@@ -812,6 +825,28 @@ async fn logout_device(
     })?;
     info!(task = "subs", user = %u.name, "device logged out from Mon compte");
     Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct OriginalQuery {
+    kind: String,
+    tmdb: i64,
+}
+
+/// GET /compte/api/original?kind=movie|tv&tmdb=<id> : langue d'origine (ISO 639-1, TMDB via Jellyseerr, cache 1 h).
+/// Sert au mode « VO » du script Mon compte : Jellyfin ne connaît pas la langue d'origine d'un titre, et un
+/// film français doublé en anglais ne doit pas passer en anglais.
+async fn original_language(
+    State(st): State<SubsState>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<OriginalQuery>,
+) -> ApiResult<Json<Value>> {
+    let _u = auth(&st, &headers).await?;
+    let kind = if q.kind == "tv" { "tv" } else { "movie" };
+    let d = details(&st, kind, q.tmdb).await;
+    Ok(Json(
+        json!({ "lang": d.get("lang").cloned().unwrap_or(Value::Null) }),
+    ))
 }
 
 /// POST /compte/api/password : lien de changement de mot de passe (page /bienvenue/<jeton>, 1 h).
