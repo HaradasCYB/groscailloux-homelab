@@ -15,6 +15,7 @@ pub mod context;
 pub mod discord;
 pub mod disk;
 pub mod docker;
+pub mod html;
 pub mod indexer;
 pub mod mail;
 pub mod manual_search;

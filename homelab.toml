@@ -284,7 +284,9 @@ sonarr_root = "/tv"
 
 [cleanup]
 interval_secs = 86400
-transcodes_dir = "/opt/homelab/jellyfin/cache/transcodes"
+# Vide : les transcodages de Jellyfin sont dans un tmpfs du conteneur (/cache/transcodes, masque ce dossier de
+# l'hôte), purgé chaque minute par scripts/jellyfin-transcodes-purge.sh. L'ancien chemin visait un dossier vide.
+transcodes_dir = ""
 transcodes_max_age_days = 1
 empty_download_dirs_max_age_days = 2
 recycle_dirs = ["/opt/homelab/library/media/movies/.recycle", "/opt/homelab/library/media/tvshows/.recycle"]

@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::secret::Secret;
 
 /// Configuration non secrète, chargée depuis `homelab.toml`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub paths: Paths,
@@ -44,7 +44,7 @@ pub struct Config {
 }
 
 /// Où les tâches ont le droit de lancer de **nouveaux** téléchargements.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Downloads {
     /// Machines autorisées à récupérer du neuf : `vps`, `seedbox`. Une machine absente garde ses
@@ -77,7 +77,7 @@ impl Downloads {
 }
 
 /// Règles communes à tout ce qui interroge l'indexer (tâches et page `/recherche`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Indexers {
     /// Requêtes au plus par heure glissante **et par clé** (deux clés : `C411` et `C411 (2)`).
@@ -107,7 +107,7 @@ impl Default for Indexers {
 }
 
 /// Page `/recherche` : recherche manuelle d'une saison ou d'un film par identifiant TMDB (voir `manual_search`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ManualSearch {
     /// Nom de l'indexer dans Prowlarr.
@@ -130,7 +130,7 @@ impl Default for ManualSearch {
 
 /// Tchat des membres dans Jellyfin (voir `chat`). Modérateurs : écrivent les annonces, lisent les fils
 /// privés, suppriment tout message. `beta_users` non vide = tchat visible de ces comptes seulement.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Chat {
     pub enabled: bool,
@@ -150,7 +150,7 @@ pub struct Chat {
 /// Abonnés et cycle premium (`homelab_core::subscriptions`, tâches `subscription_cycle` et
 /// `subscription_reconcile`, page « Mon compte » dans Jellyfin). L'admin garde la main : statuts
 /// « offert » et « exempt », prolongations manuelles, `cycle_dry_run` pour observer avant d'agir.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Subscriptions {
     pub enabled: bool,
@@ -212,7 +212,7 @@ impl Default for Chat {
 
 /// Comptes Jellyfin : « premium » = compte actif, sinon suspendu (`IsDisabled`, rien n'est
 /// supprimé). Plafonds dimensionnés pour 6 vCPU sans GPU et le lien seedbox (~190 Mbit/s).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Accounts {
     /// Comptes premium au plus (admin exclus) ; vérifié à l'activation.
@@ -265,7 +265,7 @@ impl Default for Accounts {
 
 /// Seedbox distante : Radarr/Sonarr qui y rangent les médias, montés en lecture seule sur le
 /// VPS (rclone) et lus par Jellyfin. `enabled = false` ⇒ tout ce qui touche la seedbox est ignoré.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Seedbox {
     pub enabled: bool,
@@ -322,7 +322,7 @@ impl Default for Seedbox {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Paths {
     /// Racine du homelab (compose, .env, dossiers d'état).
@@ -338,7 +338,7 @@ pub struct Paths {
     pub backups: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Urls {
     pub sonarr: String,
@@ -350,7 +350,7 @@ pub struct Urls {
 }
 
 /// Discord (webhooks `DISCORD_WEBHOOK_MEMBERS` / `DISCORD_WEBHOOK_ADMIN` dans `.env`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Discord {
     /// Les annonces du tchat sont aussi postées sur le salon des membres.
@@ -369,7 +369,7 @@ impl Default for Discord {
 }
 
 /// Onboarding des membres : lien de bienvenue (définir son mot de passe) et page publique d'inscription.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Onboard {
     /// Durée de validité d'un lien de bienvenue (minutes) ; renouvelable depuis la page elle-même.
@@ -393,7 +393,7 @@ impl Default for Onboard {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Web {
     pub listen: String,
@@ -403,13 +403,13 @@ pub struct Web {
 impl Default for Web {
     fn default() -> Self {
         Self {
-            listen: "0.0.0.0:8765".into(),
+            listen: "0.0.0.0:8766".into(),
             rate_limit_secs: 30,
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Tasks {
     /// Noms de tâches à ne pas planifier (restent invocables via `homelabctl run`).
@@ -446,7 +446,7 @@ pub struct Tasks {
 
 /// Sous-titres extraits par le Bazarr de la seedbox → rafraîchissement des fiches Jellyfin
 /// (voir `tasks::subtitle_sync`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct SubtitleSync {
     pub interval_secs: u64,
@@ -480,7 +480,7 @@ impl Default for SubtitleSync {
 
 /// Canari de lecture : un vrai transcodage de quelques secondes, alerte admin au premier échec
 /// (voir `tasks::playback_canary`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct PlaybackCanary {
     pub interval_secs: u64,
@@ -501,7 +501,7 @@ impl Default for PlaybackCanary {
 }
 
 /// Lectures simultanées par compte : arrêt des lectures en trop (voir `tasks::playback_limit`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct PlaybackLimit {
     pub interval_secs: u64,
@@ -521,7 +521,7 @@ impl Default for PlaybackLimit {
 }
 
 /// Rangée « Tendances » de l'accueil Jellyfin : collection tenue à jour depuis Playback Reporting.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Trending {
     pub interval_secs: u64,
@@ -548,7 +548,7 @@ impl Default for Trending {
 }
 
 /// Nettoyage après une suppression dans Jellyfin : fiche Arr, Jellyseerr, torrent.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct DeletionCleanup {
     pub interval_secs: u64,
@@ -605,7 +605,7 @@ impl Default for DeletionCleanup {
 }
 
 /// Recherche des saisons manquantes par identifiant TMDB chez un seul indexer (C411), via Prowlarr.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct SeriesSearch {
     pub interval_secs: u64,
@@ -668,7 +668,7 @@ impl Default for SeriesSearch {
 }
 
 /// Rattrapage des films suivis et manquants par identifiant TMDB (la recherche de Radarr reste la voie normale).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct MovieSearch {
     pub interval_secs: u64,
@@ -691,14 +691,14 @@ impl Default for MovieSearch {
             missing_hours: 0,
             retry_after_hours: 72,
             error_retry_hours: 1,
-            query_gap_secs: 15,
+            query_gap_secs: 5,
             indexer: "C411".into(),
         }
     }
 }
 
 /// Rangement de l'animation japonaise dans les dossiers « Anime » et « Films d'animation » (voir `tasks::anime_library`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct AnimeLibrary {
     pub interval_secs: u64,
@@ -734,7 +734,7 @@ impl Default for AnimeLibrary {
 }
 
 /// Contrôle des identifications de Jellyfin (voir `tasks::identity_check`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct IdentityCheck {
     pub interval_secs: u64,
@@ -755,7 +755,7 @@ impl Default for IdentityCheck {
 }
 
 /// Remise en service des indexeurs mis en pause par Sonarr/Radarr après des échecs.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct IndexerUnblock {
     pub interval_secs: u64,
@@ -784,7 +784,7 @@ impl Default for IndexerUnblock {
 }
 
 /// Import des torrents ajoutés à la main dans qBittorrent (VPS et seedbox).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct TorrentImport {
     pub interval_secs: u64,
@@ -807,7 +807,7 @@ impl Default for TorrentImport {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct StackHealth {
     pub interval_secs: u64,
@@ -821,7 +821,7 @@ pub struct StackHealth {
     pub probes: Vec<Probe>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Probe {
     pub service: String,
@@ -872,7 +872,7 @@ fn d_200() -> u16 {
     200
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct TrackerRatio {
     pub interval_secs: u64,
@@ -891,7 +891,7 @@ impl Default for TrackerRatio {
     fn default() -> Self {
         Self {
             interval_secs: 1800,
-            unlimited: vec!["c411.org".into()],
+            unlimited: vec!["c411.org".into(), "c411.tw".into()],
             secondary: vec!["yggleak".into(), "u2p".into(), "ygg.gratis".into()],
             public: [
                 "opentrackr",
@@ -927,7 +927,7 @@ impl Default for TrackerRatio {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct StuckHandler {
     pub interval_secs: u64,
@@ -950,7 +950,7 @@ impl Default for StuckHandler {
 }
 
 /// Boucles HLS : un client qui redemande sans fin le même segment d'un flux transcodé (journal NPM).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct HlsLoopWatch {
     pub interval_secs: u64,
@@ -975,7 +975,7 @@ impl Default for HlsLoopWatch {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct DiskPressure {
     pub interval_secs: u64,
@@ -995,7 +995,7 @@ impl Default for DiskPressure {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Interval300 {
     pub interval_secs: u64,
@@ -1006,7 +1006,7 @@ impl Default for Interval300 {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Interval3600 {
     pub interval_secs: u64,
@@ -1019,7 +1019,7 @@ impl Default for Interval3600 {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Interval86400 {
     pub interval_secs: u64,
@@ -1032,7 +1032,7 @@ impl Default for Interval86400 {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Interval600 {
     pub interval_secs: u64,
@@ -1043,7 +1043,7 @@ impl Default for Interval600 {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct UserPoller {
     pub interval_secs: u64,
@@ -1062,7 +1062,7 @@ impl Default for UserPoller {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct AutoImport {
     pub enabled: bool,
@@ -1088,7 +1088,7 @@ impl Default for AutoImport {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Cleanup {
     pub interval_secs: u64,
@@ -1105,7 +1105,7 @@ impl Default for Cleanup {
     fn default() -> Self {
         Self {
             interval_secs: 86400,
-            transcodes_dir: "/opt/homelab/jellyfin/cache/transcodes".into(),
+            transcodes_dir: "".into(),
             transcodes_max_age_days: 1,
             empty_download_dirs_max_age_days: 2,
             recycle_dirs: vec![
@@ -1119,7 +1119,7 @@ impl Default for Cleanup {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Backup {
     /// Sous-chemins de `paths.base` exclus de l'archive d'état.
@@ -1152,7 +1152,7 @@ impl Default for Backup {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Vpn {
     pub qbit_conf: PathBuf,
@@ -1563,5 +1563,52 @@ jellyfin = "http://j"
 jellyseerr = "http://js"
 "#;
         assert!(toml::from_str::<Config>(raw).is_err());
+    }
+}
+
+/// Règle du dépôt : les valeurs par défaut du code = celles de `homelab.toml`. Ce test charge le fichier, construit
+/// la configuration « tout par défaut » (seuls `paths` et `urls` sont obligatoires) et échoue au premier réglage
+/// qui diffère. Le 2026-09-25 il en a trouvé trois (`tracker_ratio.unlimited` sans `c411.tw`,
+/// `movie_search.query_gap_secs`, `web.listen`). Seuls les réglages propres à CETTE machine sont exemptés.
+#[cfg(test)]
+mod toml_matches_defaults {
+    const MACHINE_SPECIFIC: &[&str] = &[".paths", ".urls", ".seedbox.", ".tasks.disabled"];
+
+    fn walk(path: &str, f: &toml::Value, d: &toml::Value, out: &mut Vec<String>) {
+        if MACHINE_SPECIFIC.iter().any(|p| path.starts_with(p)) {
+            return;
+        }
+        match (f, d) {
+            (toml::Value::Table(ft), toml::Value::Table(dt)) => {
+                for (k, fv) in ft {
+                    match dt.get(k) {
+                        Some(dv) => walk(&format!("{path}.{k}"), fv, dv, out),
+                        None => out.push(format!("{path}.{k} : absent des défauts du code")),
+                    }
+                }
+            }
+            _ if f != d => out.push(format!("{path} : homelab.toml = {f}, code = {d}")),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn homelab_toml_equals_code_defaults() {
+        let raw =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../homelab.toml"))
+                .expect("homelab.toml");
+        let file: toml::Value = toml::from_str(&raw).unwrap();
+        let mut min = toml::map::Map::new();
+        min.insert("paths".into(), file["paths"].clone());
+        min.insert("urls".into(), file["urls"].clone());
+        let cfg: super::Config = toml::Value::Table(min).try_into().unwrap();
+        let def = toml::Value::try_from(&cfg).unwrap();
+        let mut out = Vec::new();
+        walk("", &file, &def, &mut out);
+        assert!(
+            out.is_empty(),
+            "homelab.toml ≠ défauts du code :\n{}",
+            out.join("\n")
+        );
     }
 }

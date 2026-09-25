@@ -22,6 +22,7 @@ use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue, Method, StatusCode, Uri};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
+use homelab_core::html::esc;
 use homelab_core::{Secret, TaskContext};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -314,12 +315,6 @@ fn redirect(to: &str, cookie: Option<HeaderValue>) -> Response {
 }
 
 pub fn login_page(next: &str, msg: &str, status: StatusCode) -> Response {
-    let esc = |s: &str| {
-        s.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-    };
     let flash = if msg.is_empty() {
         String::new()
     } else {

@@ -3,17 +3,10 @@
 //! viennent de `.env` (dépôt public). Source et captures : `backups/guide-draft-20260915/`.
 
 use homelab_core::config::Secrets;
+use homelab_core::html::esc;
 
 const GUIDE_HTML: &str = include_str!("../assets/guide.html");
 pub const ICON_PNG: &[u8] = include_bytes!("../assets/guide-icon.png");
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
 
 fn host(url: &str) -> &str {
     url.trim_start_matches("https://")

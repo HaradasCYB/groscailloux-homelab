@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use homelab_core::html::esc;
 use homelab_core::state::RunInfo;
 use serde::Deserialize;
 
@@ -126,13 +127,6 @@ pub fn ago(now: i64, t: i64) -> String {
         3600..=86_399 => format!("il y a {} h", d / 3600),
         _ => format!("il y a {} j", d / 86_400),
     }
-}
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 /// État d'une tâche : `ok`, `err` ou `none` (jamais lancée depuis le démarrage de l'état).

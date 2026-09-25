@@ -8,6 +8,7 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 
 use crate::context::TaskContext;
+use crate::html::esc;
 use crate::state::{now, WelcomeLink};
 
 pub const KIND_WELCOME: &str = "welcome";
@@ -306,13 +307,6 @@ pub struct Rendered {
     pub subject: String,
     pub text: String,
     pub html: String,
-}
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 /// Contenu du mail selon le type de lien. `premium` = compte déjà actif.

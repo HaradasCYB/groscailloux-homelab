@@ -12,6 +12,7 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Form, Router};
+pub use homelab_core::html::esc;
 use homelab_core::manual_search::{self, Found, Job, Row};
 use homelab_core::state::now;
 use homelab_core::tasks::series_search::Target;
@@ -56,13 +57,6 @@ fn denied() -> Response {
         ),
     )
         .into_response()
-}
-
-pub fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 fn urlencode(s: &str) -> String {

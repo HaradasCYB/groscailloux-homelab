@@ -7,6 +7,7 @@
 use homelab_core::accounts::Account;
 
 use crate::status_page::ago;
+use homelab_core::html::esc;
 
 pub struct PageData<'a> {
     pub now: i64,
@@ -33,13 +34,6 @@ pub struct SubInfo {
     pub expires: String,
     /// `paypal`, `manual`, `trial`, `import`.
     pub source: String,
-}
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 fn activity(now: i64, iso: Option<&str>) -> String {
