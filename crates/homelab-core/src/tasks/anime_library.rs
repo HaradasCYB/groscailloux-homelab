@@ -123,6 +123,16 @@ pub fn russian_route(item: &Value, cfg: &crate::config::AnimeLibrary) -> bool {
         })
 }
 
+/// Une fiche arrivée dans le dossier russe (choix du dossier dans la fenêtre « Demander ») n'y reste que si un de
+/// ses demandeurs est autorisé (`HOMELABD_RUSSIAN_USERS`) — Jellyseerr ne contrôle PAS le dossier à la création
+/// d'une demande. Sans demande connue (fiche ajoutée à la main par l'admin) : elle reste.
+pub fn russian_folder_allowed(requesters: &[String], allowed: &[String]) -> bool {
+    requesters.is_empty()
+        || requesters
+            .iter()
+            .any(|r| allowed.iter().any(|a| a.eq_ignore_ascii_case(r)))
+}
+
 /// Relancer la recherche d'une fiche russe sans fichier ? Jamais cherchée, ou dernière recherche assez ancienne.
 pub fn search_due(last: Option<i64>, now: i64, retry_hours: i64) -> bool {
     last.is_none_or(|t| now - t >= retry_hours * 3600)
@@ -301,6 +311,31 @@ async fn tmdb_class(
     Some(class)
 }
 
+/// (type `tv`/`movie`, tmdb) → pseudos des demandeurs (Jellyfin et Jellyseerr, pour comparer à la liste autorisée).
+async fn jellyseerr_requesters(ctx: &TaskContext) -> Result<HashMap<(String, i64), Vec<String>>> {
+    let mut out: HashMap<(String, i64), Vec<String>> = HashMap::new();
+    for r in ctx.jellyseerr.all_requests().await? {
+        let (Some(kind), Some(tmdb)) = (
+            r.pointer("/media/mediaType").and_then(Value::as_str),
+            r.pointer("/media/tmdbId").and_then(Value::as_i64),
+        ) else {
+            continue;
+        };
+        let names = out.entry((kind.to_string(), tmdb)).or_default();
+        for k in ["jellyfinUsername", "displayName", "username"] {
+            if let Some(n) = r
+                .pointer(&format!("/requestedBy/{k}"))
+                .and_then(Value::as_str)
+            {
+                if !n.is_empty() && !names.iter().any(|x| x.eq_ignore_ascii_case(n)) {
+                    names.push(n.to_string());
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Attend la fin des commandes de déplacement de l'Arr (4 min au plus : un passage est coupé à 10 min).
 async fn wait_moves(arr: &ArrClient) {
     for _ in 0..24 {
@@ -426,6 +461,8 @@ impl Task for AnimeLibrary {
             Err(e) => return Ok(Report::new(format!("jellyfin injoignable : {e:#}"), 0)),
         };
         let mut moves_left = cfg.max_moves_per_run;
+        // demandeurs de chaque œuvre (type, tmdb), lus dans Jellyseerr seulement si une fiche russe est à vérifier
+        let mut requesters: Option<HashMap<(String, i64), Vec<String>>> = None;
         let mut counts: BTreeMap<&str, u32> = BTreeMap::new();
         let mut notes: Vec<String> = Vec::new();
         for place in &places {
@@ -496,10 +533,46 @@ impl Task for AnimeLibrary {
                 };
                 match decide(class, &labels, in_anime, in_ru) {
                     Decision::Keep if class == Class::Russian && in_ru == Some(true) => {
+                        // arrivée dans le dossier russe sans tag : demandée avec le choix « Russe » de la fenêtre
+                        // « Demander ». Seul un compte autorisé peut l'y laisser, sinon retour en classique.
+                        let untagged = !labels.iter().any(|l| l.eq_ignore_ascii_case(TAG_RUSSIAN));
+                        if untagged {
+                            if requesters.is_none() {
+                                requesters =
+                                    Some(jellyseerr_requesters(ctx).await.unwrap_or_default());
+                            }
+                            let kind = if place.movies { "movie" } else { "tv" };
+                            let who = requesters
+                                .as_ref()
+                                .and_then(|m| m.get(&(kind.to_string(), it.tmdb)))
+                                .cloned()
+                                .unwrap_or_default();
+                            if !russian_folder_allowed(&who, &ctx.secrets.russian_route_users) {
+                                let root = if place.movies {
+                                    &cfg.seedbox_default_movies_root
+                                } else {
+                                    &cfg.seedbox_default_series_root
+                                };
+                                warn!(task = "anime_library", service = arr.name, title = %it.title, "russian folder chosen by a member not allowed: back to classic");
+                                *counts.entry("remis_classique").or_default() += 1;
+                                if !ctx.dry_run {
+                                    let editor = if place.movies {
+                                        ("api/v3/movie/editor", "movieIds")
+                                    } else {
+                                        ("api/v3/series/editor", "seriesIds")
+                                    };
+                                    if let Err(e) = arr
+                                        .put(editor.0, &json!({ editor.1: [it.id], "rootFolderPath": root, "moveFiles": true }))
+                                        .await
+                                    {
+                                        warn!(task = "anime_library", service = arr.name, title = %it.title, error = %e, "move back failed");
+                                    }
+                                }
+                                continue;
+                            }
+                        }
                         // demandée dans le dossier russe : l'indexer RuTracker ne sert qu'aux fiches taguées `russe`
-                        if !labels.iter().any(|l| l.eq_ignore_ascii_case(TAG_RUSSIAN))
-                            && !ctx.dry_run
-                        {
+                        if untagged && !ctx.dry_run {
                             let editor = if place.movies {
                                 ("api/v3/movie/editor", "movieIds")
                             } else {
@@ -767,6 +840,21 @@ mod tests {
         assert!(search_due(None, 100_000, 24));
         assert!(!search_due(Some(100_000 - 3600), 100_000, 24));
         assert!(search_due(Some(100_000 - 24 * 3600), 100_000, 24));
+    }
+
+    #[test]
+    fn russian_folder_needs_an_allowed_requester() {
+        let allowed = l(&["membreru"]);
+        assert!(russian_folder_allowed(&l(&["MembreRu"]), &allowed));
+        assert!(russian_folder_allowed(
+            &l(&["someone", "membreru"]),
+            &allowed
+        ));
+        assert!(!russian_folder_allowed(&l(&["someone"]), &allowed));
+        // ajoutée à la main (aucune demande) : reste
+        assert!(russian_folder_allowed(&[], &allowed));
+        // personne d'autorisé dans .env : jamais pour un membre
+        assert!(!russian_folder_allowed(&l(&["membreru"]), &[]));
     }
 
     #[test]

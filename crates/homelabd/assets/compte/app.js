@@ -418,4 +418,92 @@
     }).catch(function () {});
   }
   setInterval(reqPaint, TV ? 6000 : 3000);
+
+  // Fenêtre « Demander » de Jellyfin Enhanced (options avancées activées pour la voie russe) : pour un compte
+  // autorisé, un seul choix « Version » expliqué ; pour tous les autres, le bloc reste caché et la demande part avec
+  // les réglages par défaut (version classique), exactement comme avant.
+  var RU_LABELS = {
+    tvClassic: 'Classique — version française si elle existe (C411) · rangée dans « Séries »',
+    movieClassic: 'Classique — version française si elle existe (C411) · rangée dans « Films »',
+    tvRu: 'Russe — VO russe, sans sous-titres français (RuTracker) · rangée dans « Séries russes », visible de toi seul',
+    movieRu: 'Russe — VO russe, sans sous-titres français (RuTracker) · rangée dans « Films russes », visible de toi seul'
+  };
+  function kindOfFolder(path) {
+    var p = String(path || '');
+    if (/\/Russian Movies\/?$/.test(p)) return 'movieRu';
+    if (/\/Russian\/?$/.test(p)) return 'tvRu';
+    if (/\/Movies\/?$/.test(p)) return 'movieClassic';
+    if (/\/TV Shows\/?$/.test(p)) return 'tvClassic';
+    return null; // Anime, Films d'animation, VPS : rangés automatiquement, pas proposés
+  }
+  function adaptRequestModal() {
+    var blocks = document.querySelectorAll('.jellyseerr-advanced-options');
+    if (!blocks.length) return;
+    routeFetch().then(function () {
+      blocks.forEach(function (bl) {
+        if (!ROUTE.allowed) { bl.classList.remove('gc-ru-ok'); return; }
+        bl.classList.add('gc-ru-ok');
+        var folder = bl.querySelector('select[id$="-folder"]');
+        if (!folder || !folder.options.length || folder.options.length < 2) return; // pas encore rempli
+        if (bl.getAttribute('data-gc') === String(folder.options.length) + folder.value) return;
+        bl.querySelectorAll('.jellyseerr-form-row').forEach(function (row) {
+          if (!row.querySelector('select[id$="-folder"]')) row.style.display = 'none'; // serveur, profil : défaut
+        });
+        var h3 = bl.querySelector('h3'); if (h3) h3.textContent = 'Version à télécharger';
+        var lab = bl.querySelector('label[for$="-folder"]'); if (lab) lab.textContent = 'Version';
+        Array.prototype.slice.call(folder.options).forEach(function (o) {
+          if (!o.value) { o.remove(); return; }
+          var k = kindOfFolder(o.value);
+          if (!k) { o.remove(); return; }
+          o.textContent = RU_LABELS[k];
+        });
+        var cur = kindOfFolder(folder.value);
+        if (!cur) { var c = Array.prototype.find.call(folder.options, function (o) { return /Classic/.test(kindOfFolder(o.value) || ''); }); if (c) folder.value = c.value; }
+        var help = bl.querySelector('.gc-ru-help');
+        if (!help) {
+          help = h('div', { class: 'gc-ru-help' });
+          help.style.cssText = 'margin:.5em 0 0;font-size:.85em;line-height:1.4;color:#c9d4df';
+          folder.parentNode.appendChild(help);
+          folder.addEventListener('change', function () { paintHelp(folder, help); });
+        }
+        paintHelp(folder, help);
+        bl.setAttribute('data-gc', String(folder.options.length) + folder.value);
+      });
+    });
+  }
+  function paintHelp(folder, help) {
+    var ru = /Ru$/.test(kindOfFolder(folder.value) || '');
+    help.textContent = ru
+      ? 'Russe : cherché sur le tracker russe par le titre russe, en VO russe (en général sans sous-titres). ' +
+        'Le titre n\'apparaît que dans tes bibliothèques « Séries russes » / « Films russes » : les autres membres ne le verront pas.'
+      : 'Classique : cherché comme d\'habitude, en version française si elle existe (sinon VOSTFR). ' +
+        'Le titre arrive dans Séries / Films, visible de tous.';
+  }
+  // Par défaut le bloc est caché (tous les membres, télé comprise) ; seul un compte autorisé le voit.
+  (function () {
+    if (document.getElementById('gc-ru-css')) return;
+    var st = document.createElement('style'); st.id = 'gc-ru-css';
+    st.textContent = '.jellyseerr-advanced-options{display:none!important}.jellyseerr-advanced-options.gc-ru-ok{display:block!important}';
+    document.head.appendChild(st);
+  })();
+  // Les réglages avancés ne partent QUE pour un dossier russe choisi par un compte autorisé ; sinon la demande part
+  // sans réglages, donc exactement comme avant (profil et dossier Anime automatiques, règles de Jellyseerr).
+  function keepSettings(settings) {
+    return !!(settings && ROUTE.allowed && /Ru$/.test(kindOfFolder(settings.rootFolder) || ''));
+  }
+  function wrapRequests() {
+    var api = window.JellyfinEnhanced && window.JellyfinEnhanced.jellyseerrAPI;
+    if (!api || api.__gcRu) return;
+    var rm = api.requestMedia, rt = api.requestTvSeasons;
+    // l'autorisation est relue avant l'envoi (elle ne dépend pas de l'ouverture de la fenêtre)
+    if (typeof rm === 'function') api.requestMedia = function (tmdbId, mediaType, adv, is4k, media) {
+      return routeFetch().then(function () { return rm.call(api, tmdbId, mediaType, keepSettings(adv) ? adv : {}, is4k, media); });
+    };
+    if (typeof rt === 'function') api.requestTvSeasons = function (tmdbId, seasons, adv, media, is4k) {
+      return routeFetch().then(function () { return rt.call(api, tmdbId, seasons, keepSettings(adv) ? adv : {}, media, is4k); });
+    };
+    api.__gcRu = true;
+  }
+  setInterval(wrapRequests, 500);
+  if (!TV) setInterval(adaptRequestModal, 400);
 })();

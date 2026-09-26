@@ -134,8 +134,15 @@ journalctl -u homelabd -f
   liste explicite sans elles le 2026-09-27 (sauvegarde dans `backups/russe-20260926/`) ; restent
   visibles des deux comptes protégés. Limite connue : Jellyseerr affiche « disponible » à tous pour un titre russe.
   Retour au classique = tag retiré + fiche remise dans `seedbox_default_*_root` +
-  `series_search`/`movie_search` lancés. `JellyseerrShowAdvanced` (Jellyfin Enhanced) reste **coupé** : il est global
-  et montrerait serveur/profil/dossier à tous. **Sonarr/Radarr ne trouvent pas une œuvre russe** (ils cherchent le
+  `series_search`/`movie_search` lancés. **Choix à la demande (2026-09-27, voulu par l'utilisateur)** :
+  `JellyseerrShowAdvanced = true` dans Jellyfin Enhanced (global) ; le script Mon compte **cache le bloc** à tous
+  (CSS `gc-ru-css`) sauf au compte autorisé, pour qui il ne reste qu'un choix « Version » (Classique / Russe, libellés
+  et phrase d'explication), et **enveloppe `JE.jellyseerrAPI.requestMedia/requestTvSeasons`** : les réglages avancés ne
+  partent QUE pour un dossier russe choisi par un compte autorisé, sinon la demande part sans réglages (profil et
+  dossier Anime automatiques, comme avant). **Jellyseerr ne contrôle PAS le dossier à la création d'une demande**
+  (seule son interface le masque) : `anime_library` remet en classique un titre arrivé dans un dossier russe si aucun
+  de ses demandeurs n'est autorisé (`russian_folder_allowed`). Banc : `backups/russe-20260926/ru_filter_test.js` (le
+  vrai app.js dans une page simulée). Sauvegarde de la config du plugin : `…/jellyfin-enhanced-config-before.json`. **Sonarr/Radarr ne trouvent pas une œuvre russe** (ils cherchent le
   titre anglais : « The Interns » → 0, « Интерны » → 18) : tâche **`russian_search`** (10 min) = recherche RuTracker
   par **titre original** TMDB via le Jackett de la seedbox (joignable du VPS : `…/jackett`, `SEEDBOX_JACKETT_API_KEY`),
   plage d'épisodes en **numérotation absolue** (`E1-120`, `S4E61-268`, `(101-120)`), torrent `homelab:russe` avec
