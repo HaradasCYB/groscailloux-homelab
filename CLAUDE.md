@@ -751,6 +751,13 @@ journalctl -u homelabd -f
   **Après coup, Jellyfin** : `Library/Media/Updated` sur le dossier ne suffit pas pour une grosse série dont tous les
   noms de fichiers changent (Hunter x Hunter restée à 65/150, L'Attaque des Titans à 66/97) : `POST
   /Items/<id série>/Refresh?Recursive=true` par série, puis comparer le nombre d'épisodes Jellyfin à `episodeFileCount`.
+  Ça ne marche que pour des fichiers **remplacés dans des saisons déjà connues** : une série **nouvelle**, une saison
+  nouvelle ou de nouveaux épisodes dans une saison seedbox ne sont vus qu'après `POST /Library/Refresh` (analyse
+  complète, ~7 min ; *Кухня* le 26/09 : resté à 25/57 avec le rafraîchissement de la série, 57/57 après l'analyse).
+- **Série introuvable sur C411, trouvée en vidéo** (Кухня, Dailymotion, 26/09) : `yt-dlp` autonome dans `~/bin` de la
+  seedbox, URL **`/embed/video/<id>`** (la page normale ne propose que 480p), `-f hls-720` réessayé (le 720p n'est
+  servi qu'à certains appels), remux MKV `-c copy` audio `rus`, puis `ManualImport` en **`move`** (pas de torrent).
+  Scripts : `backups/kukhnya-20260926/` (`dl.py` sur la seedbox, `import.py` depuis le VPS, épisodes terminés seulement).
 - **`torrent_import` ne remplace jamais un fichier** : épisode (ou film) déjà présent ⇒ fichier écarté, et la
   correspondance d'épisodes de l'Arr prime sur l'analyse du nom. Le 2026-09-17, « The.Final.Season.E01 » (sans
   saison) a été lu S01E01 et la saison 1 d'une série écrasée ; réparé en réimportant les fichiers d'origine
