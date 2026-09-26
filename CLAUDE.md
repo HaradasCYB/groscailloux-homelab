@@ -747,6 +747,9 @@ journalctl -u homelabd -f
   `SxxEyy`. Chercher par identifiant **sans saison** : les « INTEGRALE » n'apparaissent pas par saison (Hunter x
   Hunter 237 → 42 Go). Écarter HDR/DV (transcodage sans GPU) et ne remplacer un MULTi que par un MULTi. Modèle :
   `backups/codec-replace-20260926/` (`verify.py`, `grab.py`, `replace.py`, `--dry-run` d'abord).
+  **Après coup, Jellyfin** : `Library/Media/Updated` sur le dossier ne suffit pas pour une grosse série dont tous les
+  noms de fichiers changent (Hunter x Hunter restée à 65/150, L'Attaque des Titans à 66/97) : `POST
+  /Items/<id série>/Refresh?Recursive=true` par série, puis comparer le nombre d'épisodes Jellyfin à `episodeFileCount`.
 - **`torrent_import` ne remplace jamais un fichier** : épisode (ou film) déjà présent ⇒ fichier écarté, et la
   correspondance d'épisodes de l'Arr prime sur l'analyse du nom. Le 2026-09-17, « The.Final.Season.E01 » (sans
   saison) a été lu S01E01 et la saison 1 d'une série écrasée ; réparé en réimportant les fichiers d'origine
