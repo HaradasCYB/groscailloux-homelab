@@ -128,7 +128,12 @@ journalctl -u homelabd -f
   **Le choix, côté membre (2026-09-27)** : bouton « Chercher en russe » / « Voie russe · revenir au classique » sur
   **ses propres** cartes de l'onglet Demandes (script Mon compte, `GET|POST /compte/api/route`), seulement pour les
   comptes de `HOMELABD_RUSSIAN_USERS` (`.env`) ; le serveur vérifie que la demande est la sienne (Jellyseerr
-  `requestedBy`, `serviceId` 1). Retour au classique = tag retiré + fiche remise dans `seedbox_default_*_root` +
+  `requestedBy`, `serviceId` 1). **Aucun effet sur les autres membres** : passage en russe refusé (bouton masqué,
+  409) si un autre membre a aussi demandé le titre ou s'il a déjà des fichiers (il disparaîtrait de Séries/Films) ;
+  bibliothèques russes données au seul compte autorisé — **l'admin non protégé** (`EnableAllFolders`) est passé en
+  liste explicite sans elles le 2026-09-27 (sauvegarde dans `backups/russe-20260926/`) ; restent
+  visibles des deux comptes protégés. Limite connue : Jellyseerr affiche « disponible » à tous pour un titre russe.
+  Retour au classique = tag retiré + fiche remise dans `seedbox_default_*_root` +
   `series_search`/`movie_search` lancés. `JellyseerrShowAdvanced` (Jellyfin Enhanced) reste **coupé** : il est global
   et montrerait serveur/profil/dossier à tous. **Sonarr/Radarr ne trouvent pas une œuvre russe** (ils cherchent le
   titre anglais : « The Interns » → 0, « Интерны » → 18) : tâche **`russian_search`** (10 min) = recherche RuTracker

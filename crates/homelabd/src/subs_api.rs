@@ -372,13 +372,12 @@ fn russian_allowed(st: &SubsState, name: &str) -> bool {
 }
 
 /// Demandes **de ce compte** passées par la seedbox : (type, tmdb, id Arr).
-async fn own_seedbox_requests(
-    st: &SubsState,
-    user_id: &str,
-) -> anyhow::Result<Vec<(String, i64, i64)>> {
+async fn own_seedbox_requests(st: &SubsState, user_id: &str) -> anyhow::Result<Vec<OwnRequest>> {
     let norm = |s: &str| s.replace('-', "").to_ascii_lowercase();
     let me = norm(user_id);
-    let mut out = Vec::new();
+    let mut out: Vec<OwnRequest> = Vec::new();
+    // qui a demandé quoi : un titre demandé AUSSI par un autre membre ne passe jamais en voie russe
+    let mut by_media: HashMap<(String, i64), HashSet<String>> = HashMap::new();
     for r in st.ctx.jellyseerr.all_requests().await? {
         let by = r
             .pointer("/requestedBy/jellyfinUserId")
@@ -394,17 +393,34 @@ async fn own_seedbox_requests(
         ) else {
             continue;
         };
+        by_media
+            .entry((kind.to_string(), tmdb))
+            .or_default()
+            .insert(by.clone());
         // serviceId 1 = Arrs de la seedbox, seuls à avoir la voie russe
-        if by == me
-            && service == 1
-            && !out
-                .iter()
-                .any(|(k, t, _): &(String, i64, i64)| k == kind && *t == tmdb)
-        {
-            out.push((kind.to_string(), tmdb, arr_id));
+        if by == me && service == 1 && !out.iter().any(|o| o.kind == kind && o.tmdb == tmdb) {
+            out.push(OwnRequest {
+                kind: kind.to_string(),
+                tmdb,
+                arr_id,
+                shared: false,
+            });
         }
     }
+    for o in &mut out {
+        o.shared = by_media
+            .get(&(o.kind.clone(), o.tmdb))
+            .is_some_and(|who| who.iter().any(|w| *w != me));
+    }
     Ok(out)
+}
+
+/// Une demande du membre, et si un autre membre a demandé le même titre.
+struct OwnRequest {
+    kind: String,
+    tmdb: i64,
+    arr_id: i64,
+    shared: bool,
 }
 
 fn seedbox_arr<'a>(st: &'a SubsState, kind: &str) -> Option<&'a homelab_core::clients::ArrClient> {
@@ -417,7 +433,7 @@ fn seedbox_arr<'a>(st: &'a SubsState, kind: &str) -> Option<&'a homelab_core::cl
 
 /// Voie de chaque fiche d'un Arr de la seedbox (`russe` : dossier russe ou tag `russe`), en DEUX appels (fiches +
 /// tags), quel que soit le nombre de demandes.
-async fn routes_of(st: &SubsState, kind: &str) -> HashMap<i64, &'static str> {
+async fn routes_of(st: &SubsState, kind: &str) -> HashMap<i64, (&'static str, bool)> {
     let mut out = HashMap::new();
     let Some(arr) = seedbox_arr(st, kind) else {
         return out;
@@ -448,7 +464,14 @@ async fn routes_of(st: &SubsState, kind: &str) -> HashMap<i64, &'static str> {
                 .is_some_and(|a| a.iter().any(|x| x.as_i64() == Some(t)))
         });
         let ru = tagged || homelab_core::tasks::anime_library::russian_route(item, cfg);
-        out.insert(id, if ru { "russe" } else { "classique" });
+        // déjà des fichiers : le titre est visible de tous dans Séries/Films, on n'y touche pas
+        let has_files = item.get("hasFile").and_then(Value::as_bool) == Some(true)
+            || item
+                .pointer("/statistics/episodeFileCount")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                > 0;
+        out.insert(id, (if ru { "russe" } else { "classique" }, has_files));
     }
     out
 }
@@ -467,13 +490,16 @@ async fn route_list(State(st): State<SubsState>, headers: HeaderMap) -> ApiResul
     let movies = routes_of(&st, "movie").await;
     let items: Vec<Value> = reqs
         .into_iter()
-        .filter_map(|(kind, tmdb, arr_id)| {
-            let route = if kind == "tv" {
-                tv.get(&arr_id)
+        .filter_map(|o| {
+            let (route, has_files) = if o.kind == "tv" {
+                tv.get(&o.arr_id)
             } else {
-                movies.get(&arr_id)
+                movies.get(&o.arr_id)
             }?;
-            Some(json!({ "media_type": kind, "tmdb_id": tmdb, "route": route }))
+            // passer en russe : seulement un titre à lui seul et encore sans fichier (sinon il disparaîtrait de
+            // Séries/Films pour les autres) ; revenir au classique : toujours possible
+            (*route == "russe" || (!o.shared && !has_files))
+                .then(|| json!({ "media_type": o.kind, "tmdb_id": o.tmdb, "route": route }))
         })
         .collect();
     Ok(Json(json!({ "allowed": true, "items": items })))
@@ -504,9 +530,14 @@ async fn route_set(
     let reqs = own_seedbox_requests(&st, &u.id)
         .await
         .map_err(|_| err(StatusCode::BAD_GATEWAY, "Jellyseerr injoignable"))?;
-    let Some((kind, _, arr_id)) = reqs
+    let Some(OwnRequest {
+        kind,
+        arr_id,
+        shared,
+        ..
+    }) = reqs
         .into_iter()
-        .find(|(k, t, _)| *k == b.media_type && *t == b.tmdb_id)
+        .find(|o| o.kind == b.media_type && o.tmdb == b.tmdb_id)
     else {
         return Err(err(
             StatusCode::NOT_FOUND,
@@ -514,6 +545,23 @@ async fn route_set(
         ));
     };
     let arr = seedbox_arr(&st, &kind).ok_or_else(|| err(StatusCode::BAD_GATEWAY, "Arr absent"))?;
+    if b.route == "russe" {
+        let has_files = routes_of(&st, &kind)
+            .await
+            .get(&arr_id)
+            .map(|(_, f)| *f)
+            .unwrap_or(true);
+        if shared || has_files {
+            return Err(err(
+                StatusCode::CONFLICT,
+                if shared {
+                    "un autre membre a aussi demandé ce titre : il reste en version classique"
+                } else {
+                    "ce titre a déjà des fichiers, visibles de tous : il reste en version classique"
+                },
+            ));
+        }
+    }
     let cfg = &st.ctx.cfg.tasks.anime_library;
     let (editor, ids) = if kind == "tv" {
         ("api/v3/series/editor", "seriesIds")
