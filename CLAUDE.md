@@ -738,6 +738,15 @@ journalctl -u homelabd -f
   lèvent le blocage (pas d'API : `indexerstatus` → 404), et aucune recherche ni `release/push` ne passe.
   L'état est dans la table `IndexerStatus` ; `indexer_unblock` s'en charge. Pendant la pause, `series_search`
   passe par qBittorrent (étiquette `homelab:`).
+- **Remplacer un titre par une version plus légère** (2026-09-26, 23 titres, 881 Go retirés pour ~220 Go, quota
+  seedbox 1 921 Go / 3 725) : `torrent_import` examine **tout** torrent complet de la seedbox, quelle que soit son
+  étiquette — tant que l'ancien fichier est là il note le nouveau « rien à importer » **pour de bon**, et il a même
+  créé une fiche Radarr fausse (« Spider-Cast ») pour un nom ambigu. Donc : télécharger, puis supprimer l'ancien
+  fichier par l'Arr (fiche gardée) et importer soi-même en `ManualImport` copy — aperçu `manualimport?folder=`
+  **sans** id de fiche (avec l'id, l'Arr renvoie les fichiers déjà rangés), épisodes « Unknown Series » lus par
+  `SxxEyy`. Chercher par identifiant **sans saison** : les « INTEGRALE » n'apparaissent pas par saison (Hunter x
+  Hunter 237 → 42 Go). Écarter HDR/DV (transcodage sans GPU) et ne remplacer un MULTi que par un MULTi. Modèle :
+  `backups/codec-replace-20260926/` (`verify.py`, `grab.py`, `replace.py`, `--dry-run` d'abord).
 - **`torrent_import` ne remplace jamais un fichier** : épisode (ou film) déjà présent ⇒ fichier écarté, et la
   correspondance d'épisodes de l'Arr prime sur l'analyse du nom. Le 2026-09-17, « The.Final.Season.E01 » (sans
   saison) a été lu S01E01 et la saison 1 d'une série écrasée ; réparé en réimportant les fichiers d'origine
