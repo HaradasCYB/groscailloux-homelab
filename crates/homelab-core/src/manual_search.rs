@@ -18,7 +18,7 @@ use crate::context::TaskContext;
 use crate::matching::normalize;
 use crate::tasks::anime_library::in_root;
 use crate::tasks::series_search::{
-    allowed_qualities, is_h264, lang_rank, send_release, tmdb_matches, Target,
+    allowed_qualities, codec_rank, lang_rank, send_release, tmdb_matches, Target,
 };
 
 /// Résultats analysés au plus par recherche (un appel `parse` de l'Arr chacun).
@@ -48,7 +48,8 @@ pub struct Row {
     /// 4 VF, 3 MULTi, 2 FRENCH, 1 VOSTFR, 0 aucun marqueur français.
     pub lang: u8,
     pub resolution: i64,
-    pub h264: bool,
+    /// `series_search::codec_rank` : 2 HEVC, 1 H.264 ou non indiqué, 0 AV1.
+    pub codec: u8,
     pub quality: String,
     pub season: Option<i64>,
     pub episodes: Vec<i64>,
@@ -216,7 +217,7 @@ pub fn flags_for(
 }
 
 /// Ordre d'affichage : releases sans écart d'abord, puis la bonne œuvre et la bonne saison, langue, saison
-/// complète, résolution, H.264, sources.
+/// complète, résolution, codec (HEVC > H.264 > AV1), sources.
 pub fn sort_rows(rows: &mut [Row]) {
     rows.sort_by_key(|r| {
         let right_item = !r
@@ -229,7 +230,7 @@ pub fn sort_rows(rows: &mut [Row]) {
             r.lang,
             r.full_season,
             r.resolution.min(1080),
-            r.h264,
+            r.codec,
             r.seeders,
         ))
     });
@@ -281,7 +282,7 @@ pub fn build_row(
             .pointer("/quality/resolution")
             .and_then(Value::as_i64)
             .unwrap_or(0),
-        h264: is_h264(&title),
+        codec: codec_rank(&title),
         quality: quality
             .pointer("/quality/name")
             .and_then(Value::as_str)

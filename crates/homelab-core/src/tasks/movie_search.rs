@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use super::series_search::{
-    acceptable, allowed_qualities, due, lang_rank, send_release, size_ok, tmdb_matches, Target,
-    Throttle,
+    acceptable, allowed_qualities, codec_rank, due, lang_rank, send_release, size_ok, tmdb_matches,
+    Target, Throttle,
 };
 use super::{Report, Task};
 use crate::clients::{ArrClient, ProwlarrClient};
@@ -128,8 +128,8 @@ pub fn best_movie_release<'a>(
             acceptable(&release, res, seeders, allowed).then_some((
                 r,
                 release,
-                // le codec ne départage rien : voir series_search::choose (mesures du 2026-09-18)
-                (lang, res, seeders >= 2, seeders),
+                // x265 > x264 > AV1 après la langue et le partage : voir series_search::codec_rank
+                (lang, res, seeders >= 2, codec_rank(title), seeders),
             ))
         })
         .max_by_key(|(_, _, rank)| *rank)
@@ -467,5 +467,28 @@ mod tests {
             "Souvenirs.De.Marnie.2014.MULTI.VFF.1080p.BluRay.x264"
         );
         assert!(best_movie_release(&items, 99999, &allowed, 25.0, true).is_none());
+        // 2026-09-26 : à langue égale, le x265 passe devant le x264 même moins partagé, l'AV1 en dernier
+        let mut items = items;
+        items.push((
+            r(
+                "Souvenirs.De.Marnie.2014.MULTI.VFF.1080p.WEB.AV1",
+                83389,
+                60,
+            ),
+            q(7, 1080),
+        ));
+        items.push((
+            r(
+                "Souvenirs.De.Marnie.2014.MULTI.VFF.1080p.BluRay.x265",
+                83389,
+                4,
+            ),
+            q(7, 1080),
+        ));
+        let (_, rel) = best_movie_release(&items, 83389, &allowed, 25.0, true).unwrap();
+        assert_eq!(
+            rel["title"],
+            "Souvenirs.De.Marnie.2014.MULTI.VFF.1080p.BluRay.x265"
+        );
     }
 }

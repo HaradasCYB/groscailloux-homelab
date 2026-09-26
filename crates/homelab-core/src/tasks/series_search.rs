@@ -43,7 +43,8 @@ pub struct Candidate {
     pub full_season: bool,
     pub lang_rank: u8,
     pub resolution: i64,
-    pub h264: bool,
+    /// `codec_rank` : 2 = HEVC, 1 = H.264 ou non indiqué, 0 = AV1.
+    pub codec: u8,
     pub seeders: i64,
     pub size: i64,
 }
@@ -168,6 +169,28 @@ pub fn is_h264(title: &str) -> bool {
     !(t.contains("265") || t.contains("HEVC"))
 }
 
+/// Préférence de codec, **après** la langue, la résolution et « au moins 2 sources » (2026-09-26) :
+/// 2 = HEVC (x265), 1 = H.264 ou codec non indiqué, 0 = AV1. Mesuré sur la médiathèque : un 1080p HEVC
+/// pèse 1,1 à 1,3 Go/h contre 3,4 à 4,25 Go/h en H.264, et il n'est pas plus transcodé (13 % des lectures
+/// HEVC réencodées sur 30 jours, 20 % des H.264). L'AV1, aussi léger, est mal lu par les vieux clients.
+/// AV1 = mot entier, pour ne pas attraper un nom de groupe.
+pub fn codec_rank(title: &str) -> u8 {
+    let t = title.to_ascii_uppercase();
+    if ["X265", "H265", "H.265", "H 265", "HEVC"]
+        .iter()
+        .any(|m| t.contains(m))
+    {
+        2
+    } else if t
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|w| w == "AV1")
+    {
+        0
+    } else {
+        1
+    }
+}
+
 /// La release porte-t-elle l'identifiant TMDB de l'œuvre cherchée ? (C411 renvoie `tmdbId` sur chacune.)
 pub fn tmdb_matches(release: &Value, tmdb_id: i64) -> bool {
     tmdb_id > 0 && release.get("tmdbId").and_then(Value::as_i64) == Some(tmdb_id)
@@ -290,6 +313,7 @@ pub struct CourPack {
     pub seeders: i64,
     pub size: i64,
     pub lang_rank: u8,
+    pub codec: u8,
 }
 
 /// Cette release est-elle le pack d'un cours de **notre** saison, publié sous son propre titre ?
@@ -332,6 +356,7 @@ pub fn cour_pack(
     let url = result.get("downloadUrl").and_then(Value::as_str)?;
     Some(CourPack {
         lang_rank: lang_rank_for(&title, anime),
+        codec: codec_rank(&title),
         seeders: result.get("seeders").and_then(Value::as_i64).unwrap_or(0),
         size: result
             .get("size")
@@ -380,7 +405,7 @@ pub fn series_candidate(
             .pointer("/quality/resolution")
             .and_then(Value::as_i64)
             .unwrap_or(0),
-        h264: is_h264(&title),
+        codec: codec_rank(&title),
         seeders: result.get("seeders").and_then(Value::as_i64).unwrap_or(0),
         size: result
             .get("size")
@@ -447,10 +472,9 @@ pub fn acceptable(release: &Value, resolution: i64, seeders: i64, allowed: &Hash
 /// prise que si `allow_vo` et qu'aucune release française n'est acceptable ; à langue et qualité
 /// égales, une release à une seule source passe derrière les autres.
 ///
-/// **Le codec ne départage rien** (mesuré le 2026-09-18) : h264 et HEVC transcodent à la même vitesse
-/// sur ce serveur (1,85× tous les deux, le coût est l'encodage x264 et pas le décodage), et les clients
-/// des membres lisent le HEVC en direct. Écarter le x265 revenait à refuser la seule version française
-/// disponible, ce qui est le cas courant des animés sur C411.
+/// **Codec** (2026-09-26) : à langue, résolution et partage égaux, le x265 passe devant le x264, l'AV1 en
+/// dernier (`codec_rank`). Le x265 n'est jamais **exigé** : un x264 en VF passe toujours devant un x265
+/// sans français, et un x265 à une seule source derrière un x264 bien partagé.
 pub fn choose<'a>(
     cands: &'a [Candidate],
     season: i64,
@@ -481,7 +505,15 @@ pub fn choose<'a>(
         cands
             .iter()
             .filter(|c| ok(c) && (vo || c.lang_rank > 0))
-            .max_by_key(|c| (c.lang_rank, c.resolution, c.seeders >= 2, c.seeders))
+            .max_by_key(|c| {
+                (
+                    c.lang_rank,
+                    c.resolution,
+                    c.seeders >= 2,
+                    c.codec,
+                    c.seeders,
+                )
+            })
     };
     best(false).or_else(|| if allow_vo { best(true) } else { None })
 }
@@ -1232,9 +1264,9 @@ async fn try_cour_pack(
             })
         })
         .collect();
-    // le mieux partagé d'abord ; à égalité, le français
+    // le français d'abord, puis le x265, puis le mieux partagé
     let mut order: Vec<&CourPack> = packs.iter().collect();
-    order.sort_by_key(|p| std::cmp::Reverse((p.lang_rank, p.seeders)));
+    order.sort_by_key(|p| std::cmp::Reverse((p.lang_rank, p.codec, p.seeders)));
     let gap_list: Vec<i64> = gap.iter().copied().collect();
     for p in order {
         let Some(url) = p.release.get("downloadUrl").and_then(Value::as_str) else {
@@ -2047,37 +2079,71 @@ mod tests {
     }
 
     #[test]
-    fn codec_no_longer_decides() {
-        // Mesuré le 2026-09-18 : h264 et HEVC transcodent à la même vitesse sur ce serveur, et les
-        // clients lisent le HEVC en direct. À langue et qualité égales, seules les sources comptent.
+    fn codec_rank_reads_real_titles() {
+        assert_eq!(
+            codec_rank("Bleach.S17E01.MULTI.VFF.1080p.BluRay.x265-KAF"),
+            2
+        );
+        assert_eq!(codec_rank("Dune.2021.MULTi.1080p.WEB.H.265-GRP"), 2);
+        assert_eq!(codec_rank("Show S01 VOSTFR 1080p HEVC 10bits"), 2);
+        assert_eq!(codec_rank("Show.S01E01.MULTI.VFF.1080p.WEB.H264-GRP"), 1);
+        assert_eq!(codec_rank("Show.S01E01.FRENCH.1080p.HDTV"), 1);
+        assert_eq!(codec_rank("Show.S01E01.MULTI.1080p.WEB.AV1.10bit-GRP"), 0);
+        // un nom de groupe qui contient « av1 » n'est pas de l'AV1
+        assert_eq!(codec_rank("Show.S01E01.MULTI.1080p.x264-AV1ON"), 1);
+    }
+
+    #[test]
+    fn x265_first_then_x264_then_av1() {
+        // 2026-09-26 : à langue, résolution et partage égaux, x265 > x264 > AV1 (voir `codec_rank`).
         let missing: HashSet<i64> = [1].into_iter().collect();
         let allowed: HashSet<i64> = [9].into_iter().collect();
-        let mk = |title: &str, seeders: i64| {
+        let mk = |title: &str, seeders: i64, anime: bool| {
             series_candidate(
                 &result(title, 30984, seeders),
                 &info(1, false, &[1], 9, 1080),
                 1,
-                false,
+                anime,
             )
             .unwrap()
         };
-        let cands = vec![
-            mk("Show.S01E01.MULTI.VFF.1080p.x265-A", 120),
-            mk("Show.S01E01.MULTI.VFF.1080p.x264-B", 30),
+        let pick = |cands: &[Candidate]| {
+            choose(cands, 1, false, &missing, &allowed, 6.0, true)
+                .unwrap()
+                .title
+                .clone()
+        };
+        // le x265 gagne même moins partagé
+        let c = vec![
+            mk("Show.S01E01.MULTI.VFF.1080p.x264-B", 120, false),
+            mk("Show.S01E01.MULTI.VFF.1080p.x265-A", 5, false),
         ];
-        let pick = choose(&cands, 1, false, &missing, &allowed, 6.0, true).unwrap();
-        assert!(
-            pick.title.ends_with("x265-A"),
-            "le x265 mieux partagé doit gagner, pas le x264 : {}",
-            pick.title
-        );
-        // le français reste prioritaire sur tout, codec compris
-        let cands = vec![
-            mk("Show.S01E01.VOSTFR.1080p.x264-B", 999),
-            mk("Show.S01E01.MULTI.VFF.1080p.x265-A", 5),
+        assert!(pick(&c).ends_with("x265-A"));
+        // le x264 passe devant l'AV1, l'AV1 seul est pris
+        let c = vec![
+            mk("Show.S01E01.MULTI.1080p.WEB.AV1-C", 80, false),
+            mk("Show.S01E01.MULTI.1080p.WEB.x264-B", 10, false),
         ];
-        let pick = choose(&cands, 1, false, &missing, &allowed, 6.0, true).unwrap();
-        assert!(pick.title.contains("VFF"), "{}", pick.title);
+        assert!(pick(&c).ends_with("x264-B"));
+        assert!(pick(&c[..1]).ends_with("AV1-C"));
+        // la langue reste prioritaire : un x264 en VF bat un x265 en VOSTFR
+        let c = vec![
+            mk("Show.S01E01.VOSTFR.1080p.x265-A", 999, false),
+            mk("Show.S01E01.VFF.1080p.x264-B", 5, false),
+        ];
+        assert!(pick(&c).contains("VFF"));
+        // un x265 à une seule source ne passe pas devant un x264 bien partagé
+        let c = vec![
+            mk("Show.S01E01.MULTI.1080p.x265-A", 1, false),
+            mk("Show.S01E01.MULTI.1080p.x264-B", 10, false),
+        ];
+        assert!(pick(&c).ends_with("x264-B"));
+        // animé : entre deux MULTi, le x265
+        let c = vec![
+            mk("Show.S01E01.MULTI.VFF.1080p.x264-B", 50, true),
+            mk("Show.S01E01.MULTI.VFF.1080p.x265-A", 8, true),
+        ];
+        assert!(pick(&c).ends_with("x265-A"));
     }
 
     #[test]
@@ -2206,7 +2272,7 @@ mod tests {
             65,
         );
         let c = series_candidate(&r, &info(4, true, &[], 9, 1080), 4, false).unwrap();
-        assert!(c.full_season && c.h264 && c.lang_rank == 4 && c.resolution == 1080);
+        assert!(c.full_season && c.codec == 1 && c.lang_rank == 4 && c.resolution == 1080);
         assert!(series_candidate(&r, &info(3, true, &[], 9, 1080), 4, false).is_none());
         // VO : gardée avec le rang 0 (prise seulement en dernier recours par `choose`)
         let vo = result("Shingeki.no.Kyojin.S04.1080p.WEB", 1429, 65);

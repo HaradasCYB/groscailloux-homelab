@@ -148,6 +148,10 @@ Prowlarr et les 4 Arrs (RSS ~16/h) : le 2026-09-17, le 429 est tombé vers 50 re
 le rattrapage de l'arriéré (35 requêtes homelabd + RSS + une recherche Sonarr).
 Résumé : `grabbed=1 none=2 pending=13`.
 
+**Codec** (2026-09-26) : à langue, résolution et partage égaux (≥ 2 sources), le **x265** passe devant le x264 et
+l'**AV1** en dernier (`codec_rank`, clé `(langue, résolution, sources ≥ 2, codec, sources)`, même clé pour
+`movie_search` et `/recherche`). Un x264 reste pris quand c'est la seule version française bien partagée.
+
 ### movie_search — 5 min
 Recherche des films **suivis, sans fichier, sortis, hors file d'attente**, dès le passage qui suit la demande
 (`missing_hours` 0, passage toutes les 5 min) : depuis le 2026-09-17, Radarr n'a plus aucune recherche (C411 en

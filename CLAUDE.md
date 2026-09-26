@@ -468,13 +468,17 @@ journalctl -u homelabd -f
   `Library/Media/Updated`, ni un redémarrage ; vu le 2026-09-17, analyse de 65 à 315 s) : ranger en masse
   **avant 13 h**, ou attendre l'analyse de 05 h. Après une réidentification, vérifier les `ProviderIds` contre
   l'Arr : le 2026-09-17, *L'Attaque des Titans* est repartie sur son spin-off et *Slime* sur *Slime Diaries*.
-- **Codec : HEVC et H.264 sont à égalité** (2026-09-18). Retiré du classement de `choose` et de
-  `best_movie_release`, et les formats personnalisés `HEVC 10-bit`, `HEVC 8-bit`, `H.264` et `AV1` sont à **0**
-  dans les 4 profils FR-friendly (sauvegarde `backups/arr-codec-neutral-20260918-104404/`). Motif : mesures du
-  jour — h264 et HEVC transcodent tous deux à 1,85×, le coût est l'encodage x264 et pas le décodage, et les 19
-  transcodages de la semaine venaient tous de sources h264 alors que le HEVC est 53 % de la médiathèque.
-  Pénaliser le x265 revenait à refuser la seule version française disponible (cas courant des animés sur C411).
-  Le nom « FR-friendly H.264 » des profils est resté, il ne décrit plus le codec.
+- **Codec : x265 d'abord, x264 ensuite, AV1 en dernier** (2026-09-26, demandé par l'utilisateur ; remplace « codec à
+  égalité » du 18/09). Clé de `choose`, `best_movie_release` et `/recherche` : **langue > résolution > ≥ 2 sources >
+  codec (`series_search::codec_rank` : HEVC 2, H.264 ou non indiqué 1, AV1 0) > sources**. Le x265 n'est jamais
+  **exigé** : un x264 en VF passe devant un x265 sans français, un x265 à une seule source derrière un x264 bien
+  partagé. Mêmes scores côté Arrs, sur FR-friendly et Anime - MULTi/VOSTFR des 4 Arrs : `HEVC 10-bit`/`HEVC 8-bit` +200,
+  `H.264` +100, `AV1` 0 (sous les marches de langue, ≥ 500 ; sauvegarde `backups/arr-codec-priority-20260926/`). Mesuré
+  le 26/09 : 1080p HEVC **1,1–1,3 Go/h** contre **3,4–4,25 Go/h** en H.264 (le H.264 = 51 % du volume pour 38 % des
+  titres) ; sur 30 jours, 13 % des lectures HEVC réencodées contre 20 % des H.264 (le réencodage vient des plafonds de
+  débit Chromecast/iOS, pas du codec ; Safari réencode un HEVC en MKV, les vieux Chromecast aussi). L'AV1, aussi
+  léger, est mal lu par les vieux clients. Le nom « FR-friendly H.264 » des profils est resté, il ne décrit pas le
+  codec. `radarr-seedbox` a encore un profil « Anime - JAP/VOSTFR » (HEVC −10000) : n'y mettre aucun film.
 - **Langue des ANIMÉS** (2026-09-18, demandé par l'utilisateur) : **MULTi 4 > VOSTFR 3 > VF 2 > FRENCH 1 >
   VO 0** (`lang_rank_for(title, anime)`, `seriesType == "anime"`). Un MULTi porte les deux pistes audio ; la
   VOSTFR garde l'audio japonais. Un « MULTI.VFF » compte comme MULTi pour un animé, comme VF pour le reste
