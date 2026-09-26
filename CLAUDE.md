@@ -478,7 +478,11 @@ journalctl -u homelabd -f
   titres) ; sur 30 jours, 13 % des lectures HEVC réencodées contre 20 % des H.264 (le réencodage vient des plafonds de
   débit Chromecast/iOS, pas du codec ; Safari réencode un HEVC en MKV, les vieux Chromecast aussi). L'AV1, aussi
   léger, est mal lu par les vieux clients. Le nom « FR-friendly H.264 » des profils est resté, il ne décrit pas le
-  codec. `radarr-seedbox` a encore un profil « Anime - JAP/VOSTFR » (HEVC −10000) : n'y mettre aucun film.
+  codec. **Audio ensuite** (même jour) : `audio_rank` 3 = AAC/E-AC3/AC3/Opus (ou non indiqué), 2 = FLAC, 1 = DTS,
+  0 = DTS-HD MA/DTS:X/TrueHD, départage **après** le codec ; formats Arr « Audio DTS » −50 et « Audio DTS-HD/TrueHD »
+  −100 (titre de release, sauvegarde `…/*-customformat-before-audio.json`). Mesuré sur 30 jours : 80 % des lectures
+  d'une piste DTS réencodaient le son (Chromecast, appli iOS), aucune en AAC ; une piste DTS (1,5 Mbit/s) pèse 60 % de
+  l'image d'un épisode HEVC. `radarr-seedbox` a encore un profil « Anime - JAP/VOSTFR » (HEVC −10000) : n'y mettre aucun film.
 - **Langue des ANIMÉS** (2026-09-18, demandé par l'utilisateur) : **MULTi 4 > VOSTFR 3 > VF 2 > FRENCH 1 >
   VO 0** (`lang_rank_for(title, anime)`, `seriesType == "anime"`). Un MULTi porte les deux pistes audio ; la
   VOSTFR garde l'audio japonais. Un « MULTI.VFF » compte comme MULTi pour un animé, comme VF pour le reste

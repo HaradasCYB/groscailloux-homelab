@@ -45,6 +45,8 @@ pub struct Candidate {
     pub resolution: i64,
     /// `codec_rank` : 2 = HEVC, 1 = H.264 ou non indiqué, 0 = AV1.
     pub codec: u8,
+    /// `audio_rank` : 3 = AAC/E-AC3/AC3/Opus, 2 = FLAC, 1 = DTS, 0 = DTS-HD/TrueHD.
+    pub audio: u8,
     pub seeders: i64,
     pub size: i64,
 }
@@ -191,6 +193,34 @@ pub fn codec_rank(title: &str) -> u8 {
     }
 }
 
+/// Départage audio, **après** le codec vidéo (2026-09-26) : 3 = AAC, E-AC3, AC3, Opus ou non indiqué ;
+/// 2 = FLAC ; 1 = DTS ; 0 = DTS-HD MA, DTS:X ou TrueHD. Mesuré sur 30 jours : 80 % des lectures d'une
+/// piste DTS réencodaient le son (Chromecast et appli iOS ne le lisent pas), aucune en AAC ; et une piste
+/// DTS (1,5 Mbit/s) pèse 60 % de l'image d'un épisode HEVC, un DTS-HD MA 2,6 à 3,5 Mbit/s.
+pub fn audio_rank(title: &str) -> u8 {
+    let w: Vec<String> = title
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .map(str::to_ascii_uppercase)
+        .collect();
+    let at = |i: usize| w.get(i).map(String::as_str).unwrap_or("");
+    let dts = w
+        .iter()
+        .position(|x| x == "DTS" || x.starts_with("DTSHD") || x == "DTSX");
+    if w.iter().any(|x| x == "TRUEHD")
+        || dts.is_some_and(|i| {
+            w[i] != "DTS" || matches!(at(i + 1), "HD" | "MA" | "X") || at(i + 1) == "HDMA"
+        })
+    {
+        0
+    } else if dts.is_some() {
+        1
+    } else if w.iter().any(|x| x == "FLAC") {
+        2
+    } else {
+        3
+    }
+}
+
 /// La release porte-t-elle l'identifiant TMDB de l'œuvre cherchée ? (C411 renvoie `tmdbId` sur chacune.)
 pub fn tmdb_matches(release: &Value, tmdb_id: i64) -> bool {
     tmdb_id > 0 && release.get("tmdbId").and_then(Value::as_i64) == Some(tmdb_id)
@@ -314,6 +344,7 @@ pub struct CourPack {
     pub size: i64,
     pub lang_rank: u8,
     pub codec: u8,
+    pub audio: u8,
 }
 
 /// Cette release est-elle le pack d'un cours de **notre** saison, publié sous son propre titre ?
@@ -357,6 +388,7 @@ pub fn cour_pack(
     Some(CourPack {
         lang_rank: lang_rank_for(&title, anime),
         codec: codec_rank(&title),
+        audio: audio_rank(&title),
         seeders: result.get("seeders").and_then(Value::as_i64).unwrap_or(0),
         size: result
             .get("size")
@@ -406,6 +438,7 @@ pub fn series_candidate(
             .and_then(Value::as_i64)
             .unwrap_or(0),
         codec: codec_rank(&title),
+        audio: audio_rank(&title),
         seeders: result.get("seeders").and_then(Value::as_i64).unwrap_or(0),
         size: result
             .get("size")
@@ -473,7 +506,7 @@ pub fn acceptable(release: &Value, resolution: i64, seeders: i64, allowed: &Hash
 /// égales, une release à une seule source passe derrière les autres.
 ///
 /// **Codec** (2026-09-26) : à langue, résolution et partage égaux, le x265 passe devant le x264, l'AV1 en
-/// dernier (`codec_rank`). Le x265 n'est jamais **exigé** : un x264 en VF passe toujours devant un x265
+/// dernier (`codec_rank`), puis l'audio départage (`audio_rank` : AAC/E-AC3/AC3 avant FLAC, DTS, DTS-HD). Le x265 n'est jamais **exigé** : un x264 en VF passe toujours devant un x265
 /// sans français, et un x265 à une seule source derrière un x264 bien partagé.
 pub fn choose<'a>(
     cands: &'a [Candidate],
@@ -511,6 +544,7 @@ pub fn choose<'a>(
                     c.resolution,
                     c.seeders >= 2,
                     c.codec,
+                    c.audio,
                     c.seeders,
                 )
             })
@@ -1266,7 +1300,7 @@ async fn try_cour_pack(
         .collect();
     // le français d'abord, puis le x265, puis le mieux partagé
     let mut order: Vec<&CourPack> = packs.iter().collect();
-    order.sort_by_key(|p| std::cmp::Reverse((p.lang_rank, p.codec, p.seeders)));
+    order.sort_by_key(|p| std::cmp::Reverse((p.lang_rank, p.codec, p.audio, p.seeders)));
     let gap_list: Vec<i64> = gap.iter().copied().collect();
     for p in order {
         let Some(url) = p.release.get("downloadUrl").and_then(Value::as_str) else {
@@ -2091,6 +2125,75 @@ mod tests {
         assert_eq!(codec_rank("Show.S01E01.MULTI.1080p.WEB.AV1.10bit-GRP"), 0);
         // un nom de groupe qui contient « av1 » n'est pas de l'AV1
         assert_eq!(codec_rank("Show.S01E01.MULTI.1080p.x264-AV1ON"), 1);
+    }
+
+    #[test]
+    fn audio_rank_reads_real_titles() {
+        assert_eq!(
+            audio_rank(
+                "Hunter.X.Hunter.2011.INTEGRALE.MULTI.VFF.1080p.BluRay.AAC.2.0.x265-Phoenix"
+            ),
+            3
+        );
+        assert_eq!(
+            audio_rank("Repo.Men.2010.MULTI.VFF.1080p.WEB.EAC3.5.1.H265-Seigneuraltair"),
+            3
+        );
+        assert_eq!(audio_rank("Show.S01.MULTI.1080p.WEB.DDP5.1.x265"), 3);
+        assert_eq!(
+            audio_rank("Hunter.x.Hunter.2011.S02.VOSTFR.1080p.WEB.FLAC.2.0.x264-Kitsune"),
+            2
+        );
+        assert_eq!(
+            audio_rank("L.Attaque.des.Titans.S03.MULTI.VFF.1080p.BluRay.DTS.2.0.x264-KAZETV"),
+            1
+        );
+        assert_eq!(
+            audio_rank("L.Attaque.des.Titans.S02.MULTI.VFF.1080p.BluRay.DTS.HD.MA.2.0.x264"),
+            0
+        );
+        assert_eq!(
+            audio_rank("Film.2001.MULTi.VFF.1080p.BluRay.DTS-HDMA.x264"),
+            0
+        );
+        assert_eq!(
+            audio_rank("Film.2021.MULTi.1080p.BluRay.TrueHD.Atmos.7.1.x265"),
+            0
+        );
+        assert_eq!(audio_rank("Film.2021.MULTi.1080p.WEB.x265"), 3);
+    }
+
+    #[test]
+    fn audio_breaks_ties_after_codec() {
+        let missing: HashSet<i64> = [1].into_iter().collect();
+        let allowed: HashSet<i64> = [9].into_iter().collect();
+        let mk = |title: &str, seeders: i64| {
+            series_candidate(
+                &result(title, 30984, seeders),
+                &info(1, false, &[1], 9, 1080),
+                1,
+                false,
+            )
+            .unwrap()
+        };
+        let pick = |c: &[Candidate]| {
+            choose(c, 1, false, &missing, &allowed, 6.0, true)
+                .unwrap()
+                .title
+                .clone()
+        };
+        // même codec : l'AAC passe devant le DTS mieux partagé
+        let c = vec![
+            mk("Show.S01E01.MULTI.VFF.1080p.DTS.x265-A", 90),
+            mk("Show.S01E01.MULTI.VFF.1080p.AAC.x265-B", 6),
+        ];
+        assert!(pick(&c).ends_with("x265-B"));
+        // le codec vidéo passe avant l'audio : x265 DTS bat x264 AAC
+        let c = vec![
+            mk("Show.S01E01.MULTI.VFF.1080p.AAC.x264-A", 90),
+            mk("Show.S01E01.MULTI.VFF.1080p.DTS.x265-B", 6),
+        ];
+        assert!(pick(&c).ends_with("x265-B"));
     }
 
     #[test]

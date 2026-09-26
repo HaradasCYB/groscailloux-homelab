@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use super::series_search::{
-    acceptable, allowed_qualities, codec_rank, due, lang_rank, send_release, size_ok, tmdb_matches,
-    Target, Throttle,
+    acceptable, allowed_qualities, audio_rank, codec_rank, due, lang_rank, send_release, size_ok,
+    tmdb_matches, Target, Throttle,
 };
 use super::{Report, Task};
 use crate::clients::{ArrClient, ProwlarrClient};
@@ -129,7 +129,14 @@ pub fn best_movie_release<'a>(
                 r,
                 release,
                 // x265 > x264 > AV1 après la langue et le partage : voir series_search::codec_rank
-                (lang, res, seeders >= 2, codec_rank(title), seeders),
+                (
+                    lang,
+                    res,
+                    seeders >= 2,
+                    codec_rank(title),
+                    audio_rank(title),
+                    seeders,
+                ),
             ))
         })
         .max_by_key(|(_, _, rank)| *rank)

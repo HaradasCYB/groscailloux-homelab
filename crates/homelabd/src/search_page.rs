@@ -477,6 +477,7 @@ mod tests {
             lang: 3,
             resolution: 1080,
             codec: 1,
+            audio: 3,
             quality: "WEBDL-1080p".into(),
             season: Some(2),
             episodes: vec![],

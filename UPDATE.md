@@ -32,6 +32,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Moins de place pour la même image (26/09)** : à langue égale, la recherche automatique prend maintenant la
   version **x265** d'un épisode ou d'un film plutôt que la x264, environ 2,5 à 3 fois plus légère, et l'AV1 en dernier
   (moins bien lu par les vieux appareils). Une version française en x264 reste préférée à une x265 sans français.
+  À égalité, le son en AAC, E-AC3 ou AC3 passe devant le DTS, que Chromecast et iPhone ne lisent pas : il fallait le
+  réencoder pendant la lecture.
 - **Noms des tâches** : le panneau Automatisation de Homarr et la page d'état n'affichent plus « Tâche » pour les six
   tâches les plus récentes (lectures simultanées, test de lecture, sous-titres extraits, cycle des abonnements,
   contrôle PayPal, lectures qui bouclent). Chaque tâche porte désormais son nom dans son propre code, et une tâche
