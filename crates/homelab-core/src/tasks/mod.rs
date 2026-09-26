@@ -16,6 +16,7 @@ pub mod movie_search;
 pub mod onboard;
 pub mod playback_canary;
 pub mod playback_limit;
+pub mod russian_search;
 pub mod seedbox_refresh;
 pub mod series_search;
 pub mod stack_health;
@@ -79,6 +80,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(movie_search::MovieSearch),
         Box::new(indexer_unblock::IndexerUnblock),
         Box::new(anime_library::AnimeLibrary),
+        Box::new(russian_search::RussianSearch),
         Box::new(identity_check::IdentityCheck),
         Box::new(deletion_cleanup::DeletionCleanup),
         Box::new(trending::Trending),

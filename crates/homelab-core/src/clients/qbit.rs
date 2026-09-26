@@ -266,6 +266,28 @@ impl QbitClient {
         Ok(())
     }
 
+    /// Priorité de fichiers d'un torrent (`ids` = rang dans `torrents/files`, 0 = ne pas télécharger).
+    pub async fn set_file_priority(&self, hash: &str, ids: &[usize], priority: u8) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let form = [
+            ("hash".to_string(), hash.to_string()),
+            (
+                "id".to_string(),
+                ids.iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join("|"),
+            ),
+            ("priority".to_string(), priority.to_string()),
+        ];
+        let resp = self
+            .send(|r| r.form(&form), Method::POST, "api/v2/torrents/filePrio")
+            .await?;
+        check(resp, "qbit torrents/filePrio").await.map(|_| ())
+    }
+
     /// Remplace les étiquettes d'un torrent déjà présent (les anciennes `homelab:` d'abord retirées).
     /// Sert quand un titre supprimé est redemandé : le torrent est encore là, complet, et il suffit de
     /// le rattacher à la nouvelle fiche pour que `torrent_import` l'importe sans rien retélécharger.

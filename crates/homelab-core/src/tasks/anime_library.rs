@@ -41,6 +41,12 @@ pub struct AnimeLibrary;
 static SCAN_PENDING: AtomicBool = AtomicBool::new(false);
 static LAST_SCAN: AtomicI64 = AtomicI64::new(0);
 
+/// Demande une analyse complète au prochain passage (un import dans une bibliothèque seedbox ne suffit pas toujours
+/// à faire apparaître de nouveaux épisodes : *Кухня*, 2026-09-26).
+pub fn request_library_scan() {
+    SCAN_PENDING.store(true, Ordering::SeqCst);
+}
+
 /// Lancer l'analyse maintenant ? Seulement si un déplacement l'attend et que la précédente date d'au moins `gap_mins`.
 pub fn scan_due(pending: bool, now: i64, last: i64, gap_mins: i64) -> bool {
     pending && now - last >= gap_mins * 60

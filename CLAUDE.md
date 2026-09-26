@@ -125,6 +125,18 @@ journalctl -u homelabd -f
   russes » `1de6d599992bb110f4cab5814bc899be` et « Films russes » `4b5799916c780f2a26b93b2970081b95`, **données au
   seul compte autorisé** (+ comptes `EnableAllFolders` : Haradas, LeGrosCailloux, **un admin non protégé**), pas dans
   `JELLYFIN_LIB_EXTRA` ; activées dans Jellyseerr (6 bibliothèques). Sauvegardes `backups/russe-20260926/`.
+  **Le choix, côté membre (2026-09-27)** : bouton « Chercher en russe » / « Voie russe · revenir au classique » sur
+  **ses propres** cartes de l'onglet Demandes (script Mon compte, `GET|POST /compte/api/route`), seulement pour les
+  comptes de `HOMELABD_RUSSIAN_USERS` (`.env`) ; le serveur vérifie que la demande est la sienne (Jellyseerr
+  `requestedBy`, `serviceId` 1). Retour au classique = tag retiré + fiche remise dans `seedbox_default_*_root` +
+  `series_search`/`movie_search` lancés. `JellyseerrShowAdvanced` (Jellyfin Enhanced) reste **coupé** : il est global
+  et montrerait serveur/profil/dossier à tous. **Sonarr/Radarr ne trouvent pas une œuvre russe** (ils cherchent le
+  titre anglais : « The Interns » → 0, « Интерны » → 18) : tâche **`russian_search`** (10 min) = recherche RuTracker
+  par **titre original** TMDB via le Jackett de la seedbox (joignable du VPS : `…/jackett`, `SEEDBOX_JACKETT_API_KEY`),
+  plage d'épisodes en **numérotation absolue** (`E1-120`, `S4E61-268`, `(101-120)`), torrent `homelab:russe` avec
+  **seuls les fichiers manquants** (`Интерны_060.avi`, `S2E02` → absolu par l'Arr), import `ManualImport` copy puis
+  analyse complète. Tracker `t-ru.org` (RuTracker) dans `tracker_ratio.secondary` (ratio compté chez eux). Vignettes
+  des 2 bibliothèques : `backups/russe-20260926/lib-ru-*.png` (images TMDB : hors du dépôt public).
 - **Indexers** : **C411 est le seul indexer**, dans les 4 Arrs comme dans Prowlarr (2026-09-17 : les 34
   indexers publics passant par Jackett ont été retirés, Jackett et FlareSolverr arrêtés et sortis du compose ;
   ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes et remplissaient le

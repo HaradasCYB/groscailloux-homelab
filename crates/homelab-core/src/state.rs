@@ -60,6 +60,10 @@ pub struct State {
     /// `seedbox:movie:<id>` / `seedbox:series:<id>` → date.
     #[serde(default)]
     pub russian_searches: BTreeMap<String, i64>,
+    /// russian_search : dernière recherche RuTracker par titre original et torrent pris, clé
+    /// `seedbox:movie:<id>` / `seedbox:series:<id>`.
+    #[serde(default)]
+    pub russian_title: BTreeMap<String, RussianTitleRecord>,
     /// Dates (secondes) des requêtes envoyées à l'indexer, **par clé** : plafond horaire commun aux
     /// tâches et à la page /recherche.
     /// (Nouveau format : l'ancien champ `c411_queries`, une simple liste, est ignoré.)
@@ -164,6 +168,19 @@ impl TorrentImportRecord {
     pub fn is_final(&self) -> bool {
         self.outcome != "retry"
     }
+}
+
+/// Voie russe : recherche par titre original et suite donnée.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RussianTitleRecord {
+    pub at: i64,
+    /// `none`, `grabbed`, `imported`, `error`.
+    pub outcome: String,
+    #[serde(default)]
+    pub detail: String,
+    /// Torrent pris (minuscules), en attente d'import tant que `outcome = grabbed`.
+    #[serde(default)]
+    pub hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -202,6 +202,15 @@ seules portes d'entrée : tâches et page passent par elles.
 tâches de fond, la réserve restant à la page. Avant le 2026-09-17, chacun avait son plafond (12/h, 1/h, 6/h)
 sans voir les autres.
 
+### russian_search — 10 min
+Voie russe : Sonarr et Radarr cherchent par leur titre (anglais), RuTracker range par le titre russe. Pour chaque
+fiche de la voie russe à qui il manque des fichiers : titre original TMDB (Jellyseerr) → Jackett de la seedbox
+(RuTracker) → film de la bonne année ≤ 1080p, ou release dont la plage d'épisodes en numérotation absolue couvre le
+plus d'épisodes manquants → `.torrent` ajouté au qBittorrent de la seedbox (`homelab:russe`), fichiers inutiles
+désélectionnés → une fois complet, `ManualImport` copy (épisode par `SxxEyy` ou numéro absolu) et analyse complète de
+Jellyfin. `max_per_run` 2, `retry_hours` 24 (1 h après une erreur), état `russian_title`. Un torrent déjà présent
+(même release) est repris tel quel.
+
 ### anime_library — 5 min
 **Voie russe** (2026-09-26) : une fiche de la seedbox rangée dans `seedbox_ru_series_root` / `seedbox_ru_movies_root`
 (dossier choisi dans Jellyseerr par le membre, permission « demandes avancées ») reçoit le tag `russe` et, s'il lui

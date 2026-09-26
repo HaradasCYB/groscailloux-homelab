@@ -331,11 +331,49 @@
       '.gc-req .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#3b8fd9,#6fd0ff);transition:width .6s}',
       '.gc-req.search .bar i{background:linear-gradient(90deg,#8a8f99,#b9c0cc)}.gc-req.import .bar i{background:linear-gradient(90deg,#3fae6b,#7ee0a2)}.gc-req.available .bar i{background:#3fae6b}',
       // jusqu'à 3 lignes (un libellé explicatif était coupé à « … » sur une seule ligne, 2026-09-25)
-      '.gc-req .txt{white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.3}'
+      '.gc-req .txt{white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.3}',
+      '.gc-route{margin:.35em 0 0;padding:.25em .7em;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.06);color:#e8eef5;font:inherit;font-size:.82em;cursor:pointer}',
+      '.gc-route:hover{background:rgba(255,255,255,.14)}.gc-route[disabled]{opacity:.6;cursor:default}'
     ].join('\n');
     document.head.appendChild(st);
   }
   function reqCards() { return document.querySelectorAll('.je-request-card'); }
+  // voie russe : seulement pour les comptes autorisés (la 1re réponse « non autorisé » coupe les appels)
+  var ROUTE = { allowed: null, at: 0, byKey: {} };
+  function routeFetch() {
+    if (ROUTE.allowed === false) return Promise.resolve(ROUTE);
+    if (Date.now() - ROUTE.at < 25000) return Promise.resolve(ROUTE);
+    ROUTE.at = Date.now();
+    return api('GET', '/api/route').then(function (d) {
+      ROUTE.allowed = !!d.allowed; ROUTE.byKey = {};
+      (d.items || []).forEach(function (i) { ROUTE.byKey[i.media_type + ':' + i.tmdb_id] = i.route; });
+      return ROUTE;
+    }).catch(function () { return ROUTE; });
+  }
+  function routeButton(box, r) {
+    var cur = ROUTE.byKey[r.media_type + ':' + r.tmdb_id];
+    var b = box.querySelector('.gc-route');
+    if (!cur || TV) { if (b) b.remove(); return; }
+    if (!b) {
+      b = h('button', { class: 'gc-route', type: 'button' });
+      b.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        var to = b.getAttribute('data-to'); b.disabled = true; b.textContent = 'Un instant…';
+        api('POST', '/api/route', { media_type: r.media_type, tmdb_id: r.tmdb_id, route: to }).then(function () {
+          ROUTE.byKey[r.media_type + ':' + r.tmdb_id] = to; ROUTE.at = Date.now();
+          b.disabled = false; paintRoute(b, to);
+        }).catch(function (err) { b.disabled = false; b.textContent = 'Échec : ' + err.message; });
+      });
+      box.appendChild(b);
+    }
+    if (!b.disabled) paintRoute(b, cur);
+  }
+  function paintRoute(b, cur) {
+    b.setAttribute('data-to', cur === 'russe' ? 'classique' : 'russe');
+    b.textContent = cur === 'russe' ? 'Voie russe · revenir au classique' : 'Chercher en russe (VO russe)';
+    b.title = cur === 'russe' ? 'Recherche sur le tracker russe, rangé dans les bibliothèques russes'
+                              : 'Passer cette demande sur le tracker russe (VO russe, bibliothèques russes)';
+  }
   function reqFetch() {
     if (Date.now() - REQ.at < 25000 && REQ.data) return Promise.resolve(REQ.data);
     return api('GET', '/api/requests').then(function (d) { REQ.data = d; REQ.at = Date.now(); return d; });
@@ -343,7 +381,8 @@
   function reqPaint() {
     var cards = reqCards(); if (!cards.length) return;
     reqCss();
-    reqFetch().then(function (d) {
+    Promise.all([reqFetch(), routeFetch()]).then(function (all) {
+      var d = all[0];
       var byKey = {}, byPoster = {}, byTitle = {};
       (d.requests || []).forEach(function (r) {
         byKey[r.media_type + ':' + r.tmdb_id] = r;
@@ -374,6 +413,7 @@
         // sous la ligne « membre • date » (.je-request-meta est une rangée flex : y entrer la superposerait au texte),
         // dans la colonne .je-request-info
         if (!old) { var meta = card.querySelector('.je-request-meta'); if (meta) meta.insertAdjacentElement('afterend', box); else (card.querySelector('.je-request-info') || card).appendChild(box); }
+        if (ROUTE.allowed) routeButton(box, r);
       });
     }).catch(function () {});
   }

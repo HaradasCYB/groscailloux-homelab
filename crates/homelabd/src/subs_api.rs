@@ -78,6 +78,7 @@ pub fn router(ctx: Arc<TaskContext>) -> Router {
         .route("/compte/api/language", post(set_language))
         .route("/compte/api/original", get(original_language))
         .route("/compte/api/requests", get(requests_progress))
+        .route("/compte/api/route", get(route_list).post(route_set))
         .with_state(st)
 }
 
@@ -223,6 +224,7 @@ async fn me(State(st): State<SubsState>, headers: HeaderMap) -> ApiResult<Json<V
         .collect();
     Ok(Json(json!({
         "name": u.name,
+        "russian_route": russian_allowed(&st, &u.name),
         "status": status.as_str(),
         "status_label": status.label(),
         "expires_at": fiche.expires_at,
@@ -358,6 +360,219 @@ fn side_of(service_id: i64, vps_id: i64) -> &'static str {
     } else {
         "seedbox"
     }
+}
+
+/// Ce compte peut-il choisir la voie russe (`HOMELABD_RUSSIAN_USERS`) ?
+fn russian_allowed(st: &SubsState, name: &str) -> bool {
+    st.ctx
+        .secrets
+        .russian_route_users
+        .iter()
+        .any(|n| n.eq_ignore_ascii_case(name))
+}
+
+/// Demandes **de ce compte** passées par la seedbox : (type, tmdb, id Arr).
+async fn own_seedbox_requests(
+    st: &SubsState,
+    user_id: &str,
+) -> anyhow::Result<Vec<(String, i64, i64)>> {
+    let norm = |s: &str| s.replace('-', "").to_ascii_lowercase();
+    let me = norm(user_id);
+    let mut out = Vec::new();
+    for r in st.ctx.jellyseerr.all_requests().await? {
+        let by = r
+            .pointer("/requestedBy/jellyfinUserId")
+            .and_then(Value::as_str)
+            .map(norm)
+            .unwrap_or_default();
+        let m = r.get("media").cloned().unwrap_or(Value::Null);
+        let service = m.get("serviceId").and_then(Value::as_i64).unwrap_or(-1);
+        let (Some(kind), Some(tmdb), Some(arr_id)) = (
+            m.get("mediaType").and_then(Value::as_str),
+            m.get("tmdbId").and_then(Value::as_i64),
+            m.get("externalServiceId").and_then(Value::as_i64),
+        ) else {
+            continue;
+        };
+        // serviceId 1 = Arrs de la seedbox, seuls à avoir la voie russe
+        if by == me
+            && service == 1
+            && !out
+                .iter()
+                .any(|(k, t, _): &(String, i64, i64)| k == kind && *t == tmdb)
+        {
+            out.push((kind.to_string(), tmdb, arr_id));
+        }
+    }
+    Ok(out)
+}
+
+fn seedbox_arr<'a>(st: &'a SubsState, kind: &str) -> Option<&'a homelab_core::clients::ArrClient> {
+    if kind == "tv" {
+        st.ctx.seedbox_sonarr.as_ref()
+    } else {
+        st.ctx.seedbox_radarr.as_ref()
+    }
+}
+
+/// Voie de chaque fiche d'un Arr de la seedbox (`russe` : dossier russe ou tag `russe`), en DEUX appels (fiches +
+/// tags), quel que soit le nombre de demandes.
+async fn routes_of(st: &SubsState, kind: &str) -> HashMap<i64, &'static str> {
+    let mut out = HashMap::new();
+    let Some(arr) = seedbox_arr(st, kind) else {
+        return out;
+    };
+    let cfg = &st.ctx.cfg.tasks.anime_library;
+    let list = if kind == "tv" {
+        arr.series().await
+    } else {
+        arr.movies().await
+    };
+    let (Ok(list), Ok(tags)) = (list, arr.get("api/v3/tag", &[]).await) else {
+        return out;
+    };
+    let ru_tag = tags.as_array().and_then(|a| {
+        a.iter().find_map(|t| {
+            (t.get("label").and_then(Value::as_str) == Some(homelab_core::anime::TAG_RUSSIAN))
+                .then(|| t.get("id").and_then(Value::as_i64))
+                .flatten()
+        })
+    });
+    for item in &list {
+        let Some(id) = item.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+        let tagged = ru_tag.is_some_and(|t| {
+            item.get("tags")
+                .and_then(Value::as_array)
+                .is_some_and(|a| a.iter().any(|x| x.as_i64() == Some(t)))
+        });
+        let ru = tagged || homelab_core::tasks::anime_library::russian_route(item, cfg);
+        out.insert(id, if ru { "russe" } else { "classique" });
+    }
+    out
+}
+
+/// GET /compte/api/route : voie de chacune des demandes de ce compte (voie russe autorisée seulement).
+async fn route_list(State(st): State<SubsState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
+    let u = auth(&st, &headers).await?;
+    if !russian_allowed(&st, &u.name) {
+        return Ok(Json(json!({ "allowed": false, "items": [] })));
+    }
+    let reqs = own_seedbox_requests(&st, &u.id).await.map_err(|e| {
+        warn!(task = "subs", error = %e, "own requests unreadable");
+        err(StatusCode::BAD_GATEWAY, "Jellyseerr injoignable")
+    })?;
+    let tv = routes_of(&st, "tv").await;
+    let movies = routes_of(&st, "movie").await;
+    let items: Vec<Value> = reqs
+        .into_iter()
+        .filter_map(|(kind, tmdb, arr_id)| {
+            let route = if kind == "tv" {
+                tv.get(&arr_id)
+            } else {
+                movies.get(&arr_id)
+            }?;
+            Some(json!({ "media_type": kind, "tmdb_id": tmdb, "route": route }))
+        })
+        .collect();
+    Ok(Json(json!({ "allowed": true, "items": items })))
+}
+
+#[derive(Deserialize)]
+struct RouteBody {
+    media_type: String,
+    tmdb_id: i64,
+    route: String,
+}
+
+/// POST /compte/api/route : passe une demande de ce compte en voie russe (tag `russe`, rangement et recherche
+/// RuTracker par `anime_library`) ou la ramène en voie classique (tag retiré, fiche remise dans Séries/Films,
+/// recherche C411 par `series_search` / `movie_search`).
+async fn route_set(
+    State(st): State<SubsState>,
+    headers: HeaderMap,
+    Json(b): Json<RouteBody>,
+) -> ApiResult<Json<Value>> {
+    let u = auth(&st, &headers).await?;
+    if !russian_allowed(&st, &u.name) {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "option non disponible pour ce compte",
+        ));
+    }
+    let reqs = own_seedbox_requests(&st, &u.id)
+        .await
+        .map_err(|_| err(StatusCode::BAD_GATEWAY, "Jellyseerr injoignable"))?;
+    let Some((kind, _, arr_id)) = reqs
+        .into_iter()
+        .find(|(k, t, _)| *k == b.media_type && *t == b.tmdb_id)
+    else {
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            "demande introuvable parmi les vôtres",
+        ));
+    };
+    let arr = seedbox_arr(&st, &kind).ok_or_else(|| err(StatusCode::BAD_GATEWAY, "Arr absent"))?;
+    let cfg = &st.ctx.cfg.tasks.anime_library;
+    let (editor, ids) = if kind == "tv" {
+        ("api/v3/series/editor", "seriesIds")
+    } else {
+        ("api/v3/movie/editor", "movieIds")
+    };
+    let tags = arr
+        .get("api/v3/tag", &[])
+        .await
+        .map_err(|_| err(StatusCode::BAD_GATEWAY, "Arr injoignable"))?;
+    let existing = tags.as_array().and_then(|a| {
+        a.iter().find_map(|t| {
+            (t.get("label").and_then(Value::as_str) == Some(homelab_core::anime::TAG_RUSSIAN))
+                .then(|| t.get("id").and_then(Value::as_i64))
+                .flatten()
+        })
+    });
+    let tag = match existing {
+        Some(id) => id,
+        None => arr
+            .post(
+                "api/v3/tag",
+                &json!({ "label": homelab_core::anime::TAG_RUSSIAN }),
+            )
+            .await
+            .ok()
+            .and_then(|v| v.get("id").and_then(Value::as_i64))
+            .ok_or_else(|| err(StatusCode::BAD_GATEWAY, "tag russe impossible"))?,
+    };
+    let body = match b.route.as_str() {
+        "russe" => json!({ ids: [arr_id], "tags": [tag], "applyTags": "add" }),
+        "classique" => {
+            let root = if kind == "tv" {
+                &cfg.seedbox_default_series_root
+            } else {
+                &cfg.seedbox_default_movies_root
+            };
+            json!({ ids: [arr_id], "tags": [tag], "applyTags": "remove", "rootFolderPath": root, "moveFiles": true })
+        }
+        _ => return Err(err(StatusCode::BAD_REQUEST, "voie inconnue")),
+    };
+    arr.put(editor, &body).await.map_err(|e| {
+        warn!(task = "subs", user = %u.name, error = %e, "route change failed");
+        err(StatusCode::BAD_GATEWAY, "Arr injoignable")
+    })?;
+    info!(task = "subs", user = %u.name, kind = %kind, tmdb = b.tmdb_id, route = %b.route, "request route changed from Mon compte");
+    // rangement + recherche (voie russe) ou recherche C411 (voie classique) tout de suite, sans attendre le passage
+    let ctx = st.ctx.clone();
+    let task = if b.route == "russe" {
+        "anime_library"
+    } else if kind == "tv" {
+        "series_search"
+    } else {
+        "movie_search"
+    };
+    tokio::spawn(async move {
+        let _ = crate::scheduler::run_now(ctx, task).await;
+    });
+    Ok(Json(json!({ "ok": true, "route": b.route })))
 }
 
 /// Titre (fr), année et chemin d'affiche TMDB d'une demande, mis en cache 1 h.

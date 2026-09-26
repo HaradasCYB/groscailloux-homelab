@@ -40,6 +40,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Contenu russe (26/09)** : un membre peut demander des séries et films russes par une voie dédiée (tracker
   russe, en VO russe) en choisissant le dossier « Russian » dans la fenêtre de demande ; ils arrivent dans deux
   bibliothèques « Séries russes » et « Films russes » visibles de son compte. *La Cuisine* (Кухня) y a été rangée.
+  Le choix se fait d'un bouton sur ses propres cartes de demande (« Chercher en russe »), et la recherche se fait par
+  le titre russe d'origine : *Интерны* (60 épisodes) et les épisodes manquants de *La Cuisine* ont été trouvés ainsi.
 - **Films d'animation et animés visibles tout de suite (26/09)** : un titre rangé dans « Anime » ou « Films
   d'animation » n'apparaissait qu'à l'analyse du lendemain matin (un film attendu 45 min alors qu'il était déjà
   téléchargé). Il est maintenant rangé dans les 5 minutes et visible juste après.

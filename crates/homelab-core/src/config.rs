@@ -433,6 +433,8 @@ pub struct Tasks {
     pub movie_search: MovieSearch,
     pub indexer_unblock: IndexerUnblock,
     pub anime_library: AnimeLibrary,
+    #[serde(default)]
+    pub russian_search: RussianSearch,
     pub identity_check: IdentityCheck,
     pub deletion_cleanup: DeletionCleanup,
     pub trending: Trending,
@@ -730,6 +732,9 @@ pub struct AnimeLibrary {
     pub russian: bool,
     pub seedbox_ru_series_root: String,
     pub seedbox_ru_movies_root: String,
+    /// Dossiers « classiques » de la seedbox : retour d'une fiche russe vers la voie classique.
+    pub seedbox_default_series_root: String,
+    pub seedbox_default_movies_root: String,
     /// Une fiche russe sans fichier est recherchée (SeriesSearch / MoviesSearch) au plus toutes les N heures.
     pub ru_search_retry_hours: i64,
 }
@@ -751,7 +756,41 @@ impl Default for AnimeLibrary {
             russian: true,
             seedbox_ru_series_root: "/home/kakaouette/media/Russian".into(),
             seedbox_ru_movies_root: "/home/kakaouette/media/Russian Movies".into(),
+            seedbox_default_series_root: "/home/kakaouette/media/TV Shows".into(),
+            seedbox_default_movies_root: "/home/kakaouette/media/Movies".into(),
             ru_search_retry_hours: 24,
+        }
+    }
+}
+
+/// Voie russe : recherche RuTracker par **titre original** (voir `tasks::russian_search`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct RussianSearch {
+    pub interval_secs: u64,
+    /// Jackett de la seedbox, vu depuis le VPS.
+    pub jackett_url: String,
+    pub indexer: String,
+    /// Une fiche est recherchée au plus toutes les N heures.
+    pub retry_hours: i64,
+    /// Fiches recherchées au plus par passage.
+    pub max_per_run: usize,
+    pub min_seeders: i64,
+    pub max_gb_per_episode: f64,
+    pub max_gb_per_movie: f64,
+}
+
+impl Default for RussianSearch {
+    fn default() -> Self {
+        Self {
+            interval_secs: 600,
+            jackett_url: "https://kakaouette.tofino.usbx.me/jackett".into(),
+            indexer: "rutracker".into(),
+            retry_hours: 24,
+            max_per_run: 2,
+            min_seeders: 2,
+            max_gb_per_episode: 3.0,
+            max_gb_per_movie: 20.0,
         }
     }
 }
@@ -915,7 +954,12 @@ impl Default for TrackerRatio {
         Self {
             interval_secs: 1800,
             unlimited: vec!["c411.org".into(), "c411.tw".into()],
-            secondary: vec!["yggleak".into(), "u2p".into(), "ygg.gratis".into()],
+            secondary: vec![
+                "yggleak".into(),
+                "u2p".into(),
+                "ygg.gratis".into(),
+                "t-ru.org".into(),
+            ],
             public: [
                 "opentrackr",
                 "demonii",
@@ -1309,6 +1353,11 @@ pub struct Secrets {
     /// Adresses de l'admin (IP de la maison) ouvertes sans connexion sur les pages d'administration
     /// (`HOMELABD_ADMIN_TRUSTED_IPS`, virgules). Dans `.env` : jamais d'IP dans le dépôt public.
     pub admin_trusted_ips: Vec<String>,
+    /// Comptes qui peuvent choisir la **voie russe** d'une de leurs demandes (bouton sur leurs cartes de demande,
+    /// `HOMELABD_RUSSIAN_USERS`, virgules). Dans `.env` : jamais de pseudo dans le dépôt public.
+    pub russian_route_users: Vec<String>,
+    /// Jackett de la seedbox (RuTracker, voie russe) : `SEEDBOX_JACKETT_API_KEY`.
+    pub seedbox_jackett_api_key: Option<Secret>,
     /// Page de don `/don` (bouton PayPal) : identifiants publics mais propres au compte PayPal,
     /// gardés hors du dépôt. Absents = pas de page.
     pub donation: Option<Donation>,
@@ -1455,6 +1504,15 @@ impl Secrets {
             onboard_token: opt("HOMELABD_ONBOARD_TOKEN").map(Secret::new),
             status_token: opt("HOMELABD_STATUS_TOKEN").map(Secret::new),
             admin_trusted_ips: opt("HOMELABD_ADMIN_TRUSTED_IPS")
+                .map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            seedbox_jackett_api_key: opt("SEEDBOX_JACKETT_API_KEY").map(Secret::new),
+            russian_route_users: opt("HOMELABD_RUSSIAN_USERS")
                 .map(|v| {
                     v.split(',')
                         .map(|s| s.trim().to_string())

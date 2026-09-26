@@ -205,6 +205,20 @@ indexer = "C411"
 # la salle ; le membre voit « VOD vers le … » dans l'onglet Demandes (Le Vertige, 2026-09-25). Le RSS reste actif.
 min_days_after_cinema = 110
 
+[tasks.russian_search]
+# Voie russe : Sonarr/Radarr cherchent par le titre anglais, RuTracker range par le titre russe (« The Interns »
+# → rien, « Интерны » → 18 releases). Cherche par le TITRE ORIGINAL TMDB dans le Jackett de la seedbox, prend la
+# release qui couvre le plus d'épisodes manquants (numérotation absolue des séries russes), ne télécharge que ces
+# fichiers, puis les importe (lien physique).
+interval_secs = 600
+jackett_url = "https://kakaouette.tofino.usbx.me/jackett"
+indexer = "rutracker"
+retry_hours = 24
+max_per_run = 2
+min_seeders = 2
+max_gb_per_episode = 3.0
+max_gb_per_movie = 20.0
+
 [tasks.anime_library]
 # Animation japonaise (classement TMDB, tags manuels `anime` / `pas-anime` prioritaires) rangée dans les
 # bibliothèques « Anime » et « Films d'animation » : tag `anime` + déplacement par l'éditeur de l'Arr.
@@ -228,6 +242,8 @@ scan_min_gap_mins = 20
 russian = true
 seedbox_ru_series_root = "/home/kakaouette/media/Russian"
 seedbox_ru_movies_root = "/home/kakaouette/media/Russian Movies"
+seedbox_default_series_root = "/home/kakaouette/media/TV Shows"   # retour à la voie classique
+seedbox_default_movies_root = "/home/kakaouette/media/Movies"
 ru_search_retry_hours = 24
 
 [tasks.identity_check]
@@ -260,7 +276,7 @@ interval_secs = 300
 interval_secs = 1800
 # c411 : seed illimité ; ygg/u2p + publics : 2.0 / 14 j ; défaut : 1.0 / 7 j
 unlimited = ["c411.org", "c411.tw"]   # C411 annonce aussi via tk.c411.tw (24 torrents mal classés jusqu au 2026-09-14)
-secondary = ["yggleak", "u2p", "ygg.gratis"]
+secondary = ["yggleak", "u2p", "ygg.gratis", "t-ru.org"]   # t-ru.org = RuTracker (voie russe), ratio compté
 public_ratio = 2.0
 public_time_min = 20160
 default_ratio = 1.0
