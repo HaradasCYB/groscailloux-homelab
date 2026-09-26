@@ -203,6 +203,13 @@ tâches de fond, la réserve restant à la page. Avant le 2026-09-17, chacun ava
 sans voir les autres.
 
 ### anime_library — 5 min
+**Voie russe** (2026-09-26) : une fiche de la seedbox rangée dans `seedbox_ru_series_root` / `seedbox_ru_movies_root`
+(dossier choisi dans Jellyseerr par le membre, permission « demandes avancées ») reçoit le tag `russe` et, s'il lui
+manque des fichiers, une recherche de l'Arr (`SeriesSearch` / `MoviesSearch`, au plus toutes les
+`ru_search_retry_hours`) qui n'interroge que RuTracker (seul indexer tagué `russe`). Un tag `russe` posé à la main
+hors du dossier fait déplacer la fiche. La langue TMDB seule ne décide jamais. `series_search` et `movie_search`
+ignorent ces fiches (`russian_route`).
+
 **Après un déplacement, analyse complète de la médiathèque** (`scan_after_move`, au plus une toutes les
 `scan_min_gap_mins` = 20, un déplacement pendant l'attente est rattrapé au passage suivant) : un titre passé d'une
 bibliothèque seedbox à une autre n'est créé par Jellyfin que par cette analyse (`Library/Media/Updated` et le

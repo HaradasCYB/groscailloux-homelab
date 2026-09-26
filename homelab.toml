@@ -222,6 +222,13 @@ only_tmdb = []
 # 45 min d'attente le 26/09) : lancée après un déplacement, au plus une fois toutes les scan_min_gap_mins.
 scan_after_move = true
 scan_min_gap_mins = 20
+# Voie russe = CHOIX du membre (dossier « Russian » choisi dans Jellyseerr, ou tag `russe`), pas la langue TMDB : rangé dans ces dossiers de la
+# seedbox (Jellyfin « Séries russes » / « Films russes », compte d'un membre seulement) ; une fiche sans fichier est
+# recherchée par l'Arr, qui n'interroge que RuTracker (indexer du Jackett seedbox, tag `russe`).
+russian = true
+seedbox_ru_series_root = "/home/kakaouette/media/Russian"
+seedbox_ru_movies_root = "/home/kakaouette/media/Russian Movies"
+ru_search_retry_hours = 24
 
 [tasks.identity_check]
 # Jellyfin identifie un dossier d'après son nom : trois séries sont parties sur un spin-off (Attaque des

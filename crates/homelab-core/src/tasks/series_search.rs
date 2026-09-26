@@ -1607,6 +1607,12 @@ async fn plan_seasons(
     Ok(by
         .into_values()
         .filter(|s| !queued.contains(&(s.series_id, s.season)))
+        // voie russe : RuTracker par l'Arr (anime_library), jamais C411
+        .filter(|s| {
+            !series.get(&s.series_id).is_some_and(|v| {
+                super::anime_library::russian_route(v, &ctx.cfg.tasks.anime_library)
+            })
+        })
         .filter(|s| {
             due(
                 records.get(&key(arr, s.series_id, s.season)),

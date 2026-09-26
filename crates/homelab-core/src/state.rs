@@ -56,6 +56,10 @@ pub struct State {
     /// deletion_cleanup les laisse tranquilles quelques heures.
     #[serde(default)]
     pub anime_moves: BTreeMap<String, i64>,
+    /// anime_library : dernière recherche lancée dans l'Arr (RuTracker) pour une fiche russe sans fichier, clé
+    /// `seedbox:movie:<id>` / `seedbox:series:<id>` → date.
+    #[serde(default)]
+    pub russian_searches: BTreeMap<String, i64>,
     /// Dates (secondes) des requêtes envoyées à l'indexer, **par clé** : plafond horaire commun aux
     /// tâches et à la page /recherche.
     /// (Nouveau format : l'ancien champ `c411_queries`, une simple liste, est ignoré.)

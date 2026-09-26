@@ -259,7 +259,9 @@ impl Task for MovieSearch {
                 Ok((movies, queued)) => {
                     for m in movies {
                         let id = m.get("id").and_then(Value::as_i64).unwrap_or(0);
-                        if !wanted(&m, &queued, t, cfg.missing_hours) {
+                        if !wanted(&m, &queued, t, cfg.missing_hours)
+                            || super::anime_library::russian_route(&m, &ctx.cfg.tasks.anime_library)
+                        {
                             continue;
                         }
                         if awaiting_vod(&m, now_dt, cfg.min_days_after_cinema).is_some() {

@@ -16,10 +16,15 @@ pub const KEYWORD_ANIME: i64 = 210024;
 /// Tags posés à la main dans les Arrs pour forcer le classement.
 pub const TAG_ANIME: &str = "anime";
 pub const TAG_NOT_ANIME: &str = "pas-anime";
+/// Contenu russe (2026-09-26) : bibliothèques « Séries russes » / « Films russes » de la seedbox, recherche RuTracker.
+pub const TAG_RUSSIAN: &str = "russe";
+pub const TAG_NOT_RUSSIAN: &str = "pas-russe";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
     Anime,
+    /// Langue d'origine russe (hors animation japonaise), films comme séries, animation comprise.
+    Russian,
     NotAnime,
     /// Fiche TMDB absente ou vide : on ne décide pas.
     Unknown,
@@ -59,8 +64,20 @@ fn countries(details: &Value) -> Vec<String> {
     out
 }
 
-/// Classement d'une fiche TMDB (réponse Jellyseerr `tv/{id}` ou `movie/{id}`).
+/// Classement d'une fiche TMDB (réponse Jellyseerr `tv/{id}` ou `movie/{id}`) : l'animation japonaise
+/// d'abord, puis la langue d'origine russe.
 pub fn classify(details: &Value) -> Class {
+    match classify_anime(details) {
+        Class::NotAnime
+            if details.get("originalLanguage").and_then(Value::as_str) == Some("ru") =>
+        {
+            Class::Russian
+        }
+        c => c,
+    }
+}
+
+fn classify_anime(details: &Value) -> Class {
     let genres = ids(details, "genres");
     if genres.is_empty() && details.get("originalLanguage").is_none() {
         return Class::Unknown;
@@ -85,16 +102,32 @@ pub fn classify(details: &Value) -> Class {
     }
 }
 
-/// Choix manuel dans l'Arr, prioritaire sur TMDB : tag `anime` ⇒ Anime, tag `pas-anime` ⇒ NotAnime.
-/// `labels` : libellés des tags de la fiche.
+/// Choix manuel dans l'Arr, prioritaire sur TMDB : tag `anime` ⇒ Anime, `pas-anime` ⇒ NotAnime, `russe` ⇒
+/// Russian (sauf `pas-russe`). `labels` : libellés des tags de la fiche. `pas-russe` seul ne décide rien : voir
+/// `apply_not_russian`.
 pub fn manual_override(labels: &[String]) -> Option<Class> {
     let has = |t: &str| labels.iter().any(|l| l.eq_ignore_ascii_case(t));
     if has(TAG_NOT_ANIME) {
         Some(Class::NotAnime)
     } else if has(TAG_ANIME) {
         Some(Class::Anime)
+    } else if has(TAG_RUSSIAN) && !has(TAG_NOT_RUSSIAN) {
+        Some(Class::Russian)
     } else {
         None
+    }
+}
+
+/// Tag `pas-russe` : une fiche classée russe par TMDB reste dans Séries/Films.
+pub fn apply_not_russian(class: Class, labels: &[String]) -> Class {
+    if class == Class::Russian
+        && labels
+            .iter()
+            .any(|l| l.eq_ignore_ascii_case(TAG_NOT_RUSSIAN))
+    {
+        Class::NotAnime
+    } else {
+        class
     }
 }
 
@@ -162,6 +195,47 @@ mod tests {
             classify(&tmdb(&[16], "en", &["US", "JP"], &["US", "JP"], &[])),
             Class::NotAnime
         );
+    }
+
+    #[test]
+    fn russian_original_language_is_russian_after_anime() {
+        // Кухня (série), Брат (film) : prises de vues réelles russes
+        assert_eq!(
+            classify(&tmdb(&[35], "ru", &["RU"], &["RU"], &[])),
+            Class::Russian
+        );
+        assert_eq!(
+            classify(&tmdb(&[80, 18], "ru", &[], &["RU"], &[])),
+            Class::Russian
+        );
+        // animation russe (Masha) : russe aussi
+        assert_eq!(
+            classify(&tmdb(&[16, 10762], "ru", &["RU"], &["RU"], &[])),
+            Class::Russian
+        );
+        // tourné en Russie mais en anglais : pas russe
+        assert_eq!(
+            classify(&tmdb(&[18], "en", &["RU"], &["RU"], &[])),
+            Class::NotAnime
+        );
+        // l'animation japonaise reste anime, même co-produite en Russie
+        assert_eq!(
+            classify(&tmdb(&[16], "ja", &["JP", "RU"], &["JP"], &[])),
+            Class::Anime
+        );
+    }
+
+    #[test]
+    fn russian_tags() {
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(manual_override(&l(&["russe"])), Some(Class::Russian));
+        assert_eq!(manual_override(&l(&["russe", "pas-russe"])), None);
+        assert_eq!(manual_override(&l(&["anime", "russe"])), Some(Class::Anime));
+        assert_eq!(
+            apply_not_russian(Class::Russian, &l(&["pas-russe"])),
+            Class::NotAnime
+        );
+        assert_eq!(apply_not_russian(Class::Russian, &l(&[])), Class::Russian);
     }
 
     #[test]

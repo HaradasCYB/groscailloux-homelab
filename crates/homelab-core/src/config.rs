@@ -725,6 +725,13 @@ pub struct AnimeLibrary {
     pub scan_after_move: bool,
     /// Deux analyses déclenchées ainsi sont espacées d'au moins N minutes (un déplacement suivant attend).
     pub scan_min_gap_mins: i64,
+    /// Contenu russe (langue d'origine TMDB `ru`) rangé dans ces dossiers de la seedbox (bibliothèques « Séries
+    /// russes » / « Films russes », visibles d'un seul compte) et cherché par l'Arr sur RuTracker (tag `russe`).
+    pub russian: bool,
+    pub seedbox_ru_series_root: String,
+    pub seedbox_ru_movies_root: String,
+    /// Une fiche russe sans fichier est recherchée (SeriesSearch / MoviesSearch) au plus toutes les N heures.
+    pub ru_search_retry_hours: i64,
 }
 
 impl Default for AnimeLibrary {
@@ -741,6 +748,10 @@ impl Default for AnimeLibrary {
             only_tmdb: Vec::new(),
             scan_after_move: true,
             scan_min_gap_mins: 20,
+            russian: true,
+            seedbox_ru_series_root: "/home/kakaouette/media/Russian".into(),
+            seedbox_ru_movies_root: "/home/kakaouette/media/Russian Movies".into(),
+            ru_search_retry_hours: 24,
         }
     }
 }

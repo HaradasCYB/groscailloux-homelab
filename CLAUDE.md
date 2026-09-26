@@ -109,6 +109,22 @@ journalctl -u homelabd -f
   repli en texte libre exige en plus que l'Arr rattache la release à **cette** fiche. Le 2026-09-17, le pack
   *Smoking Behind the Supermarket with You (Mini Episodes)* (12 min/épisode) avait été pris et importé à la
   place de la série officielle (24 min) : fichiers et torrent retirés, vraie saison 1 récupérée.
+- **Voie russe (2026-09-26, pour un membre)** : seule exception à « C411 seul » et « aucune recherche
+  Arr ». **RuTracker** dans le **Jackett de la seedbox** (`app-jackett`, `172.17.0.1:16129`, compte dans `.env`
+  `RUTRACKER_USERNAME/PASSWORD` — mot de passe collé dans une conversation, à changer), derrière le **FlareSolverr de
+  la seedbox** (`app-flaresolverr`, 16111 : RuTracker présente un défi Cloudflare à l'IP de la seedbox ; sans lui,
+  « Challenge detected but FlareSolverr is not configured »). Les Arrs de la seedbox ne joignent **pas** le Prowlarr
+  du VPS. Indexer Torznab « RuTracker » dans Sonarr (id 10) et Radarr (id 8) de la seedbox, **tag `russe`** (ne sert
+  qu'à ces fiches), RSS + recherche automatique ; C411 inchangé (sans tag, sans recherche) : une recherche de l'Arr sur
+  une fiche `russe` n'interroge que RuTracker. **C'est un CHOIX, pas la langue TMDB** : le membre autorisé a la permission
+  Jellyseerr « demandes avancées » (8192) et choisit le dossier `…/Russian` ou `…/Russian Movies` à la demande ; un film
+  russe demandé normalement suit la voie classique (C411, VF si elle existe). `anime_library` : fiche dans un dossier
+  russe ⇒ tag `russe` posé, recherche `SeriesSearch`/`MoviesSearch` si incomplète (au plus toutes les
+  `ru_search_retry_hours`, `state.russian_searches`) ; tag `russe` posé à la main hors du dossier ⇒ déplacée
+  (`russian_choice`). `series_search`/`movie_search` ignorent la voie russe (`russian_route`). Jellyfin : « Séries
+  russes » `1de6d599992bb110f4cab5814bc899be` et « Films russes » `4b5799916c780f2a26b93b2970081b95`, **données au
+  seul compte autorisé** (+ comptes `EnableAllFolders` : Haradas, LeGrosCailloux, **un admin non protégé**), pas dans
+  `JELLYFIN_LIB_EXTRA` ; activées dans Jellyseerr (6 bibliothèques). Sauvegardes `backups/russe-20260926/`.
 - **Indexers** : **C411 est le seul indexer**, dans les 4 Arrs comme dans Prowlarr (2026-09-17 : les 34
   indexers publics passant par Jackett ont été retirés, Jackett et FlareSolverr arrêtés et sortis du compose ;
   ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes et remplissaient le

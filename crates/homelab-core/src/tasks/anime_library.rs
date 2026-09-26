@@ -29,7 +29,7 @@ use tracing::{info, warn};
 
 use super::deletion_cleanup::{map_path, rclone_refresh, side_maps};
 use super::{Report, Task};
-use crate::anime::{classify, manual_override, Class, TAG_ANIME};
+use crate::anime::{apply_not_russian, classify, manual_override, Class, TAG_ANIME, TAG_RUSSIAN};
 use crate::clients::ArrClient;
 use crate::config::Config;
 use crate::context::TaskContext;
@@ -52,7 +52,7 @@ pub const MOVE_GRACE_SECS: i64 = 6 * 3600;
 /// Ce qu'il faut faire d'une fiche.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
-    /// Anime hors du dossier anime : à déplacer.
+    /// Anime (ou russe) hors de son dossier : à déplacer.
     Move,
     /// Pas anime mais dans le dossier anime : signalé seulement.
     Misplaced,
@@ -74,20 +74,58 @@ pub fn in_root(path: &str, root: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
-/// Décision pour une fiche : tag manuel prioritaire, sinon classement TMDB.
-pub fn decide(tmdb_class: Class, labels: &[String], in_anime_root: bool) -> Decision {
-    let class = manual_override(labels).unwrap_or(tmdb_class);
-    match (class, in_anime_root) {
-        (Class::Anime, false) => Decision::Move,
-        (Class::NotAnime, true) => Decision::Misplaced,
-        (Class::Unknown, false) => Decision::Unknown,
+/// Décision pour une fiche : tag manuel prioritaire, sinon classement TMDB. `in_ru_root` : `None` quand ce côté
+/// n'a pas de dossier russe (VPS, ou `russian = false`) — le russe y est alors traité comme le reste.
+pub fn decide(
+    tmdb_class: Class,
+    labels: &[String],
+    in_anime_root: bool,
+    in_ru_root: Option<bool>,
+) -> Decision {
+    let class = apply_not_russian(manual_override(labels).unwrap_or(tmdb_class), labels);
+    let class = match (class, in_ru_root) {
+        (Class::Russian, None) => Class::NotAnime,
+        (c, _) => c,
+    };
+    match class {
+        Class::Anime if !in_anime_root => Decision::Move,
+        Class::Russian if in_ru_root == Some(false) => Decision::Move,
+        Class::NotAnime if in_anime_root => Decision::Misplaced,
+        Class::Unknown if !in_anime_root => Decision::Unknown,
         _ => Decision::Keep,
     }
+}
+
+/// La voie russe est un choix, pas un classement : `Russian` seulement si la fiche est dans le dossier russe ou porte
+/// le tag `russe` ; sinon une fiche russe par TMDB reste dans Séries/Films. Un anime reste anime.
+pub fn russian_choice(class: Class, labels: &[String], in_ru_root: Option<bool>) -> Class {
+    let tagged = labels.iter().any(|l| l.eq_ignore_ascii_case(TAG_RUSSIAN));
+    match class {
+        Class::Anime => Class::Anime,
+        _ if in_ru_root == Some(true) || (tagged && in_ru_root.is_some()) => Class::Russian,
+        Class::Russian => Class::NotAnime,
+        c => c,
+    }
+}
+
+/// Fiche de la **voie russe** (dans un dossier russe de la seedbox) : cherchée par l'Arr sur RuTracker, jamais par
+/// `series_search` / `movie_search` sur C411 (sinon une VF de C411 remplacerait le choix du membre).
+pub fn russian_route(item: &Value, cfg: &crate::config::AnimeLibrary) -> bool {
+    cfg.russian
+        && item.get("path").and_then(Value::as_str).is_some_and(|p| {
+            in_root(p, &cfg.seedbox_ru_series_root) || in_root(p, &cfg.seedbox_ru_movies_root)
+        })
+}
+
+/// Relancer la recherche d'une fiche russe sans fichier ? Jamais cherchée, ou dernière recherche assez ancienne.
+pub fn search_due(last: Option<i64>, now: i64, retry_hours: i64) -> bool {
+    last.is_none_or(|t| now - t >= retry_hours * 3600)
 }
 
 pub fn class_name(c: Class) -> &'static str {
     match c {
         Class::Anime => "anime",
+        Class::Russian => "russian",
         Class::NotAnime => "not_anime",
         Class::Unknown => "unknown",
     }
@@ -96,6 +134,7 @@ pub fn class_name(c: Class) -> &'static str {
 fn class_from(name: &str) -> Class {
     match name {
         "anime" => Class::Anime,
+        "russian" => Class::Russian,
         "not_anime" => Class::NotAnime,
         _ => Class::Unknown,
     }
@@ -123,6 +162,8 @@ struct Item {
     tags: Vec<i64>,
     /// Séries : `standard`, `anime` ou `daily`.
     series_type: Option<String>,
+    /// Fiche surveillée à qui il manque des fichiers (film sans fichier, épisodes diffusés manquants).
+    missing: bool,
 }
 
 fn items(list: &[Value]) -> Vec<Item> {
@@ -146,6 +187,15 @@ fn items(list: &[Value]) -> Vec<Item> {
                     .get("seriesType")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                missing: v.get("monitored").and_then(Value::as_bool) == Some(true)
+                    && match v.get("statistics") {
+                        // série : épisodes diffusés et suivis sans fichier
+                        Some(st) if v.get("seriesType").is_some() => {
+                            let n = |k: &str| st.get(k).and_then(Value::as_i64).unwrap_or(0);
+                            n("episodeCount") > n("episodeFileCount")
+                        }
+                        _ => v.get("hasFile").and_then(Value::as_bool) == Some(false),
+                    },
             })
         })
         .collect()
@@ -157,6 +207,8 @@ struct Place<'a> {
     arr: &'a ArrClient,
     movies: bool,
     root: String,
+    /// Dossier russe de ce côté (seedbox seulement, `russian = true`).
+    ru_root: Option<String>,
 }
 
 async fn tag_map(arr: &ArrClient) -> Result<HashMap<i64, String>> {
@@ -175,16 +227,14 @@ async fn tag_map(arr: &ArrClient) -> Result<HashMap<i64, String>> {
         .unwrap_or_default())
 }
 
-async fn anime_tag_id(arr: &ArrClient, tags: &HashMap<i64, String>) -> Result<i64> {
-    if let Some((id, _)) = tags.iter().find(|(_, l)| l.eq_ignore_ascii_case(TAG_ANIME)) {
+async fn tag_id(arr: &ArrClient, tags: &HashMap<i64, String>, label: &str) -> Result<i64> {
+    if let Some((id, _)) = tags.iter().find(|(_, l)| l.eq_ignore_ascii_case(label)) {
         return Ok(*id);
     }
-    let v = arr
-        .post("api/v3/tag", &json!({ "label": TAG_ANIME }))
-        .await?;
+    let v = arr.post("api/v3/tag", &json!({ "label": label })).await?;
     v.get("id")
         .and_then(Value::as_i64)
-        .context("tag anime non créé")
+        .with_context(|| format!("tag {label} non créé"))
 }
 
 async fn has_root_folder(arr: &ArrClient, root: &str) -> Result<bool> {
@@ -270,10 +320,17 @@ async fn wait_moves(arr: &ArrClient) {
     );
 }
 
-/// Déplace une fiche : tag `anime` + nouveau dossier racine, fichiers compris. Une série passe aussi en
-/// type « anime » : sans ça, Sonarr ne comprend pas la numérotation absolue (« Bleach - 367 ») et les
-/// imports tombent à côté.
-async fn move_item(arr: &ArrClient, movies: bool, id: i64, tag: i64, root: &str) -> Result<()> {
+/// Déplace une fiche : tag (`anime` ou `russe`) + nouveau dossier racine, fichiers compris. Une série animée
+/// passe aussi en type « anime » : sans ça, Sonarr ne comprend pas la numérotation absolue (« Bleach - 367 »)
+/// et les imports tombent à côté.
+async fn move_item(
+    arr: &ArrClient,
+    movies: bool,
+    anime: bool,
+    id: i64,
+    tag: i64,
+    root: &str,
+) -> Result<()> {
     let (path, ids) = if movies {
         ("api/v3/movie/editor", "movieIds")
     } else {
@@ -286,7 +343,7 @@ async fn move_item(arr: &ArrClient, movies: bool, id: i64, tag: i64, root: &str)
         "rootFolderPath": root,
         "moveFiles": true,
     });
-    if !movies {
+    if !movies && anime {
         body["seriesType"] = json!("anime");
     }
     arr.put(path, &body).await?;
@@ -313,7 +370,7 @@ impl Task for AnimeLibrary {
     }
 
     fn label(&self) -> &'static str {
-        "Rangement des animés"
+        "Rangement des animés et du russe"
     }
 
     fn interval(&self, cfg: &Config) -> Duration {
@@ -328,12 +385,14 @@ impl Task for AnimeLibrary {
                 arr: &ctx.sonarr,
                 movies: false,
                 root: cfg.vps_series_root.clone(),
+                ru_root: None,
             },
             Place {
                 side: "vps",
                 arr: &ctx.radarr,
                 movies: true,
                 root: cfg.vps_movies_root.clone(),
+                ru_root: None,
             },
         ];
         if let Some(a) = &ctx.seedbox_sonarr {
@@ -342,6 +401,7 @@ impl Task for AnimeLibrary {
                 arr: a,
                 movies: false,
                 root: cfg.seedbox_series_root.clone(),
+                ru_root: cfg.russian.then(|| cfg.seedbox_ru_series_root.clone()),
             });
         }
         if let Some(a) = &ctx.seedbox_radarr {
@@ -350,6 +410,7 @@ impl Task for AnimeLibrary {
                 arr: a,
                 movies: true,
                 root: cfg.seedbox_movies_root.clone(),
+                ru_root: cfg.russian.then(|| cfg.seedbox_ru_movies_root.clone()),
             });
         }
         let mut lookups = 0usize;
@@ -366,6 +427,11 @@ impl Task for AnimeLibrary {
             let prepared = async {
                 if !has_root_folder(arr, &place.root).await? {
                     anyhow::bail!("dossier racine {} absent de l'Arr", place.root);
+                }
+                if let Some(r) = &place.ru_root {
+                    if !has_root_folder(arr, r).await? {
+                        anyhow::bail!("dossier racine {r} absent de l'Arr");
+                    }
                 }
                 let list = if place.movies {
                     arr.movies().await?
@@ -402,6 +468,7 @@ impl Task for AnimeLibrary {
                     .filter_map(|t| tags.get(t).cloned())
                     .collect();
                 let in_anime = in_root(&it.path, &place.root);
+                let in_ru = place.ru_root.as_deref().map(|r| in_root(&it.path, r));
                 // un tag manuel évite la lecture TMDB
                 let class = match manual_override(&labels) {
                     Some(c) => c,
@@ -413,7 +480,81 @@ impl Task for AnimeLibrary {
                         }
                     },
                 };
-                match decide(class, &labels, in_anime) {
+                // voie russe = CHOIX du membre (dossier « Russian » choisi dans Jellyseerr) ou tag `russe` posé à la
+                // main, jamais la seule langue TMDB : un film russe demandé normalement suit la voie classique
+                let class = russian_choice(apply_not_russian(class, &labels), &labels, in_ru);
+                let (target, tag_label) = if class == Class::Russian {
+                    (place.ru_root.clone().unwrap_or_default(), TAG_RUSSIAN)
+                } else {
+                    (place.root.clone(), TAG_ANIME)
+                };
+                match decide(class, &labels, in_anime, in_ru) {
+                    Decision::Keep if class == Class::Russian && in_ru == Some(true) => {
+                        // demandée dans le dossier russe : l'indexer RuTracker ne sert qu'aux fiches taguées `russe`
+                        if !labels.iter().any(|l| l.eq_ignore_ascii_case(TAG_RUSSIAN))
+                            && !ctx.dry_run
+                        {
+                            let editor = if place.movies {
+                                ("api/v3/movie/editor", "movieIds")
+                            } else {
+                                ("api/v3/series/editor", "seriesIds")
+                            };
+                            match tag_id(arr, &tags, TAG_RUSSIAN).await {
+                                Ok(tag) => {
+                                    if let Err(e) = arr.put(editor.0, &json!({ editor.1: [it.id], "tags": [tag], "applyTags": "add" })).await {
+                                        warn!(task = "anime_library", service = arr.name, title = %it.title, error = %e, "russe tag not set");
+                                        continue;
+                                    }
+                                    info!(task = "anime_library", service = arr.name, title = %it.title, "tag russe posé");
+                                    *counts.entry("tag_russe").or_default() += 1;
+                                }
+                                Err(e) => {
+                                    warn!(task = "anime_library", service = arr.name, error = %e, "tag unavailable");
+                                    continue;
+                                }
+                            }
+                        }
+                        // Jellyseerr est en preventSearch : sans ça, personne ne chercherait. L'Arr n'interroge
+                        // que les indexers de la fiche : RuTracker (tag `russe`), C411 étant sans recherche.
+                        if !it.missing || queued.contains(&it.id) {
+                            continue;
+                        }
+                        let kind = if place.movies { "movie" } else { "series" };
+                        let k = format!("{}:{kind}:{}", place.side, it.id);
+                        let t = now();
+                        let last = ctx
+                            .state
+                            .read(|s| s.russian_searches.get(&k).copied())
+                            .await;
+                        if !search_due(last, t, cfg.ru_search_retry_hours) {
+                            continue;
+                        }
+                        if ctx.dry_run {
+                            info!(task = "anime_library", service = arr.name, title = %it.title, "dry-run: would search (RuTracker)");
+                            *counts.entry("recherche_russe").or_default() += 1;
+                            continue;
+                        }
+                        let cmd = if place.movies {
+                            json!({ "name": "MoviesSearch", "movieIds": [it.id] })
+                        } else {
+                            json!({ "name": "SeriesSearch", "seriesId": it.id })
+                        };
+                        match arr.command(cmd).await {
+                            Ok(_) => {
+                                info!(task = "anime_library", service = arr.name, title = %it.title, "search requested (RuTracker)");
+                                *counts.entry("recherche_russe").or_default() += 1;
+                                ctx.state
+                                    .update(|s| {
+                                        s.russian_searches.retain(|_, at| t - *at < 30 * 86_400);
+                                        s.russian_searches.insert(k, t);
+                                    })
+                                    .await?;
+                            }
+                            Err(e) => {
+                                warn!(task = "anime_library", service = arr.name, title = %it.title, error = %e, "search request failed");
+                            }
+                        }
+                    }
                     Decision::Keep => {
                         // déjà rangée : reste le type, indispensable à la numérotation absolue
                         if in_anime && !place.movies && it.series_type.as_deref() != Some("anime") {
@@ -451,14 +592,14 @@ impl Task for AnimeLibrary {
                             continue;
                         }
                         if ctx.dry_run {
-                            info!(task = "anime_library", service = arr.name, title = %it.title, tmdb = it.tmdb, from = %it.path, to = %place.root, "dry-run: would move");
+                            info!(task = "anime_library", service = arr.name, title = %it.title, tmdb = it.tmdb, from = %it.path, to = %target, "dry-run: would move");
                             *counts.entry("a_deplacer").or_default() += 1;
                             continue;
                         }
-                        let tag = match anime_tag_id(arr, &tags).await {
+                        let tag = match tag_id(arr, &tags, tag_label).await {
                             Ok(t) => t,
                             Err(e) => {
-                                warn!(task = "anime_library", service = arr.name, error = %e, "anime tag unavailable");
+                                warn!(task = "anime_library", service = arr.name, error = %e, "tag unavailable");
                                 break;
                             }
                         };
@@ -472,9 +613,10 @@ impl Task for AnimeLibrary {
                                 s.anime_moves.insert(k, t);
                             })
                             .await?;
-                        match move_item(arr, place.movies, it.id, tag, &place.root).await {
+                        let anime = class == Class::Anime;
+                        match move_item(arr, place.movies, anime, it.id, tag, &target).await {
                             Ok(()) => {
-                                info!(task = "anime_library", service = arr.name, title = %it.title, tmdb = it.tmdb, from = %it.path, to = %place.root, "moved");
+                                info!(task = "anime_library", service = arr.name, title = %it.title, tmdb = it.tmdb, from = %it.path, to = %target, "moved");
                                 *counts.entry("deplace").or_default() += 1;
                                 moves_left -= 1;
                                 moved.push(it);
@@ -558,6 +700,70 @@ mod tests {
     }
 
     #[test]
+    fn russian_is_a_choice_not_a_language() {
+        let none: Vec<String> = vec![];
+        let tag = l(&["russe"]);
+        // film russe demandé normalement : voie classique, rien ne bouge
+        assert_eq!(
+            russian_choice(Class::Russian, &none, Some(false)),
+            Class::NotAnime
+        );
+        assert_eq!(
+            decide(
+                russian_choice(Class::Russian, &none, Some(false)),
+                &none,
+                false,
+                Some(false)
+            ),
+            Decision::Keep
+        );
+        // demandé dans le dossier russe (même si TMDB dit autre chose) : voie russe, reste en place
+        assert_eq!(
+            russian_choice(Class::NotAnime, &none, Some(true)),
+            Class::Russian
+        );
+        assert_eq!(
+            decide(Class::Russian, &none, false, Some(true)),
+            Decision::Keep
+        );
+        // tag russe posé à la main hors du dossier : déplacé
+        assert_eq!(
+            russian_choice(Class::NotAnime, &tag, Some(false)),
+            Class::Russian
+        );
+        assert_eq!(
+            decide(Class::Russian, &tag, false, Some(false)),
+            Decision::Move
+        );
+        // côté VPS (pas de dossier russe) : jamais russe
+        assert_eq!(russian_choice(Class::Russian, &tag, None), Class::NotAnime);
+        // un anime reste un anime
+        assert_eq!(russian_choice(Class::Anime, &tag, Some(true)), Class::Anime);
+        // seule la voie russe de la seedbox est écartée de C411
+        let cfg = crate::config::AnimeLibrary::default();
+        assert!(russian_route(
+            &json!({"path": "/home/kakaouette/media/Russian Movies/Brat (1997)"}),
+            &cfg
+        ));
+        assert!(russian_route(
+            &json!({"path": "/home/kakaouette/media/Russian/Kukhnya"}),
+            &cfg
+        ));
+        assert!(!russian_route(
+            &json!({"path": "/home/kakaouette/media/Movies/Brat (1997)"}),
+            &cfg
+        ));
+        assert!(!russian_route(
+            &json!({"path": "/home/kakaouette/media/Russian Moviesque/x"}),
+            &cfg
+        ));
+        // recherche : jamais faite, ou assez ancienne
+        assert!(search_due(None, 100_000, 24));
+        assert!(!search_due(Some(100_000 - 3600), 100_000, 24));
+        assert!(search_due(Some(100_000 - 24 * 3600), 100_000, 24));
+    }
+
+    #[test]
     fn library_scan_waits_for_a_move_and_the_gap() {
         assert!(!scan_due(false, 10_000, 0, 20)); // aucun déplacement
         assert!(scan_due(true, 10_000, 0, 20)); // première fois
@@ -598,24 +804,27 @@ mod tests {
 
     #[test]
     fn decisions() {
-        assert_eq!(decide(Class::Anime, &[], false), Decision::Move);
-        assert_eq!(decide(Class::Anime, &[], true), Decision::Keep);
-        assert_eq!(decide(Class::NotAnime, &[], false), Decision::Keep);
+        assert_eq!(decide(Class::Anime, &[], false, None), Decision::Move);
+        assert_eq!(decide(Class::Anime, &[], true, None), Decision::Keep);
+        assert_eq!(decide(Class::NotAnime, &[], false, None), Decision::Keep);
         // jamais ressorti automatiquement
-        assert_eq!(decide(Class::NotAnime, &[], true), Decision::Misplaced);
-        assert_eq!(decide(Class::Unknown, &[], false), Decision::Unknown);
-        assert_eq!(decide(Class::Unknown, &[], true), Decision::Keep);
+        assert_eq!(
+            decide(Class::NotAnime, &[], true, None),
+            Decision::Misplaced
+        );
+        assert_eq!(decide(Class::Unknown, &[], false, None), Decision::Unknown);
+        assert_eq!(decide(Class::Unknown, &[], true, None), Decision::Keep);
         // tags manuels
         assert_eq!(
-            decide(Class::NotAnime, &l(&["anime"]), false),
+            decide(Class::NotAnime, &l(&["anime"]), false, None),
             Decision::Move
         );
         assert_eq!(
-            decide(Class::Anime, &l(&["pas-anime"]), false),
+            decide(Class::Anime, &l(&["pas-anime"]), false, None),
             Decision::Keep
         );
         assert_eq!(
-            decide(Class::Unknown, &l(&["pas-anime"]), false),
+            decide(Class::Unknown, &l(&["pas-anime"]), false, None),
             Decision::Keep
         );
     }
