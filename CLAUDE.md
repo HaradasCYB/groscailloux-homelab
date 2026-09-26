@@ -467,7 +467,11 @@ journalctl -u homelabd -f
   créée par l'API reste vide**, et **un déplacement sur la seedbox n'apparaît pas** dans la nouvelle bibliothèque,
   tant que l'analyse complète de la médiathèque n'est pas passée (ni `Items/{id}/Refresh`, ni
   `Library/Media/Updated`, ni un redémarrage ; vu le 2026-09-17, analyse de 65 à 315 s) : ranger en masse
-  **avant 13 h**, ou attendre l'analyse de 05 h. Après une réidentification, vérifier les `ProviderIds` contre
+  **avant 13 h**, ou attendre l'analyse de 05 h. **Depuis le 2026-09-26, `anime_library` lance lui-même l'analyse
+  complète après un déplacement** (`scan_after_move`, au plus une toutes les `scan_min_gap_mins` = 20 ; passage toutes
+  les 5 min au lieu de 30) : *Your Name*, importé en 3 min, avait attendu 45 min invisible (rangé dans « Films
+  d'animation » après le signal de `seedbox_refresh`). Mesuré le même soir : une analyse complète prend 2 à 3 min et
+  n'a coupé aucune des lectures en cours (4 analyses entre 20 h 53 et 23 h). Après une réidentification, vérifier les `ProviderIds` contre
   l'Arr : le 2026-09-17, *L'Attaque des Titans* est repartie sur son spin-off et *Slime* sur *Slime Diaries*.
 - **Codec : x265 d'abord, x264 ensuite, AV1 en dernier** (2026-09-26, demandé par l'utilisateur ; remplace « codec à
   égalité » du 18/09). Clé de `choose`, `best_movie_release` et `/recherche` : **langue > résolution > ≥ 2 sources >

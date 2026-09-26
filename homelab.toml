@@ -209,7 +209,7 @@ min_days_after_cinema = 110
 # Animation japonaise (classement TMDB, tags manuels `anime` / `pas-anime` prioritaires) rangée dans les
 # bibliothèques « Anime » et « Films d'animation » : tag `anime` + déplacement par l'éditeur de l'Arr.
 # Jamais ressortie automatiquement. `only_tmdb` = essai limité à ces identifiants (vide = tous).
-interval_secs = 1800
+interval_secs = 300             # 1800 jusqu'au 26/09 : un animé attendait jusqu'à 30 min avant d'être rangé
 max_moves_per_run = 5
 max_lookups_per_run = 150
 recheck_days = 30
@@ -218,6 +218,10 @@ vps_movies_root = "/anime-films"
 seedbox_series_root = "/home/kakaouette/media/Anime"
 seedbox_movies_root = "/home/kakaouette/media/Anime Movies"
 only_tmdb = []
+# Un titre déplacé d'une bibliothèque seedbox à une autre n'apparaît qu'après une analyse complète (Your Name,
+# 45 min d'attente le 26/09) : lancée après un déplacement, au plus une fois toutes les scan_min_gap_mins.
+scan_after_move = true
+scan_min_gap_mins = 20
 
 [tasks.identity_check]
 # Jellyfin identifie un dossier d'après son nom : trois séries sont parties sur un spin-off (Attaque des

@@ -721,12 +721,16 @@ pub struct AnimeLibrary {
     pub seedbox_movies_root: String,
     /// Essai : seuls ces identifiants TMDB sont traités (vide = tous).
     pub only_tmdb: Vec<i64>,
+    /// Après un déplacement, analyse complète de la médiathèque (sinon le titre n'apparaît qu'à celle de 05 h).
+    pub scan_after_move: bool,
+    /// Deux analyses déclenchées ainsi sont espacées d'au moins N minutes (un déplacement suivant attend).
+    pub scan_min_gap_mins: i64,
 }
 
 impl Default for AnimeLibrary {
     fn default() -> Self {
         Self {
-            interval_secs: 1800,
+            interval_secs: 300,
             max_moves_per_run: 5,
             max_lookups_per_run: 150,
             recheck_days: 30,
@@ -735,6 +739,8 @@ impl Default for AnimeLibrary {
             seedbox_series_root: "/home/kakaouette/media/Anime".into(),
             seedbox_movies_root: "/home/kakaouette/media/Anime Movies".into(),
             only_tmdb: Vec::new(),
+            scan_after_move: true,
+            scan_min_gap_mins: 20,
         }
     }
 }

@@ -10,12 +10,16 @@
 //!   `max_moves_per_run` par passage ; une fiche avec un téléchargement en cours attend.
 //! - Ensuite : fin des commandes de déplacement attendue, cache rclone rafraîchi (seedbox) et Jellyfin prévenu
 //!   pour l'ancien et le nouveau chemin. Le déplacement est noté (`anime_moves`) : `deletion_cleanup` ignore
-//!   ces fiches pendant `MOVE_GRACE_SECS`.
+//!   ces fiches pendant `MOVE_GRACE_SECS`. Puis **analyse complète** de la médiathèque (`scan_after_move`) :
+//!   sans elle, un titre déplacé d'une bibliothèque seedbox à une autre n'apparaît qu'à l'analyse de 05 h (ni
+//!   `Library/Media/Updated` ni le rafraîchissement du dossier ne créent la fiche ; Your Name, 2026-09-26).
+//!   Au plus une toutes les `scan_min_gap_mins` ; un déplacement pendant l'attente est rattrapé au passage suivant.
 //! - Pas anime mais rangé dans le dossier anime : jamais ressorti automatiquement, seulement signalé.
 //! - Fiche TMDB introuvable : rien n'est fait, signalé.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -32,6 +36,15 @@ use crate::context::TaskContext;
 use crate::state::{now, AnimeClassRecord};
 
 pub struct AnimeLibrary;
+
+/// Analyse complète à lancer (un déplacement l'attend) et heure de la dernière lancée par cette tâche.
+static SCAN_PENDING: AtomicBool = AtomicBool::new(false);
+static LAST_SCAN: AtomicI64 = AtomicI64::new(0);
+
+/// Lancer l'analyse maintenant ? Seulement si un déplacement l'attend et que la précédente date d'au moins `gap_mins`.
+pub fn scan_due(pending: bool, now: i64, last: i64, gap_mins: i64) -> bool {
+    pending && now - last >= gap_mins * 60
+}
 
 /// Après un déplacement, `deletion_cleanup` laisse la fiche tranquille pendant ce temps.
 pub const MOVE_GRACE_SECS: i64 = 6 * 3600;
@@ -502,6 +515,28 @@ impl Task for AnimeLibrary {
                 warn!(task = "anime_library", error = %e, "jellyfin notification failed");
             }
         }
+        if counts.get("deplace").copied().unwrap_or(0) > 0 && cfg.scan_after_move && !ctx.dry_run {
+            SCAN_PENDING.store(true, Ordering::SeqCst);
+        }
+        let now = chrono::Utc::now().timestamp();
+        if scan_due(
+            SCAN_PENDING.load(Ordering::SeqCst),
+            now,
+            LAST_SCAN.load(Ordering::SeqCst),
+            cfg.scan_min_gap_mins,
+        ) {
+            match ctx.jellyfin.library_refresh().await {
+                Ok(()) => {
+                    SCAN_PENDING.store(false, Ordering::SeqCst);
+                    LAST_SCAN.store(now, Ordering::SeqCst);
+                    info!(task = "anime_library", "library scan requested after move");
+                    notes.push("analyse de la médiathèque lancée".into());
+                }
+                Err(e) => warn!(task = "anime_library", error = %e, "library scan request failed"),
+            }
+        } else if SCAN_PENDING.load(Ordering::SeqCst) {
+            notes.push("analyse de la médiathèque au passage suivant".into());
+        }
         let actions = counts.get("deplace").copied().unwrap_or(0);
         let mut summary: Vec<String> = counts.iter().map(|(k, v)| format!("{k}={v}")).collect();
         summary.extend(notes);
@@ -520,6 +555,14 @@ mod tests {
 
     fn l(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn library_scan_waits_for_a_move_and_the_gap() {
+        assert!(!scan_due(false, 10_000, 0, 20)); // aucun déplacement
+        assert!(scan_due(true, 10_000, 0, 20)); // première fois
+        assert!(!scan_due(true, 10_000, 10_000 - 5 * 60, 20)); // trop tôt : attend
+        assert!(scan_due(true, 10_000, 10_000 - 20 * 60, 20)); // écart atteint
     }
 
     #[test]

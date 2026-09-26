@@ -37,6 +37,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **VO, correctif (26/09)** : le mode « Toujours en VO » laissait Jellyfin lire la piste marquée par défaut dans le
   fichier, souvent la VF d'un MULTi (un animé partait en VF). La langue choisie passe maintenant avant ; les trois
   comptes déjà en VO ont été corrigés.
+- **Films d'animation et animés visibles tout de suite (26/09)** : un titre rangé dans « Anime » ou « Films
+  d'animation » n'apparaissait qu'à l'analyse du lendemain matin (un film attendu 45 min alors qu'il était déjà
+  téléchargé). Il est maintenant rangé dans les 5 minutes et visible juste après.
 - **Noms des tâches** : le panneau Automatisation de Homarr et la page d'état n'affichent plus « Tâche » pour les six
   tâches les plus récentes (lectures simultanées, test de lecture, sous-titres extraits, cycle des abonnements,
   contrôle PayPal, lectures qui bouclent). Chaque tâche porte désormais son nom dans son propre code, et une tâche

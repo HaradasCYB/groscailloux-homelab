@@ -147,6 +147,14 @@ impl JellyfinClient {
             .map(|_| ())
     }
 
+    /// Analyse complète de la médiathèque (`Library/Refresh`, tâche « Analyser la médiathèque »). Seul moyen de
+    /// faire apparaître un titre **déplacé** d'une bibliothèque seedbox à une autre (ni `Library/Media/Updated`,
+    /// ni `Items/{id}/Refresh` ne créent la fiche : Your Name, 45 min d'attente le 2026-09-26).
+    pub async fn library_refresh(&self) -> Result<()> {
+        let resp = self.req(Method::POST, "Library/Refresh").send().await?;
+        check(resp, "jellyfin Library/Refresh").await.map(|_| ())
+    }
+
     pub async fn item_paths(&self) -> Result<std::collections::HashSet<String>> {
         let resp = self
             .req(Method::GET, "Items")

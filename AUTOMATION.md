@@ -202,7 +202,12 @@ seules portes d'entrée : tâches et page passent par elles.
 tâches de fond, la réserve restant à la page. Avant le 2026-09-17, chacun avait son plafond (12/h, 1/h, 6/h)
 sans voir les autres.
 
-### anime_library — 30 min
+### anime_library — 5 min
+**Après un déplacement, analyse complète de la médiathèque** (`scan_after_move`, au plus une toutes les
+`scan_min_gap_mins` = 20, un déplacement pendant l'attente est rattrapé au passage suivant) : un titre passé d'une
+bibliothèque seedbox à une autre n'est créé par Jellyfin que par cette analyse (`Library/Media/Updated` et le
+rafraîchissement du dossier ne suffisent pas ; *Your Name* invisible 45 min le 2026-09-26).
+
 Pose aussi `seriesType = anime` sur toute série rangée dans Anime (numérotation absolue), et rattrape celles
 qui étaient restées en « standard » (`RescanSeries` derrière, contrôle des fichiers).
 
