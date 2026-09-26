@@ -284,7 +284,8 @@ journalctl -u homelabd -f
   côté serveur (animés, tous appareils) + script Mon compte qui, au démarrage d'un titre parti en français, bascule
   sur la piste de la **langue d'origine** (TMDB via Jellyseerr, `GET /compte/api/original`, anglais si inconnue ;
   rien pour une origine française ni l'audiodescription) par `SetAudioStreamIndex` envoyé à sa propre session, une
-  fois par titre ; applis TV natives : japonais seulement ; banc `backups/jellyfin-vo-20260925/`). Choisir un mode
+  fois par titre ; applis TV natives : japonais seulement ; banc `backups/jellyfin-vo-20260925/`). **`PlayDefaultAudioTrack` = false dans les DEUX modes** (à `true`, Jellyfin prend la piste « par défaut » du
+  fichier AVANT la langue préférée : SNK en VF en mode VO, corrigé le 26/09, 3 comptes). Choisir un mode
   coupe aussi `RememberAudioSelections`/`RememberSubtitleSelections` du compte : une piste retenue pour un titre
   (table `UserData.AudioStreamIndex`, invisible par l'API) passait avant la langue du compte — Harry Potter resté
   en anglais après le passage en VF ; **avancement des demandes** dans l'onglet Demandes de Jellyfin Enhanced (`/compte/api/requests`,

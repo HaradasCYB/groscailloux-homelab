@@ -308,7 +308,9 @@ async fn set_language(
                     &a.vo_audio_language,
                     &a.subtitle_language,
                     "Always",
-                    true,
+                    // false : sinon Jellyfin lit la piste « par défaut » du fichier (la VF d'un MULTi) avant
+                    // la langue préférée — SNK restait en VF en mode VO (2026-09-26)
+                    false,
                 )
                 .await
         }

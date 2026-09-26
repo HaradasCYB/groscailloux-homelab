@@ -34,6 +34,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   (moins bien lu par les vieux appareils). Une version française en x264 reste préférée à une x265 sans français.
   À égalité, le son en AAC, E-AC3 ou AC3 passe devant le DTS, que Chromecast et iPhone ne lisent pas : il fallait le
   réencoder pendant la lecture.
+- **VO, correctif (26/09)** : le mode « Toujours en VO » laissait Jellyfin lire la piste marquée par défaut dans le
+  fichier, souvent la VF d'un MULTi (un animé partait en VF). La langue choisie passe maintenant avant ; les trois
+  comptes déjà en VO ont été corrigés.
 - **Noms des tâches** : le panneau Automatisation de Homarr et la page d'état n'affichent plus « Tâche » pour les six
   tâches les plus récentes (lectures simultanées, test de lecture, sous-titres extraits, cycle des abonnements,
   contrôle PayPal, lectures qui bouclent). Chaque tâche porte désormais son nom dans son propre code, et une tâche
