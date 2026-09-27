@@ -818,8 +818,13 @@ journalctl -u homelabd -f
   11 % ; `torrent_import` a importé 48 épisodes tronqués (saisons 4-6), retirés le jour même (sauvegarde
   `backups/fix-20260927/`). Depuis : `TorrentFile.progress/priority`, `torrent_import::incomplete_paths` écarte tout
   fichier à `progress < 1` ou priorité 0 ; `russian_search` ajoute le torrent **arrêté** (`add_torrent_with(…, true)`),
-  désélectionne, **puis** démarre, et remet le torrent en partage forcé (ratio 2) après import. Les torrents RuTracker
-  s'arrêtaient ~3 min après la fin (cause non trouvée : ni limite qBittorrent, ni homelabd) : démarrage forcé.
+  désélectionne, **puis** démarre.
+- **L'hébergeur de la seedbox arrête les torrents « publics »** (trouvé le 2026-09-27) : Ultra.cc fait tourner toutes
+  les 5 min `~/.config/.stop_pub/qbittorrent/qbt_pub.py`, qui lit le drapeau `private` du `.torrent` et, s'il manque,
+  **bride l'envoi et arrête le torrent une fois terminé** (journal qBittorrent : « Torrent stopped », via l'API). Les
+  torrents **RuTracker** n'ont pas ce drapeau : ils se téléchargent mais ne partagent pas (ratio du compte RuTracker
+  bas, à surveiller). **Ne pas contourner** cette règle de l'hébergeur (conditions d'utilisation) ; C411 est privé,
+  non concerné.
 - **`torrent_import` ne remplace jamais un fichier** : épisode (ou film) déjà présent ⇒ fichier écarté, et la
   correspondance d'épisodes de l'Arr prime sur l'analyse du nom. Le 2026-09-17, « The.Final.Season.E01 » (sans
   saison) a été lu S01E01 et la saison 1 d'une série écrasée ; réparé en réimportant les fichiers d'origine

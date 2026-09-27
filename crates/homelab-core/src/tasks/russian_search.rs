@@ -499,13 +499,8 @@ impl Task for RussianSearch {
             .await
             {
                 Ok(n) => {
-                    // RuTracker compte le ratio : on garde le torrent en partage
-                    if !ctx.dry_run {
-                        let _ = qbit.set_share_limits(hash, 2.0, -1).await;
-                        if let Err(e) = qbit.start(hash, true).await {
-                            warn!(task = "russian_search", key = %key, error = %e, "seeding not restarted");
-                        }
-                    }
+                    // pas de relance du partage : l'hébergeur (Ultra.cc, `~/.config/.stop_pub`) arrête toutes les 5 min
+                    // les torrents non « privés », ce qu'est RuTracker (2026-09-27) ; ne pas lutter contre sa règle
                     info!(task = "russian_search", key = %key, files = n, "imported");
                     notes.push(format!("importé {n} fichier(s)"));
                     actions += n as u32;
