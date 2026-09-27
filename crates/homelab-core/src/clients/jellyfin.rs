@@ -150,6 +150,23 @@ impl JellyfinClient {
     /// Analyse complète de la médiathèque (`Library/Refresh`, tâche « Analyser la médiathèque »). Seul moyen de
     /// faire apparaître un titre **déplacé** d'une bibliothèque seedbox à une autre (ni `Library/Media/Updated`,
     /// ni `Items/{id}/Refresh` ne créent la fiche : Your Name, 45 min d'attente le 2026-09-26).
+    /// Une analyse de la médiathèque tourne-t-elle ? (Relancer `Library/Refresh` ANNULE celle en cours : le 2026-09-26,
+    /// des analyses relancées à répétition ne finissaient jamais.)
+    pub async fn library_scan_running(&self) -> Result<bool> {
+        let resp = self
+            .req(Method::GET, "ScheduledTasks")
+            .query(&[("isHidden", "false")])
+            .send()
+            .await?;
+        let v = json(resp, "jellyfin ScheduledTasks").await?;
+        Ok(v.as_array().is_some_and(|a| {
+            a.iter().any(|t| {
+                t.get("Key").and_then(Value::as_str) == Some("RefreshLibrary")
+                    && t.get("State").and_then(Value::as_str) != Some("Idle")
+            })
+        }))
+    }
+
     pub async fn library_refresh(&self) -> Result<()> {
         let resp = self.req(Method::POST, "Library/Refresh").send().await?;
         check(resp, "jellyfin Library/Refresh").await.map(|_| ())

@@ -1,0 +1,9 @@
+[Unit]
+Description=Seedbox : chien de garde du montage rclone (ffprobe de Jellyfin bloqué sur un fichier supprimé)
+After=homelab-seedbox-mount.service docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/homelab
+ExecStart=/opt/homelab/scripts/seedbox-mount-watch.sh
+Nice=10

@@ -37,6 +37,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **VO, correctif (26/09)** : le mode « Toujours en VO » laissait Jellyfin lire la piste marquée par défaut dans le
   fichier, souvent la VF d'un MULTi (un animé partait en VF). La langue choisie passe maintenant avant ; les trois
   comptes déjà en VO ont été corrigés.
+- **Nouveaux titres bloqués à « Ajout à la médiathèque » (27/09)** : un fichier remplacé la veille était resté
+  « fantôme » dans le montage de la seedbox et Jellyfin s'y était bloqué pendant des heures ; plus rien de nouveau
+  n'apparaissait. Débloqué (les 6 films attendus sont arrivés), et un chien de garde débloque désormais ce cas seul en
+  quelques minutes.
 - **Contenu russe (26/09)** : un membre peut demander des séries et films russes par une voie dédiée (tracker
   russe, en VO russe) en choisissant le dossier « Russian » dans la fenêtre de demande ; ils arrivent dans deux
   bibliothèques « Séries russes » et « Films russes » visibles de son compte. *La Cuisine* (Кухня) y a été rangée.

@@ -1,0 +1,9 @@
+[Unit]
+Description=Seedbox : chien de garde du montage rclone toutes les 5 minutes
+
+[Timer]
+OnCalendar=*:0/5:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

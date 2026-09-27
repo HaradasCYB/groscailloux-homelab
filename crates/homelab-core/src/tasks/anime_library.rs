@@ -746,14 +746,25 @@ impl Task for AnimeLibrary {
             LAST_SCAN.load(Ordering::SeqCst),
             cfg.scan_min_gap_mins,
         ) {
-            match ctx.jellyfin.library_refresh().await {
+            // une analyse en cours prendra les nouveaux titres : ne jamais l'annuler en en relançant une
+            let running = ctx.jellyfin.library_scan_running().await.unwrap_or(true);
+            let r = if running {
+                Err(anyhow::anyhow!("analyse déjà en cours"))
+            } else {
+                ctx.jellyfin.library_refresh().await
+            };
+            match r {
                 Ok(()) => {
                     SCAN_PENDING.store(false, Ordering::SeqCst);
                     LAST_SCAN.store(now, Ordering::SeqCst);
                     info!(task = "anime_library", "library scan requested after move");
                     notes.push("analyse de la médiathèque lancée".into());
                 }
-                Err(e) => warn!(task = "anime_library", error = %e, "library scan request failed"),
+                Err(e) => {
+                    // reste en attente : relancée au passage suivant, une fois l'analyse en cours terminée
+                    info!(task = "anime_library", reason = %e, "library scan postponed");
+                    notes.push(format!("analyse de la médiathèque reportée : {e}"));
+                }
             }
         } else if SCAN_PENDING.load(Ordering::SeqCst) {
             notes.push("analyse de la médiathèque au passage suivant".into());

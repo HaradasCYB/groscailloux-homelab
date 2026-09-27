@@ -510,8 +510,10 @@ journalctl -u homelabd -f
   **avant 13 h**, ou attendre l'analyse de 05 h. **Depuis le 2026-09-26, `anime_library` lance lui-même l'analyse
   complète après un déplacement** (`scan_after_move`, au plus une toutes les `scan_min_gap_mins` = 20 ; passage toutes
   les 5 min au lieu de 30) : *Your Name*, importé en 3 min, avait attendu 45 min invisible (rangé dans « Films
-  d'animation » après le signal de `seedbox_refresh`). Mesuré le même soir : une analyse complète prend 2 à 3 min et
-  n'a coupé aucune des lectures en cours (4 analyses entre 20 h 53 et 23 h). Après une réidentification, vérifier les `ProviderIds` contre
+  d'animation » après le signal de `seedbox_refresh`). **Corrigé le 2026-09-27** : ce « 2 à 3 min » était faux — les
+  titres apparaissaient vers 87–91 % d'analyses qui, relancées à la main par-dessus, **s'annulaient les unes les autres**
+  (`Library/Refresh` annule celle en cours ; journaux : annulées après 25 à 65 min). `anime_library` ne relance plus
+  une analyse tant qu'une autre tourne (`library_scan_running`) ; ne pas en lancer à la main par-dessus non plus. Après une réidentification, vérifier les `ProviderIds` contre
   l'Arr : le 2026-09-17, *L'Attaque des Titans* est repartie sur son spin-off et *Slime* sur *Slime Diaries*.
 - **Codec : x265 d'abord, x264 ensuite, AV1 en dernier** (2026-09-26, demandé par l'utilisateur ; remplace « codec à
   égalité » du 18/09). Clé de `choose`, `best_movie_release` et `/recherche` : **langue > résolution > ≥ 2 sources >
@@ -747,6 +749,15 @@ journalctl -u homelabd -f
   `homelabctl accounts delete`), et pour les captures, réponses d'API simulées **dans le navigateur de test**
   (interception, voir `backups/chat-tests-20260915/chatshots.js`). Une session ouverte par l'API compte dans
   la limite de 2 appareils : supprimer puis recréer le compte de test plutôt que toucher aux appareils.
+- **Fichier fantôme dans rclone = Jellyfin bloqué** (2026-09-27) : un fichier supprimé sur la seedbox (ici l'ancien
+  BLACK TORCH S01E01, remplacé par le x265) resté dans le cache de répertoires de rclone ; le `ffprobe` de Jellyfin
+  qui l'ouvre ne rend **jamais** la main (ouverture SFTP bloquée, état D, `kill -9` sans effet) et garde le fichier
+  « vivant » dans rclone. Huit `ffprobe` bloqués 13 à 19 h : **plus aucun titre nouveau n'apparaissait** (films
+  « Ajout à la médiathèque » pendant 1 h+, file de rafraîchissement bouchée) et l'analyse restait figée à 91 %.
+  Diagnostic : `ps -eo pid,stat,etime,args | grep jellyfin-ffmpeg/ffprobe` (état `D`, heures) et `rc core/stats`
+  (transfert à 0 octet). Seul remède : `vfs/forget` puis **redémarrer `homelab-seedbox-mount`**. Automatisé :
+  `scripts/seedbox-mount-watch.sh` (timer `seedbox-mount-watch`, 5 min) — ffprobe > 15 min → forget ; toujours bloqué →
+  redémarrage du montage s'il n'y a pas de lecture seedbox, d'office après 60 min ; alerte Discord admin ; `--check`.
 - **`GET /Items` sans `UserId` renvoie une liste incomplète** (2026-09-21 : 2 064 items, aucun des 13 épisodes importés le
   matin ; avec l'id d'un admin : 2 004 items, tous présents). Toute lecture de la médiathèque par l'API passe par un
   compte (`UserId=<admin>`), comme `subtitle_sync` et le canari.

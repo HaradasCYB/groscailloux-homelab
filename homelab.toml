@@ -418,7 +418,7 @@ trial_days = 7            # essai gratuit à l'inscription publique (0 = activat
 referral_days = 15        # jours offerts au parrain et au filleul au premier paiement du filleul
 referral_cap_days_per_year = 90
 exempt = []               # jamais suspendus par le cycle (accounts.protected l'est déjà)
-cycle_dry_run = true      # première semaine : le cycle annonce sans suspendre ni écrire aux membres
+cycle_dry_run = false     # réel depuis le 2026-09-27 (semaine d observation sans action)
 price_text = "3,50 € / mois"
 
 [chat]

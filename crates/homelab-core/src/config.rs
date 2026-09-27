@@ -187,7 +187,7 @@ impl Default for Subscriptions {
             referral_days: 15,
             referral_cap_days_per_year: 90,
             exempt: Vec::new(),
-            cycle_dry_run: true,
+            cycle_dry_run: false, // réel depuis le 2026-09-27 (voir homelab.toml)
             price_text: "3,50 € / mois".into(),
         }
     }
