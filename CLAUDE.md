@@ -802,7 +802,11 @@ journalctl -u homelabd -f
   **sans** id de fiche (avec l'id, l'Arr renvoie les fichiers déjà rangés), épisodes « Unknown Series » lus par
   `SxxEyy`. Chercher par identifiant **sans saison** : les « INTEGRALE » n'apparaissent pas par saison (Hunter x
   Hunter 237 → 42 Go). Écarter HDR/DV (transcodage sans GPU) et ne remplacer un MULTi que par un MULTi. Modèle :
-  `backups/codec-replace-20260926/` (`verify.py`, `grab.py`, `replace.py`, `--dry-run` d'abord).
+  `backups/codec-replace-20260926/` (`verify.py`, `grab.py`, `replace.py`, `--dry-run` d'abord). **Version à jour :
+  `backups/codec-replace-20260927/`** (2ᵉ lot, 18 titres sur 40 vérifiés, ~123 Go) : MULTi exigé aussi pour les séries,
+  fichiers incomplets écartés, `vfs/forget` + `vfs/refresh` récursif **juste après** la suppression par l'Arr (le
+  2026-09-27, Jellyfin a ouvert l'ancien *Sans un bruit : Jour 1* 14 s après sa suppression et s'est bloqué — le chien
+  de garde a débloqué à 16 min), packs « `04. Titre.mkv` » d'une seule saison lus par le numéro en tête.
   **Après coup, Jellyfin** : `Library/Media/Updated` sur le dossier ne suffit pas pour une grosse série dont tous les
   noms de fichiers changent (Hunter x Hunter restée à 65/150, L'Attaque des Titans à 66/97) : `POST
   /Items/<id série>/Refresh?Recursive=true` par série, puis comparer le nombre d'épisodes Jellyfin à `episodeFileCount`.

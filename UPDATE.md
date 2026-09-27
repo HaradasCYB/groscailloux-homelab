@@ -37,6 +37,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **VO, correctif (26/09)** : le mode « Toujours en VO » laissait Jellyfin lire la piste marquée par défaut dans le
   fichier, souvent la VF d'un MULTi (un animé partait en VF). La langue choisie passe maintenant avant ; les trois
   comptes déjà en VO ont été corrigés.
+- **Deuxième lot de fichiers allégés (27/09)** : 18 titres de plus passés en version optimisée (dont Matrix, Batman
+  Begins, Loki, Bet, Blue Box, Stranger Things 1985), environ 120 Go libérés ; 22 titres gardés faute de meilleure
+  version disponible.
 - **Contrôle complet (27/09)** : *La Cuisine* avait reçu par erreur 48 épisodes incomplets des saisons 4 à 6 (retirés,
   la série est revenue à ses 60 épisodes) ; un fichier incomplet ne peut plus être ajouté à la médiathèque. Collections
   remises à jour après le remplacement des fichiers de la veille. Tout le reste vérifié : services, tâches, lecture,
