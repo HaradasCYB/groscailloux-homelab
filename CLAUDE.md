@@ -456,6 +456,13 @@ journalctl -u homelabd -f
   Jellyfin** (`getSessions`), jamais les cibles Cast ou AirPlay du navigateur. Récepteur Cast du serveur :
   `CastReceiverApplications` = Stable `F007D354`, posé sur les comptes. AirPlay passe par le bouton du lecteur
   dans Safari/iPhone.
+  **Chromecast = son AAC imposé par NPM** (2026-09-27) : le récepteur Jellyfin (agent `CrKey`) s'est mis à déclarer
+  l'AC3/E-AC3 ; Jellyfin copiait donc le son dans le HLS et la télé restait sur « Ready to cast » après le 1ᵉʳ segment
+  (jusqu'au 23/09 : `AudioCodec=aac`, des centaines de segments). Bloc `location ~* ^/videos/[^/]+/master\.m3u8$` de
+  l'hôte 1 (base **et** `1.conf`, sauvegarde `backups/npm-20260927-chromecast/`) : pour `CrKey` seulement,
+  `AudioCodec=aac` + `aac-audiochannels=2` sur la liste maîtresse (main.m3u8 et segments en héritent) ; `proxy.conf`
+  passe `$request_uri`, d'où un `proxy_pass …$uri?$gc_args` propre au bloc. Contrôle : `curl -A '…CrKey/1.56…'` sur un
+  `master.m3u8` → `CODECS="…,mp4a.40.2"`, sans l'agent → `ac-3`.
 - **Applis TV natives (Android TV, Fire TV Stick)** : 2ᵉ usage de la maison (133 lectures, 72 h sur 30 j au
   2026-09-22, dont un Fire TV Stick en appli 0.19.10, plus un membre sur le client tiers JellyWatch), **100 % en
   lecture directe**. Elles ne chargent **pas** jellyfin-web : ni calque CSS, ni script injecté (tchat, Mon compte,

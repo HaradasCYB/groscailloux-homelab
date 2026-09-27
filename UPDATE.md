@@ -48,6 +48,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   « fantôme » dans le montage de la seedbox et Jellyfin s'y était bloqué pendant des heures ; plus rien de nouveau
   n'apparaissait. Débloqué (les 6 films attendus sont arrivés), et un chien de garde débloque désormais ce cas seul en
   quelques minutes.
+- **Google Cast bloqué sur « Ready to cast » (27/09)** : depuis une mise à jour de l'appli Chromecast de Jellyfin, la
+  télé demandait le son AC3/E-AC3 tel quel, chargeait le premier morceau puis abandonnait. Le serveur lui envoie de
+  nouveau un son AAC stéréo, comme avant ; les autres appareils ne changent pas.
 - **Contenu russe (26/09)** : un membre peut demander des séries et films russes par une voie dédiée (tracker
   russe, en VO russe) en choisissant le dossier « Russian » dans la fenêtre de demande ; ils arrivent dans deux
   bibliothèques « Séries russes » et « Films russes » visibles de son compte. *La Cuisine* (Кухня) y a été rangée.
