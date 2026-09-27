@@ -813,6 +813,13 @@ journalctl -u homelabd -f
   seedbox, URL **`/embed/video/<id>`** (la page normale ne propose que 480p), `-f hls-720` réessayé (le 720p n'est
   servi qu'à certains appels), remux MKV `-c copy` audio `rus`, puis `ManualImport` en **`move`** (pas de torrent).
   Scripts : `backups/kukhnya-20260926/` (`dl.py` sur la seedbox, `import.py` depuis le VPS, épisodes terminés seulement).
+- **Jamais d'import d'un fichier incomplet** (2026-09-27) : un torrent « terminé » peut contenir des fichiers
+  **désélectionnés après le début du téléchargement**, donc tronqués sur le disque. Кухня : 117 fichiers désélectionnés à
+  11 % ; `torrent_import` a importé 48 épisodes tronqués (saisons 4-6), retirés le jour même (sauvegarde
+  `backups/fix-20260927/`). Depuis : `TorrentFile.progress/priority`, `torrent_import::incomplete_paths` écarte tout
+  fichier à `progress < 1` ou priorité 0 ; `russian_search` ajoute le torrent **arrêté** (`add_torrent_with(…, true)`),
+  désélectionne, **puis** démarre, et remet le torrent en partage forcé (ratio 2) après import. Les torrents RuTracker
+  s'arrêtaient ~3 min après la fin (cause non trouvée : ni limite qBittorrent, ni homelabd) : démarrage forcé.
 - **`torrent_import` ne remplace jamais un fichier** : épisode (ou film) déjà présent ⇒ fichier écarté, et la
   correspondance d'épisodes de l'Arr prime sur l'analyse du nom. Le 2026-09-17, « The.Final.Season.E01 » (sans
   saison) a été lu S01E01 et la saison 1 d'une série écrasée ; réparé en réimportant les fichiers d'origine

@@ -325,6 +325,7 @@ async fn import(
     arr_id: i64,
     hash: &str,
     content_path: &str,
+    incomplete: &HashSet<String>,
 ) -> Result<usize> {
     let cands = arr
         .get(
@@ -338,9 +339,9 @@ async fn import(
         .unwrap_or_default()
         .into_iter()
         .filter(|c| {
-            c.get("path")
-                .and_then(Value::as_str)
-                .is_some_and(|p| p.starts_with(content_path) && is_video(p))
+            c.get("path").and_then(Value::as_str).is_some_and(|p| {
+                p.starts_with(content_path) && is_video(p) && !incomplete.contains(p)
+            })
         })
         .collect();
     let base = |c: &Value| {
@@ -478,8 +479,33 @@ impl Task for RussianSearch {
             if tor.progress < 1.0 {
                 continue;
             }
-            match import(ctx, arr, movie, arr_id, hash, &tor.content_path).await {
+            // fichiers désélectionnés ou incomplets : jamais importés (Кухня, 2026-09-27)
+            let incomplete = match qbit.files(hash).await {
+                Ok(f) => super::torrent_import::incomplete_paths(&f, &tor.save_path),
+                Err(e) => {
+                    warn!(task = "russian_search", key = %key, error = %e, "file list unreadable: import postponed");
+                    continue;
+                }
+            };
+            match import(
+                ctx,
+                arr,
+                movie,
+                arr_id,
+                hash,
+                &tor.content_path,
+                &incomplete,
+            )
+            .await
+            {
                 Ok(n) => {
+                    // RuTracker compte le ratio : on garde le torrent en partage
+                    if !ctx.dry_run {
+                        let _ = qbit.set_share_limits(hash, 2.0, -1).await;
+                        if let Err(e) = qbit.start(hash, true).await {
+                            warn!(task = "russian_search", key = %key, error = %e, "seeding not restarted");
+                        }
+                    }
                     info!(task = "russian_search", key = %key, files = n, "imported");
                     notes.push(format!("importé {n} fichier(s)"));
                     actions += n as u32;
@@ -675,7 +701,7 @@ impl Task for RussianSearch {
                     });
                     if let Some(h) = present {
                         Some(h)
-                    } else if let Err(e) = qbit.add_torrent(bytes, "", TAG).await {
+                    } else if let Err(e) = qbit.add_torrent_with(bytes, "", TAG, true).await {
                         warn!(task = "russian_search", title = %title, error = %e, "add failed");
                         record(
                             ctx,
@@ -752,6 +778,10 @@ impl Task for RussianSearch {
                     } else {
                         info!(task = "russian_search", title = %title, kept = files.len() - skip.len(), total = files.len(), "only missing episodes kept");
                     }
+                }
+                // ajouté arrêté : démarré seulement maintenant, fichiers inutiles déjà désélectionnés
+                if let Err(e) = qbit.start(&hash, false).await {
+                    warn!(task = "russian_search", title = %title, error = %e, "torrent not started");
                 }
                 info!(task = "russian_search", title = %title, release = %rel.title, covered, "grabbed");
                 notes.push(format!("{title} : « {} » ({covered} ép.)", rel.title));

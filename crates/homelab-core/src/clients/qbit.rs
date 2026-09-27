@@ -76,6 +76,20 @@ pub struct TorrentFile {
     pub name: String,
     #[serde(default)]
     pub size: i64,
+    /// Part téléchargée du fichier (0 à 1). Un fichier désélectionné (priorité 0) reste incomplet même quand le
+    /// torrent est « terminé » : il ne doit jamais être importé (Кухня, 2026-09-27 : 48 épisodes tronqués importés).
+    #[serde(default = "one")]
+    pub progress: f64,
+    /// 0 = ne pas télécharger.
+    #[serde(default = "one_i")]
+    pub priority: i64,
+}
+
+fn one() -> f64 {
+    1.0
+}
+fn one_i() -> i64 {
+    1
 }
 
 fn minus_two() -> f64 {
@@ -236,7 +250,20 @@ impl QbitClient {
     }
 
     pub async fn add_torrent(&self, torrent: Vec<u8>, save_path: &str, tags: &str) -> Result<()> {
+        self.add_torrent_with(torrent, save_path, tags, false).await
+    }
+
+    /// Comme `add_torrent`, mais **arrêté** si `stopped` : laisse le temps de désélectionner des fichiers avant le
+    /// moindre octet (sinon les fichiers déjà entamés restent sur le disque, tronqués).
+    pub async fn add_torrent_with(
+        &self,
+        torrent: Vec<u8>,
+        save_path: &str,
+        tags: &str,
+        stopped: bool,
+    ) -> Result<()> {
         let (save, tags) = (save_path.to_string(), tags.to_string());
+        let state = if stopped { "true" } else { "false" };
         let resp = self
             .send(
                 move |r| {
@@ -247,8 +274,8 @@ impl QbitClient {
                     let mut form = reqwest::multipart::Form::new()
                         .part("torrents", part)
                         .text("tags", tags.clone())
-                        .text("paused", "false")
-                        .text("stopped", "false");
+                        .text("paused", state)
+                        .text("stopped", state);
                     if !save.is_empty() {
                         form = form.text("savepath", save.clone());
                     }
@@ -262,6 +289,30 @@ impl QbitClient {
         let body = resp.text().await.unwrap_or_default();
         if body.trim().eq_ignore_ascii_case("fails.") {
             bail!("qBittorrent a refusé le torrent (déjà présent ou invalide)");
+        }
+        Ok(())
+    }
+
+    /// Démarre un torrent, en **démarrage forcé** si `force` (passe outre files d'attente et limites).
+    pub async fn start(&self, hash: &str, force: bool) -> Result<()> {
+        let form = [("hashes".to_string(), hash.to_string())];
+        let resp = self
+            .send(|r| r.form(&form), Method::POST, "api/v2/torrents/start")
+            .await?;
+        check(resp, "qbit torrents/start").await?;
+        if force {
+            let form = [
+                ("hashes".to_string(), hash.to_string()),
+                ("value".to_string(), "true".to_string()),
+            ];
+            let resp = self
+                .send(
+                    |r| r.form(&form),
+                    Method::POST,
+                    "api/v2/torrents/setForceStart",
+                )
+                .await?;
+            check(resp, "qbit setForceStart").await?;
         }
         Ok(())
     }

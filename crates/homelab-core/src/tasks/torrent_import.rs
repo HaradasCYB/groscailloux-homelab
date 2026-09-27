@@ -157,6 +157,18 @@ pub fn is_candidate(t: &Torrent, record: Option<&TorrentImportRecord>) -> bool {
     t.progress >= 1.0 && !t.content_path.is_empty() && record.map(|r| !r.is_final()).unwrap_or(true)
 }
 
+/// Chemins (vus par l'Arr, qui partage les chemins de qBittorrent) des fichiers du torrent **pas entièrement
+/// téléchargés** : désélectionnés ou incomplets. Un torrent « terminé » peut en contenir (fichiers désélectionnés
+/// après le début du téléchargement) : ils ne sont jamais importés.
+pub fn incomplete_paths(files: &[TorrentFile], save_path: &str) -> HashSet<String> {
+    let base = save_path.trim_end_matches('/');
+    files
+        .iter()
+        .filter(|f| f.progress < 1.0 || f.priority == 0)
+        .map(|f| format!("{base}/{}", f.name))
+        .collect()
+}
+
 /// Vidéos du torrent, sans les extraits (`sample`).
 pub fn video_files(files: &[TorrentFile]) -> Vec<&TorrentFile> {
     files
@@ -692,7 +704,21 @@ async fn examine(
     // la série et aucun du torrent (le 2026-09-17, 59 fichiers de la fiche et 0 des 28 épisodes de la saison 4),
     // et pour une fiche vide il répond 500. Les épisodes sont ensuite rattachés à **cette** fiche par le nom de
     // chaque fichier : l'identification de la série par Sonarr (titre japonais, anglais, français) ne compte pas.
-    let candidates = from_torrent(&arr.manual_import(&t.content_path).await?, &t.content_path);
+    let incomplete = incomplete_paths(&files, &t.save_path);
+    let candidates: Vec<Value> =
+        from_torrent(&arr.manual_import(&t.content_path).await?, &t.content_path)
+            .into_iter()
+            .filter(|c| {
+                let keep = c
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .is_none_or(|p| !incomplete.contains(p));
+                if !keep {
+                    info!(task = "torrent_import", side = side.name, torrent = %t.name, file = ?c.get("path"), "incomplete file skipped");
+                }
+                keep
+            })
+            .collect();
     let mut by_path: HashMap<String, Vec<i64>> = HashMap::new();
     let mut has_file: HashSet<i64> = HashSet::new();
     let mut source = EpisodeSource::ArrFirst;
@@ -984,6 +1010,24 @@ mod tests {
             detail: String::new(),
             attempts: 1,
         }
+    }
+
+    #[test]
+    fn deselected_or_partial_files_are_never_imported() {
+        // Кухня, 2026-09-27 : 117 fichiers désélectionnés APRÈS le début du téléchargement, torrent « terminé »
+        let files: Vec<TorrentFile> = serde_json::from_value(json!([
+            {"name": "Kukhnya/S2E02.mkv", "size": 10, "progress": 1.0, "priority": 1},
+            {"name": "Kukhnya/S6E12.mkv", "size": 10, "progress": 0.14, "priority": 0},
+            {"name": "Kukhnya/S5E01.mkv", "size": 10, "progress": 1.0, "priority": 0},
+            {"name": "Kukhnya/S1E01.mkv", "size": 10}
+        ]))
+        .unwrap();
+        let bad = incomplete_paths(&files, "/home/x/downloads/");
+        assert!(bad.contains("/home/x/downloads/Kukhnya/S6E12.mkv"));
+        assert!(bad.contains("/home/x/downloads/Kukhnya/S5E01.mkv"));
+        assert!(!bad.contains("/home/x/downloads/Kukhnya/S2E02.mkv"));
+        // sans champ progress (ancienne API) : considéré complet
+        assert!(!bad.contains("/home/x/downloads/Kukhnya/S1E01.mkv"));
     }
 
     #[test]

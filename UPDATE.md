@@ -37,6 +37,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **VO, correctif (26/09)** : le mode « Toujours en VO » laissait Jellyfin lire la piste marquée par défaut dans le
   fichier, souvent la VF d'un MULTi (un animé partait en VF). La langue choisie passe maintenant avant ; les trois
   comptes déjà en VO ont été corrigés.
+- **Contrôle complet (27/09)** : *La Cuisine* avait reçu par erreur 48 épisodes incomplets des saisons 4 à 6 (retirés,
+  la série est revenue à ses 60 épisodes) ; un fichier incomplet ne peut plus être ajouté à la médiathèque. Collections
+  remises à jour après le remplacement des fichiers de la veille. Tout le reste vérifié : services, tâches, lecture,
+  espace, et chaque série et film de la seedbox présent dans Jellyfin.
 - **Nouveaux titres bloqués à « Ajout à la médiathèque » (27/09)** : un fichier remplacé la veille était resté
   « fantôme » dans le montage de la seedbox et Jellyfin s'y était bloqué pendant des heures ; plus rien de nouveau
   n'apparaissait. Débloqué (les 6 films attendus sont arrivés), et un chien de garde débloque désormais ce cas seul en
