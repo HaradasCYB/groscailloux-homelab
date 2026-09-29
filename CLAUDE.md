@@ -467,7 +467,13 @@ journalctl -u homelabd -f
   1080p recevait du niveau 4.2 à 18 Mbit/s (*James et la Pêche géante*, HEVC 10 bits à fort débit), chargeait 1 à 2
   segments puis restait figé en envoyant des `Ping` (chargement infini), alors que son lien mesurait ~45 Mbit/s ; le
   Chromecast 4K d'un autre membre n'est pas touché. Captures nommées obligatoires dans ces `set` (`${1}` → « unknown "1"
-  variable »). Contrôle : `curl -A '…CrKey…'` avec `MaxWidth=1920` → `CODECS="avc1.640029,…"`, `BANDWIDTH` ≈ 8,2 M.
+  variable »). **Puis 720p / 4 Mbit/s** (même soir, choix de l'utilisateur) : en 1080p la conversion tournait à ~1,3× et
+  chaque avance coûtait 10 à 15 s de chargement ; `MaxWidth=1280`, `MaxHeight=720`, `VideoBitrate` ≤ 4 000 000.
+  Contrôle : `curl -A '…CrKey…'` avec `MaxWidth=1920` → `RESOLUTION=…x720`, `CODECS="avc1.640029,…"`, `BANDWIDTH` ≈ 4,3 M.
+  Plusieurs appuis rapprochés sur l'avance = autant de relances de ffmpeg (4 en 17 s vues le 29/09) : avancer d'un geste.
+  « Transcode Nag » : `ExcludedClientPatterns = ["Chromecast"]` (29/09, sauvegarde `backups/transcode-nag-20260929/`) —
+  ce n'était PAS la cause du blocage (vérifié : le Chromecast s'est figé pareil sans le message), gardé car le message
+  n'a pas de sens sur une télé. Un Chromecast figé peut aussi ne plus rien demander au serveur : le débrancher 10 s.
   **Télés LG (webOS) : changement de piste audio par le serveur** (2026-09-29) : jellyfin-web (webOS ≥ 4,
   `video.audioTracks` présent) bascule la piste **dans le lecteur de la télé** sans rien demander au serveur, et sur
   les LG ça ne fait rien (VO demandée sur *Obsession*, restée en VF). `gc-tv.js`, sur agent webOS seulement :
