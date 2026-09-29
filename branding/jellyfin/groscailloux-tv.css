@@ -135,3 +135,12 @@
 .layout-tv #peopleCollapsible, .layout-tv #scenesCollapsible, .layout-tv #musicVideosCollapsible,
 .layout-tv .streaming-lookup-container, .layout-tv #streaming-result-container, .layout-tv .audio-languages-container,
 .layout-tv .je-secondary-actions, .layout-tv .je-series-request-more-styles { display: none !important; }
+
+/* Fenêtre « Épisode suivant » (29/09) : un titre d'épisode au nom de fichier (« Re.ZERO.Starting.Life…-TLC », un seul
+   mot pour le navigateur) élargissait la colonne ; la rangée de boutons, calée à droite, sortait de l'écran —
+   plus de « Cacher », plus de « Démarrer maintenant ». Colonne bornée, titre coupé n'importe où (2 lignes max). */
+.upNextContainer { max-width: calc(100vw - 4em) !important; }
+.upNextContainer > .flex-grow { min-width: 0 !important; max-width: 100% !important; }
+.upNextDialog-title { overflow-wrap: anywhere !important; word-break: break-word !important; display: -webkit-box !important;
+  -webkit-line-clamp: 2 !important; -webkit-box-orient: vertical !important; overflow: hidden !important; }
+.upNextDialog-buttons { justify-content: flex-end !important; flex-wrap: wrap !important; gap: .5em; max-width: 100% !important; }

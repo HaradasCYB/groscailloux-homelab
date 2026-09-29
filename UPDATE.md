@@ -54,6 +54,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Chromecast 1080p (29/09)** : sur les Chromecast non 4K, certains films restaient en chargement infini après
   quelques secondes (image trop exigeante pour ces modèles). Le serveur leur envoie désormais une image qu'ils savent
   tous lire (H.264 4.1, 8 Mbit/s au plus) ; les Chromecast 4K ne changent pas.
+- **Fenêtre « Épisode suivant » (29/09)** : quand le titre d'un épisode était un nom de fichier, la fenêtre de fin
+  d'épisode poussait ses boutons « Démarrer maintenant » et « Cacher » hors de l'écran. Ils restent maintenant visibles.
 - **Télés LG (29/09)** : changer de langue en cours de film (VF → VO) ne faisait rien sur les télés LG ; la télé
   restait sur la piste par défaut. Le changement passe maintenant par le serveur (quelques secondes de chargement,
   sans perte de qualité), et le mode « Toujours en VO » de Mon compte marche aussi sur LG. Sur les télés, les
