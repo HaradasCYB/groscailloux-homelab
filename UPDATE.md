@@ -51,6 +51,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Google Cast bloqué sur « Ready to cast » (27/09)** : depuis une mise à jour de l'appli Chromecast de Jellyfin, la
   télé demandait le son AC3/E-AC3 tel quel, chargeait le premier morceau puis abandonnait. Le serveur lui envoie de
   nouveau un son AAC stéréo, comme avant ; les autres appareils ne changent pas.
+- **Chromecast 1080p (29/09)** : sur les Chromecast non 4K, certains films restaient en chargement infini après
+  quelques secondes (image trop exigeante pour ces modèles). Le serveur leur envoie désormais une image qu'ils savent
+  tous lire (H.264 4.1, 8 Mbit/s au plus) ; les Chromecast 4K ne changent pas.
 - **Télés LG (29/09)** : changer de langue en cours de film (VF → VO) ne faisait rien sur les télés LG ; la télé
   restait sur la piste par défaut. Le changement passe maintenant par le serveur (quelques secondes de chargement,
   sans perte de qualité), et le mode « Toujours en VO » de Mon compte marche aussi sur LG. Sur les télés, les

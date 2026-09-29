@@ -463,6 +463,11 @@ journalctl -u homelabd -f
   `AudioCodec=aac` + `aac-audiochannels=2` sur la liste maîtresse (main.m3u8 et segments en héritent) ; `proxy.conf`
   passe `$request_uri`, d'où un `proxy_pass …$uri?$gc_args` propre au bloc. Contrôle : `curl -A '…CrKey/1.56…'` sur un
   `master.m3u8` → `CODECS="…,mp4a.40.2"`, sans l'agent → `ac-3`.
+  **Chromecast 1080p : H.264 niveau 4.1 et 8 Mbit/s au plus** (2026-09-29, même bloc, `MaxWidth` ≠ 3840) : un Chromecast
+  1080p recevait du niveau 4.2 à 18 Mbit/s (*James et la Pêche géante*, HEVC 10 bits à fort débit), chargeait 1 à 2
+  segments puis restait figé en envoyant des `Ping` (chargement infini), alors que son lien mesurait ~45 Mbit/s ; le
+  Chromecast 4K d'un autre membre n'est pas touché. Captures nommées obligatoires dans ces `set` (`${1}` → « unknown "1"
+  variable »). Contrôle : `curl -A '…CrKey…'` avec `MaxWidth=1920` → `CODECS="avc1.640029,…"`, `BANDWIDTH` ≈ 8,2 M.
   **Télés LG (webOS) : changement de piste audio par le serveur** (2026-09-29) : jellyfin-web (webOS ≥ 4,
   `video.audioTracks` présent) bascule la piste **dans le lecteur de la télé** sans rien demander au serveur, et sur
   les LG ça ne fait rien (VO demandée sur *Obsession*, restée en VF). `gc-tv.js`, sur agent webOS seulement :
