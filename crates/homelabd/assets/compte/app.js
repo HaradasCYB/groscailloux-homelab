@@ -55,7 +55,11 @@
       '.gc-acc .err{background:#4a1f1f}.gc-acc .ok{background:#1f4a2c}',
       '.gc-acc ul{margin:.3em 0;padding-left:1.2em}.gc-acc li{margin:.15em 0}',
       '@media (max-width:600px){.gc-acc-wrap{padding:3.8em .5em .5em}.gc-acc{padding:.9em}}'
-    ].join('\n');
+    ].concat(TV ? [
+      // Télé (29/09, revue LG) : 15 px se lisait mal à 3 m ; texte ×1,45, focus de télécommande bien visible
+      '.gc-acc{width:min(1200px,94vw);font-size:22px;padding:1.2em 1.5em}',
+      '.gc-acc .btn:focus,.gc-acc select:focus,.gc-acc a:focus,.gc-acc .close:focus{outline:3px solid #8fd3fb;outline-offset:3px}'
+    ] : []).join('\n');
     document.head.appendChild(st);
   }
   function icon() {
@@ -175,8 +179,15 @@
   function applySubtitleSize() {
     var em = SIZE_EM[subtitleSize()], el = document.getElementById('gc-sub-size');
     if (!em) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
-    var css = '.videoSubtitlesInner,.videoSecondarySubtitlesInner{font-size:' + em + ' !important}'
-      + 'video::cue{font-size:' + em + ' !important}';
+    // Télé : lue à 3 m, la même taille paraît minuscule (27/09, LG) → ×1,4 et un contour pour les images claires.
+    var extra = '';
+    if (TV) {
+      var n = parseFloat(em) || 1;
+      em = (Math.round(n * 1.4 * 100) / 100) + 'em';
+      extra = ';text-shadow:0 0 .12em #000,0 0 .12em #000,.06em .06em .1em #000 !important';
+    }
+    var css = '.videoSubtitlesInner,.videoSecondarySubtitlesInner{font-size:' + em + ' !important' + extra + '}'
+      + 'video::cue{font-size:' + em + ' !important' + extra + '}';
     if (!el) { el = document.createElement('style'); el.id = 'gc-sub-size'; (document.head || document.documentElement).appendChild(el); }
     if (el.textContent !== css) el.textContent = css;
   }

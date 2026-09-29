@@ -51,6 +51,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Google Cast bloqué sur « Ready to cast » (27/09)** : depuis une mise à jour de l'appli Chromecast de Jellyfin, la
   télé demandait le son AC3/E-AC3 tel quel, chargeait le premier morceau puis abandonnait. Le serveur lui envoie de
   nouveau un son AAC stéréo, comme avant ; les autres appareils ne changent pas.
+- **Télés LG (29/09)** : changer de langue en cours de film (VF → VO) ne faisait rien sur les télés LG ; la télé
+  restait sur la piste par défaut. Le changement passe maintenant par le serveur (quelques secondes de chargement,
+  sans perte de qualité), et le mode « Toujours en VO » de Mon compte marche aussi sur LG. Sur les télés, les
+  sous-titres sont plus grands, avec un contour, et le panneau Mon compte est lisible depuis le canapé.
 - **Contenu russe (26/09)** : un membre peut demander des séries et films russes par une voie dédiée (tracker
   russe, en VO russe) en choisissant le dossier « Russian » dans la fenêtre de demande ; ils arrivent dans deux
   bibliothèques « Séries russes » et « Films russes » visibles de son compte. *La Cuisine* (Кухня) y a été rangée.

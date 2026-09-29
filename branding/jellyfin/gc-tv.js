@@ -20,6 +20,80 @@
   if (!TV) return;
   window.__gcTvDone = true;
 
+  /* LG webOS : jellyfin-web (webOS ≥ 4, `video.audioTracks` présent) change de piste audio DANS le lecteur de la
+     télé, sans rien demander au serveur ; sur les LG vues, ce basculement ne fait rien : la télé garde la piste
+     « par défaut » du fichier (27/09 : VO demandée sur Obsession, restée en VF).
+     1. `audioTracks` est masqué sur la seule vidéo EN LECTURE (celle posée dans la page) : jellyfin-web ne peut
+        plus basculer lui-même et redemande le flux au serveur avec la piste choisie. L'élément de test qui sert à
+        construire le profil de lecture n'est jamais inséré dans la page : le profil ne change pas, la piste par
+        défaut reste en lecture directe (masquer tout le prototype faisait remuxer aussi la VF par défaut, que
+        Jellyfin juge « secondaire » dès qu'elle n'est pas la première du fichier).
+     2. Toute demande de lecture d'une autre piste que celle par défaut part sans lecture directe : remux, image et
+        son copiés, coût processeur négligeable. */
+  if (/web0?s|webos/i.test(ua)) {
+    var hideTracks = function (v) {
+      if (v.__gcNoTracks) return;
+      try { Object.defineProperty(v, 'audioTracks', { configurable: true, get: function () { return undefined; } }); v.__gcNoTracks = true; } catch (e) {}
+    };
+    var scan = function (n) {
+      if (!n || n.nodeType !== 1) return;
+      if (n.tagName === 'VIDEO') hideTracks(n);
+      else if (n.querySelectorAll) { var vs = n.querySelectorAll('video'); for (var i = 0; i < vs.length; i++) hideTracks(vs[i]); }
+    };
+    var startVideoWatch = function () {
+      scan(document.body);
+      new MutationObserver(function (ms) { ms.forEach(function (m) { for (var i = 0; i < m.addedNodes.length; i++) scan(m.addedNodes[i]); }); })
+        .observe(document.documentElement, { childList: true, subtree: true });
+    };
+    if (document.body) startVideoWatch(); else document.addEventListener('DOMContentLoaded', startVideoWatch);
+    window.__gcNoAudioTracks = true;
+    var defaultAudio = function (streams) {
+      var a = (streams || []).filter(function (s) { return s.Type === 'Audio' && !s.IsExternal; });
+      var d = a.filter(function (s) { return s.IsDefault; })[0] || a[0];
+      return d ? d.Index : null;
+    };
+    window.__gcTvDefaultAudio = defaultAudio;
+    // corps modifié (texte) si la piste demandée n'est pas celle que la télé jouerait en lecture directe
+    var adjust = function (url, bodyText) {
+      var m = /\/Items\/([0-9a-f-]{32,36})\/PlaybackInfo/i.exec(url || '');
+      var AC = window.ApiClient;
+      if (!m || typeof bodyText !== 'string' || !AC || !AC.getItem) return Promise.resolve(bodyText);
+      var body; try { body = JSON.parse(bodyText || '{}'); } catch (e) { return Promise.resolve(bodyText); }
+      var idx = body.AudioStreamIndex;
+      if (idx == null) idx = (/[?&]AudioStreamIndex=(\d+)/i.exec(url) || [])[1];
+      if (idx == null || body.EnableDirectPlay === false) return Promise.resolve(bodyText);
+      return AC.getItem(AC.getCurrentUserId(), m[1].replace(/-/g, '')).then(function (it) {
+        var src = (it.MediaSources || []).filter(function (s) { return !body.MediaSourceId || s.Id === body.MediaSourceId; })[0] || (it.MediaSources || [])[0];
+        var d = src ? defaultAudio(src.MediaStreams) : null;
+        if (d == null || Number(idx) === d) return bodyText;
+        body.EnableDirectPlay = false;
+        window.__gcTvForcedRemux = (window.__gcTvForcedRemux || 0) + 1;
+        return JSON.stringify(body);
+      }, function () { return bodyText; });
+    };
+    window.__gcTvAdjust = adjust;
+    // jellyfin-web 10.11 : playbackManager passe par le SDK (axios → XMLHttpRequest)
+    var xOpen = XMLHttpRequest.prototype.open, xSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__gcPI = /^post$/i.test(method) && /\/PlaybackInfo/i.test(String(url)) ? String(url) : null;
+      return xOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function (data) {
+      var x = this;
+      if (!x.__gcPI) return xSend.apply(x, arguments);
+      adjust(x.__gcPI, data).then(function (d) { xSend.call(x, d); }, function () { xSend.call(x, data); });
+    };
+    // ancien client (jellyfin-apiclient) : fetch
+    var origFetch = window.fetch;
+    window.fetch = function (input, init) {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      if (init && /^post$/i.test(init.method || '') && /\/PlaybackInfo/i.test(url)) {
+        return adjust(url, init.body).then(function (d) { return origFetch(input, Object.assign({}, init, { body: d })); });
+      }
+      return origFetch.apply(this, arguments);
+    };
+  }
+
   /* Media Bar : neutralisé avant son démarrage (ses objets sont exposés en fin de slideshowpure.js) */
   function muteMediaBar() {
     var sp = window.slideshowPure;

@@ -463,6 +463,17 @@ journalctl -u homelabd -f
   `AudioCodec=aac` + `aac-audiochannels=2` sur la liste maîtresse (main.m3u8 et segments en héritent) ; `proxy.conf`
   passe `$request_uri`, d'où un `proxy_pass …$uri?$gc_args` propre au bloc. Contrôle : `curl -A '…CrKey/1.56…'` sur un
   `master.m3u8` → `CODECS="…,mp4a.40.2"`, sans l'agent → `ac-3`.
+  **Télés LG (webOS) : changement de piste audio par le serveur** (2026-09-29) : jellyfin-web (webOS ≥ 4,
+  `video.audioTracks` présent) bascule la piste **dans le lecteur de la télé** sans rien demander au serveur, et sur
+  les LG ça ne fait rien (VO demandée sur *Obsession*, restée en VF). `gc-tv.js`, sur agent webOS seulement :
+  `audioTracks` masqué sur la **vidéo insérée dans la page** (jamais sur le prototype : l'élément de test du profil de
+  lecture garde `audioTracks`, sinon Jellyfin remuxe aussi la VF par défaut, qu'il juge « secondaire » dès qu'elle
+  n'est pas la 1re piste du fichier), et toute demande `PlaybackInfo` (XHR du SDK **et** fetch) pour une autre piste
+  que celle « par défaut » du fichier part avec `EnableDirectPlay=false` → remux, image et son copiés. Piste par
+  défaut = lecture directe comme avant. Sous-titres ×1,4 + contour et panneau Mon compte en 22 px sur TV (`app.js`).
+  Banc `backups/lg-tv-20260929/` (`run.sh lg_audio.js "tv:0"` : télé LG **émulée** — `audioTracks` et HEVC/E-AC3
+  déclarés —, `lg_screens.js` : captures) ; le Chromium du banc ne décode pas le HEVC : le lecteur y finit en
+  « Erreur de lecture », seules les décisions du serveur sont mesurées.
 - **Applis TV natives (Android TV, Fire TV Stick)** : 2ᵉ usage de la maison (133 lectures, 72 h sur 30 j au
   2026-09-22, dont un Fire TV Stick en appli 0.19.10, plus un membre sur le client tiers JellyWatch), **100 % en
   lecture directe**. Elles ne chargent **pas** jellyfin-web : ni calque CSS, ni script injecté (tchat, Mon compte,
