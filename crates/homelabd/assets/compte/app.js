@@ -58,7 +58,8 @@
     ].concat(TV ? [
       // Télé (29/09, revue LG) : 15 px se lisait mal à 3 m ; texte ×1,45, focus de télécommande bien visible
       '.gc-acc{width:min(1200px,94vw);font-size:22px;padding:1.2em 1.5em}',
-      '.gc-acc .btn:focus,.gc-acc select:focus,.gc-acc a:focus,.gc-acc .close:focus{outline:3px solid #8fd3fb;outline-offset:3px}'
+      '.gc-acc .btn:focus,.gc-acc select:focus,.gc-acc a:focus,.gc-acc .close:focus{outline:3px solid #8fd3fb;outline-offset:3px}',
+      '.gc-acc .gc-choices{display:flex;flex-wrap:wrap;gap:.5em}.gc-acc .gc-choices .btn{padding:.6em 1em}'
     ] : []).join('\n');
     document.head.appendChild(st);
   }
@@ -116,22 +117,32 @@
     }
 
     box.appendChild(h('h3', { text: 'Langue de lecture' }));
-    var langSel = h('select', { class: 'btn', 'aria-label': 'Langue de lecture', onchange: function () { setLanguage(this.value, this); } });
-    [['fr', 'Fran\u00e7ais quand il existe (VF, sinon VO sous-titr\u00e9e)'], ['vo', 'Toujours en VO, sous-titres fran\u00e7ais']].forEach(function (o) {
-      var op = h('option', { value: o[0], text: o[1] }); if (d.language === o[0]) op.selected = true; langSel.appendChild(op);
-    });
-    box.appendChild(h('p', null, [langSel]));
+    var LANGS = [['fr', 'Fran\u00e7ais quand il existe (VF, sinon VO sous-titr\u00e9e)'], ['vo', 'Toujours en VO, sous-titres fran\u00e7ais']];
+    if (TV) {
+      box.appendChild(choices(LANGS, d.language, function (v, b) { setLanguage(v, b); }));
+    } else {
+      var langSel = h('select', { class: 'btn', 'aria-label': 'Langue de lecture', onchange: function () { setLanguage(this.value, this); } });
+      LANGS.forEach(function (o) {
+        var op = h('option', { value: o[0], text: o[1] }); if (d.language === o[0]) op.selected = true; langSel.appendChild(op);
+      });
+      box.appendChild(h('p', null, [langSel]));
+    }
     box.appendChild(h('p', { class: 'muted', text: 'Appliqu\u00e9 \u00e0 la prochaine lecture, sur tous tes appareils.' }));
 
     // Taille des sous-titres : réglage jellyfin-web propre à CET appareil (localStorage
     // `<userId>-localplayersubtitleappearance3`, champ textSize) ; l'ASS garde ses propres styles.
     box.appendChild(h('h3', { text: 'Taille des sous-titres' }));
-    var sizeSel = h('select', { class: 'btn', 'aria-label': 'Taille des sous-titres', onchange: function () { setSubtitleSize(this.value); } });
     var cur = subtitleSize();
-    [['normal', 'Normale'], ['large', 'Grande'], ['extralarge', 'Tr\u00e8s grande']].forEach(function (o) {
-      var op = h('option', { value: o[0], text: o[1] }); if (cur === o[0]) op.selected = true; sizeSel.appendChild(op);
-    });
-    box.appendChild(h('p', null, [sizeSel]));
+    var SIZES = [['normal', 'Normale'], ['large', 'Grande'], ['extralarge', 'Tr\u00e8s grande']];
+    if (TV) {
+      box.appendChild(choices(SIZES, cur, function (v) { setSubtitleSize(v); }));
+    } else {
+      var sizeSel = h('select', { class: 'btn', 'aria-label': 'Taille des sous-titres', onchange: function () { setSubtitleSize(this.value); } });
+      SIZES.forEach(function (o) {
+        var op = h('option', { value: o[0], text: o[1] }); if (cur === o[0]) op.selected = true; sizeSel.appendChild(op);
+      });
+      box.appendChild(h('p', null, [sizeSel]));
+    }
     box.appendChild(h('p', { class: 'muted', text: 'Pour cet appareil, sous-titres SRT ; les sous-titres ASS des anim\u00e9s gardent leur propre style.' }));
 
     if (d.steps_url || d.guide_url) {
@@ -223,7 +234,10 @@
     }).catch(function (e) { note(e.message, 'err'); });
   }
   function load() {
-    return api('GET', '/api/me').then(function (d) { S.data = d; rememberMode(d.language); render(d); })
+    return api('GET', '/api/me').then(function (d) {
+      S.data = d; rememberMode(d.language); render(d);
+      if (TV) { var f = S.el.box && S.el.box.querySelector('.gc-choices button.primary') || focusables()[0]; if (f) f.focus(); }
+    })
       .catch(function (e) { S.el.box.innerHTML = ''; S.el.box.appendChild(h('button', { class: 'close', type: 'button', onclick: close }, ['×'])); S.el.box.appendChild(h('p', { text: 'Mon compte indisponible : ' + e.message })); });
   }
   function open() {
@@ -235,10 +249,52 @@
     load();
   }
   function close() { if (!S.open) return; S.open = false; if (S.el.wrap) S.el.wrap.remove(); S.el = {}; }
+  /* Télé : une liste de boutons au lieu d'un <select> (la liste native de webOS se manie mal à la télécommande).
+     Le bouton choisi est marqué (aria-pressed) ; `onPick(valeur, bouton)`. */
+  function choices(opts, current, onPick) {
+    var row = h('p', { class: 'gc-choices' });
+    opts.forEach(function (o) {
+      var b = h('button', { class: 'btn' + (o[0] === current ? ' primary' : ''), type: 'button', 'aria-pressed': o[0] === current ? 'true' : 'false', text: o[1],
+        onclick: function () {
+          var all = row.querySelectorAll('button');
+          for (var i = 0; i < all.length; i++) { all[i].classList.remove('primary'); all[i].setAttribute('aria-pressed', 'false'); }
+          b.classList.add('primary'); b.setAttribute('aria-pressed', 'true');
+          onPick(o[0], b);
+        } });
+      row.appendChild(b);
+    });
+    return row;
+  }
+  /* Télé (29/09, LG) : jellyfin-web gère la télécommande pour sa propre page et ne voit pas ce panneau — les
+     flèches déplaçaient la sélection DERRIÈRE (« Reprendre »). Panneau ouvert : les flèches passent d'un élément
+     du panneau à l'autre (ordre de lecture), OK active l'élément, Retour ferme. */
+  function focusables() {
+    if (!S.el.box) return [];
+    return Array.prototype.filter.call(S.el.box.querySelectorAll('button, a[href], select, input'), function (e) {
+      return !e.disabled && e.offsetParent !== null;
+    });
+  }
+  function moveFocus(step) {
+    var list = focusables(); if (!list.length) return;
+    var i = list.indexOf(document.activeElement);
+    var n = i < 0 ? (step > 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, i + step));
+    list[n].focus();
+    try { list[n].scrollIntoView({ block: 'nearest' }); } catch (e) { list[n].scrollIntoView(false); }
+  }
   function toggle() { S.open ? close() : open(); }
-  document.addEventListener('keydown', function (ev) {
+  window.addEventListener('keydown', function (ev) {
     if (!S.open) return;
-    if (ev.key === 'Escape' || ev.keyCode === 27 || ev.keyCode === 461 || ev.keyCode === 10009 || ev.keyCode === 8) { ev.preventDefault(); ev.stopPropagation(); close(); }
+    var k = ev.keyCode;
+    if (ev.key === 'Escape' || k === 27 || k === 461 || k === 10009 || (k === 8 && !(ev.target && /INPUT|TEXTAREA/.test(ev.target.tagName)))) {
+      ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation(); close(); return;
+    }
+    if (!TV) return;
+    if (k >= 37 && k <= 40) {
+      ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
+      moveFocus(k === 38 || k === 37 ? -1 : 1);
+    } else if (k === 13) {
+      ev.stopPropagation(); ev.stopImmediatePropagation(); // l'activation native du bouton reste
+    }
   }, true);
 
   function mount() {

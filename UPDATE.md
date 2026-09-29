@@ -58,6 +58,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   d'épisode poussait ses boutons « Démarrer maintenant » et « Cacher » hors de l'écran. Ils restent maintenant visibles.
 - **Sous-titres en AirPlay (29/09)** : diffusé en AirPlay depuis un iPhone, iPad ou Mac, un film arrivait sur la télé
   sans ses sous-titres. Ils font maintenant partie du flux envoyé à la télé.
+- **Mon compte à la télécommande (29/09)** : sur les télés, le panneau Mon compte s'ouvrait mais on ne pouvait pas s'y
+  déplacer. Les flèches passent maintenant d'un réglage à l'autre, et la langue et la taille des sous-titres se
+  choisissent par des boutons.
 - **Télés LG (29/09)** : changer de langue en cours de film (VF → VO) ne faisait rien sur les télés LG ; la télé
   restait sur la piste par défaut. Le changement passe maintenant par le serveur (quelques secondes de chargement,
   sans perte de qualité), et le mode « Toujours en VO » de Mon compte marche aussi sur LG. Sur les télés, les

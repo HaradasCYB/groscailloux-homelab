@@ -463,6 +463,9 @@ journalctl -u homelabd -f
   met les sous-titres dans le flux (`#EXT-X-MEDIA TYPE=SUBTITLES`, piste choisie `DEFAULT=YES`), affichés nativement par
   l'iPhone et transmis par AirPlay, sans conversion vidéo. Lecture **directe** (MP4 lisible tel quel) : non couverte.
   Banc `backups/lg-tv-20260929/sub_airplay.js` (`ITEM=<id> run.sh sub_airplay.js "iphone:0 iphone:1 desktop:1"`).
+  **Limite vue le 29/09** : le récepteur AirPlay **intégré à une télé LG** (`AirPlay/2.0 … MFi_AirPlay_Device`)
+  télécharge bien `subtitles.m3u8` et `stream.vtt` mais n'affiche rien ; sur une télé LG, utiliser l'appli Jellyfin de
+  la télé. Seule autre voie : incruster les sous-titres pendant l'AirPlay (conversion vidéo complète, non faite).
   **Chromecast = son AAC imposé par NPM** (2026-09-27) : le récepteur Jellyfin (agent `CrKey`) s'est mis à déclarer
   l'AC3/E-AC3 ; Jellyfin copiait donc le son dans le HLS et la télé restait sur « Ready to cast » après le 1ᵉʳ segment
   (jusqu'au 23/09 : `AudioCodec=aac`, des centaines de segments). Bloc `location ~* ^/videos/[^/]+/master\.m3u8$` de
@@ -489,6 +492,10 @@ journalctl -u homelabd -f
   n'est pas la 1re piste du fichier), et toute demande `PlaybackInfo` (XHR du SDK **et** fetch) pour une autre piste
   que celle « par défaut » du fichier part avec `EnableDirectPlay=false` → remux, image et son copiés. Piste par
   défaut = lecture directe comme avant. Sous-titres ×1,4 + contour et panneau Mon compte en 22 px sur TV (`app.js`).
+  **Panneau Mon compte à la télécommande** (29/09) : jellyfin-web ne voit pas notre panneau, les flèches déplaçaient la
+  sélection DERRIÈRE. Sur TV, `app.js` capte ←↑→↓ (écouteur `window` en capture, avant jellyfin-web) et passe d'un
+  élément du panneau à l'autre, OK garde l'activation native, Retour ferme ; langue et taille = boutons (`choices`) au
+  lieu de `<select>`. Banc `backups/lg-tv-20260929/lg_panel.js`.
   Banc `backups/lg-tv-20260929/` (`run.sh lg_audio.js "tv:0"` : télé LG **émulée** — `audioTracks` et HEVC/E-AC3
   déclarés —, `lg_screens.js` : captures) ; le Chromium du banc ne décode pas le HEVC : le lecteur y finit en
   « Erreur de lecture », seules les décisions du serveur sont mesurées.
