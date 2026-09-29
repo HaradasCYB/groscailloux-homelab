@@ -57,7 +57,24 @@
     return v && typeof v.webkitShowPlaybackTargetPicker === 'function' ? v : null;
   }
 
+  /* Sous-titres en AirPlay (2026-09-29) : jellyfin-web ne déclare que des sous-titres « External », qu'il dessine
+     lui-même par-dessus la vidéo ; AirPlay n'envoie à la télé que le flux HLS, donc sans sous-titres (Chainsaw Man,
+     un membre). Déclarer aussi `vtt` en « Hls » (en tête) : pour une lecture en HLS (remux ou conversion), le serveur
+     met les sous-titres DANS le flux (`#EXT-X-MEDIA TYPE=SUBTITLES`, la piste choisie en DEFAULT=YES), que l'iPhone
+     affiche nativement et qu'AirPlay transmet. Aucune conversion vidéo. Lecture directe : inchangée. */
+  function withHlsSubtitles(bodyText) {
+    var b;
+    try { b = JSON.parse(bodyText || '{}'); } catch (e) { return bodyText; }
+    var prof = b && b.DeviceProfile;
+    if (!prof) return bodyText;
+    var subs = prof.SubtitleProfiles || [];
+    if (subs.some(function (x) { return x && x.Method === 'Hls'; })) return bodyText;
+    prof.SubtitleProfiles = [{ Format: 'vtt', Method: 'Hls' }].concat(subs);
+    return JSON.stringify(b);
+  }
+
   root.__gcAirPlay = {
+    withHlsSubtitles: withHlsSubtitles,
     isApple: isApple,
     isAndroid: isAndroid,
     castUnsupported: castUnsupported,
@@ -66,6 +83,28 @@
     EMPTY_ANDROID: EMPTY_ANDROID
   };
   if (typeof window === 'undefined' || root !== window) return; // tests
+
+  /* PlaybackInfo : XHR du SDK (jellyfin-web 10.11) et fetch (ancien client) — appareils Apple seulement */
+  if (isApple() && !window.__gcHlsSubs) {
+    window.__gcHlsSubs = true;
+    var xOpen = XMLHttpRequest.prototype.open, xSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__gcSubPI = /^post$/i.test(method) && /\/PlaybackInfo/i.test(String(url));
+      return xOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function (data) {
+      if (this.__gcSubPI && typeof data === 'string') data = withHlsSubtitles(data);
+      return xSend.call(this, data);
+    };
+    var oFetch = window.fetch;
+    window.fetch = function (input, init) {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      if (init && /^post$/i.test(init.method || '') && /\/PlaybackInfo/i.test(url) && typeof init.body === 'string') {
+        init = Object.assign({}, init, { body: withHlsSubtitles(init.body) });
+      }
+      return oFetch.call(this, input, init);
+    };
+  }
 
   /* --- journal : ce qui s'est passé, lisible côté serveur (jellyfin/config/log/upload_*.log) --- */
   var steps = [];

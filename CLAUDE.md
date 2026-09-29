@@ -456,6 +456,13 @@ journalctl -u homelabd -f
   Jellyfin** (`getSessions`), jamais les cibles Cast ou AirPlay du navigateur. Récepteur Cast du serveur :
   `CastReceiverApplications` = Stable `F007D354`, posé sur les comptes. AirPlay passe par le bouton du lecteur
   dans Safari/iPhone.
+  **Sous-titres en AirPlay** (2026-09-29) : jellyfin-web ne déclare que des sous-titres `External`, dessinés par la
+  page par-dessus la vidéo ; AirPlay n'envoie que le flux HLS → télé sans sous-titres (Chainsaw Man, un membre et
+  l'admin). `gc-airplay.js` (appareils Apple seulement) ajoute `{Format: vtt, Method: Hls}` **en tête** des
+  `SubtitleProfiles` de chaque `PlaybackInfo` (XHR du SDK et fetch) : en lecture HLS (remux ou conversion), le serveur
+  met les sous-titres dans le flux (`#EXT-X-MEDIA TYPE=SUBTITLES`, piste choisie `DEFAULT=YES`), affichés nativement par
+  l'iPhone et transmis par AirPlay, sans conversion vidéo. Lecture **directe** (MP4 lisible tel quel) : non couverte.
+  Banc `backups/lg-tv-20260929/sub_airplay.js` (`ITEM=<id> run.sh sub_airplay.js "iphone:0 iphone:1 desktop:1"`).
   **Chromecast = son AAC imposé par NPM** (2026-09-27) : le récepteur Jellyfin (agent `CrKey`) s'est mis à déclarer
   l'AC3/E-AC3 ; Jellyfin copiait donc le son dans le HLS et la télé restait sur « Ready to cast » après le 1ᵉʳ segment
   (jusqu'au 23/09 : `AudioCodec=aac`, des centaines de segments). Bloc `location ~* ^/videos/[^/]+/master\.m3u8$` de

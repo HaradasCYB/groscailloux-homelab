@@ -56,6 +56,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   reprise environ deux fois plus rapide. Les Chromecast 4K ne changent pas.
 - **Fenêtre « Épisode suivant » (29/09)** : quand le titre d'un épisode était un nom de fichier, la fenêtre de fin
   d'épisode poussait ses boutons « Démarrer maintenant » et « Cacher » hors de l'écran. Ils restent maintenant visibles.
+- **Sous-titres en AirPlay (29/09)** : diffusé en AirPlay depuis un iPhone, iPad ou Mac, un film arrivait sur la télé
+  sans ses sous-titres. Ils font maintenant partie du flux envoyé à la télé.
 - **Télés LG (29/09)** : changer de langue en cours de film (VF → VO) ne faisait rien sur les télés LG ; la télé
   restait sur la piste par défaut. Le changement passe maintenant par le serveur (quelques secondes de chargement,
   sans perte de qualité), et le mode « Toujours en VO » de Mon compte marche aussi sur LG. Sur les télés, les
