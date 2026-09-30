@@ -131,6 +131,14 @@ pub async fn search_text(
     run(ctx, prow, manual, |id| prow.search(query, id, limit)).await
 }
 
+/// Liste vide : panne de l'indexer (notée par Prowlarr, ou page de maintenance) plutôt que « rien trouvé » ?
+async fn indexer_down(prow: &ProwlarrClient, id: i64) -> bool {
+    if prow.indexer_failing(id).await.unwrap_or(false) {
+        return true;
+    }
+    !prow.indexer_reachable(id).await.unwrap_or(true)
+}
+
 async fn run<F, Fut>(
     ctx: &TaskContext,
     prow: &ProwlarrClient,
@@ -147,6 +155,13 @@ where
             return Ok(None);
         };
         match call(key.id).await {
+            // liste vide : panne de l'indexer ou vraiment rien ? Prowlarr ne le dit que dans `indexerstatus`
+            Ok(v) if v.is_empty() && indexer_down(prow, key.id).await => {
+                anyhow::bail!(
+                    "{} indisponible (panne ou maintenance) : nouvelle tentative plus tard",
+                    key.name
+                )
+            }
             Ok(v) => return Ok(Some(v)),
             Err(e) if is_limit(&e) => mark_limited(ctx, &key.name).await,
             Err(e) => return Err(e),

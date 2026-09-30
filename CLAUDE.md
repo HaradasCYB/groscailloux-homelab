@@ -605,6 +605,11 @@ journalctl -u homelabd -f
   Plafonds de taille du choix automatique : `max_gb_per_episode` (3) et `max_gb_per_movie` (15) — sinon un pack
   de 134 Go à une seule source peut gagner contre un 27,8 Go bien partagé. Un refus « blocked till … » compte
   comme une **erreur** (nouvelle tentative dans l'heure), plus comme « aucun candidat » (24 h).
+  **Panne de C411 ≠ « aucune release »** (2026-09-30) : Prowlarr répond à une recherche par une liste **vide** avec un
+  code 200 quand C411 est en panne (503) ou en maintenance (page HTML « Incident en cours » servie en 200, rien dans
+  `indexerstatus`). Trois films d'un membre sont ainsi passés pour introuvables et attendaient 24 h. Désormais, sur une
+  liste vide, `indexer::indexer_down` regarde `indexerstatus` (échec < 10 min ou `disabledTill` à venir) **et** sonde
+  `<baseUrl>/api?t=caps` (sans clé, aucun quota) ; panne ⇒ erreur, nouvelle tentative au bout de `error_retry_hours`.
 - **Titre supprimé puis redemandé : le torrent est réutilisé, pas retéléchargé** (2026-09-18). `deletion_cleanup`
   garde les torrents en partage (C411 : ratio 1 ou 7 j) alors que les fichiers médias, eux, sont supprimés.
   Redemandé, `torrents/add` répondait « Fails. » (déjà présent) et **rien ne s'importait** : Bleach S17, 0/20

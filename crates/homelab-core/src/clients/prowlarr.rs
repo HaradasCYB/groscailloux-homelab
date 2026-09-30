@@ -84,6 +84,53 @@ impl ProwlarrClient {
         Ok(v.as_array().cloned().unwrap_or_default())
     }
 
+    /// Vrai si Prowlarr a noté un échec récent de cet indexer (panne, 503, délai dépassé). Prowlarr répond alors
+    /// à une recherche par une liste **vide**, sans erreur : sans ce contrôle, une panne de C411 passait pour
+    /// « aucune release » et la recherche n'était refaite que 24 h plus tard (3 films d'un membre, 30/09).
+    pub async fn indexer_failing(&self, indexer_id: i64) -> Result<bool> {
+        let resp = self.req(Method::GET, "api/v1/indexerstatus").send().await?;
+        let v = json(resp, "prowlarr indexerstatus").await?;
+        Ok(failing_in(&v, indexer_id, chrono::Utc::now()))
+    }
+
+    /// Sonde directe de l'indexer : sa page `caps` Torznab (sans clé, aucun quota). Le 30/09, C411 en maintenance
+    /// renvoyait une page HTML « Incident en cours » avec un code 200 : Prowlarr échouait en silence (liste vide,
+    /// rien dans `indexerstatus`). Vrai = réponse Torznab valide.
+    pub async fn indexer_reachable(&self, indexer_id: i64) -> Result<bool> {
+        let resp = self
+            .req(Method::GET, &format!("api/v1/indexer/{indexer_id}"))
+            .send()
+            .await?;
+        let def = json(resp, "prowlarr indexer").await?;
+        let field = |n: &str| {
+            def.get("fields")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|f| f.get("name").and_then(Value::as_str) == Some(n))
+                .and_then(|f| f.get("value"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        let Some(base) = field("baseUrl") else {
+            return Ok(true); // indexer sans URL lisible : on ne conclut rien
+        };
+        let path = field("apiPath").unwrap_or_else(|| "/api".into());
+        let url = format!("{}{}?t=caps", base.trim_end_matches('/'), path);
+        let Ok(r) = self
+            .http
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+        else {
+            return Ok(false);
+        };
+        let ok = r.status().is_success();
+        let body = r.text().await.unwrap_or_default();
+        Ok(ok && looks_like_caps(&body))
+    }
+
     /// Contenu d'un `.torrent` à partir du lien de téléchargement renvoyé par une recherche (il passe par
     /// Prowlarr, qui porte la clé de l'indexer).
     pub async fn download(&self, url: &str) -> Result<Vec<u8>> {
@@ -144,5 +191,64 @@ impl ProwlarrClient {
             .await?;
         let v = json(resp, "prowlarr search").await?;
         Ok(v.as_array().cloned().unwrap_or_default())
+    }
+}
+
+/// Réponse `t=caps` Torznab valide (et non une page HTML de maintenance).
+pub fn looks_like_caps(body: &str) -> bool {
+    let b = body.trim_start();
+    b.contains("<caps") && !b.to_ascii_lowercase().starts_with("<!doctype html")
+}
+
+/// `indexerstatus` de Prowlarr : l'indexer est en échec s'il est mis de côté (`disabledTill` à venir) ou s'il a
+/// échoué dans les 10 dernières minutes (`mostRecentFailure`).
+pub fn failing_in(status: &Value, indexer_id: i64, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let at = |e: &Value, k: &str| {
+        e.get(k)
+            .and_then(Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+    };
+    status.as_array().into_iter().flatten().any(|e| {
+        e.get("indexerId").and_then(Value::as_i64) == Some(indexer_id)
+            && (at(e, "disabledTill").is_some_and(|d| d > now)
+                || at(e, "mostRecentFailure")
+                    .is_some_and(|d| now - d < chrono::Duration::minutes(10)))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn indexer_failure_is_detected_from_status() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-30T12:58:30Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        // la panne du 30/09 : mis de côté jusqu'à 14:59:21 heure de Paris
+        let st = json!([{ "indexerId": 1, "disabledTill": "2026-09-30T12:59:21Z", "mostRecentFailure": "2026-09-30T12:58:21Z" }]);
+        assert!(failing_in(&st, 1, now));
+        assert!(
+            !failing_in(&st, 2, now),
+            "un autre indexer n'est pas concerné"
+        );
+        let old = json!([{ "indexerId": 1, "mostRecentFailure": "2026-09-30T10:00:00Z" }]);
+        assert!(!failing_in(&old, 1, now), "un échec ancien ne compte plus");
+        let recent = json!([{ "indexerId": 1, "mostRecentFailure": "2026-09-30T12:55:00Z" }]);
+        assert!(failing_in(&recent, 1, now));
+        assert!(!failing_in(&json!([]), 1, now));
+    }
+
+    #[test]
+    fn caps_probe_rejects_maintenance_page() {
+        assert!(looks_like_caps(
+            "<?xml version=\"1.0\"?><caps><server title=\"C411\"/></caps>"
+        ));
+        assert!(!looks_like_caps(
+            "<!DOCTYPE html><html><head><title>Incident en cours - C411</title>"
+        ));
+        assert!(!looks_like_caps(""));
     }
 }

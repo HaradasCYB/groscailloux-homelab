@@ -61,6 +61,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Mon compte à la télécommande (29/09)** : sur les télés, le panneau Mon compte s'ouvrait mais on ne pouvait pas s'y
   déplacer. Les flèches passent maintenant d'un réglage à l'autre, et la langue et la taille des sous-titres se
   choisissent par des boutons.
+- **Demandes pendant une panne de C411 (30/09)** : quand le site de téléchargement était en panne, une demande passait
+  pour « introuvable » et n'était recherchée à nouveau que le lendemain. La panne est maintenant reconnue : la recherche
+  reprend toute seule dès que le site revient.
 - **Télés LG (29/09)** : changer de langue en cours de film (VF → VO) ne faisait rien sur les télés LG ; la télé
   restait sur la piste par défaut. Le changement passe maintenant par le serveur (quelques secondes de chargement,
   sans perte de qualité), et le mode « Toujours en VO » de Mon compte marche aussi sur LG. Sur les télés, les
