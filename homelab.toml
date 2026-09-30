@@ -389,6 +389,9 @@ allow_no_french = true        # release sans français (VO) prise en dernier rec
 # 110 Mo/min sur les qualités 1080p (qualitydefinition). L'existant n'est pas touché.
 max_gb_per_episode = 3.0      # au-delà, écartée du choix automatique (reste visible sur la page)
 max_gb_per_movie = 15.0
+# Secours PUBLIC (sans compte), seulement quand C411 est en panne (2026-09-30, « Incident en cours ») : recherche en
+# texte libre, release rattachée par le `parse` de l'Arr, mêmes règles de langue / taille / codec. Vide = aucun.
+fallback = "World-torrent"
 
 [downloads]
 # Tout ce qui est neuf passe par la SEEDBOX (2026-09-18). Le VPS garde ses fiches, ses fichiers et ses

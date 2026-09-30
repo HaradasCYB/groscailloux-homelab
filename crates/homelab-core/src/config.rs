@@ -91,6 +91,9 @@ pub struct Indexers {
     /// Plafonds de taille du choix automatique (la page reste libre).
     pub max_gb_per_episode: f64,
     pub max_gb_per_movie: f64,
+    /// Indexer PUBLIC de secours (nom dans Prowlarr), interrogé en texte libre **seulement quand C411 est en
+    /// panne** (2026-09-30 : « Incident en cours » toute la soirée). Vide = aucun secours.
+    pub fallback: String,
 }
 
 impl Default for Indexers {
@@ -102,6 +105,7 @@ impl Default for Indexers {
             allow_no_french: true,
             max_gb_per_episode: 3.0,
             max_gb_per_movie: 15.0,
+            fallback: "World-torrent".into(),
         }
     }
 }

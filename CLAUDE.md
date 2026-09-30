@@ -610,6 +610,16 @@ journalctl -u homelabd -f
   `indexerstatus`). Trois films d'un membre sont ainsi passés pour introuvables et attendaient 24 h. Désormais, sur une
   liste vide, `indexer::indexer_down` regarde `indexerstatus` (échec < 10 min ou `disabledTill` à venir) **et** sonde
   `<baseUrl>/api?t=caps` (sans clé, aucun quota) ; panne ⇒ erreur, nouvelle tentative au bout de `error_retry_hours`.
+  **Secours public quand C411 est en panne : World-torrent** (2026-09-30, demandé par l'utilisateur : public, sans
+  compte). Indexer « World-torrent » (id 10) dans le **Prowlarr du VPS** (joignable sans Cloudflare ; Torrent9 testé :
+  0 résultat, retiré ; 1337x/TPB : presque rien en VF). `[indexers] fallback = "World-torrent"` ; **films seulement**
+  pour l'instant (`movie_search`) : seulement si `indexer::is_outage`. Il ne cherche que par **titre français** et la
+  ponctuation le perd → titre TMDB français (Jellyseerr `movie_details`) nettoyé + année, puis début du titre + année
+  (`movie_search::fallback_queries`) ; pas d'identifiant TMDB chez lui : la release n'est gardée que si le `parse` de
+  Radarr la rattache à CETTE fiche ; mêmes règles de langue/taille/codec. Son lien « .torrent » est une redirection 301
+  vers un magnet : `send_release` passe par le magnet pour le secours. Torrents publics : l'hébergeur de la seedbox
+  les arrête une fois terminés (normal, aucun ratio à tenir). Le 30/09 : 3 films d'un membre pris ainsi (VF2 1080p ×2,
+  TRUEFRENCH 720p). Séries : à brancher.
 - **Titre supprimé puis redemandé : le torrent est réutilisé, pas retéléchargé** (2026-09-18). `deletion_cleanup`
   garde les torrents en partage (C411 : ratio 1 ou 7 j) alors que les fichiers médias, eux, sont supprimés.
   Redemandé, `torrents/add` répondait « Fails. » (déjà présent) et **rien ne s'importait** : Bleach S17, 0/20

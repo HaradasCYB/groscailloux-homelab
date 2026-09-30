@@ -875,11 +875,16 @@ pub async fn send_release(
 ) -> Result<(String, String)> {
     let tag = target.tag();
     let tag = tag.as_str();
-    // release sans .torrent (Nyaa) : lien magnet ajouté directement au qBittorrent du même côté
-    if let (None, Some(magnet)) = (
-        release.get("downloadUrl").and_then(Value::as_str),
-        release.get("magnetUrl").and_then(Value::as_str),
-    ) {
+    // release sans .torrent (Nyaa), ou venue du secours public (World-torrent : son « .torrent » est une
+    // redirection 301 vers un magnet, 30/09) : lien magnet ajouté directement au qBittorrent du même côté
+    let from_fallback =
+        !ctx.cfg.indexers.fallback.is_empty() && indexer == ctx.cfg.indexers.fallback;
+    let dl = release.get("downloadUrl").and_then(Value::as_str);
+    let magnet = release
+        .get("magnetUrl")
+        .and_then(Value::as_str)
+        .or(if from_fallback { dl } else { None });
+    if let (true, Some(magnet)) = (dl.is_none() || from_fallback, magnet) {
         let qbit = qbit_for(ctx, arr).context("aucun qBittorrent pour ce côté")?;
         qbit.add_url(&prow.resolve_magnet(magnet).await?, tag)
             .await?;

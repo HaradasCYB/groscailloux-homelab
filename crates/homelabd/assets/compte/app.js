@@ -386,6 +386,33 @@
   mount();
   // la taille est aussi relue à chaque tour : un changement fait dans Réglages → Sous-titres de Jellyfin suit
   setInterval(function () { mount(); applySubtitleSize(); }, TV ? 3000 : 1000);
+  /* Diagnostic télé (29/09) : sur LG, la taille choisie ne changeait pas le sous-titre principal alors que le
+     secondaire grossissait. Une fois par lecture, dès qu'un texte de sous-titre est à l'écran, on envoie au journal
+     client de Jellyfin (jellyfin/config/log/upload_*.log, ligne « gc-subdiag ») quels éléments le portent et à
+     quelle taille réelle. Aucune donnée personnelle ; à retirer une fois la cause trouvée. */
+  var SUBDIAG = {};
+  if (TV) setInterval(function () {
+    try {
+      var v = document.querySelector('video'), AC = window.ApiClient;
+      if (!v || !AC || !AC.getUrl || v.paused || v.currentTime < 3) return;
+      var key = (v.currentSrc || v.src || '').replace(/[?#].*$/, '').slice(-60);
+      if (SUBDIAG[key]) return;
+      var rows = [];
+      var cand = document.querySelectorAll('.videoSubtitles, .videoSubtitlesInner, .videoSecondarySubtitlesInner, .videoPlayerContainer [class*="ubtitle"], .videoPlayerContainer [class*="cue"], track');
+      Array.prototype.forEach.call(cand, function (e) {
+        var cs = getComputedStyle(e), r = e.getBoundingClientRect();
+        rows.push((e.tagName + '.' + String(e.className || '').replace(/\s+/g, '.')).slice(0, 70) + ' | texte="' + (e.textContent || '').trim().slice(0, 25)
+          + '" | font=' + cs.fontSize + ' | h=' + Math.round(r.height) + ' | inline=' + (e.getAttribute('style') || '').slice(0, 80)
+          + (e.tagName === 'TRACK' ? ' | kind=' + e.kind + ' src=' + String(e.src || '').replace(/[?].*$/, '').slice(-40) : ''));
+      });
+      var tt = Array.prototype.map.call(v.textTracks || [], function (t) { return t.kind + ':' + t.mode + ':' + (t.cues ? t.cues.length : '-'); }).join(',');
+      if (!rows.some(function (x) { return /texte="[^"]/.test(x); }) && !/showing/.test(tt)) return; // pas encore de sous-titre à l'écran
+      SUBDIAG[key] = true;
+      var body = 'gc-subdiag | ' + navigator.userAgent + '\nvideo ' + v.videoWidth + 'x' + v.videoHeight + ' affichée ' + Math.round(v.getBoundingClientRect().width) + 'px | textTracks=' + tt
+        + '\ngc-sub-size=' + ((document.getElementById('gc-sub-size') || {}).textContent || 'absent').slice(0, 120) + '\n' + rows.join('\n') + '\n';
+      fetch(AC.getUrl('ClientLog/Document'), { method: 'POST', headers: { 'Content-Type': 'text/plain', 'X-Emby-Token': AC.accessToken() }, body: body }).catch(function () {});
+    } catch (e) { /* jamais bloquant */ }
+  }, 4000);
 
   // ---- Onglet Demandes (Jellyfin Enhanced) : barre d'avancement sous chaque demande en cours -------------
   var REQ = { data: null, at: 0, timer: null };

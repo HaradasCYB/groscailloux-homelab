@@ -176,13 +176,24 @@ impl ProwlarrClient {
     /// Recherche en texte libre sur un indexer. Les résultats portent `title`, `downloadUrl`,
     /// `publishDate`, `size` et `seeders`.
     pub async fn search(&self, query: &str, indexer_id: i64, limit: u32) -> Result<Vec<Value>> {
+        self.search_in(query, indexer_id, "5000", limit).await
+    }
+
+    /// Recherche en texte libre dans une catégorie (`2000` films, `5000` séries).
+    pub async fn search_in(
+        &self,
+        query: &str,
+        indexer_id: i64,
+        categories: &str,
+        limit: u32,
+    ) -> Result<Vec<Value>> {
         let (id, lim) = (indexer_id.to_string(), limit.to_string());
         let resp = self
             .req(Method::GET, "api/v1/search")
             .query(&[
                 ("query", query),
                 ("indexerIds", id.as_str()),
-                ("categories", "5000"),
+                ("categories", categories),
                 ("type", "search"),
                 ("limit", lim.as_str()),
             ])

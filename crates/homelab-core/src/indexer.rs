@@ -131,6 +131,33 @@ pub async fn search_text(
     run(ctx, prow, manual, |id| prow.search(query, id, limit)).await
 }
 
+/// Message d'erreur d'une panne de l'indexer (voir `run`) : la tâche peut alors passer au secours public.
+pub fn is_outage(e: &anyhow::Error) -> bool {
+    format!("{e:#}").contains(OUTAGE)
+}
+const OUTAGE: &str = "indisponible (panne ou maintenance)";
+
+/// Secours public (`[indexers] fallback`, ex. World-torrent) : recherche en texte libre, sans quota. `None` si
+/// aucun secours n'est configuré ou trouvé dans Prowlarr. Renvoie le nom de l'indexer et ses résultats.
+pub async fn search_fallback(
+    ctx: &TaskContext,
+    prow: &ProwlarrClient,
+    query: &str,
+    categories: &str,
+) -> Result<Option<(String, Vec<Value>)>> {
+    let name = ctx.cfg.indexers.fallback.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let Some(id) = prow.indexer_id(name).await? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        name.to_string(),
+        prow.search_in(query, id, categories, 100).await?,
+    )))
+}
+
 /// Liste vide : panne de l'indexer (notée par Prowlarr, ou page de maintenance) plutôt que « rien trouvé » ?
 async fn indexer_down(prow: &ProwlarrClient, id: i64) -> bool {
     if prow.indexer_failing(id).await.unwrap_or(false) {
@@ -157,10 +184,7 @@ where
         match call(key.id).await {
             // liste vide : panne de l'indexer ou vraiment rien ? Prowlarr ne le dit que dans `indexerstatus`
             Ok(v) if v.is_empty() && indexer_down(prow, key.id).await => {
-                anyhow::bail!(
-                    "{} indisponible (panne ou maintenance) : nouvelle tentative plus tard",
-                    key.name
-                )
+                anyhow::bail!("{} {OUTAGE} : nouvelle tentative plus tard", key.name)
             }
             Ok(v) => return Ok(Some(v)),
             Err(e) if is_limit(&e) => mark_limited(ctx, &key.name).await,

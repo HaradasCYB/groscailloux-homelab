@@ -27,6 +27,45 @@ use crate::state::{now, SeasonSearchRecord};
 
 pub struct MovieSearch;
 
+/// Requêtes pour un tracker public français (World-torrent) : il ne trouve que le titre **français**, et la
+/// ponctuation le perd (« Les Gardiens de la Galaxie Vol. 2 » → 0, « Les Gardiens de la Galaxie 2017 » → 5).
+/// Titre nettoyé + année, puis début du titre (avant « : », « - », « Vol ») + année.
+pub fn fallback_queries(fr_title: &str, year: i64) -> Vec<String> {
+    let clean = |t: &str| {
+        t.chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '\'' {
+                    c
+                } else {
+                    ' '
+                }
+            })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let y = if year > 0 {
+        format!(" {year}")
+    } else {
+        String::new()
+    };
+    let mut out = vec![format!("{}{y}", clean(fr_title))];
+    let lower = fr_title.to_lowercase();
+    let cut = [":", " - ", " vol", " –"]
+        .iter()
+        .filter_map(|m| lower.find(m))
+        .min();
+    if let Some(i) = cut {
+        let head = clean(&fr_title[..i]);
+        if !head.is_empty() {
+            out.push(format!("{head}{y}"));
+        }
+    }
+    out.dedup();
+    out
+}
+
 /// Film à rattraper : suivi, sans fichier, sorti, ajouté depuis assez longtemps, hors file d'attente.
 pub fn wanted(movie: &Value, queued: &HashSet<i64>, now_secs: i64, missing_hours: i64) -> bool {
     let id = movie.get("id").and_then(Value::as_i64).unwrap_or(0);
@@ -157,18 +196,58 @@ async fn process_movie(
     if !throttle.take().await {
         return Ok(("pending".into(), String::new()));
     }
-    let Some(found) = crate::indexer::search_tmdb(ctx, prow, tmdb, None, false).await? else {
-        return Ok(("pending".into(), String::new()));
+    // C411 par identifiant ; s'il est en panne, secours public en texte libre (titre + année)
+    let (found, source) = match crate::indexer::search_tmdb(ctx, prow, tmdb, None, false).await {
+        Ok(Some(f)) => (f, cfg.indexer.clone()),
+        Ok(None) => return Ok(("pending".into(), String::new())),
+        Err(e) if crate::indexer::is_outage(&e) => {
+            let year = movie.get("year").and_then(Value::as_i64).unwrap_or(0);
+            // les trackers publics français cherchent par titre FRANÇAIS (TMDB via Jellyseerr)
+            let fr = ctx
+                .jellyseerr
+                .movie_details(tmdb)
+                .await
+                .ok()
+                .and_then(|d| d.get("title").and_then(Value::as_str).map(str::to_string))
+                .unwrap_or_else(|| title.to_string());
+            let mut got = None;
+            for q in fallback_queries(&fr, year) {
+                match crate::indexer::search_fallback(ctx, prow, &q, "2000").await? {
+                    Some((name, f)) => {
+                        info!(task = "movie_search", movie = title, fallback = %name, query = %q, results = f.len(), "C411 en panne : recherche de secours");
+                        let empty = f.is_empty();
+                        got = Some((f, name));
+                        if !empty {
+                            break;
+                        }
+                    }
+                    None => return Err(e),
+                }
+            }
+            match got {
+                Some(g) => g,
+                None => return Err(e),
+            }
+        }
+        Err(e) => return Err(e),
     };
+    let fallback = source != cfg.indexer;
     let mut items = Vec::new();
-    for r in found {
-        if !tmdb_matches(&r, tmdb) {
+    for mut r in found.into_iter().take(40) {
+        if !fallback && !tmdb_matches(&r, tmdb) {
             continue;
         }
-        let Some(t) = r.get("title").and_then(Value::as_str) else {
+        let Some(t) = r.get("title").and_then(Value::as_str).map(str::to_string) else {
             continue;
         };
-        let parse = arr.parse(t).await?;
+        let parse = arr.parse(&t).await?;
+        if fallback {
+            // pas d'identifiant TMDB chez un tracker public : c'est l'Arr qui dit si c'est bien CE film
+            if parse.pointer("/movie/id").and_then(Value::as_i64) != Some(id) {
+                continue;
+            }
+            r["tmdbId"] = json!(tmdb);
+        }
         let info = parse.get("parsedMovieInfo").cloned().unwrap_or_default();
         items.push((r, info));
     }
@@ -185,6 +264,12 @@ async fn process_movie(
         ix.max_gb_per_movie,
         ix.allow_no_french,
     ) else {
+        // secours sans rien d'acceptable : on retentera C411 dans l'heure, pas dans 24 h
+        anyhow::ensure!(
+            !fallback,
+            "C411 en panne ; secours {source} : {} release(s), aucune acceptable",
+            items.len()
+        );
         return Ok((
             "none".into(),
             format!(
@@ -209,7 +294,7 @@ async fn process_movie(
         arr,
         &rtitle,
         &release,
-        &cfg.indexer,
+        &source,
         Target::Movie { movie_id: id },
     )
     .await
@@ -343,6 +428,23 @@ impl Task for MovieSearch {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn fallback_queries_use_the_french_title_without_punctuation() {
+        assert_eq!(
+            fallback_queries("Les Gardiens de la Galaxie Vol. 2", 2017),
+            vec![
+                "Les Gardiens de la Galaxie Vol 2 2017",
+                "Les Gardiens de la Galaxie 2017"
+            ]
+        );
+        assert_eq!(
+            fallback_queries("Kaamelott : Premier Volet", 2021),
+            vec!["Kaamelott Premier Volet 2021", "Kaamelott 2021"]
+        );
+        assert_eq!(fallback_queries("Matrix", 1999), vec!["Matrix 1999"]);
+        assert_eq!(fallback_queries("L'Été dernier", 0), vec!["L'Été dernier"]);
+    }
     use super::*;
 
     fn fr_movie(lang: &str, cinema: &str, digital: Option<&str>) -> Value {
