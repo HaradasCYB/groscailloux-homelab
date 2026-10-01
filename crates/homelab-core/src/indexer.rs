@@ -158,6 +158,19 @@ pub async fn search_fallback(
     )))
 }
 
+/// Recherche en texte libre chez un indexer nommé (secours public). `None` s'il n'existe pas dans Prowlarr.
+pub async fn search_indexer(
+    prow: &ProwlarrClient,
+    name: &str,
+    query: &str,
+    categories: &str,
+) -> Result<Option<Vec<Value>>> {
+    let Some(id) = prow.indexer_id(name).await? else {
+        return Ok(None);
+    };
+    Ok(Some(prow.search_in(query, id, categories, 100).await?))
+}
+
 /// Liste vide : panne de l'indexer (notée par Prowlarr, ou page de maintenance) plutôt que « rien trouvé » ?
 async fn indexer_down(prow: &ProwlarrClient, id: i64) -> bool {
     if prow.indexer_failing(id).await.unwrap_or(false) {

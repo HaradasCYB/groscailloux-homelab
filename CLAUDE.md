@@ -619,7 +619,13 @@ journalctl -u homelabd -f
   Radarr la rattache à CETTE fiche ; mêmes règles de langue/taille/codec. Son lien « .torrent » est une redirection 301
   vers un magnet : `send_release` passe par le magnet pour le secours. Torrents publics : l'hébergeur de la seedbox
   les arrête une fois terminés (normal, aucun ratio à tenir). Le 30/09 : 3 films d'un membre pris ainsi (VF2 1080p ×2,
-  TRUEFRENCH 720p). Séries : à brancher.
+  TRUEFRENCH 720p). **Séries et animés (2026-10-01)** : `series_search::fallback_candidates` — animé : **Nyaa.si**
+  (Prowlarr id 12, `[indexers] fallback_anime`, liens magnet) puis World-torrent ; autre série : World-torrent. Requêtes =
+  deux premiers noms connus sans ponctuation (`fallback_names` : titre TMDB français, titre d'origine) ; release gardée
+  seulement si l'Arr la rattache à CETTE fiche et saison, et **français seulement** (`lang_rank_for` > 0 : la plupart
+  des releases Nyaa sont sous-titrées en anglais, jamais prises pendant une panne). Secours sans candidat acceptable =
+  `error` (retenté dans l'heure), et aucun « trou » affiché sur `/status.html`. Le 30/09, S04E19 de *Re:ZERO* (sorti
+  pendant la panne) a été pris à la main sur Nyaa : `SUBFRENCH 1080p CR WEB-DL x264-Tsundere-Raws`.
 - **Titre supprimé puis redemandé : le torrent est réutilisé, pas retéléchargé** (2026-09-18). `deletion_cleanup`
   garde les torrents en partage (C411 : ratio 1 ou 7 j) alors que les fichiers médias, eux, sont supprimés.
   Redemandé, `torrents/add` répondait « Fails. » (déjà présent) et **rien ne s'importait** : Bleach S17, 0/20

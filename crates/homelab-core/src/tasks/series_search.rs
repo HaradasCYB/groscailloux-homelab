@@ -877,8 +877,9 @@ pub async fn send_release(
     let tag = tag.as_str();
     // release sans .torrent (Nyaa), ou venue du secours public (World-torrent : son « .torrent » est une
     // redirection 301 vers un magnet, 30/09) : lien magnet ajouté directement au qBittorrent du même côté
-    let from_fallback =
-        !ctx.cfg.indexers.fallback.is_empty() && indexer == ctx.cfg.indexers.fallback;
+    let ixc = &ctx.cfg.indexers;
+    let from_fallback = (!ixc.fallback.is_empty() && indexer == ixc.fallback)
+        || (!ixc.fallback_anime.is_empty() && indexer == ixc.fallback_anime);
     let dl = release.get("downloadUrl").and_then(Value::as_str);
     let magnet = release
         .get("magnetUrl")
@@ -1125,6 +1126,105 @@ pub fn gap_names(names: &[String]) -> Vec<String> {
     extra
 }
 
+/// Requêtes de secours : les premiers noms connus (titre français TMDB, titre d'origine…), sans ponctuation.
+pub fn fallback_names(names: &[String], n: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in names {
+        let q = name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '\'' {
+                    c
+                } else {
+                    ' '
+                }
+            })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !q.is_empty() && !out.contains(&q) {
+            out.push(q);
+        }
+        if out.len() >= n {
+            break;
+        }
+    }
+    out
+}
+
+/// C411 en panne (2026-09-30) : secours publics en texte libre — Nyaa d'abord pour un animé, puis World-torrent.
+/// Mêmes garde-fous que le texte libre de C411 (l'Arr doit rattacher la release à CETTE fiche et à cette
+/// saison), plus un : **français seulement** (aucune VO prise pendant une panne). Rien de pris : erreur, pour
+/// retenter C411 dans l'heure.
+async fn fallback_candidates(
+    ctx: &TaskContext,
+    arr: &ArrClient,
+    prow: &ProwlarrClient,
+    todo: &SeasonTodo,
+    names: &[String],
+    anime: bool,
+    outage: anyhow::Error,
+) -> Result<(Vec<Candidate>, Vec<CourPack>, &'static str)> {
+    let ix = &ctx.cfg.indexers;
+    let mut sources: Vec<&str> = Vec::new();
+    if anime && !ix.fallback_anime.trim().is_empty() {
+        sources.push(ix.fallback_anime.trim());
+    }
+    if !ix.fallback.trim().is_empty() {
+        sources.push(ix.fallback.trim());
+    }
+    if sources.is_empty() {
+        return Err(outage);
+    }
+    let mut out: Vec<Candidate> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for src in sources {
+        for q in fallback_names(names, 2) {
+            let Some(found) = crate::indexer::search_indexer(prow, src, &q, "5000").await? else {
+                break; // indexer absent de Prowlarr
+            };
+            info!(task = "series_search", series_id = todo.series_id, season = todo.season, fallback = src, query = %q, results = found.len(), "C411 en panne : recherche de secours");
+            for mut r in found.into_iter().take(60) {
+                let Some(title) = r.get("title").and_then(Value::as_str).map(str::to_string) else {
+                    continue;
+                };
+                if !seen.insert(title.clone())
+                    || derivative(&title, names).is_some()
+                    || lang_rank_for(&title, anime) == 0
+                {
+                    continue;
+                }
+                let parse = arr.parse(&title).await?;
+                match parsed_series(&parse) {
+                    Some(p) if title_matches(&p.title, names) => {}
+                    _ => continue,
+                }
+                if parse.pointer("/series/id").and_then(Value::as_i64) != Some(todo.series_id) {
+                    continue;
+                }
+                r["_gc_source"] = json!(src);
+                let info = parse.get("parsedEpisodeInfo").cloned().unwrap_or_default();
+                if let Some(c) = series_candidate(&r, &info, todo.season, anime) {
+                    out.push(c);
+                }
+            }
+        }
+        if !out.is_empty() && uncovered(&out, &todo.missing_numbers).is_empty() {
+            break;
+        }
+    }
+    Ok((out, Vec::new(), "secours"))
+}
+
+/// Indexer d'où vient un candidat (secours public), C411 par défaut.
+fn source_of<'a>(c: &'a Candidate, default: &'a str) -> &'a str {
+    c.release
+        .get("_gc_source")
+        .and_then(Value::as_str)
+        .unwrap_or(default)
+}
+
 /// Candidats d'une saison : par identifiant TMDB, puis (rien trouvé) en texte libre avec les noms connus.
 async fn season_candidates(
     ctx: &TaskContext,
@@ -1144,11 +1244,15 @@ async fn season_candidates(
         if !throttle.take().await {
             return Ok((out, packs, "budget"));
         }
-        let Some(found) =
-            crate::indexer::search_tmdb(ctx, prow, tmdb, Some(todo.season), false).await?
-        else {
-            return Ok((out, packs, "budget"));
-        };
+        let found =
+            match crate::indexer::search_tmdb(ctx, prow, tmdb, Some(todo.season), false).await {
+                Ok(Some(f)) => f,
+                Ok(None) => return Ok((out, packs, "budget")),
+                Err(e) if crate::indexer::is_outage(&e) => {
+                    return fallback_candidates(ctx, arr, prow, todo, &names, anime, e).await;
+                }
+                Err(e) => return Err(e),
+            };
         for r in found {
             if !tmdb_matches(&r, tmdb) {
                 continue;
@@ -1385,9 +1489,13 @@ async fn process_season(
     if how == "budget" {
         return Ok(SeasonOutcome::new("pending", String::new(), Vec::new()));
     }
-    // ce que l'indexer n'a pas du tout : remonté tel quel sur /status.html
+    // ce que l'indexer n'a pas du tout : remonté tel quel sur /status.html (pas pendant une panne de C411)
     let gap = uncovered(&cands, &todo.missing_numbers);
-    let left: Vec<i64> = gap.iter().copied().collect();
+    let left: Vec<i64> = if how == "secours" {
+        Vec::new()
+    } else {
+        gap.iter().copied().collect()
+    };
     // Un cours publié sous son propre titre peut combler exactement ce trou. Animés seulement, et
     // uniquement si TOUT concorde (voir `offset_mapping`) : sinon on ne touche à rien.
     if cfg.cour_packs
@@ -1455,7 +1563,8 @@ async fn process_season(
         let mut ok = 0usize;
         let mut last = String::new();
         for c in &singles {
-            match send_release(ctx, prow, arr, &c.title, &c.release, &cfg.indexer, target).await {
+            let src = source_of(c, &cfg.indexer);
+            match send_release(ctx, prow, arr, &c.title, &c.release, src, target).await {
                 Ok((outcome, detail)) => {
                     if outcome == "grabbed" {
                         ok += 1;
@@ -1487,7 +1596,7 @@ async fn process_season(
     let chosen = pack.or_else(|| pick(false));
     let Some(c) = chosen else {
         return Ok(SeasonOutcome::new(
-            "none",
+            if how == "secours" { "error" } else { "none" },
             format!(
                 "{} candidat(s) {} (recherche {how}), aucun acceptable",
                 cands.len(),
@@ -1508,8 +1617,16 @@ async fn process_season(
         series_id: todo.series_id,
         season: todo.season,
     };
-    let (mut outcome, detail) =
-        send_release(ctx, prow, arr, &c.title, &c.release, &cfg.indexer, target).await?;
+    let (mut outcome, detail) = send_release(
+        ctx,
+        prow,
+        arr,
+        &c.title,
+        &c.release,
+        source_of(c, &cfg.indexer),
+        target,
+    )
+    .await?;
     if outcome == "grabbed" && !c.full_season {
         outcome = "grabbed_episode".into();
     }
@@ -1804,6 +1921,23 @@ impl Task for SeriesSearch {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn fallback_names_are_clean_and_limited() {
+        let n = vec![
+            "Re:Zero".to_string(),
+            "Re:Zero kara Hajimeru Isekai Seikatsu".to_string(),
+            "Re: ZERO".to_string(),
+        ];
+        assert_eq!(
+            fallback_names(&n, 2),
+            vec!["Re Zero", "Re Zero kara Hajimeru Isekai Seikatsu"]
+        );
+        assert_eq!(
+            fallback_names(&["L'Attaque des Titans".to_string()], 2),
+            vec!["L'Attaque des Titans"]
+        );
+    }
     use super::*;
 
     fn ep(season: i64, num: i64, air: Option<&str>, monitored: bool, has_file: bool) -> Value {

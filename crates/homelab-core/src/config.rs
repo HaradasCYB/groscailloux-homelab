@@ -94,6 +94,9 @@ pub struct Indexers {
     /// Indexer PUBLIC de secours (nom dans Prowlarr), interrogé en texte libre **seulement quand C411 est en
     /// panne** (2026-09-30 : « Incident en cours » toute la soirée). Vide = aucun secours.
     pub fallback: String,
+    /// Secours supplémentaire pour les **animés**, essayé avant `fallback` (Nyaa : public, sans compte ; la
+    /// plupart de ses releases sont sous-titrées en anglais, seules les françaises sont prises).
+    pub fallback_anime: String,
 }
 
 impl Default for Indexers {
@@ -106,6 +109,7 @@ impl Default for Indexers {
             max_gb_per_episode: 3.0,
             max_gb_per_movie: 15.0,
             fallback: "World-torrent".into(),
+            fallback_anime: "Nyaa.si".into(),
         }
     }
 }

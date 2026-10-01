@@ -65,7 +65,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   pour « introuvable » et n'était recherchée à nouveau que le lendemain. La panne est maintenant reconnue : la recherche
   reprend toute seule dès que le site revient.
 - **Site de secours (30/09)** : quand notre site de téléchargement principal est en panne, les films demandés sont
-  cherchés automatiquement sur un site public de secours, en français. Les séries suivront.
+  cherchés automatiquement sur un site public de secours, en français. Depuis le 01/10, les séries et les animés aussi
+  (pour les animés, d'abord un site spécialisé, en VOSTFR ou en VF seulement).
 - **Télés LG (29/09)** : changer de langue en cours de film (VF → VO) ne faisait rien sur les télés LG ; la télé
   restait sur la piste par défaut. Le changement passe maintenant par le serveur (quelques secondes de chargement,
   sans perte de qualité), et le mode « Toujours en VO » de Mon compte marche aussi sur LG. Sur les télés, les
