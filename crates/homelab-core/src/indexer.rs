@@ -171,6 +171,14 @@ pub async fn search_indexer(
     Ok(Some(prow.search_in(query, id, categories, 100).await?))
 }
 
+/// C411 répond-il ? (première clé ; sonde `indexerstatus` + `caps`, aucun quota consommé)
+pub async fn c411_up(ctx: &TaskContext, prow: &ProwlarrClient) -> bool {
+    match prow.indexer_id(&ctx.cfg.manual_search.c411_indexer).await {
+        Ok(Some(id)) => !indexer_down(prow, id).await,
+        _ => true,
+    }
+}
+
 /// Liste vide : panne de l'indexer (notée par Prowlarr, ou page de maintenance) plutôt que « rien trouvé » ?
 async fn indexer_down(prow: &ProwlarrClient, id: i64) -> bool {
     if prow.indexer_failing(id).await.unwrap_or(false) {

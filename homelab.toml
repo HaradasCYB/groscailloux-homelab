@@ -393,6 +393,7 @@ max_gb_per_movie = 15.0
 # texte libre, release rattachée par le `parse` de l'Arr, mêmes règles de langue / taille / codec. Vide = aucun.
 fallback = "World-torrent"
 fallback_anime = "Nyaa.si"     # animés : Nyaa d'abord (releases françaises seulement), puis World-torrent
+fallback_retry_hours = 12      # secours sans résultat : refait toutes les 12 h ; C411 revenu = tout de suite
 
 [downloads]
 # Tout ce qui est neuf passe par la SEEDBOX (2026-09-18). Le VPS garde ses fiches, ses fichiers et ses

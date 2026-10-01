@@ -97,6 +97,10 @@ pub struct Indexers {
     /// Secours supplémentaire pour les **animés**, essayé avant `fallback` (Nyaa : public, sans compte ; la
     /// plupart de ses releases sont sous-titrées en anglais, seules les françaises sont prises).
     pub fallback_anime: String,
+    /// Secours sans rien d'acceptable (`fallback_none`) : nouvelle recherche de secours au bout de ce délai. Le
+    /// retour de C411 est, lui, vérifié à chaque passage (sonde `caps`, sans quota) : dès qu'il répond, la saison
+    /// ou le film repart aussitôt sur C411.
+    pub fallback_retry_hours: i64,
 }
 
 impl Default for Indexers {
@@ -110,6 +114,7 @@ impl Default for Indexers {
             max_gb_per_movie: 15.0,
             fallback: "World-torrent".into(),
             fallback_anime: "Nyaa.si".into(),
+            fallback_retry_hours: 12,
         }
     }
 }

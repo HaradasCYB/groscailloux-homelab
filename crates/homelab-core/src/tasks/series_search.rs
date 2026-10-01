@@ -606,6 +606,19 @@ pub fn due(
     }
 }
 
+/// Décision pour un passage noté `fallback_none` (C411 en panne, secours sans rien d'acceptable) : `None` pour
+/// tout autre résultat. C411 revenu → aussitôt ; sinon, secours refait seulement au bout de `fallback_h` heures
+/// (avant : une erreur, donc un passage par heure — 8 requêtes/h pour les 4 saisons du *Voyageur*, 01/10).
+pub fn fallback_due(
+    rec: Option<&SeasonSearchRecord>,
+    now: i64,
+    fallback_h: i64,
+    c411_up: bool,
+) -> Option<bool> {
+    let r = rec?;
+    (r.outcome == "fallback_none").then(|| c411_up || now - r.at >= fallback_h * 3600)
+}
+
 /// Refus de l'Arr qui ne tiennent qu'à l'identification ou à l'état de l'indexeur : on passe alors par
 /// qBittorrent. Tout autre refus (liste noire, taille, profil…) est respecté.
 pub fn bypassable_rejection(reason: &str) -> bool {
@@ -1596,7 +1609,11 @@ async fn process_season(
     let chosen = pack.or_else(|| pick(false));
     let Some(c) = chosen else {
         return Ok(SeasonOutcome::new(
-            if how == "secours" { "error" } else { "none" },
+            if how == "secours" {
+                "fallback_none"
+            } else {
+                "none"
+            },
             format!(
                 "{} candidat(s) {} (recherche {how}), aucun acceptable",
                 cands.len(),
@@ -1711,6 +1728,13 @@ async fn plan_seasons(
         })
         .collect();
     let records = ctx.state.read(|s| s.unknown_series.clone()).await;
+    // une saison laissée par le secours repart dès que C411 répond (sonde sans quota, une fois par passage)
+    let c411_up = match &ctx.prowlarr {
+        Some(p) if records.values().any(|r| r.outcome == "fallback_none") => {
+            crate::indexer::c411_up(ctx, p).await
+        }
+        _ => true,
+    };
     // une saison notée « épisodes introuvables » et qui n'a plus rien de manquant (importée entre-temps,
     // par un pack de cours ou à la main) sort de la liste « Saisons sans release » de /status.html
     let stale = stale_uncovered(&records, arr.name, &by.keys().copied().collect());
@@ -1736,13 +1760,18 @@ async fn plan_seasons(
             })
         })
         .filter(|s| {
-            due(
-                records.get(&key(arr, s.series_id, s.season)),
-                t,
-                cfg.retry_after_hours,
-                cfg.grabbed_retry_hours,
-                cfg.error_retry_hours,
-                cfg.episode_retry_mins,
+            let rec = records.get(&key(arr, s.series_id, s.season));
+            fallback_due(rec, t, ctx.cfg.indexers.fallback_retry_hours, c411_up).unwrap_or_else(
+                || {
+                    due(
+                        rec,
+                        t,
+                        cfg.retry_after_hours,
+                        cfg.grabbed_retry_hours,
+                        cfg.error_retry_hours,
+                        cfg.episode_retry_mins,
+                    )
+                },
             )
         })
         .collect())
@@ -2767,6 +2796,21 @@ mod tests {
         assert!(!due(Some(&r("grabbed_episode", 0)), 600, 24, 168, 1, 15));
         assert!(due(Some(&r("grabbed_episode", 0)), 900, 24, 168, 1, 15));
         assert!(due(Some(&r("error", 0)), 3600, 24, 168, 1, 15));
+        // secours sans résultat : 12 h tant que C411 est en panne, aussitôt s'il répond
+        assert_eq!(
+            fallback_due(Some(&r("fallback_none", 0)), 3600, 12, false),
+            Some(false)
+        );
+        assert_eq!(
+            fallback_due(Some(&r("fallback_none", 0)), 12 * 3600, 12, false),
+            Some(true)
+        );
+        assert_eq!(
+            fallback_due(Some(&r("fallback_none", 0)), 60, 12, true),
+            Some(true)
+        );
+        assert_eq!(fallback_due(Some(&r("none", 0)), 60, 12, true), None);
+        assert_eq!(fallback_due(None, 60, 12, true), None);
     }
 
     #[test]

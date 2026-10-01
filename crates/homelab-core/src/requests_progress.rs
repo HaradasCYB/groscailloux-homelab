@@ -131,6 +131,8 @@ pub fn next_search_in(
     let delay = match rec.outcome.as_str() {
         "grabbed" | "grabbed_episode" => grabbed_h * 3600,
         "error" => error_h * 3600,
+        // secours sans résultat (C411 en panne) : 12 h au plus, souvent moins (retour de C411)
+        "fallback_none" => 12 * 3600,
         _ => retry_h * 3600,
     };
     (rec.at + delay - now).max(0)

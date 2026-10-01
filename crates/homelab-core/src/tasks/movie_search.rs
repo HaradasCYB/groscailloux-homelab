@@ -264,12 +264,16 @@ async fn process_movie(
         ix.max_gb_per_movie,
         ix.allow_no_french,
     ) else {
-        // secours sans rien d'acceptable : on retentera C411 dans l'heure, pas dans 24 h
-        anyhow::ensure!(
-            !fallback,
-            "C411 en panne ; secours {source} : {} release(s), aucune acceptable",
-            items.len()
-        );
+        // secours sans rien d'acceptable : refait dans `fallback_retry_hours`, ou dès que C411 répond
+        if fallback {
+            return Ok((
+                "fallback_none".into(),
+                format!(
+                    "C411 en panne ; secours {source} : {} release(s), aucune acceptable",
+                    items.len()
+                ),
+            ));
+        }
         return Ok((
             "none".into(),
             format!(
@@ -325,6 +329,11 @@ impl Task for MovieSearch {
             .filter(|a| ctx.cfg.downloads.may_grab(a.name))
             .collect();
         let records = ctx.state.read(|s| s.movie_search.clone()).await;
+        let c411_up = if records.values().any(|r| r.outcome == "fallback_none") {
+            crate::indexer::c411_up(ctx, prow).await
+        } else {
+            true
+        };
         let t = now();
         let mut todo: Vec<(&ArrClient, Value)> = Vec::new();
         let mut vod_wait = 0u32;
@@ -353,14 +362,24 @@ impl Task for MovieSearch {
                             vod_wait += 1;
                             continue;
                         }
-                        if due(
-                            records.get(&format!("{}:{id}", arr.name)),
+                        let rec = records.get(&format!("{}:{id}", arr.name));
+                        let go = super::series_search::fallback_due(
+                            rec,
                             t,
-                            cfg.retry_after_hours,
-                            cfg.retry_after_hours,
-                            cfg.error_retry_hours,
-                            15,
-                        ) {
+                            ctx.cfg.indexers.fallback_retry_hours,
+                            c411_up,
+                        )
+                        .unwrap_or_else(|| {
+                            due(
+                                rec,
+                                t,
+                                cfg.retry_after_hours,
+                                cfg.retry_after_hours,
+                                cfg.error_retry_hours,
+                                15,
+                            )
+                        });
+                        if go {
                             todo.push((arr, m));
                         }
                     }

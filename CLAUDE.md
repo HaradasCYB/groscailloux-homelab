@@ -624,7 +624,10 @@ journalctl -u homelabd -f
   deux premiers noms connus sans ponctuation (`fallback_names` : titre TMDB français, titre d'origine) ; release gardée
   seulement si l'Arr la rattache à CETTE fiche et saison, et **français seulement** (`lang_rank_for` > 0 : la plupart
   des releases Nyaa sont sous-titrées en anglais, jamais prises pendant une panne). Secours sans candidat acceptable =
-  `error` (retenté dans l'heure), et aucun « trou » affiché sur `/status.html`. Le 30/09, S04E19 de *Re:ZERO* (sorti
+  `fallback_none` : secours refait au bout de `[indexers] fallback_retry_hours` (12), mais **dès que C411 répond**
+  (sonde `indexer::c411_up`, sans quota, une fois par passage) la saison ou le film repart aussitôt sur C411
+  (`series_search::fallback_due`) ; avant, c'était `error` → un passage par heure (8 requêtes/h pour *Le Voyageur*,
+  01/10). Aucun « trou » affiché sur `/status.html` pendant une panne. Le 30/09, S04E19 de *Re:ZERO* (sorti
   pendant la panne) a été pris à la main sur Nyaa : `SUBFRENCH 1080p CR WEB-DL x264-Tsundere-Raws`.
 - **Titre supprimé puis redemandé : le torrent est réutilisé, pas retéléchargé** (2026-09-18). `deletion_cleanup`
   garde les torrents en partage (C411 : ratio 1 ou 7 j) alors que les fichiers médias, eux, sont supprimés.
