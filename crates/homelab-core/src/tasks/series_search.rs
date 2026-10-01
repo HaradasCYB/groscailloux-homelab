@@ -1230,6 +1230,18 @@ async fn fallback_candidates(
     Ok((out, Vec::new(), "secours"))
 }
 
+/// Secours interrogés pour une fiche, dans l'ordre (« Nyaa.si + World-torrent » pour un animé).
+pub fn fallback_label(ix: &crate::config::Indexers, anime: bool) -> String {
+    let mut v: Vec<&str> = Vec::new();
+    if anime && !ix.fallback_anime.trim().is_empty() {
+        v.push(ix.fallback_anime.trim());
+    }
+    if !ix.fallback.trim().is_empty() {
+        v.push(ix.fallback.trim());
+    }
+    v.join(" + ")
+}
+
 /// Indexer d'où vient un candidat (secours public), C411 par défaut.
 fn source_of<'a>(c: &'a Candidate, default: &'a str) -> &'a str {
     c.release
@@ -1614,11 +1626,19 @@ async fn process_season(
             } else {
                 "none"
             },
-            format!(
-                "{} candidat(s) {} (recherche {how}), aucun acceptable",
-                cands.len(),
-                cfg.indexer
-            ),
+            if how == "secours" {
+                format!(
+                    "C411 en panne ; secours {} : {} candidat(s), aucun acceptable",
+                    fallback_label(&ctx.cfg.indexers, is_anime(series)),
+                    cands.len()
+                )
+            } else {
+                format!(
+                    "{} candidat(s) {} (recherche {how}), aucun acceptable",
+                    cands.len(),
+                    cfg.indexer
+                )
+            },
             left,
         ));
     };
@@ -2811,6 +2831,9 @@ mod tests {
         );
         assert_eq!(fallback_due(Some(&r("none", 0)), 60, 12, true), None);
         assert_eq!(fallback_due(None, 60, 12, true), None);
+        let ix = crate::config::Indexers::default();
+        assert_eq!(fallback_label(&ix, true), "Nyaa.si + World-torrent");
+        assert_eq!(fallback_label(&ix, false), "World-torrent");
     }
 
     #[test]
