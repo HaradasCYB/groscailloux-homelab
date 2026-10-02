@@ -39,6 +39,31 @@ côté Guacamole : garder l'intervalle ≥ 5 min (extension `ban` : 5 échecs / 
 Pour arrêter un service volontairement : l'ajouter à `ignore` avant, sinon il sera relancé.
 Résumé : `expected=21 running=21 healthy=16 started=[] restarted=[] waiting=[] failed=[]`.
 
+**Sonde qBittorrent vue de l'hôte** (2026-10-02) : `http://localhost:8080/api/v2/app/version`. qBittorrent partage le
+réseau de gluetun ; quand gluetun est recréé, il reste « healthy » (sa sonde interne passe) mais injoignable. Sonde en
+échec alors que gluetun est sain → `action = "recreate"` (`up -d --force-recreate --no-deps qbittorrent`), puis
+`post_exec` dans gluetun : le hook `qbit-update-port.sh` repose le port transféré. Toute sonde accepte maintenant
+`action` (`restart` par défaut, ou `recreate`) et `post_exec_in` / `post_exec`.
+
+### seedbox_health — 5 min
+
+Santé de la seedbox vue du VPS : `ping` de Sonarr et Radarr, version de qBittorrent, historique Bazarr, lecture du
+montage rclone (`mount_check`). Un service injoignable depuis `alert_after_mins` (10) → **mail + Discord admin**, une
+seule fois par panne ; un second message à son retour (« panne d'environ 16 h 25 »). Décision pure `decide`, testée.
+La relance, elle, est faite **sur la seedbox** par son crontab : `scripts/seedbox/homelab-apps-watch.sh` (copié dans
+`~/.local/bin/`), `@reboot` (toutes les applis, 2 min après le démarrage) et toutes les 5 min (une appli qui ne
+répond pas deux fois de suite → `app-<x> start`, sans effet si elle tourne déjà) ; journal
+`~/.local/state/homelab-apps-watch/watch.log`, `--dry-run` pour voir. Origine : le 01/10, l'hôte de la seedbox a
+redémarré et Sonarr, Radarr, Bazarr, Jackett, FlareSolverr, autobrr et unpackerr sont restés arrêtés 16 h sans alerte.
+
+### Chien de garde de homelabd (hors homelabd)
+
+`systemd/homelabd-watchdog.timer` (toutes les 2 min, 5 min après le démarrage) lance en root
+`scripts/homelabd-watchdog.sh` : `/health` sans réponse 3 fois de suite (≈ 6 min) → `systemctl restart homelabd` et
+message Discord admin (webhook lu dans `.env`) ; un second message quand il répond de nouveau ; `--check` pour voir.
+homelabd est en `Restart=always` (relancé même après un arrêt « propre » imprévu) ; le chien de garde couvre le cas
+d'un homelabd vivant mais figé.
+
 ### id_match_import — 5 min
 Radarr/Sonarr bloquent l'import quand le nom de la release ne correspond pas au titre de la fiche,
 même si l'indexer a fourni l'id au grab : message « Found matching movie/series via grab history,

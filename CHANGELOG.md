@@ -64,6 +64,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 - **Demandes pendant une panne de C411 (30/09)** : quand le site de téléchargement était en panne, une demande passait
   pour « introuvable » et n'était recherchée à nouveau que le lendemain. La panne est maintenant reconnue : la recherche
   reprend toute seule dès que le site revient.
+- **Résilience (02/10)** : si la seedbox redémarre ou qu'une de ses applis s'arrête, elle se relance toute seule en
+  quelques minutes, et l'admin est prévenu si une panne dure plus de 10 minutes. Côté serveur, le moteur
+  d'automatisation est surveillé et relancé s'il se fige, et le téléchargement direct du serveur se répare seul après
+  une coupure du VPN.
 - **Site de secours (30/09)** : quand notre site de téléchargement principal est en panne, les films demandés sont
   cherchés automatiquement sur un site public de secours, en français. Depuis le 01/10, les séries et les animés aussi
   (pour les animés, d'abord un site spécialisé, en VOSTFR ou en VF seulement).

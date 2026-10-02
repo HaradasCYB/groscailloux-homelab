@@ -1,0 +1,7 @@
+[Unit]
+Description=Chien de garde de homelabd (/health ; relance si figé)
+After=homelabd.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/homelab/scripts/homelabd-watchdog.sh

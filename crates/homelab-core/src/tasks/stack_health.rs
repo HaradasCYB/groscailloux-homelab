@@ -131,6 +131,7 @@ async fn run_probe(ctx: &TaskContext, p: &Probe) -> Result<(u16, String)> {
 async fn compose_action(ctx: &TaskContext, verb: &str, service: &str) -> bool {
     let args: &[&str] = match verb {
         "start" => &["up", "-d", service],
+        "recreate" => &["up", "-d", "--force-recreate", "--no-deps", service],
         _ => &["restart", service],
     };
     if ctx.dry_run {
@@ -307,7 +308,23 @@ impl Task for StackHealth {
                 continue;
             }
             warn!(task = "stack_health", service = %p.service, %detail, url = %p.url, "probe failed");
-            if compose_action(ctx, "restart", &p.service).await {
+            let verb = if p.action == "recreate" {
+                "recreate"
+            } else {
+                "restart"
+            };
+            if compose_action(ctx, verb, &p.service).await {
+                if !p.post_exec_in.is_empty() && !p.post_exec.is_empty() && !ctx.dry_run {
+                    let cmd: Vec<&str> = p.post_exec.iter().map(String::as_str).collect();
+                    match crate::docker::exec_in(&p.post_exec_in, &cmd).await {
+                        Ok(out) => {
+                            info!(task = "stack_health", service = %p.service, into = %p.post_exec_in, out = %out.trim(), "post_exec ok")
+                        }
+                        Err(e) => {
+                            warn!(task = "stack_health", service = %p.service, error = %e, "post_exec en échec")
+                        }
+                    }
+                }
                 restarted.push(p.service.clone());
                 ctx.state
                     .update(|s| s.restarts.insert(p.service.clone(), ts))

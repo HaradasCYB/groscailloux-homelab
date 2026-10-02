@@ -64,6 +64,25 @@ content_type = "application/x-www-form-urlencoded"
 expect_status = 403
 expect_body_contains = "INVALID_CREDENTIALS"
 requires_healthy = ["guacdb"]
+action = "restart"
+post_exec_in = ""
+post_exec = []
+
+[[tasks.stack_health.probes]]
+# qBittorrent vu de L'HÔTE (2026-10-02, audit de résilience) : il partage le réseau de gluetun ; quand gluetun est
+# recréé, qBittorrent reste « healthy » (sa sonde interne passe) mais injoignable de partout (19/09 : 11 h). Sonde
+# externe ; en échec alors que gluetun est sain → recréé, puis le port transféré est reposé par le hook de gluetun.
+service = "qbittorrent"
+url = "http://localhost:8080/api/v2/app/version"
+expect_status = 200
+requires_healthy = ["gluetun"]
+method = "GET"
+body = ""
+content_type = "application/x-www-form-urlencoded"
+expect_body_contains = ""
+action = "recreate"
+post_exec_in = "gluetun"
+post_exec = ["sh", "-c", "/gluetun/scripts/qbit-update-port.sh \"$(cat /tmp/gluetun/forwarded_port)\""]
 
 [tasks.id_match_import]
 # Débloque les imports « matched to movie/series by ID » (releases C411 en titre français) :
@@ -96,6 +115,14 @@ vps_paths = [
   ["/anime-films", "/opt/homelab/library/media/anime-films", "/media/anime-films"],
   ["/anime", "/opt/homelab/library/media/anime", "/media/anime"],
 ]
+
+[tasks.seedbox_health]
+# Santé de la seedbox vue du VPS (2026-10-02) : le 01/10, l'hôte de la seedbox a redémarré et Sonarr, Radarr, Bazarr…
+# sont restés arrêtés 16 h sans alerte. La seedbox se relance seule (crontab : scripts/seedbox/homelab-apps-watch.sh) ;
+# cette tâche prévient (mail + Discord admin) si un service reste injoignable, puis quand il revient.
+interval_secs = 300
+alert_after_mins = 10
+mount_check = "/mnt/seedbox/media"
 
 [tasks.hls_loop_watch]
 # Boucles HLS (audit lecture du 2026-09-18) : un client qui redemande sans fin le même segment d'un flux

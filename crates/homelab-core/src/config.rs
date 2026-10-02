@@ -435,6 +435,8 @@ pub struct Tasks {
     pub disk_pressure: DiskPressure,
     #[serde(default)]
     pub hls_loop_watch: HlsLoopWatch,
+    #[serde(default)]
+    pub seedbox_health: SeedboxHealth,
     pub tba_bypass: Interval300,
     pub monitor_sync: Interval600,
     pub user_poller: UserPoller,
@@ -914,6 +916,19 @@ pub struct Probe {
     /// Ne pas redémarrer tant que ces services ne sont pas `healthy`.
     #[serde(default)]
     pub requires_healthy: Vec<String>,
+    /// `restart` (défaut) ou `recreate` (`up -d --force-recreate --no-deps`) : un conteneur qui partage le réseau
+    /// d'un autre (qBittorrent dans gluetun) doit être RECRÉÉ quand celui-ci a changé, un restart ne suffit pas.
+    #[serde(default = "d_restart")]
+    pub action: String,
+    /// Commande lancée ensuite dans ce conteneur (`docker exec`), ex. reprogrammer le port transféré.
+    #[serde(default)]
+    pub post_exec_in: String,
+    #[serde(default)]
+    pub post_exec: Vec<String>,
+}
+
+fn d_restart() -> String {
+    "restart".into()
 }
 
 impl Default for StackHealth {
@@ -932,6 +947,27 @@ impl Default for StackHealth {
                 expect_status: 403,
                 expect_body_contains: "INVALID_CREDENTIALS".into(),
                 requires_healthy: vec!["guacdb".into()],
+                action: d_restart(),
+                post_exec_in: String::new(),
+                post_exec: vec![],
+            },
+            // qBittorrent vu de l'hôte : recréé si injoignable alors que gluetun est sain (voir homelab.toml)
+            Probe {
+                service: "qbittorrent".into(),
+                method: d_get(),
+                url: "http://localhost:8080/api/v2/app/version".into(),
+                body: String::new(),
+                content_type: d_form(),
+                expect_status: 200,
+                expect_body_contains: String::new(),
+                requires_healthy: vec!["gluetun".into()],
+                action: "recreate".into(),
+                post_exec_in: "gluetun".into(),
+                post_exec: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "/gluetun/scripts/qbit-update-port.sh \"$(cat /tmp/gluetun/forwarded_port)\"".into(),
+                ],
             }],
         }
     }
@@ -1025,6 +1061,26 @@ impl Default for StuckHandler {
             stall_secs: 8 * 3600,
             max_actions_per_run: 5,
             pattern: "stalled|metadata|no connections".into(),
+        }
+    }
+}
+
+/// Santé de la seedbox vue du VPS (Arrs, qBittorrent, Bazarr, montage) : alerte admin après `alert_after_mins`.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SeedboxHealth {
+    pub interval_secs: u64,
+    pub alert_after_mins: i64,
+    /// Dossier du montage rclone à lire (vide = pas de contrôle du montage).
+    pub mount_check: PathBuf,
+}
+
+impl Default for SeedboxHealth {
+    fn default() -> Self {
+        Self {
+            interval_secs: 300,
+            alert_after_mins: 10,
+            mount_check: "/mnt/seedbox/media".into(),
         }
     }
 }

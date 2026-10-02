@@ -762,7 +762,18 @@ journalctl -u homelabd -f
   rclone, si). Vu le lendemain par `homelabctl check` (« 502 Bad Gateway » sur les Arrs seedbox) : ~16 h sans import ni
   recherche. Relance : `ssh seedbox 'app-sonarr start; app-radarr start; app-bazarr start; app-jackett start;
   app-flaresolverr start; app-autobrr start; app-unpackerr start'` (`app-<x>` : `start|restart|backup…`, pas de
-  `status`). `stack_health` ne surveille que les conteneurs du VPS.
+  `status`). **Automatisé le 2026-10-02** : crontab de la seedbox → `~/.local/bin/homelab-apps-watch.sh` (source :
+  `scripts/seedbox/homelab-apps-watch.sh`, `@reboot` + toutes les 5 min, crontab d'avant dans
+  `~/.local/state/crontab-avant-20261002.txt`) ; tâche homelabd `seedbox_health` = alerte admin après 10 min. Ports
+  locaux sur la seedbox : Sonarr 16126, Radarr 16127, Bazarr 16131, Jackett 16129, FlareSolverr **172.17.0.1**:16111,
+  autobrr 16123, qBittorrent 16141.
+- **Résilience (audit du 2026-10-02)** : redémarrage du VPS (propre ou forcé) → tout repart (Docker activé, 20/21
+  conteneurs `unless-stopped`, Guacamole relancé par `stack_health`, montage, homelabd et minuteurs activés) ; panique
+  noyau → redémarrage en 10 s (`kernel.panic = 10`). **Montage seedbox absent ou vide** : testé sur une instance
+  Jellyfin jetable (même image, fausse médiathèque) — l'analyse écrit « Library folder … is inaccessible or empty,
+  skipping » et **ne supprime rien** ; les titres reviennent au retour du montage. Ajouts : sonde qBittorrent vue de
+  l'hôte avec recréation (gluetun), `seedbox_health`, chien de garde `homelabd-watchdog.timer`, homelabd en
+  `Restart=always`. Reste à faire (phase 3, plan de l'utilisateur) : sauvegarde hors du VPS.
 - **Espace seedbox = le quota du compte** (`quota -s` sur la seedbox : 3,7 To, 2,9 To utilisés au 2026-09-23), pas le
   `df` du disque partagé (20 To, 5,7 To libres, 234 comptes).
 - Montage : rclone dans **`/mnt/seedbox/media`**, Jellyfin lie le **parent** `/mnt/seedbox`

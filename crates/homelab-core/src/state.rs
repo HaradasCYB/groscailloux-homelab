@@ -49,6 +49,12 @@ pub struct State {
     pub indexer_app_restarts: BTreeMap<String, i64>,
     #[serde(default)]
     pub indexer_alerts: BTreeMap<String, i64>,
+    /// seedbox_health : service seedbox → premier échec constaté (absent = répond).
+    #[serde(default)]
+    pub seedbox_down: BTreeMap<String, i64>,
+    /// seedbox_health : pannes déjà signalées (service → date de l'alerte).
+    #[serde(default)]
+    pub seedbox_alerted: BTreeMap<String, i64>,
     /// anime_library : classement TMDB en cache, clé `tv:<tmdb>` / `movie:<tmdb>` → (date, classe).
     #[serde(default)]
     pub anime_class: BTreeMap<String, AnimeClassRecord>,

@@ -17,6 +17,7 @@ pub mod onboard;
 pub mod playback_canary;
 pub mod playback_limit;
 pub mod russian_search;
+pub mod seedbox_health;
 pub mod seedbox_refresh;
 pub mod series_search;
 pub mod stack_health;
@@ -68,6 +69,7 @@ pub trait Task: Send + Sync {
 pub fn registry() -> Vec<Box<dyn Task>> {
     vec![
         Box::new(stack_health::StackHealth),
+        Box::new(seedbox_health::SeedboxHealth),
         Box::new(seedbox_refresh::SeedboxRefresh),
         Box::new(tracker_ratio::TrackerRatio),
         Box::new(stuck_handler::StuckHandler),
