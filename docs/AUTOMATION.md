@@ -662,8 +662,8 @@ la seule source de vérité ; les comptes admin ne sont jamais listés ni modifi
 
 ## Autres commandes
 
-- `homelabctl vpn status|on|off` : voir DEPLOY.md (profils compose).
-- `sudo homelabctl backup` : voir DEPLOY.md ; aussi `homelab-backup.timer`.
+- `homelabctl vpn status|on|off` : voir [DEPLOY.md](DEPLOY.md) (profils compose).
+- `sudo homelabctl backup` : voir [DEPLOY.md](DEPLOY.md) ; aussi `homelab-backup.timer`.
 - `homelabctl check` : ping Sonarr, Radarr, qBittorrent, Jellyfin, Jellyseerr ; présence SMTP,
   token, dossier surveillé.
 - `sudo homelabctl install` : copie `systemd/*` dans `/etc/systemd/system`, enable.

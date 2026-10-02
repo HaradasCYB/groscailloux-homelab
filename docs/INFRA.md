@@ -181,7 +181,7 @@ flowchart LR
 Tout passe par `homelabd` (un binaire, un service systemd, `homelab.toml` + `.env`). Une tâche ne tourne jamais
 deux fois en même temps ; une erreur imprévue n'arrête qu'un passage. L'état n'est écrit que par le démon
 (écriture atomique) : `homelabctl` le lit et lui demande tout changement (`POST /admin/run`, `/admin/accounts`).
-Détail : [AUTOMATION.md](../AUTOMATION.md).
+Détail : [AUTOMATION.md](AUTOMATION.md).
 
 | Tâche | Rythme | Rôle | Garde-fou |
 |---|---|---|---|
@@ -258,5 +258,5 @@ docker compose ps           # conteneurs et healthchecks
 journalctl -u homelabd -f   # journal des tâches
 ```
 
-Voir aussi : [ONBOARDING.md](ONBOARDING.md) · [ARCHITECTURE.md](../ARCHITECTURE.md) ·
-[AUTOMATION.md](../AUTOMATION.md) · [DEPLOY.md](../DEPLOY.md) · [SECRETS.md](../SECRETS.md).
+Voir aussi : [ONBOARDING.md](ONBOARDING.md) · [ARCHITECTURE.md](ARCHITECTURE.md) ·
+[AUTOMATION.md](AUTOMATION.md) · [DEPLOY.md](DEPLOY.md) · [SECRETS.md](SECRETS.md).

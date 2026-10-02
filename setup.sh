@@ -44,7 +44,7 @@ id -u deploy >/dev/null 2>&1 || { err "l'utilisateur 'deploy' (uid 1000, groupe 
 ok "docker $(docker --version | awk '{print $3}' | tr -d ,), compose $(docker compose version --short)"
 
 hdr "2. .env"
-[ -f "$BASE/.env" ] || { err ".env manquant : cp .env.example .env puis remplir (voir SECRETS.md)"; exit 1; }
+[ -f "$BASE/.env" ] || { err ".env manquant : cp .env.example .env puis remplir (voir docs/SECRETS.md)"; exit 1; }
 chmod 600 "$BASE/.env"; chown deploy:deploy "$BASE/.env"
 empty=$(grep -cE '^[A-Z_]+=\s*(#.*)?$' "$BASE/.env" || true)
 [ "$empty" -eq 0 ] || { warn "$empty variable(s) vide(s) dans .env :"; grep -nE '^[A-Z_]+=\s*(#.*)?$' "$BASE/.env" | cut -d= -f1; }
@@ -107,7 +107,7 @@ fi
 hdr "8. Suite"
 cat <<EOF
   - Vérifier : homelabctl check ; journalctl -u homelabd -f ; docker compose ps
-  - Premier déploiement : configurer les services (DEPLOY.md), récupérer les clés API,
+  - Premier déploiement : configurer les services (docs/DEPLOY.md), récupérer les clés API,
     compléter .env puis relancer sudo ./setup.sh
   - Onboarder un utilisateur : homelabctl onboard <user> <email>
   - NPM : proxifier onboarder.<domaine> vers 172.18.0.1:8766 (UI homelabd sur l'hôte)

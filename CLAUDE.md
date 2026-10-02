@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guide pour Claude Code dans ce dépôt. Lire aussi ARCHITECTURE.md et AUTOMATION.md.
+Guide pour Claude Code dans ce dépôt. Lire aussi docs/ARCHITECTURE.md et docs/AUTOMATION.md.
 
 ## Ce qu'est ce dépôt
 
@@ -682,11 +682,11 @@ journalctl -u homelabd -f
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
   `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
 - **Journal des versions** : tout changement visible pour les membres ou l'admin ajoute une ligne dans
-  `UPDATE.md` (section de la version en cours, en haut, avec ses commits ; 1.0.x corrections, 1.x.0 nouveautés).
+  `CHANGELOG.md` (section de la version en cours, en haut, avec ses commits ; 1.0.x corrections, 1.x.0 nouveautés).
   Jamais de pseudo de membre, d'IP, de domaine ni d'e-mail dans le dépôt (public) : écrire « un membre ».
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans
   `registry()`, section `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run respecté,
-  tests unitaires de la décision, paragraphe dans AUTOMATION.md.
+  tests unitaires de la décision, paragraphe dans docs/AUTOMATION.md.
 - **Changement de comportement** = changement de `homelab.toml` (seuils, intervalles) avant
   changement de code. **Attention** : `Config` refuse tout champ inconnu (`deny_unknown_fields`) — dès qu'une clé
   nouvelle est dans `homelab.toml`, l'ancien `homelabctl` échoue et l'ancien homelabd **ne redémarrerait plus** :
@@ -757,6 +757,12 @@ journalctl -u homelabd -f
   Docker sur la seedbox (Radarr 16127, Sonarr 16126, Jackett 16129, FlareSolverr 16111 sur
   `172.17.0.1`), qBittorrent natif `127.0.0.1:16141`, autobrr natif `127.0.0.1:16123`. API
   publiques : `https://kakaouette.tofino.usbx.me/<app>`.
+- **Redémarrage de l'hôte seedbox = applis arrêtées** (2026-10-01 vers 20:50) : l'hôte partagé a redémarré et Sonarr,
+  Radarr, Bazarr, Jackett, FlareSolverr, autobrr et unpackerr ne sont **pas** repartis seuls (qBittorrent et le montage
+  rclone, si). Vu le lendemain par `homelabctl check` (« 502 Bad Gateway » sur les Arrs seedbox) : ~16 h sans import ni
+  recherche. Relance : `ssh seedbox 'app-sonarr start; app-radarr start; app-bazarr start; app-jackett start;
+  app-flaresolverr start; app-autobrr start; app-unpackerr start'` (`app-<x>` : `start|restart|backup…`, pas de
+  `status`). `stack_health` ne surveille que les conteneurs du VPS.
 - **Espace seedbox = le quota du compte** (`quota -s` sur la seedbox : 3,7 To, 2,9 To utilisés au 2026-09-23), pas le
   `df` du disque partagé (20 To, 5,7 To libres, 234 comptes).
 - Montage : rclone dans **`/mnt/seedbox/media`**, Jellyfin lie le **parent** `/mnt/seedbox`

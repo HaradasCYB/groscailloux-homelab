@@ -1,6 +1,6 @@
 # Architecture
 
-> Schémas (physique, parcours d'une demande, stockage) : [docs/INFRA.md](docs/INFRA.md).
+> Schémas (physique, parcours d'une demande, stockage) : [INFRA.md](INFRA.md).
 
 Un hôte, un réseau bridge `homelab` (172.18.0.0/16), tout en bind mounts sous `/opt/homelab`.
 Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'hôte
@@ -82,7 +82,7 @@ disque dépasse 95 %.
 **Utilisateurs.** Un compte = Jellyfin + import Jellyseerr + mail avec un lien à usage unique (`/bienvenue/<jeton>`,
 60 min) où le membre choisit son mot de passe, puis les premiers pas. Entrées : `/inscription` (publique, compte à
 activer), `homelabctl onboard`, la page « Créer un compte » (`/`, session admin) et le poller qui convertit les
-comptes créés dans l'UI Jellyseerr. Procédure : [docs/ONBOARDING.md](docs/ONBOARDING.md).
+comptes créés dans l'UI Jellyseerr. Procédure : [ONBOARDING.md](ONBOARDING.md).
 
 **Observabilité.** Telegraf (hôte via `/hostfs`, Docker via socket) → InfluxDB bucket
 `metrics` (30 j) → Grafana.

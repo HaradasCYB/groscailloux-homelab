@@ -444,7 +444,7 @@ moderator_mail_interval_mins = 15   # récapitulatif entraide + privé : au plus
 [seedbox]
 # Seedbox (tofino.usbx.me) : Radarr/Sonarr y rangent dans ~/media, monté en lecture seule sur
 # /mnt/seedbox/media (homelab-seedbox-mount.service) et vu par Jellyfin sous /seedbox/media.
-# Couper la seedbox : enabled = false (+ procédure DEPLOY.md).
+# Couper la seedbox : enabled = false (+ procédure docs/DEPLOY.md).
 enabled = true
 radarr_url = "https://kakaouette.tofino.usbx.me/radarr"
 sonarr_url = "https://kakaouette.tofino.usbx.me/sonarr"
