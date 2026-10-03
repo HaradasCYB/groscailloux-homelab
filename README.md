@@ -181,6 +181,7 @@ Tous les services passent par Nginx Proxy Manager (80/443). Les ports des conten
 | 🚀 | [docs/DEPLOY.md](docs/DEPLOY.md) | Déploiement d'un hôte neuf, procédures |
 | 🔑 | [docs/SECRETS.md](docs/SECRETS.md) | Chaque variable de `.env` (aucune valeur ici) |
 | 👋 | [docs/ONBOARDING.md](docs/ONBOARDING.md) | Arrivée d'un membre, côté admin |
+| ⬆️ | [docs/JELLYFIN-12.md](docs/JELLYFIN-12.md) | Migration vers Jellyfin 12.1 : répétition, prérequis, bascule et retour arrière |
 | 📝 | [CHANGELOG.md](CHANGELOG.md) | Historique des versions |
 | 🤖 | [CLAUDE.md](CLAUDE.md) | Règles d'exploitation et pièges connus (lu par l'agent qui opère le serveur) |
 

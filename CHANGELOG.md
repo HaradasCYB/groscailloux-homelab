@@ -29,6 +29,15 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 
 ## 1.19.1 — 23/09/2026 — Audit : fiabilité et sécurité
 
+- **SyncPlay sans roue de chargement (03/10)** : dans l'appli Jellyfin Desktop, avancer pendant une séance à plusieurs
+  laissait le groupe bloqué ; il fallait faire pause puis lecture. Le groupe repart maintenant seul après un saut.
+  Il faut redémarrer l'appli une fois pour en profiter. Le correctif définitif viendra avec Jellyfin 12.1, déjà testé
+  sur une instance d'essai.
+- **Serveur allégé (03/10)** : la page Téléchargements se rafraîchit toutes les 2 minutes au lieu de 30 secondes. Une
+  page laissée ouverte faisait à elle seule près des deux tiers des requêtes du serveur. Journaux plus lisibles et
+  gardés 14 jours. Les mises à jour d'extensions se font désormais à la main, après vérification.
+- **Collections (03/10)** : *Les Gardiens de la Galaxie Vol. 3*, remplacé par une version 1080p, est revenu dans
+  ses collections (Univers Marvel, Tendances, Les mieux notés).
 - **Épisodes numérotés « - 07 » (03/10)** : une série téléchargée dont les fichiers s'appellent « Titre - 07 » au lieu
   de « S01E07 » restait « téléchargée mais pas rangée » (*Angels of Death*, demandée par un membre, rangée à la main
   le jour même). L'import comprend maintenant ces numéros quand la recherche visait une saison précise, avec les

@@ -536,6 +536,47 @@ journalctl -u homelabd -f
 - **NPM hôte 1 (Jellyfin)** : sa configuration avancée contient les réglages SyncPlay (tampons coupés,
   délais 3600 s ; avant le 2026-09-15 ils n'étaient que dans le fichier conf, pas en base) et la route du
   tchat. Toujours éditer base **et** fichier ensemble (sauvegarde `backups/npm-*-chat`).
+- **SyncPlay bloqué après un saut (audit du 2026-10-03)** :
+  - **Symptôme** : roue de chargement, puis pause/lecture obligatoire.
+  - **Ce n'est ni NPM** (websocket, délais 3600 s, tampons coupés) **ni la conversion** : les membres lisaient en
+    direct.
+  - **Journaux** (deux groupes, tous sur **Jellyfin Desktop 1.0.0**, lecteur mpv) : à chaque saut, l'appli qui a
+    sauté ne répond jamais « prêt ». jellyfin-web (`PlaybackCore.scheduleSeek`) attend l'événement `playing` du
+    lecteur 30 s, puis ressaute sans répondre. L'autre appli répond en 60 ms avec son **ancienne** position, et le
+    serveur lui programme une pause « dans 1 392 s ».
+  - **Contournement** : `branding/jellyfin/gc-syncplay.js` (« Groscailloux SyncPlay », JavaScript Injector, privé).
+    - Seulement dans Jellyfin Desktop (`NativeShell.AppHost.appName()` ou `window.jmpInfo`).
+    - Il remplace `scheduleSeek` : pause, puis saut, attente que le lecteur soit à 5 s de la cible (12 s au plus),
+      puis « prêt » **à la cible**. Le serveur n'accepte un « prêt » en pause qu'à 500 ms près, sinon il ressaute en
+      boucle (« seeking to wrong position, correcting »).
+    - Le module SyncPlay est retrouvé par le registre webpack (`self.webpackChunk`, `__webpack_require__.m`) d'après
+      son code, jamais son numéro ; sans module trouvé, le script ne fait rien. Il marche aussi sur le jellyfin-web
+      12.1.
+    - Forçable dans un navigateur par `localStorage['gc-syncplay-force'] = '1'` ; état dans `window.__gcSyncPlay`.
+    - Banc : `backups/syncplay-20261003/run.sh [0|1]` (deux navigateurs, comptes temporaires, `NO_INJECT=1` pour la
+      version servie). Mesuré : reprise du groupe 0,5 s après le saut.
+  - **Correctif de fond** : Jellyfin **12.1**, voir `docs/JELLYFIN-12.md` (répétée le 03/10, bascule à valider).
+  - La prod est en **10.11.8**. Le widget « Releases » de Homarr affiche la dernière version publiée, pas celle qui
+    tourne.
+- **Jellyfin Enhanced (audit du 03/10)** :
+  - **Rafraîchissement** : page Téléchargements toutes les **120 s**, au lieu de 30 (`DownloadsPollIntervalSeconds`).
+    À 30 s, avec un appel `arr/*` par carte, deux admins dont la page restait ouverte derrière le lecteur de Jellyfin
+    Desktop faisaient 63 % de tout le trafic Jellyfin (39 900 requêtes par jour).
+  - **Mises à jour des extensions : manuelles**. La tâche « Mettre à jour les extensions » n'a plus de déclencheur
+    (sauvegarde `backups/jellyfin-tuning-20261004/`). Une mise à jour automatique s'activait au redémarrage suivant,
+    sans vérification.
+  - **Sous-titres** : Jellyfin Enhanced impose `font-size: 1.2vw` en style **inline `!important`** sur
+    `.videoSubtitlesInner`, et notre réglage Mon compte perd sur LG. La cause est trouvée par le diagnostic du 30/09 ;
+    choisir qui fait foi est **en suspens** (décision de l'utilisateur).
+- **Journaux Jellyfin** : `jellyfin/config/config/logging.json` (copie de `logging.default.json`) :
+  - extensions bavardes en `Warning` : Playback Reporting (61 % du volume), Collection Sections, Jellysleep ;
+  - traductions manquantes de Home Screen Sections en `Error` ;
+  - **14 jours** gardés au lieu de 3.
+- **Collections après un remplacement de fichier** :
+  - le nouveau fichier crée un nouvel élément Jellyfin, et les collections gardent un **lien mort** vers l'ancien
+    chemin (« Unable to find linked item », 217 avertissements en 3 jours) ;
+  - remettre le nouvel élément dans ses collections (`POST /Collections/<id>/Items?ids=`) ;
+  - les liens morts partent avec la tâche « Nettoyer les collections et les listes de lecture » (au démarrage).
 - **Identifications surveillées** : la tâche `identity_check` (30 min) compare l'identifiant de chaque fiche
   Jellyfin à celui de Sonarr/Radarr, qui fait foi, et corrige seule (`RemoteSearch` + `Apply` + métadonnées,
   3 titres au plus par passage, jamais pendant une lecture). Les nouveaux dossiers portent l'identifiant
