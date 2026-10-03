@@ -591,7 +591,12 @@ journalctl -u homelabd -f
     - la cloche NotifySync (`#netflix-bell`, accrochée à l'ancien en-tête caché) déplacée après le tchat. NotifySync ne
       la recrée pas tant qu'elle existe ;
     - la hauteur réelle de la barre dans `--gc-header-h` ; le bandeau d'annonce du tchat et le bloc de Media Bar se
-      calent dessous.
+      calent dessous ;
+    - dans les deux interfaces, les boutons de la bannière Media Bar 3.0 (« Play », « Details », « Favorite », écrits
+      en dur, sans réglage de langue) traduits en « Lire », « Infos », « Favori ».
+    Reprise par version (`VERSION`, `window.__gcHeaderV`) : une version plus récente prend la main et l'ancienne
+    s'arrête (rangée et CSS retirés). Un banc qui essaie une candidate retire en plus la version déployée du
+    `private.js` servi (`deployed-*.txt` dans `CANDIDATE_DIR`).
     Jamais retirer un élément dessiné par React : il le retirerait lui-même ensuite et planterait. On cache, on
     déplace nos éléments, on change des textes. « Lire sur » est un **menu MUI** (`#app-remote-play-menu`), présent
     caché dès le chargement et recréé avec la barre. `gc-airplay.js` v5 le surveille (texte réécrit par React à

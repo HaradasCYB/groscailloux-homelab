@@ -9,14 +9,17 @@
 //     infobulles de Jellyfin Enhanced n'ont pas de traduction (« Requests », « Calendar ») ;
 //   - la cloche NotifySync, qui s'accroche à l'ancien en-tête (gardé dans la page mais caché), déplacée dans la
 //     barre visible, juste après le tchat. NotifySync ne la recrée pas tant qu'elle existe (`#netflix-bell`).
-// Rien ne change dans l'ancienne interface ni sur les télés : tout dépend de la barre moderne visible.
+// Rien ne change dans l'ancienne interface ni sur les télés : tout dépend de la barre moderne visible, sauf les
+// libellés anglais des boutons de la bannière Media Bar (« Play » → « Lire »), traduits partout.
 // Ne retire jamais un élément dessiné par React (il le retirerait lui-même ensuite et planterait) : on cache,
 // on déplace nos propres éléments, on change des textes et des attributs.
 // Déposé dans JavaScript Injector (« Groscailloux En-tête », privé) par scripts/jellyfin-js-apply.py.
 (function () {
   'use strict';
-  if (window.__gcHeader) return;
-  window.__gcHeader = true;
+  // une version plus récente (déploiement, essai d'un banc) prend la main : celle-ci s'arrête au tour suivant
+  var VERSION = 2;
+  if ((window.__gcHeaderV || 0) >= VERSION) return;
+  window.__gcHeaderV = VERSION;
 
   var LOGO = '/web/banner-light.gc.png'; // servi par Jellyfin Enhanced (nos images de marque), quel que soit le nom
   /* anglais → français, pour les seuls textes connus de la barre et du panneau de Jellyfin Enhanced */
@@ -27,6 +30,8 @@
     'Discover': 'Découvrir', 'More from Jellyfin Enhanced': 'Plus', 'Random item': 'Élément aléatoire'
   };
   var ATTRS = ['aria-label', 'title', 'data-header-label'];
+  /* boutons de la bannière Media Bar 3.0 : libellés en anglais écrits en dur, aucun réglage de langue (04/10) */
+  var MEDIABAR = { 'Play': 'Lire', 'Details': 'Infos', 'Favorite': 'Favori' };
   var ICON = {
     home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
     fav: 'M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z'
@@ -41,11 +46,12 @@
   ];
   var S = { nav: null, links: [] };
 
+  var CSS_ID = 'gc-header-css-' + VERSION;
   function css() {
-    if (document.getElementById('gc-header-css')) return;
+    if (document.getElementById(CSS_ID)) return;
     var logo = 'header.MuiAppBar-root .MuiToolbar-root > .MuiStack-root > a[href="#/"]';
     var st = document.createElement('style');
-    st.id = 'gc-header-css';
+    st.id = CSS_ID;
     st.textContent = [
       logo + '{font-size:0!important;min-width:0!important}',
       logo + ' > .MuiButton-startIcon{display:none!important}',
@@ -152,6 +158,14 @@
     }
   }
 
+  function translateMediaBar() {
+    var els = document.querySelectorAll('#slides-container .play-text, #slides-container .action-label');
+    for (var i = 0; i < els.length; i++) {
+      var k = (els[i].textContent || '').trim();
+      if (MEDIABAR.hasOwnProperty(k)) els[i].textContent = MEDIABAR[k];
+    }
+  }
+
   /* cloche NotifySync : dans la barre visible, juste après le tchat (sinon avant les boutons de Jellyfin) */
   function placeBell(box) {
     var bell = document.getElementById('netflix-bell');
@@ -165,8 +179,19 @@
     box.insertBefore(bell, first);
   }
 
+  var timer = null;
+  function stop() {
+    clearInterval(timer);
+    window.removeEventListener('hashchange', tick);
+    if (S.nav && S.nav.parentElement) S.nav.parentElement.removeChild(S.nav);
+    var st = document.getElementById(CSS_ID);
+    if (st) st.parentElement.removeChild(st);
+  }
+
   function tick() {
+    if (window.__gcHeaderV !== VERSION) { stop(); return; }
     if (document.hidden || !document.body) return;
+    translateMediaBar(); // ancienne et nouvelle interface : la bannière est la même
     var bar = modernBar();
     var tab = bar ? homeTab() : -1;
     document.body.classList.toggle('gc-home', !!bar && tab >= 0);
@@ -182,6 +207,6 @@
   }
 
   window.addEventListener('hashchange', tick);
-  setInterval(tick, 1000);
+  timer = setInterval(tick, 1000);
   tick();
 })();

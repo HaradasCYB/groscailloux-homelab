@@ -44,7 +44,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   - le logo « Groscailloux TV » ;
   - sur l'accueil, les onglets Accueil, Favoris, Découvrir, Demandes et Calendrier ;
   - la cloche des notifications ;
-  - des libellés en français (« Favoris », « Rechercher »… restaient en anglais).
+  - des libellés en français (« Favoris », « Rechercher »… restaient en anglais, comme « Play » sur la bannière,
+    devenu « Lire »).
 
   Le titre du film ou de la série à la une ne passe plus sous la barre. Dans « Lire sur », l'iPhone retrouve
   l'entrée AirPlay. Le navigateur Android explique quoi installer pour diffuser, et ailleurs une liste vide dit
