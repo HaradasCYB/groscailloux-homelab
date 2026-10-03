@@ -604,6 +604,13 @@ journalctl -u homelabd -f
   dès qu'un fichier est lu ainsi le torrent bascule en `EpisodeSource::OursOnly` — **sinon Sonarr gagne et un
   seul fichier est rattaché aux 12 épisodes** (vu en production avant le correctif). `no_match` **et**
   `nothing_importable` remontent maintenant dans « Rien ne bouge » sur `/status.html`.
+- **Numéro nu (`Titre - 07`)** (2026-10-03) : Sonarr ne lit `Angels of Death - 07 (…).mkv` que pour un **animé**. Pour
+  une série classique, aucun épisode n'était reconnu et le pack restait « téléchargé mais pas rangé ».
+  `torrent_import::bare_episode` lit ce numéro dans la saison de l'étiquette (`season=`, posée par `series_search`),
+  et **seulement là**. `bare_episodes` refuse tout le pack si les titres diffèrent, si deux fichiers portent le même
+  numéro, ou si un numéro dépasse la saison. Un nom qui porte sa saison (`S01 - 06`) reste du ressort de la lecture
+  fansub. Même jour : piste **russe** par défaut dans ce pack (son et sous-titres). Correction sur des copies
+  (`mkvpropedit`, anglais par défaut), jamais sur les fichiers du torrent, qui doivent rester intacts pour le partage.
 - **Épisodes sans date / VOF** (2026-09-23, *Le Voyageur*) : TheTVDB date souvent tard les séries françaises et
   Sonarr **exclut de `wanted/missing` tout épisode sans date** : `series_search` lit donc aussi les épisodes des séries
   dont une saison suivie, commencée depuis moins de `undated_window_days` (730), est incomplète, et cherche leurs

@@ -27,7 +27,7 @@ use crate::classify::{classify, is_video, MediaKind};
 use crate::clients::{ArrClient, Torrent, TorrentFile};
 use crate::config::Config;
 use crate::context::{Side, TaskContext};
-use crate::matching::{parsed_movie, parsed_series, pick_movie, pick_series, Match};
+use crate::matching::{normalize, parsed_movie, parsed_series, pick_movie, pick_series, Match};
 use crate::state::{now, TorrentImportRecord};
 
 pub struct TorrentImport;
@@ -68,6 +68,9 @@ pub enum TagTarget {
     },
     Series {
         id: i64,
+        /// Saison visée à la prise (`season=` de l'étiquette) : seul cadre où un numéro d'épisode « nu »
+        /// (`Angels of Death - 07`) est lu, voir `bare_episodes`.
+        season: Option<i64>,
     },
     /// Pack d'un cours d'animé publié sous son propre titre : l'Arr lit la **mauvaise saison** dans les
     /// noms de fichiers (« S03E01 » = saison 3 de Bleach). L'épisode visé vaut `numéro lu + offset`,
@@ -87,7 +90,7 @@ pub enum TagTarget {
 impl TagTarget {
     pub fn id(&self) -> Option<i64> {
         match self {
-            TagTarget::Movie { id } | TagTarget::Series { id } => Some(*id),
+            TagTarget::Movie { id } | TagTarget::Series { id, .. } => Some(*id),
             TagTarget::CourPack { id, .. } => Some(*id),
             TagTarget::Broken(_) => None,
         }
@@ -143,7 +146,7 @@ pub fn homelab_target(tags: &str) -> Option<TagTarget> {
         Some(if movie {
             TagTarget::Movie { id }
         } else {
-            TagTarget::Series { id }
+            TagTarget::Series { id, season }
         })
     })
 }
@@ -346,6 +349,88 @@ pub fn cour_pack_episodes(
             return Err(format!("S{season:02}E{target:02} a déjà un fichier"));
         }
         out.entry(p.clone()).or_default().push(id);
+    }
+    Ok(out)
+}
+
+/// Numéro d'épisode **nu** d'un nom de fichier, avec le titre (normalisé) qui le précède :
+/// `Angels of Death - 07 (WEBRip 1920x1080 x264 AAC Rus + Eng)-NOTAG.mkv` → (« angels of death », 7).
+///
+/// Sonarr ne lit cette forme que pour un **animé** (numérotation absolue) : pour une série ordinaire il ne
+/// reconnaît aucun épisode, et le pack restait « téléchargé mais pas rangé » (Angels of Death, 2026-10-03).
+/// Forme exigée : un tiret entouré d'espaces, 1 à 3 chiffres, puis un espace, un crochet, une parenthèse ou
+/// l'extension — jamais une année, une résolution ni un codec, le chiffre suivant casse la forme. Un nom qui
+/// porte sa propre saison (`Erased S01 - 06`) n'est pas un numéro nu : c'est le cas fansub, lu ailleurs.
+pub fn bare_episode(path: &str) -> Option<(String, i64)> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static SEASON: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"^(.+?)\s+-\s+(\d{1,3})(?:[\s\[(]|\.[A-Za-z0-9]{2,4}$)")
+            .expect("regex valide")
+    });
+    let season = SEASON.get_or_init(|| {
+        regex::Regex::new(r"(?i)\b(?:s\d{1,3}|season\s*\d+|saison\s*\d+)\b").expect("regex valide")
+    });
+    let base = path.rsplit('/').next().unwrap_or(path);
+    let c = re.captures(base)?;
+    let raw = c.get(1)?.as_str();
+    if season.is_match(raw) {
+        return None;
+    }
+    let prefix = normalize(raw);
+    if prefix.is_empty() {
+        return None;
+    }
+    Some((prefix, c.get(2)?.as_str().parse().ok()?))
+}
+
+/// Numéros nus d'un torrent pris pour **une** saison (`season=` de l'étiquette) → épisodes de cette saison.
+/// `found` : (chemin, titre normalisé, numéro). Refus **en bloc** — aucun fichier rangé par ce chemin — si les
+/// fichiers ne portent pas tous le même titre (une autre œuvre glissée dans le pack), si deux fichiers ont le même
+/// numéro, ou si un numéro dépasse la saison (numérotation absolue d'une saison suivante : on ne devine pas).
+pub fn bare_episodes(
+    found: &[(String, String, i64)],
+    season: i64,
+    episodes: &[Value],
+) -> Result<HashMap<String, Vec<i64>>, String> {
+    let titles: HashSet<&str> = found.iter().map(|(_, t, _)| t.as_str()).collect();
+    if titles.len() > 1 {
+        return Err(format!(
+            "{} titres différents devant les numéros",
+            titles.len()
+        ));
+    }
+    let in_season: Vec<(i64, i64)> = episodes
+        .iter()
+        .filter(|e| e.get("seasonNumber").and_then(Value::as_i64) == Some(season))
+        .filter_map(|e| {
+            Some((
+                e.get("episodeNumber").and_then(Value::as_i64)?,
+                e.get("id").and_then(Value::as_i64)?,
+            ))
+        })
+        .collect();
+    let last = in_season.iter().map(|(n, _)| *n).max().unwrap_or(0);
+    let mut seen = HashSet::new();
+    let mut out = HashMap::new();
+    for (path, _, n) in found {
+        if !seen.insert(*n) {
+            return Err(format!("deux fichiers portent le numéro {n}"));
+        }
+        if *n < 1 || *n > last {
+            return Err(format!(
+                "numéro {n} hors de la saison {season} ({last} épisodes)"
+            ));
+        }
+        let ids: Vec<i64> = in_season
+            .iter()
+            .filter(|(e, _)| e == n)
+            .map(|(_, id)| *id)
+            .collect();
+        let [id] = ids[..] else {
+            return Err(format!("S{season:02}E{n:02} inconnu de la fiche"));
+        };
+        out.insert(path.clone(), vec![id]);
     }
     Ok(out)
 }
@@ -764,6 +849,12 @@ async fn examine(
                 }
             }
         } else {
+            // torrent pris pour une saison précise : un numéro « nu » (« - 07 ») pourra y être lu, voir plus bas
+            let tag_season = match &target {
+                Some(TagTarget::Series { season, .. }) => *season,
+                _ => None,
+            };
+            let mut bare: Vec<(String, String, i64)> = Vec::new();
             for c in &candidates {
                 let Some(path) = c.get("path").and_then(Value::as_str) else {
                     continue;
@@ -804,7 +895,30 @@ async fn examine(
                         }
                     }
                 }
+                // toujours rien : numéro nu, jamais pour un fichier que Sonarr attribue à une AUTRE fiche
+                if eps.is_empty() && tag_season.is_some() {
+                    let other = parse
+                        .pointer("/series/id")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|s| s != id);
+                    if let (false, Some((title, n))) = (other, bare_episode(base)) {
+                        bare.push((path.to_string(), title, n));
+                    }
+                }
                 by_path.insert(path.to_string(), eps);
+            }
+            if let (Some(season), false) = (tag_season, bare.is_empty()) {
+                match bare_episodes(&bare, season, &episodes) {
+                    Ok(m) => {
+                        info!(task = "torrent_import", side = side.name, torrent = %t.name, season, files = m.len(),
+                              "numéros « - NN » lus dans la saison de l'étiquette");
+                        by_path.extend(m);
+                    }
+                    Err(why) => {
+                        warn!(task = "torrent_import", side = side.name, torrent = %t.name, season, %why,
+                              "numéros « - NN » écartés : correspondance incertaine");
+                    }
+                }
             }
         }
     }
@@ -1236,7 +1350,10 @@ mod tests {
         // non-régression : les étiquettes d'avant le décalage se lisent comme avant
         assert_eq!(
             homelab_target("homelab:series=50:season=4"),
-            Some(TagTarget::Series { id: 50 })
+            Some(TagTarget::Series {
+                id: 50,
+                season: Some(4)
+            })
         );
         assert_eq!(
             homelab_target("autre, homelab:movie=66"),
@@ -1468,5 +1585,138 @@ mod tests {
             EpisodeSource::ArrFirst,
         );
         assert!(files.is_empty());
+    }
+    /// Les 10 épisodes de la saison 1 d'Angels of Death (2021) dans Sonarr (ids 1001…1010), plus des spéciaux.
+    fn angels_of_death() -> Vec<Value> {
+        let mut v: Vec<Value> = (1..=10)
+            .map(|n| json!({"id": 1000 + n, "seasonNumber": 1, "episodeNumber": n}))
+            .collect();
+        v.extend((1..=4).map(|n| json!({"id": 2000 + n, "seasonNumber": 0, "episodeNumber": n})));
+        v
+    }
+
+    #[test]
+    fn a_bare_episode_number_is_read_with_its_title() {
+        assert_eq!(
+            bare_episode("/dl/Angels of Death S01 Complet/Angels of Death - 07 (WEBRip 1920x1080 x264 AAC Rus + Eng)-NOTAG.mkv"),
+            Some(("angelsofdeath".to_string(), 7))
+        );
+        assert_eq!(
+            bare_episode("Angels of Death - 10 [Finale](WEBRip 1920x1080 x264 AAC Eng)-NOTAG.mkv"),
+            Some(("angelsofdeath".to_string(), 10))
+        );
+        assert_eq!(bare_episode("Show - 3.mkv"), Some(("show".to_string(), 3)));
+        // jamais une année, une résolution, une version « v2 » collée, ni un nom sans tiret
+        assert_eq!(bare_episode("Show - 2021.mkv"), None);
+        assert_eq!(bare_episode("Show - 1080p.mkv"), None);
+        assert_eq!(bare_episode("Show - 07v2.mkv"), None);
+        assert_eq!(bare_episode("Show.07.mkv"), None);
+        assert_eq!(bare_episode("Show.S01E07.mkv"), None);
+        // un nom qui porte sa saison relève de la lecture fansub, pas de celle-ci
+        assert_eq!(bare_episode("Erased S01 - 06 VOSTFR [1080p].mkv"), None);
+        assert_eq!(bare_episode("Show Saison 2 - 04.mkv"), None);
+    }
+
+    #[test]
+    fn bare_numbers_land_in_the_tagged_season() {
+        let eps = angels_of_death();
+        let found: Vec<(String, String, i64)> = (1..=10)
+            .map(|n| {
+                (
+                    format!("/dl/AoD/Angels of Death - {n:02}.mkv"),
+                    "angels of death".to_string(),
+                    n,
+                )
+            })
+            .collect();
+        let m = bare_episodes(&found, 1, &eps).unwrap();
+        assert_eq!(m.len(), 10);
+        assert_eq!(m["/dl/AoD/Angels of Death - 07.mkv"], vec![1007]);
+        // jamais dans les spéciaux, même si l'étiquette visait une autre saison
+        assert!(m.values().all(|ids| ids.iter().all(|id| *id < 2000)));
+    }
+
+    #[test]
+    fn bare_numbers_are_refused_as_a_whole_when_unsure() {
+        let eps = angels_of_death();
+        let f = |p: &str, t: &str, n: i64| (p.to_string(), t.to_string(), n);
+        // une autre œuvre glissée dans le pack
+        assert!(bare_episodes(
+            &[f("a", "angels of death", 1), f("b", "pariah nexus", 2)],
+            1,
+            &eps
+        )
+        .is_err());
+        // deux fichiers pour un même numéro (deux versions)
+        assert!(bare_episodes(
+            &[f("a", "angels of death", 3), f("b", "angels of death", 3)],
+            1,
+            &eps
+        )
+        .is_err());
+        // numéro au-delà de la saison : numérotation absolue, on ne devine pas
+        assert!(bare_episodes(&[f("a", "angels of death", 11)], 1, &eps).is_err());
+        assert!(bare_episodes(&[f("a", "angels of death", 0)], 1, &eps).is_err());
+        // saison inconnue de la fiche
+        assert!(bare_episodes(&[f("a", "angels of death", 1)], 2, &eps).is_err());
+    }
+
+    #[test]
+    fn the_tag_keeps_its_season_for_bare_numbers() {
+        assert_eq!(
+            homelab_target("homelab:series=104:season=1"),
+            Some(TagTarget::Series {
+                id: 104,
+                season: Some(1)
+            })
+        );
+        // ancienne étiquette sans saison : aucun numéro nu n'est lu
+        assert_eq!(
+            homelab_target("homelab:series=104"),
+            Some(TagTarget::Series {
+                id: 104,
+                season: None
+            })
+        );
+    }
+
+    #[test]
+    fn a_bare_mapping_imports_files_sonarr_did_not_recognise() {
+        // manualimport : « Unknown Series », aucun épisode proposé (Angels of Death, 2026-10-03)
+        let row = json!({"path": "/dl/AoD/Angels of Death - 07.mkv", "relativePath": "Angels of Death - 07.mkv",
+                         "rejections": [{"reason": "Unknown Series"}], "series": null, "episodes": []});
+        let m = bare_episodes(
+            &[(
+                "/dl/AoD/Angels of Death - 07.mkv".to_string(),
+                "angels of death".to_string(),
+                7,
+            )],
+            1,
+            &angels_of_death(),
+        )
+        .unwrap();
+        let (files, skipped) = fresh_files(
+            std::slice::from_ref(&row),
+            false,
+            104,
+            "H",
+            &m,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert_eq!(files.len(), 1, "{skipped:?}");
+        assert_eq!(files[0]["episodeIds"], json!([1007]));
+        assert_eq!(files[0]["seriesId"], json!(104));
+        // l'épisode a déjà un fichier : jamais remplacé
+        let (files, skipped) = fresh_files(
+            &[row],
+            false,
+            104,
+            "H",
+            &m,
+            &[1007].into_iter().collect(),
+            EpisodeSource::ArrFirst,
+        );
+        assert!(files.is_empty() && skipped.len() == 1);
     }
 }

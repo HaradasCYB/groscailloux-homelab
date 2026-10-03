@@ -29,6 +29,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 
 ## 1.19.1 — 23/09/2026 — Audit : fiabilité et sécurité
 
+- **Épisodes numérotés « - 07 » (03/10)** : une série téléchargée dont les fichiers s'appellent « Titre - 07 » au lieu
+  de « S01E07 » restait « téléchargée mais pas rangée » (*Angels of Death*, demandée par un membre, rangée à la main
+  le jour même). L'import comprend maintenant ces numéros quand la recherche visait une saison précise, avec les
+  mêmes garde-fous qu'ailleurs : rien n'est rangé en cas de doute, et aucun épisode déjà présent n'est remplacé.
 - **Séries publiées en intégrale (03/10)** : une série disponible seulement en un seul pack de toutes ses saisons
   restait « introuvable ». La recherche automatique demandait les saisons une par une et ne voyait jamais ce pack
   (*Space Dandy*, demandé par un membre, trouvé et ajouté à la main le jour même). Elle le trouve maintenant toute

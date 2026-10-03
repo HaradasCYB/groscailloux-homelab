@@ -98,7 +98,13 @@ Jellyseerr. Pour chaque torrent terminé pas encore jugé (`state.torrent_import
    (liste vide pour un téléchargement non suivi), candidats filtrés sur le **chemin du torrent**, rejets
    d'identification ignorés (`Unknown Movie/Series`, `matched … by ID`). Épisodes : **ceux de l'Arr quand il a
    reconnu cette fiche** (il connaît saisons et numérotation absolue), sinon `parse` du nom de fichier →
-   `map_episodes`. **Jamais de remplacement** : un fichier dont un épisode (ou le film) a déjà un fichier est
+   `map_episodes`, puis la numérotation fansub (`Erased S01 - 06`). En dernier recours, et seulement si
+   l'étiquette nomme une saison (`homelab:series=<id>:season=<n>`, posée par `series_search`), un **numéro nu**
+   (`Angels of Death - 07 (…).mkv` → S01E07, `bare_episode`) est lu dans cette saison. Sonarr ne lit cette forme
+   que pour un animé : *Angels of Death* (2021), une série classique, était restée « téléchargée mais pas rangée »
+   le 2026-10-03. `bare_episodes` refuse **en bloc** dans trois cas : les fichiers ne portent pas tous le même
+   titre, deux fichiers ont le même numéro, ou un numéro dépasse la saison (numérotation absolue). Jamais pour un
+   fichier que Sonarr attribue à une autre fiche. **Jamais de remplacement** : un fichier dont un épisode (ou le film) a déjà un fichier est
    écarté (« déjà présent »). Le 2026-09-17, « The.Final.Season.E01 », sans saison, a été lu S01E01 et la
    saison 1 d'une série écrasée (réparée en réimportant ses fichiers d'origine). Puis `ManualImport` en
    **`importMode: copy`** (= hardlink). Jamais `auto` : pour un téléchargement non suivi, `auto` = déplacement.
