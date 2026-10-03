@@ -40,6 +40,15 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   - **Retour en arrière** possible pendant 7 jours.
 - **Tchat et Mon compte dans la nouvelle interface (03/10)** : leurs boutons avaient disparu après le passage à
   Jellyfin 12.1. Ils sont de retour dans la barre du haut, dans toutes les mises en page.
+- **La nouvelle interface retrouve ses repères (04/10)** :
+  - le logo « Groscailloux TV » ;
+  - sur l'accueil, les onglets Accueil, Favoris, Découvrir, Demandes et Calendrier ;
+  - la cloche des notifications ;
+  - des libellés en français (« Favoris », « Rechercher »… restaient en anglais).
+
+  Le titre du film ou de la série à la une ne passe plus sous la barre. Dans « Lire sur », l'iPhone retrouve
+  l'entrée AirPlay. Le navigateur Android explique quoi installer pour diffuser, et ailleurs une liste vide dit
+  pourquoi.
 - **SyncPlay sans roue de chargement (03/10)** : dans l'appli Jellyfin Desktop, avancer pendant une séance à plusieurs
   laissait le groupe bloqué ; il fallait faire pause puis lecture. Le groupe repart maintenant seul après un saut.
   Il faut redémarrer l'appli une fois pour en profiter. Le correctif définitif viendra avec Jellyfin 12.1, déjà testé

@@ -576,10 +576,31 @@ journalctl -u homelabd -f
     Mobile, TV ; « Auto » = la nouvelle). Les télés restent sur l'ancienne. **L'ancien en-tête `.skinHeader` reste
     dans la page, caché** : tout ce qui s'y accroche est invisible dans la nouvelle interface. Le tchat et Mon compte
     ont disparu ainsi le soir de la bascule. Ils visent maintenant la barre **visible** : boîte de `a[href="#/search"]`
-    dans `header.MuiAppBar-root`, sinon `.skinHeader .headerRight` (`headerBox()` des deux `app.js`). Ce qui reste
-    propre à l'ancienne interface : la cloche NotifySync, le logo « Groscailloux TV », les onglets renommés
-    Accueil/Favoris/Découvrir/Demandes/Calendrier (Jellyfin Enhanced y met des icônes à infobulle anglaise), le
-    calque CSS de l'en-tête. L'entrée AirPlay du menu « Lire sur » n'est pas encore vérifiée.
+    dans `header.MuiAppBar-root`, sinon `.skinHeader .headerRight` (`headerBox()` des deux `app.js`).
+  - **Nouvelle interface adaptée (04/10, choix de l'utilisateur : la garder)** : `branding/jellyfin/gc-header.js`
+    (« Groscailloux En-tête », privé) agit seulement quand la barre moderne est affichée. Il pose :
+    - le logo `banner-light` à la place de l'icône et du nom du serveur. Jellyfin Enhanced sert nos images de marque
+      pour tout nom `banner-light.<n'importe quoi>.png` sous `/web/`, d'où l'adresse fixe `/web/banner-light.gc.png` ;
+    - sur l'accueil, une rangée d'onglets Accueil, Favoris, Découvrir, Demandes, Calendrier sous la barre ; les pages de
+      Jellyfin Enhanced sont `#/home?tab=2|3|4` (index = 2 + rang de son bouton). On navigue par l'adresse : son bouton
+      ne réagit plus une fois replié dans son menu « ⋯ » (1366 px). Le lien « Favoris » et ses icônes sont cachés
+      là où la rangée les remplace ;
+    - les libellés : la barre est dessinée avant le chargement du français et ne se redessine qu'à un changement de
+      palier de largeur. « Favorites », « Search », « User Menu »… restaient en anglais, même avec la langue posée. On
+      utilise une table anglais → français sur les seuls textes de la barre ;
+    - la cloche NotifySync (`#netflix-bell`, accrochée à l'ancien en-tête caché) déplacée après le tchat. NotifySync ne
+      la recrée pas tant qu'elle existe ;
+    - la hauteur réelle de la barre dans `--gc-header-h` ; le bandeau d'annonce du tchat et le bloc de Media Bar se
+      calent dessous.
+    Jamais retirer un élément dessiné par React : il le retirerait lui-même ensuite et planterait. On cache, on
+    déplace nos éléments, on change des textes. « Lire sur » est un **menu MUI** (`#app-remote-play-menu`), présent
+    caché dès le chargement et recréé avec la barre. `gc-airplay.js` v5 le surveille (texte réécrit par React à
+    l'ouverture, d'où `characterData`) : AirPlay sur appareil Apple, appli du Play Store sur Android, « aucun autre
+    appareil » ailleurs. Banc : `runprod.sh modern_ui.js ":desktop :phone :iphone :android"` (`CANDIDATE_DIR` :
+    scripts et `groscailloux-tv.css` candidats) et `airplay_flow.js` (geste complet, sélecteur simulé).
+  - **Media Bar 3.0** : son bloc texte `.slide-content` est ancré en haut (20 px) **et** en bas, avec débordement
+    masqué. Le descendre par `top` le rétrécit et coupe les boutons ; le calque le décale par `translate` sous
+    l'en-tête. Les règles Media Bar 2.x du calque (`.plot-container`, `.info-container`…) sont à revoir.
 - **Jellyfin Enhanced (audit du 03/10)** :
   - **Rafraîchissement** : page Téléchargements toutes les **120 s**, au lieu de 30 (`DownloadsPollIntervalSeconds`).
     À 30 s, avec un appel `arr/*` par carte, deux admins dont la page restait ouverte derrière le lecteur de Jellyfin

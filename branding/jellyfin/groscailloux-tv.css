@@ -55,6 +55,15 @@
 .video-container { transition: opacity 1.2s ease !important; }
 .plot-container.with-video { width: auto !important; }
 
+/* Media Bar 3.0 (04/10) : son bloc titre, infos et boutons (.slide-content) commence à 20 px du haut, sous l'en-tête
+   (le titre de la diapositive était à moitié caché). Descendu sous l'en-tête réel : hauteur posée par gc-header.js
+   dans la nouvelle interface de Jellyfin 12.1 (barre + rangée d'onglets), 5 em dans l'ancienne. Par `translate` et
+   non `top` : le bloc est ancré en haut ET en bas, avec débordement masqué ; changer `top` le rétrécissait et coupait
+   les boutons Lire/Infos/Favori. */
+@media only screen and (orientation: landscape) {
+  #slides-container .slide-content { translate: 0 calc(var(--gc-header-h, 5em) + 1em - 20px) !important; }
+}
+
 /* Rangées calées sous la bannière (80vh), quelle que soit la hauteur d'écran : Media Bar les plaçait à
    65vh et, sur un écran large et bas, « Mes médias » passait sous les boutons. */
 @media only screen and (orientation: landscape) {

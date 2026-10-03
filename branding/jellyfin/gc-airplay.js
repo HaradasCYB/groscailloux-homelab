@@ -15,6 +15,8 @@
 // Fermeture : jellyfin-web 10.11 ferme un dialogue par « retour » (history.state.usr.dialogs[]) ; si ça ne
 // suffit pas (WebView de l'appli iPhone, 2026-09-19), on rejoue popstate, puis on retire le dialogue.
 // Ce qui s'est passé est envoyé au journal client de Jellyfin (ClientLog) pour diagnostiquer un vrai iPhone.
+// Nouvelle interface de Jellyfin 12.1 (2026-10-04, VERSION 5) : « Lire sur » y est un menu MUI
+// (#app-remote-play-menu) et non plus une feuille ; mêmes règles, voir fixMenu().
 // Les vraies cibles (Cast fonctionnel, TV et Desktop du compte) ne sont jamais touchées.
 // Déposé dans JavaScript Injector (« Groscailloux AirPlay ») par scripts/jellyfin-js-apply.py.
 // Jamais de window.confirm/alert/prompt : ignorés par la WebView iPhone et Jellyfin Desktop.
@@ -224,13 +226,14 @@
     var t = setTimeout(function () { mo.disconnect(); cb(null); }, VIDEO_WAIT_MS);
   }
 
-  function onAirPlay(sheet) {
+  /* `close(done)` ferme ce qui a été touché : feuille de l'ancienne interface ou menu de la nouvelle */
+  function onAirPlay(close) {
     steps = []; step('tap');
     var v = currentVideo();
     if (v) {
       // dans le geste, avant tout : Apple l'exige
       var ok = tryPicker(v, 'live');
-      closeSheet(sheet, function () {
+      close(function () {
         window.__gcAirPlayShown = ok ? 'picker' : 'hint';
         if (!ok) banner('AirPlay', 'Touche l’icône AirPlay dans le lecteur pour choisir l’écran.');
         report(ok ? 'ok' : 'picker-refused');
@@ -240,7 +243,7 @@
     var btn = playButton();
     var detail = btn ? null : slideDetailButton();
     step(btn ? 'play: button ' + String(btn.className || btn.tagName).slice(0, 40) : detail ? 'play: via slide detail page' : 'play: no button');
-    closeSheet(sheet, function () {
+    close(function () {
       if (!btn && !detail) {
         window.__gcAirPlayShown = 'hint';
         banner('AirPlay', 'Ouvre un film ou une série, puis choisis AirPlay dans « Lire sur ».');
@@ -301,12 +304,13 @@
     b.appendChild(icon); b.appendChild(body);
     b.addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      onAirPlay(sheet);
+      onAirPlay(function (done) { closeSheet(sheet, done); });
     }, true);
     return b;
   }
 
-  var VERSION = 4;
+  var VERSION = 5;
+  window.__gcAirPlayVersion = VERSION;
   /* « Jouer sur » = la feuille qui suit un appui sur le bouton Cast de l'en-tête (indépendant de la langue) */
   var lastCastTap = 0;
   document.addEventListener('click', function (e) {
@@ -346,6 +350,95 @@
     }
   }
 
+  /* --- Nouvelle interface (Jellyfin 12.1) : « Lire sur » est un menu MUI (#app-remote-play-menu), dessiné par React.
+     Sa ligne grisée dit « Google Cast non pris en charge » (iPhone, Firefox, Jellyfin Desktop) ou « Aucune cible de
+     casting disponible » (Chrome, dont Android où la diffusion web n'existe pas). Même règles que la feuille : AirPlay
+     sur les appareils Apple, sinon une explication quand la liste est vide. Les lignes de React ne sont jamais
+     retirées (React les retire lui-même à la fermeture) : cachées ou rédigées autrement ; l'entrée AirPlay est une
+     copie de la ligne grisée, rendue active, pour garder le style du menu. --- */
+  var UNSUPPORTED_RE = /google cast/i, NO_TARGET_RE = /aucune cible|no .*target/i;
+  var AIRPLAY_PATH = 'M6 22h12l-6-6zM21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h4v-2H3V5h18v12h-4v2h4c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z';
+
+  function closeMenu(menu, done) {
+    var bd = menu.querySelector('.MuiBackdrop-root');
+    if (bd) { step('close: menu backdrop'); bd.click(); }
+    // le menu reste dans la page une fois fermé (il y est dès le chargement) : on regarde s'il est encore affiché
+    setTimeout(function () { step(menu.getClientRects().length && getComputedStyle(menu).visibility !== 'hidden' ? 'close: menu still shown' : 'close: menu closed'); done(); }, 300);
+  }
+
+  function muiAirPlayItem(menu, model) {
+    var li = model.cloneNode(true);
+    li.classList.remove('Mui-disabled');
+    li.classList.add('gc-ap-mui');
+    li.removeAttribute('aria-disabled');
+    li.style.display = '';
+    li.tabIndex = 0;
+    var icon = li.querySelector('.MuiListItemIcon-root');
+    if (!icon) {
+      icon = document.createElement('div');
+      icon.className = 'MuiListItemIcon-root';
+      icon.style.cssText = 'min-width:36px;display:inline-flex;color:inherit';
+      li.insertBefore(icon, li.firstChild);
+    }
+    var ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'), path = document.createElementNS(ns, 'path');
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+    svg.style.cssText = 'width:1.5rem;height:1.5rem;fill:currentColor';
+    path.setAttribute('d', AIRPLAY_PATH); svg.appendChild(path);
+    icon.innerHTML = ''; icon.appendChild(svg);
+    var txt = li.querySelector('.MuiListItemText-primary') || li;
+    txt.textContent = 'AirPlay';
+    li.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      onAirPlay(function (done) { closeMenu(menu, done); });
+    }, true);
+    return li;
+  }
+
+  /* idempotent : relancé à chaque changement du menu (les cibles arrivent après son ouverture) */
+  function fixMenu(menu) {
+    var list = menu.querySelector('ul[role="menu"]');
+    if (!list) return;
+    var unsupported = null, noTarget = null, real = 0;
+    for (var li = list.firstElementChild; li; li = li.nextElementSibling) {
+      if (li.classList.contains('gc-ap-mui')) continue;
+      var txt = li.textContent || '';
+      if (li.classList.contains('Mui-disabled') && UNSUPPORTED_RE.test(txt)) unsupported = li;
+      else if (li.classList.contains('Mui-disabled') && NO_TARGET_RE.test(txt)) noTarget = li;
+      else if (li.getAttribute('role') === 'menuitem' && !li.classList.contains('Mui-disabled')) real++;
+    }
+    var placeholder = unsupported || noTarget;
+    if (isApple() && unsupported) {
+      unsupported.style.display = 'none';
+      if (noTarget) noTarget.style.display = 'none';
+      if (!list.querySelector('.gc-ap-mui')) {
+        list.insertBefore(muiAirPlayItem(menu, unsupported), list.firstChild);
+        window.__gcAirPlayShown = 'airplay';
+      }
+      return;
+    }
+    if (!placeholder) return;
+    if (real > 0) { placeholder.style.display = 'none'; window.__gcAirPlayShown = 'hidden'; return; }
+    var note = isAndroid() ? EMPTY_ANDROID : EMPTY_NOTE;
+    var label = placeholder.querySelector('.MuiListItemText-primary') || placeholder;
+    if (label.textContent !== note) {
+      label.textContent = note;
+      label.style.whiteSpace = 'normal';
+      var ic = placeholder.querySelector('.MuiListItemIcon-root');
+      if (ic) ic.style.display = 'none';
+      window.__gcAirPlayShown = 'note';
+    }
+  }
+
+  function watchMenu(menu) {
+    if (menu.__gcAirPlayV >= VERSION) return;
+    menu.__gcAirPlayV = VERSION;
+    window.__gcAirPlayMenus = (window.__gcAirPlayMenus || 0) + 1;
+    fixMenu(menu);
+    var mm = new MutationObserver(function () { fixMenu(menu); });
+    // characterData : à l'ouverture, React réécrit le texte de la ligne grisée (nœud texte), sans ajouter de nœud
+    mm.observe(menu, { childList: true, subtree: true, characterData: true });
+  }
+
   var mo = new MutationObserver(function (muts) {
     for (var i = 0; i < muts.length; i++) {
       var added = muts[i].addedNodes;
@@ -354,8 +447,14 @@
         if (!n || n.nodeType !== 1) continue;
         var sheet = n.classList && n.classList.contains('actionSheet') ? n : n.querySelector && n.querySelector('.actionSheet');
         if (sheet) fixSheet(sheet);
+        var menu = n.id === 'app-remote-play-menu' ? n : n.querySelector && n.querySelector('#app-remote-play-menu');
+        if (menu) watchMenu(menu);
       }
     }
   });
   mo.observe(document.documentElement, { childList: true, subtree: true });
+  // le menu de la nouvelle interface existe déjà, caché, quand ce script arrive (après la connexion) : il n'est
+  // jamais « ajouté » sous nos yeux, seulement affiché. Il est aussi recréé quand la barre est redessinée.
+  var m0 = document.getElementById('app-remote-play-menu');
+  if (m0) watchMenu(m0);
 })(typeof window !== 'undefined' ? window : globalThis);

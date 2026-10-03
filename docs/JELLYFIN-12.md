@@ -42,15 +42,14 @@ Coupure de 2 min 08 (23:01:30 → 23:03:38), 36 migrations de base, 23 extension
 - **L'ancien en-tête reste dans la page, caché**, dans la nouvelle interface. Le tchat et Mon compte s'y
   accrochaient : ils avaient disparu le soir même. Ils visent désormais la barre visible (`headerBox()` des deux
   `app.js`). Le banc `backups/jellyfin12-test-20261003/runprod.sh header_dump.js` vérifie leur taille à l'écran.
-- **Restent propres à l'ancienne interface** :
-  - la cloche NotifySync ;
+- **Nouvelle interface gardée et adaptée (04/10)**. `gc-header.js` ajoute :
   - le logo « Groscailloux TV » ;
-  - les onglets Accueil/Favoris/Découvrir/Demandes/Calendrier (dans la nouvelle, Jellyfin Enhanced met des icônes
-    à infobulle anglaise) ;
-  - le calque CSS de l'en-tête ;
-  - quelques libellés anglais dans la nouvelle barre (« Favorites » selon le moment du chargement).
+  - la rangée d'onglets Accueil, Favoris, Découvrir, Demandes, Calendrier sur l'accueil ;
+  - les libellés traduits ;
+  - la cloche NotifySync dans la barre.
 
-  L'entrée AirPlay du menu « Lire sur » reste à vérifier dans la nouvelle interface.
+  `gc-airplay.js` v5 gère le nouveau menu « Lire sur » (AirPlay sur iPhone, explication ailleurs). Le calque décale le
+  bloc texte de Media Bar 3.0 sous la barre. Détails dans `CLAUDE.md`, « Jellyfin 12.1 ».
 
 ## Ce que la répétition a montré
 
