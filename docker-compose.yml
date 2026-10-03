@@ -23,7 +23,7 @@ services:
   # ---------------------------------------------------------------- lecture
   jellyfin:
     <<: *base
-    image: jellyfin/jellyfin:10.11.8@sha256:1694ff069f0c9dafb283c36765175606866769f5d72f2ed56b6a0f1be922fc37
+    image: jellyfin/jellyfin:12.1@sha256:78d3ea1207d1322471fcac39a614f004f2ccf7e878f95ab2977d752f07e4dd7e
     container_name: jellyfin
     user: 1000:1000
     ports:

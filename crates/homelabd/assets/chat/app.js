@@ -178,16 +178,36 @@
     svg.appendChild(p);
     return svg;
   }
+  /* Boîte des boutons de droite de la barre VISIBLE. Jellyfin 12.1 : la mise en page « modern » (défaut des
+     navigateurs, de Jellyfin Desktop et des applis mobiles) a sa propre barre React (<header class="MuiAppBar-root">)
+     et garde l'ancien en-tête (.skinHeader) dans la page, CACHÉ : le bouton posé là ne se voyait plus (03/10). Barre
+     moderne : la boîte de « Rechercher » / « Lire sur » / SyncPlay, juste avant l'avatar ; sinon l'ancien en-tête
+     (mises en page « legacy », TV). */
+  function headerBox() {
+    var bar = document.querySelector('header.MuiAppBar-root');
+    if (bar && bar.getClientRects().length) {
+      var k = bar.querySelector('a[href="#/search"], [aria-controls="app-remote-play-menu"], [aria-controls="app-sync-play-menu"]');
+      var user = bar.querySelector('[aria-controls="app-user-menu"]');
+      var box = k ? k.parentElement : user && user.parentElement && user.parentElement.previousElementSibling;
+      if (box) return box;
+    }
+    return document.querySelector('.skinHeader .headerRight');
+  }
   function ensureButton() {
-    var right = document.querySelector('.skinHeader .headerRight');
-    if (!right) return;
+    var box = headerBox();
+    if (!box) return;
     var b = S.el.btn;
-    if (!b || !right.contains(b)) {
+    if (!b) {
       b = h('button', { type: 'button', class: 'headerButton headerButtonRight paper-icon-button-light gc-chat-btn', title: 'Tchat', 'aria-label': 'Ouvrir le tchat', onclick: function () { toggle(); } }, [icon()]);
       S.el.badge = h('span', { class: 'gc-badge', hidden: '' });
       b.appendChild(S.el.badge);
-      right.insertBefore(b, right.firstChild);
       S.el.btn = b;
+    }
+    // déplacé (pas recréé) quand la barre change : mise en page, ou barre React refaite par une navigation
+    if (b.parentElement !== box) {
+      var modern = !box.classList.contains('headerRight');
+      // barre moderne : après les boutons de Jellyfin Enhanced, avant SyncPlay ; ancien en-tête : en tête, comme avant
+      box.insertBefore(b, modern ? box.querySelector(':scope > .MuiButtonBase-root') : box.firstChild);
     }
     b.hidden = playing();
   }

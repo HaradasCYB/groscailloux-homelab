@@ -555,9 +555,31 @@ journalctl -u homelabd -f
     - Forçable dans un navigateur par `localStorage['gc-syncplay-force'] = '1'` ; état dans `window.__gcSyncPlay`.
     - Banc : `backups/syncplay-20261003/run.sh [0|1]` (deux navigateurs, comptes temporaires, `NO_INJECT=1` pour la
       version servie). Mesuré : reprise du groupe 0,5 s après le saut.
-  - **Correctif de fond** : Jellyfin **12.1**, voir `docs/JELLYFIN-12.md` (répétée le 03/10, bascule à valider).
-  - La prod est en **10.11.8**. Le widget « Releases » de Homarr affiche la dernière version publiée, pas celle qui
-    tourne.
+  - **Correctif de fond** : Jellyfin **12.1**, en service depuis le 03/10 (voir « Jellyfin 12.1 » ci-dessous). Le
+    script reste en place tant que la 12.1 n'est pas validée en séance réelle dans Jellyfin Desktop.
+  - Le widget « Releases » de Homarr affiche la dernière version publiée, pas celle qui tourne.
+- **Jellyfin 12.1 (bascule le 2026-10-03 à 23:01, coupure 2 min 08)** : procédure et constats dans `docs/JELLYFIN-12.md`.
+  - **Instantané 10.11.8** : `backups/jellyfin-snapshot-10.11.8-20261003/` (root 700 : config complète prise Jellyfin
+    arrêté, image d'avant, compose et diun d'avant). Retour arrière : `sudo …/rollback.sh --yes` (~2 min, la config
+    12.1 est mise de côté). Suppression le **10/10 à 12:00** par le minuteur **transitoire** `jellyfin-snapshot-purge`
+    (perdu si le VPS redémarre : supprimer alors à la main).
+  - **`EnableLegacyAuthorization = true`** dans `config/system.xml` : la migration le met à `false`, et alors
+    `X-Emby-Token` et `?api_key=` répondent 401. Or toutes les applis ouvrent leur websocket par `api_key` et le
+    Chromecast lit ses flux ainsi. Le couper un jour = passer d'abord homelabd, `scripts/` et nos scripts à
+    `Authorization: MediaBrowser Token="…"` (accepté par 10.11 et 12.x).
+  - **Collection Sections n'a pas de version 12.x** (`MissingMethodException IUserManager.get_Users` au démarrage) :
+    ses 4 rangées d'accueil (Tendances, Anime, Les mieux notés, Films français) manquent jusqu'à une version 12.
+  - **Nouvelle interface par défaut** : la 12.1 a deux interfaces. « modern » (React, barre `header.MuiAppBar-root`)
+    est celle des navigateurs sans réglage (`layout` absent → `modern`) **et** des applis dont `NativeShell` répond
+    `desktop`/`mobile` (Jellyfin Desktop, applis iPhone/Android). L'ancienne n'est servie que pour `desktop-legacy`,
+    `mobile-legacy` et `tv` (clé `localStorage` `layout`, ou Réglages → Affichage → « Mode d'affichage » : Bureau,
+    Mobile, TV ; « Auto » = la nouvelle). Les télés restent sur l'ancienne. **L'ancien en-tête `.skinHeader` reste
+    dans la page, caché** : tout ce qui s'y accroche est invisible dans la nouvelle interface. Le tchat et Mon compte
+    ont disparu ainsi le soir de la bascule. Ils visent maintenant la barre **visible** : boîte de `a[href="#/search"]`
+    dans `header.MuiAppBar-root`, sinon `.skinHeader .headerRight` (`headerBox()` des deux `app.js`). Ce qui reste
+    propre à l'ancienne interface : la cloche NotifySync, le logo « Groscailloux TV », les onglets renommés
+    Accueil/Favoris/Découvrir/Demandes/Calendrier (Jellyfin Enhanced y met des icônes à infobulle anglaise), le
+    calque CSS de l'en-tête. L'entrée AirPlay du menu « Lire sur » n'est pas encore vérifiée.
 - **Jellyfin Enhanced (audit du 03/10)** :
   - **Rafraîchissement** : page Téléchargements toutes les **120 s**, au lieu de 30 (`DownloadsPollIntervalSeconds`).
     À 30 s, avec un appel `arr/*` par carte, deux admins dont la page restait ouverte derrière le lecteur de Jellyfin
@@ -808,7 +830,11 @@ journalctl -u homelabd -f
   Anime, Les mieux notés, Films français), Auto Collections (collections françaises, orphelines supprimées).
   Un compte absent de Jellyseerr ne voit pas les rangées « Découvrir ».
 - Tester l'interface : navigateur jetable + compte ordinaire temporaire ; remplacer le CSS dans CE navigateur
-  en interceptant `Branding/Configuration` (et contourner le service worker), jamais en production.
+  en interceptant `Branding/Configuration` (et contourner le service worker), jamais en production. **Un élément
+  se contrôle par sa taille à l'écran (`getBoundingClientRect`), jamais par sa seule présence** : le 03/10, le banc
+  disait « tchat présent » alors que le bouton était dans l'en-tête caché de la 12.1. Banc des en-têtes :
+  `backups/jellyfin12-test-20261003/runprod.sh header_dump.js ":desktop mobile:phone desktop-legacy:desktop"`
+  (compte temporaire, `CANDIDATE_DIR` pour essayer des `app.js` candidats sans toucher à la prod).
 
 ## Seedbox
 

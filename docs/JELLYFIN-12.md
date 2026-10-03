@@ -4,11 +4,53 @@
 - les « prêt » envoyés avec une position périmée sont corrigés (PR #17797) ;
 - l'attente d'un membre silencieux est désormais limitée.
 
-La 10.11.11 est la dernière 10.11, et la prod tourne en 10.11.8. Le contournement en place est le script
+La 10.11.11 est la dernière 10.11 ; la prod tournait en 10.11.8 avant la bascule. Le contournement en place est le script
 `branding/jellyfin/gc-syncplay.js` (voir `CLAUDE.md`, « SyncPlay »).
 
-**État** : répétition faite le 03/10 sur une instance d'essai, avec une copie de la config de prod. **La bascule de la
-prod n'est pas faite** : elle doit être validée par l'admin.
+**État** : **prod en 12.1 depuis le 03/10 à 23:01**, après une répétition le même jour sur une instance d'essai.
+Coupure de 2 min 08 (23:01:30 → 23:03:38), 36 migrations de base, 23 extensions actives.
+
+## Bascule du 03/10 et retour arrière (jusqu'au 10/10)
+- **Script** : `backups/jellyfin-snapshot-10.11.8-20261003/switch.sh`, avec son journal `switch.log`. Il suit les
+  étapes de « Bascule » plus bas.
+- **Instantané** : `config/` entier dans le même dossier (root 700). Première copie Jellyfin en marche, puis copie
+  finale des différences Jellyfin arrêté (4 s, 6,8 Go) ; intégrité de la base vérifiée sur la copie. Le dossier
+  garde aussi l'image d'avant (`IMAGE-AVANT.txt`), `docker-compose.before.yml` et `diun-images.before.yml`.
+- **Retour arrière** : `sudo backups/jellyfin-snapshot-10.11.8-20261003/rollback.sh --yes`, environ 2 minutes.
+  - Il arrête Jellyfin et met la config 12.1 de côté dans `jellyfin/config.12.1-<date>`.
+  - Il restaure l'instantané, remet l'image 10.11.8 dans le compose et dans diun, puis relance.
+  - Tout ce qui a changé depuis la bascule est perdu : lectures vues, comptes, réglages.
+- **Suppression** : le 10/10 à 12:00, par le minuteur **transitoire** `jellyfin-snapshot-purge`. Il ne survit pas à
+  un redémarrage du VPS : dans ce cas, supprimer le dossier à la main.
+
+## Constats après la bascule
+- **Authentification** : `EnableLegacyAuthorization` est remis à `true` (étape 5 du script). Sinon `X-Emby-Token`
+  et `?api_key=` répondent 401.
+- **Collection Sections** n'a pas de version 12.x : `MissingMethodException IUserManager.get_Users` au démarrage.
+  Ses 4 rangées de l'accueil manquent (Tendances, Anime, Les mieux notés, Films français). Home Screen Sections
+  sert les 12 autres.
+- **Chromecast** : la réécriture NPM de `master.m3u8` (agent `CrKey` → 720p, son AAC) marche telle quelle.
+- **Nouvelle interface par défaut**. jellyfin-web 12.1 a deux interfaces :
+  - « modern », en React, avec une barre `header.MuiAppBar-root` ;
+  - l'ancienne, servie seulement pour les mises en page `desktop-legacy`, `mobile-legacy` et `tv`.
+
+  Le choix vient de la clé `localStorage` `layout`. Sans clé, c'est `NativeShell.AppHost.getDefaultLayout()`
+  (Jellyfin Desktop, applis mobiles), sinon `modern`. Comme `desktop` et `mobile` donnent maintenant la nouvelle
+  interface, **navigateurs, Jellyfin Desktop et applis mobiles y sont passés d'office**. Les télés restent sur
+  l'ancienne. Un membre peut revenir à l'ancienne dans Réglages → Affichage → « Mode d'affichage » (Bureau,
+  Mobile) ; « Auto » donne la nouvelle.
+- **L'ancien en-tête reste dans la page, caché**, dans la nouvelle interface. Le tchat et Mon compte s'y
+  accrochaient : ils avaient disparu le soir même. Ils visent désormais la barre visible (`headerBox()` des deux
+  `app.js`). Le banc `backups/jellyfin12-test-20261003/runprod.sh header_dump.js` vérifie leur taille à l'écran.
+- **Restent propres à l'ancienne interface** :
+  - la cloche NotifySync ;
+  - le logo « Groscailloux TV » ;
+  - les onglets Accueil/Favoris/Découvrir/Demandes/Calendrier (dans la nouvelle, Jellyfin Enhanced met des icônes
+    à infobulle anglaise) ;
+  - le calque CSS de l'en-tête ;
+  - quelques libellés anglais dans la nouvelle barre (« Favorites » selon le moment du chargement).
+
+  L'entrée AirPlay du menu « Lire sur » reste à vérifier dans la nouvelle interface.
 
 ## Ce que la répétition a montré
 
@@ -21,7 +63,7 @@ prod n'est pas faite** : elle doit être validée par l'admin.
 | Extensions en version 12.x | Les 23 actives, accueil affiché en 18 s, fiches et lecture correctes |
 | SyncPlay (navigateurs) | Saut puis reprise du groupe sans intervention |
 | `gc-syncplay.js` | Retrouve encore SyncPlay dans le jellyfin-web 12.1 |
-| Habillage | Logo et onglets corrects. À retoucher : titre de Media Bar 3.0 qui déborde, quelques libellés restés en anglais (« Play », « Favorites », onglets de Jellyfin Enhanced) |
+| Habillage | Logo et onglets corrects **dans l'ancienne interface**. La nouvelle, par défaut, n'a pas été examinée : voir « Constats après la bascule ». À retoucher : titre de Media Bar 3.0 qui déborde, quelques libellés restés en anglais (« Play », « Favorites », onglets de Jellyfin Enhanced) |
 
 **Versions 12.x installées pendant l'essai** : Auto Collections 0.0.9, File Transformation 3.0.1, Home Screen Sections
 3.0.2, HoverTrailer 0.4.1, InPlayerEpisodePreview 2.4.0.3, Intro Skipper 12.0.4, Jellyfin Enhanced 12.10, Media Bar 3.0.0,

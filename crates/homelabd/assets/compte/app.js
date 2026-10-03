@@ -297,15 +297,31 @@
     }
   }, true);
 
+  /* Boîte des boutons de droite de la barre VISIBLE (même règle que le tchat). Jellyfin 12.1 : la mise en page
+     « modern » (défaut des navigateurs, de Jellyfin Desktop et des applis mobiles) a sa propre barre React et garde
+     l'ancien en-tête (.skinHeader) dans la page, caché : le bouton posé là ne se voyait plus (03/10). */
+  function headerBox() {
+    var bar = document.querySelector('header.MuiAppBar-root');
+    if (bar && bar.getClientRects().length) {
+      var k = bar.querySelector('a[href="#/search"], [aria-controls="app-remote-play-menu"], [aria-controls="app-sync-play-menu"]');
+      var user = bar.querySelector('[aria-controls="app-user-menu"]');
+      var box = k ? k.parentElement : user && user.parentElement && user.parentElement.previousElementSibling;
+      if (box) return box;
+    }
+    return document.querySelector('.skinHeader .headerRight');
+  }
   function mount() {
-    if (document.querySelector('.gc-acc-btn')) return;
-    var right = document.querySelector('.skinHeader .headerRight');
-    if (!right) return;
+    var box = headerBox();
+    if (!box) return;
+    var b = S.btn; // pas dans S.el : close() le vide
+    if (b && b.parentElement === box) return;
     if (!token()) return;
     css(); // sinon le SVG n'a ni taille ni couleur avant le premier clic (icône invisible après un rechargement)
-    var b = h('button', { type: 'button', class: 'headerButton headerButtonRight paper-icon-button-light gc-acc-btn', title: 'Mon compte', 'aria-label': 'Mon compte', onclick: toggle }, [icon()]);
-    var user = right.querySelector('.headerUserButton');
-    if (user) right.insertBefore(b, user); else right.appendChild(b);
+    // créé une fois, puis déplacé quand la barre change (mise en page, barre React refaite par une navigation)
+    if (!b) b = S.btn = h('button', { type: 'button', class: 'headerButton headerButtonRight paper-icon-button-light gc-acc-btn', title: 'Mon compte', 'aria-label': 'Mon compte', onclick: toggle }, [icon()]);
+    // juste avant l'avatar : ancien en-tête, devant .headerUserButton ; barre moderne, en fin de boîte (l'avatar suit)
+    var user = box.querySelector('.headerUserButton');
+    if (user && user.parentElement === box) box.insertBefore(b, user); else box.appendChild(b);
   }
   /* Mode « VO » (2026-09-25). Jellyfin n'accepte qu'une langue audio préférée par compte : le serveur pose le
      japonais (animés, sur tous les appareils) ; ici, pour un film ou une série qui n'est PAS un animé, si la

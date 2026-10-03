@@ -32,7 +32,7 @@
   include_tags: ['^[0-9a-f]{8}-ls\d+$']
 
 # --- semver nu
-- name: jellyfin/jellyfin:10.11.8
+- name: jellyfin/jellyfin:12.1
   watch_repo: true
   max_tags: 3
   include_tags: ['^\d+\.\d+\.\d+$']

@@ -29,6 +29,17 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 
 ## 1.19.1 — 23/09/2026 — Audit : fiabilité et sécurité
 
+- **Jellyfin 12.1 (03/10)** : passage à la dernière version de Jellyfin, avec 2 minutes de coupure.
+  - **Pour les membres** : SyncPlay corrigé côté serveur, sous-titres d'animés qui gardent leurs styles, pages
+    plus rapides, boutons « Tout lire » et « Aléatoire » sur les séries.
+  - **Nouvelle interface** : navigateurs, Jellyfin Desktop et téléphones passent d'office sur la nouvelle
+    interface de Jellyfin. Les bibliothèques sont dans la barre du haut. L'ancienne interface reste au choix dans
+    Réglages → Affichage → « Mode d'affichage » ; les télés ne changent pas.
+  - **Accueil** : 4 rangées manquent pour l'instant (Tendances, Anime, Les mieux notés, Films français). Leur
+    extension n'a pas encore de version pour Jellyfin 12.
+  - **Retour en arrière** possible pendant 7 jours.
+- **Tchat et Mon compte dans la nouvelle interface (03/10)** : leurs boutons avaient disparu après le passage à
+  Jellyfin 12.1. Ils sont de retour dans la barre du haut, dans toutes les mises en page.
 - **SyncPlay sans roue de chargement (03/10)** : dans l'appli Jellyfin Desktop, avancer pendant une séance à plusieurs
   laissait le groupe bloqué ; il fallait faire pause puis lecture. Le groupe repart maintenant seul après un saut.
   Il faut redémarrer l'appli une fois pour en profiter. Le correctif définitif viendra avec Jellyfin 12.1, déjà testé
