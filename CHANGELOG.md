@@ -29,6 +29,13 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 
 ## 1.19.1 — 23/09/2026 — Audit : fiabilité et sécurité
 
+- **Séries publiées en intégrale (03/10)** : une série disponible seulement en un seul pack de toutes ses saisons
+  restait « introuvable ». La recherche automatique demandait les saisons une par une et ne voyait jamais ce pack
+  (*Space Dandy*, demandé par un membre, trouvé et ajouté à la main le jour même). Elle le trouve maintenant toute
+  seule, regarde ce qu'il contient avant de le prendre, et ne télécharge que les épisodes qui manquent.
+- **Tableau de bord (03/10)** : nouvelle tuile « Lien d'inscription » sur la page de supervision, pour retrouver
+  d'un clic le lien à envoyer aux futurs membres. La tuile « Procédures » mène de nouveau à la bonne page, et la tuile
+  d'un ancien service retiré a disparu.
 - **Moins de place pour la même image (26/09)** : à langue égale, la recherche automatique prend maintenant la
   version **x265** d'un épisode ou d'un film plutôt que la x264, environ 2,5 à 3 fois plus légère, et l'AV1 en dernier
   (moins bien lu par les vieux appareils). Une version française en x264 reste préférée à une x265 sans français.

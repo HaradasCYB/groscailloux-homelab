@@ -97,6 +97,17 @@ journalctl -u homelabd -f
   et S03 → saison 3 de Bleach**. Les prendre automatiquement écraserait deux vraies saisons : le garde-fou d'égalité
   de saison de `series_candidate` les refuse, et il ne faut pas le retirer. Ces releases sont montrées sur
   `/recherche` marquées « autre saison », à l'admin de trancher.
+- **Intégrales (2026-10-03)** : un pack sans numéro de saison n'est **jamais** renvoyé par `{TmdbId}{Season}`, et
+  Sonarr ne lit rien dans son nom, pas même la qualité. *Space Dandy*, demandé par un membre, est ainsi resté
+  « 0 candidat » alors que C411 avait l'intégrale MULTi 1080p x265. `series_search::try_integrale` intervient
+  seulement quand rien d'autre n'est acceptable :
+  - il reprend les intégrales vues dans les résultats, sinon fait une requête `{TmdbId}` sans saison, si le dernier
+    épisode manquant a au moins 14 jours ;
+  - il lit le `.torrent` et passe chaque fichier au `parse` de Sonarr (scene mapping : `02x01` → S01E14) ;
+  - il ne télécharge que les fichiers des épisodes manquants de la saison : torrent ajouté arrêté, autres fichiers
+    désélectionnés, puis démarrage.
+  Si une intégrale reste introuvable : recherche Prowlarr texte sans catégorie, puis la même recette à la main (voir
+  docs/AUTOMATION.md). Interrupteur `[tasks.series_search] integrale_packs`.
 - **Aucune recherche depuis Sonarr/Radarr** : C411 y est en **RSS seulement** (`enableAutomaticSearch` et
   `enableInteractiveSearch` à `false` sur les 4 Arrs, depuis le 2026-09-17). Un bouton « Search » sur une saison
   d'animé interrogeait C411 épisode par épisode : 30 requêtes d'un coup, « API Request Limit reached, disabled

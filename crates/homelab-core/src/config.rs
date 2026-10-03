@@ -661,6 +661,14 @@ pub struct SeriesSearch {
     pub undated_episodes: bool,
     /// Seules les saisons dont la dernière diffusion date de moins de N jours sont examinées.
     pub undated_window_days: i64,
+    /// Prendre une **intégrale** (pack sans numéro de saison) quand rien d'autre n'est acceptable : la liste
+    /// de ses fichiers est lue dans le `.torrent`, seuls ceux des épisodes manquants sont téléchargés.
+    pub integrale_packs: bool,
+    /// Au-delà de ce nombre de fichiers vidéo, l'intégrale n'est pas examinée (un `parse` Sonarr par fichier).
+    pub integrale_max_files: usize,
+    /// Requête supplémentaire « toutes saisons » seulement si le dernier épisode manquant est sorti depuis au
+    /// moins N jours (une saison en cours de diffusion attend son épisode de la semaine, pas une intégrale).
+    pub integrale_min_age_days: i64,
 }
 
 impl Default for SeriesSearch {
@@ -683,6 +691,9 @@ impl Default for SeriesSearch {
             cour_max_files: 30,
             undated_episodes: true,
             undated_window_days: 730,
+            integrale_packs: true,
+            integrale_max_files: 300,
+            integrale_min_age_days: 14,
         }
     }
 }

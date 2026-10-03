@@ -18,13 +18,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use super::{Report, Task};
-use crate::clients::{ArrClient, ProwlarrClient, QbitClient};
+use crate::clients::{ArrClient, ProwlarrClient, QbitClient, TorrentFile};
 use crate::config::Config;
 use crate::context::TaskContext;
 use crate::matching::{normalize, parsed_series};
@@ -406,6 +406,124 @@ pub fn cour_pack(
         }),
         title,
     })
+}
+
+/// Sonarr ne lit **aucune saison** dans ce titre (intégrale : `parsedEpisodeInfo` vide), ou c'est un pack de
+/// plusieurs saisons : la release ne peut être jugée que fichier par fichier (voir `integrale_pick`).
+pub fn season_less_pack(parse: &Value) -> bool {
+    match parse.get("parsedEpisodeInfo") {
+        None | Some(Value::Null) => true,
+        Some(info) => {
+            info.get("isMultiSeason").and_then(Value::as_bool) == Some(true)
+                || info.get("seasonNumber").and_then(Value::as_i64).is_none()
+        }
+    }
+}
+
+/// Titre à soumettre au `parse` pour connaître la **qualité** d'une intégrale : Sonarr ne lit rien dans un titre
+/// sans saison, pas même la résolution. Le marqueur (« INTEGRALE », « COMPLETE ») devient `S01` ; sans marqueur,
+/// `S01` est inséré devant la première étiquette de langue ou de qualité. `None` : rien à quoi se raccrocher.
+pub fn integrale_quality_title(title: &str) -> Option<String> {
+    static MARK: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static TAG: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let mark = MARK.get_or_init(|| {
+        regex::Regex::new(r"(?i)\b(?:int[ée]grale?|compl[eè]te)\b").expect("regex valide")
+    });
+    if let Some(m) = mark.find(title) {
+        return Some(format!("{}S01{}", &title[..m.start()], &title[m.end()..]));
+    }
+    let tag = TAG.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)[ ._\-\[(](?:multi|vff|vfq|vfi|vf2|truefrench|french|vostfr|subfrench|vof|\d{3,4}p|bluray|bdrip|web-?dl|webrip|hdtv)\b",
+        )
+        .expect("regex valide")
+    });
+    let m = tag.find(title)?;
+    Some(format!(
+        "{}.S01{}",
+        &title[..m.start()],
+        &title[m.start()..]
+    ))
+}
+
+/// Un fichier vidéo d'une intégrale : chemin dans le `.torrent`, taille, et épisodes de **notre** fiche que Sonarr
+/// lit dans son nom, en `(saison, numéro)` — scene mapping compris (`02x01` → S01E14 pour Space Dandy).
+#[derive(Debug, Clone)]
+pub struct IntegraleFile {
+    pub path: String,
+    pub size: i64,
+    pub episodes: Vec<(i64, i64)>,
+}
+
+/// Fichiers d'une intégrale retenus pour une saison, et épisodes qu'ils pourvoient.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntegralePick {
+    pub paths: Vec<String>,
+    pub covered: BTreeSet<i64>,
+    pub bytes: i64,
+}
+
+/// Fichiers à prendre pour `season` : ceux dont **tous** les épisodes lus sont des épisodes manquants de cette
+/// saison — jamais un remplacement, jamais une autre saison. Refus si deux fichiers visent le même épisode (deux
+/// versions : on ne choisit pas au hasard) ou si aucun fichier ne tombe dans le trou.
+pub fn integrale_pick(
+    files: &[IntegraleFile],
+    season: i64,
+    missing: &HashSet<i64>,
+) -> std::result::Result<IntegralePick, &'static str> {
+    let mut paths = Vec::new();
+    let mut covered = BTreeSet::new();
+    let mut bytes = 0i64;
+    for f in files {
+        if f.episodes.is_empty()
+            || !f
+                .episodes
+                .iter()
+                .all(|(s, n)| *s == season && missing.contains(n))
+        {
+            continue;
+        }
+        for (_, n) in &f.episodes {
+            if !covered.insert(*n) {
+                return Err("deux fichiers pour un même épisode");
+            }
+        }
+        paths.push(f.path.clone());
+        bytes += f.size;
+    }
+    if paths.is_empty() {
+        return Err("aucun fichier pour les épisodes manquants de cette saison");
+    }
+    Ok(IntegralePick {
+        paths,
+        covered,
+        bytes,
+    })
+}
+
+/// Le dernier épisode manquant est-il sorti depuis au moins `days` jours ? Date absente ou illisible : non.
+pub fn aired_before(latest_air: &str, now: i64, days: i64) -> bool {
+    chrono::DateTime::parse_from_rfc3339(latest_air)
+        .map(|d| now - d.timestamp() >= days * 86_400)
+        .unwrap_or(false)
+}
+
+/// Rangs (`torrents/files`) des fichiers voulus. qBittorrent préfixe les chemins du `.torrent` par le dossier
+/// racine du torrent (son nom) ; un torrent mono-fichier n'a que son nom. Comparaison exacte, jamais par suffixe.
+pub fn file_ids(files: &[TorrentFile], wanted: &[String]) -> Vec<usize> {
+    files
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| {
+            wanted.iter().any(|w| {
+                f.name == *w
+                    || f.name
+                        .split_once('/')
+                        .is_some_and(|(_, rest)| rest == w.as_str())
+            })
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// Candidat d'après un résultat Prowlarr et l'analyse (`parsedEpisodeInfo`) de son titre par Sonarr.
@@ -1178,7 +1296,7 @@ async fn fallback_candidates(
     names: &[String],
     anime: bool,
     outage: anyhow::Error,
-) -> Result<(Vec<Candidate>, Vec<CourPack>, &'static str)> {
+) -> Result<Found> {
     let ix = &ctx.cfg.indexers;
     let mut sources: Vec<&str> = Vec::new();
     if anime && !ix.fallback_anime.trim().is_empty() {
@@ -1227,7 +1345,7 @@ async fn fallback_candidates(
             break;
         }
     }
-    Ok((out, Vec::new(), "secours"))
+    Ok((out, Vec::new(), Vec::new(), "secours"))
 }
 
 /// Secours interrogés pour une fiche, dans l'ordre (« Nyaa.si + World-torrent » pour un animé).
@@ -1250,6 +1368,21 @@ fn source_of<'a>(c: &'a Candidate, default: &'a str) -> &'a str {
         .unwrap_or(default)
 }
 
+/// Ce que ramène la recherche d'une saison : candidats ordinaires, packs de cours, **intégrales** (résultats bruts
+/// portant l'identifiant de la série mais où Sonarr ne lit aucune saison, voir `try_integrale`), et le chemin suivi
+/// (`tmdb`, `tmdb+texte`, `texte`, `secours`, `budget`).
+type Found = (Vec<Candidate>, Vec<CourPack>, Vec<Value>, &'static str);
+
+/// Retient une intégrale vue dans les résultats : identifiant de la série, aucune saison lisible, pas déjà notée.
+fn keep_integrale(integrales: &mut Vec<Value>, r: &Value, parse: &Value, tmdb: i64) {
+    if tmdb_matches(r, tmdb)
+        && season_less_pack(parse)
+        && !integrales.iter().any(|x| x.get("title") == r.get("title"))
+    {
+        integrales.push(r.clone());
+    }
+}
+
 /// Candidats d'une saison : par identifiant TMDB, puis (rien trouvé) en texte libre avec les noms connus.
 async fn season_candidates(
     ctx: &TaskContext,
@@ -1258,21 +1391,22 @@ async fn season_candidates(
     series: &Value,
     todo: &SeasonTodo,
     throttle: &mut Throttle,
-) -> Result<(Vec<Candidate>, Vec<CourPack>, &'static str)> {
+) -> Result<Found> {
     let cfg = &ctx.cfg.tasks.series_search;
     let tmdb = series.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
     let anime = is_anime(series);
     let names = names_for(ctx, series).await;
     let mut out = Vec::new();
     let mut packs: Vec<CourPack> = Vec::new();
+    let mut integrales: Vec<Value> = Vec::new();
     if tmdb > 0 {
         if !throttle.take().await {
-            return Ok((out, packs, "budget"));
+            return Ok((out, packs, integrales, "budget"));
         }
         let found =
             match crate::indexer::search_tmdb(ctx, prow, tmdb, Some(todo.season), false).await {
                 Ok(Some(f)) => f,
-                Ok(None) => return Ok((out, packs, "budget")),
+                Ok(None) => return Ok((out, packs, integrales, "budget")),
                 Err(e) if crate::indexer::is_outage(&e) => {
                     return fallback_candidates(ctx, arr, prow, todo, &names, anime, e).await;
                 }
@@ -1290,6 +1424,7 @@ async fn season_candidates(
                 continue;
             }
             let parse = arr.parse(title).await?;
+            keep_integrale(&mut integrales, &r, &parse, tmdb);
             if let Some(p) = cour_pack(&r, &parse, todo.series_id, todo.season, anime) {
                 packs.push(p);
             }
@@ -1302,7 +1437,7 @@ async fn season_candidates(
         // on complète en texte libre (les cours d'un animé sont souvent nommés autrement)
         let left = uncovered(&out, &todo.missing_numbers);
         if !out.is_empty() && left.is_empty() {
-            return Ok((out, packs, "tmdb"));
+            return Ok((out, packs, integrales, "tmdb"));
         }
         if !out.is_empty() {
             info!(
@@ -1352,6 +1487,8 @@ async fn season_candidates(
                     .and_then(Value::as_i64)
                     .is_some_and(|t| t > 0 && t != tmdb);
             let parse = arr.parse(title).await?;
+            // intégrale : Sonarr n'en lit rien (ni série ni saison), seul l'identifiant TMDB la rattache
+            keep_integrale(&mut integrales, &r, &parse, tmdb);
             // Pack d'un cours : il porte le titre du cours (« BLEACH Thousand-Year Blood War »), et
             // l'indexer lui donne l'identifiant TMDB **du cours** (313552), pas celui de la série
             // (30984). C'est donc `parse./series/id` — la table d'alias de l'Arr — qui fait foi, et
@@ -1382,7 +1519,12 @@ async fn season_candidates(
             }
         }
     }
-    Ok((out, packs, if by_id > 0 { "tmdb+texte" } else { "texte" }))
+    Ok((
+        out,
+        packs,
+        integrales,
+        if by_id > 0 { "tmdb+texte" } else { "texte" },
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1500,6 +1642,332 @@ async fn try_cour_pack(
     Ok(None)
 }
 
+/// `.torrent` d'intégrales lus au plus par saison et par passage (les mieux classées d'abord).
+const INTEGRALE_TRIES: usize = 2;
+
+/// Clé de classement d'une intégrale : (français, rang de langue, résolution, ≥ 2 sources, codec, audio, sources).
+type IntegraleRank = (bool, u8, i64, bool, u8, u8, i64);
+
+/// Tente une **intégrale** quand aucune release ordinaire n'est acceptable pour la saison. `Ok(None)` = rien de sûr,
+/// la saison reste « aucun candidat » comme avant.
+///
+/// Space Dandy (2026-10-03) : C411 n'avait qu'une intégrale, absente de la recherche par saison, et Sonarr ne lit rien
+/// dans son nom ; la demande d'un membre restait « introuvable ». Les intégrales vues dans les résultats servent
+/// d'abord ; sinon une requête par identifiant **sans saison**, seulement pour une saison dont le dernier épisode
+/// manquant est sorti depuis `integrale_min_age_days`. Mêmes règles de choix que `choose` (qualité lue en mettant
+/// `S01` à la place du marqueur), puis lecture du `.torrent` (aucune annonce) : chaque fichier vidéo est soumis au
+/// `parse` de Sonarr, et seuls ceux qui pourvoient des épisodes manquants de CETTE saison sont téléchargés.
+#[allow(clippy::too_many_arguments)]
+async fn try_integrale(
+    ctx: &TaskContext,
+    prow: &ProwlarrClient,
+    arr: &ArrClient,
+    series: &Value,
+    todo: &SeasonTodo,
+    mut found: Vec<Value>,
+    allowed: &HashSet<i64>,
+    throttle: &mut Throttle,
+) -> Result<Option<SeasonOutcome>> {
+    let cfg = &ctx.cfg.tasks.series_search;
+    let ix = &ctx.cfg.indexers;
+    let title = series.get("title").and_then(Value::as_str).unwrap_or("?");
+    let tmdb = series.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
+    let anime = is_anime(series);
+    if !cfg.integrale_packs || tmdb <= 0 {
+        return Ok(None);
+    }
+    if found.is_empty() {
+        if !aired_before(&todo.latest_air, now(), cfg.integrale_min_age_days)
+            || !throttle.take().await
+        {
+            return Ok(None);
+        }
+        let list = match crate::indexer::search_series_tmdb_all(ctx, prow, tmdb, false).await {
+            Ok(Some(l)) => l,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                warn!(task = "series_search", service = arr.name, series = title, error = %e, "intégrales : recherche sans saison impossible");
+                return Ok(None);
+            }
+        };
+        let names = names_for(ctx, series).await;
+        let total = list.len();
+        for r in list {
+            let Some(t) = r.get("title").and_then(Value::as_str) else {
+                continue;
+            };
+            if !tmdb_matches(&r, tmdb) || derivative(t, &names).is_some() {
+                continue;
+            }
+            let parse = arr.parse(t).await?;
+            keep_integrale(&mut found, &r, &parse, tmdb);
+        }
+        info!(
+            task = "series_search",
+            service = arr.name,
+            series = title,
+            season = todo.season,
+            results = total,
+            integrales = found.len(),
+            "intégrales : recherche par identifiant sans saison"
+        );
+    }
+    // classement : mêmes clés que `choose` (français d'abord, résolution, partage, codec, audio)
+    let mut ranked: Vec<(IntegraleRank, Value)> = Vec::new();
+    for r in &found {
+        let (Some(t), Some(url)) = (
+            r.get("title").and_then(Value::as_str),
+            r.get("downloadUrl").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let parse = arr.parse(t).await?;
+        let mut quality = parse
+            .pointer("/parsedEpisodeInfo/quality")
+            .cloned()
+            .unwrap_or(Value::Null);
+        if quality.is_null() {
+            if let Some(probe) = integrale_quality_title(t) {
+                quality = arr
+                    .parse(&probe)
+                    .await?
+                    .pointer("/parsedEpisodeInfo/quality")
+                    .cloned()
+                    .unwrap_or(Value::Null);
+            }
+        }
+        let res = quality
+            .pointer("/quality/resolution")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let seeders = r.get("seeders").and_then(Value::as_i64).unwrap_or(0);
+        let lang = lang_rank_for(t, anime);
+        let release = json!({
+            "title": t,
+            "downloadUrl": url,
+            "publishDate": r.get("publishDate"),
+            "quality": quality,
+            "infoHash": r.get("infoHash"),
+        });
+        if !acceptable(&release, res, seeders, allowed) || (lang == 0 && !ix.allow_no_french) {
+            info!(task = "series_search", service = arr.name, series = title, release = %t, resolution = res, seeders, lang,
+                  "intégrale écartée : qualité, sources ou langue");
+            continue;
+        }
+        let rank = (
+            lang > 0,
+            lang,
+            res,
+            seeders >= 2,
+            codec_rank(t),
+            audio_rank(t),
+            seeders,
+        );
+        ranked.push((rank, release));
+    }
+    ranked.sort_by_key(|(rank, _)| std::cmp::Reverse(*rank));
+    for (_, release) in ranked.into_iter().take(INTEGRALE_TRIES) {
+        let rtitle = release
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_string();
+        let url = release
+            .get("downloadUrl")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let raw = match prow.download(url).await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(task = "series_search", release = %rtitle, error = %e, "intégrale : .torrent illisible");
+                continue;
+            }
+        };
+        let entries = match crate::torrent_file::files(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(task = "series_search", release = %rtitle, error = %e, "intégrale : bencode illisible");
+                continue;
+            }
+        };
+        let vids = crate::torrent_file::video_paths(&entries);
+        if vids.len() > cfg.integrale_max_files {
+            info!(task = "series_search", service = arr.name, series = title, release = %rtitle, fichiers = vids.len(),
+                  "intégrale écartée : trop de fichiers à examiner");
+            continue;
+        }
+        let mut files = Vec::with_capacity(vids.len());
+        for p in &vids {
+            let base = p.rsplit('/').next().unwrap_or(p);
+            let parse = arr.parse(base).await?;
+            let episodes: Vec<(i64, i64)> =
+                if parse.pointer("/series/id").and_then(Value::as_i64) == Some(todo.series_id) {
+                    parse
+                        .get("episodes")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| {
+                            Some((
+                                e.get("seasonNumber")?.as_i64()?,
+                                e.get("episodeNumber")?.as_i64()?,
+                            ))
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+            let size = entries
+                .iter()
+                .find(|e| e.path == *p)
+                .map(|e| e.length)
+                .unwrap_or(0);
+            files.push(IntegraleFile {
+                path: p.to_string(),
+                size,
+                episodes,
+            });
+        }
+        let pick = match integrale_pick(&files, todo.season, &todo.missing_numbers) {
+            Ok(p) => p,
+            Err(why) => {
+                info!(task = "series_search", service = arr.name, series = title, season = todo.season, release = %rtitle,
+                      fichiers = files.len(), %why, "intégrale écartée");
+                continue;
+            }
+        };
+        if !size_ok(pick.bytes, pick.covered.len(), ix.max_gb_per_episode) {
+            info!(task = "series_search", service = arr.name, series = title, release = %rtitle,
+                  "intégrale écartée : trop lourde par épisode");
+            continue;
+        }
+        let left: Vec<i64> = todo
+            .missing_numbers
+            .iter()
+            .copied()
+            .filter(|n| !pick.covered.contains(n))
+            .collect::<BTreeSet<i64>>()
+            .into_iter()
+            .collect();
+        let detail = format!(
+            "intégrale {rtitle} : {} fichier(s) sur {} → S{:02}, {} épisode(s)",
+            pick.paths.len(),
+            vids.len(),
+            todo.season,
+            pick.covered.len()
+        );
+        if ctx.dry_run {
+            info!(task = "series_search", service = arr.name, series = title, %detail, "essai à blanc : intégrale retenue");
+            return Ok(Some(SeasonOutcome::new("dry_run", detail, left)));
+        }
+        let target = Target::Season {
+            series_id: todo.series_id,
+            season: todo.season,
+        };
+        let why = grab_integrale(ctx, arr, raw, &release, &pick, &target.tag()).await?;
+        info!(task = "series_search", service = arr.name, series = title, season = todo.season, %detail, %why, "intégrale confiée");
+        return Ok(Some(SeasonOutcome::new(
+            "grabbed",
+            format!("{detail} — {why}"),
+            left,
+        )));
+    }
+    Ok(None)
+}
+
+/// Confie une intégrale au qBittorrent du côté de la fiche, **arrêtée**, puis désélectionne tout ce qui n'a pas été
+/// retenu avant de la démarrer : rien d'autre n'est écrit sur le disque. Déjà présente (une autre saison de la même
+/// intégrale) : nos fichiers rejoignent sa sélection, et son passage par `torrent_import` est effacé pour qu'il les
+/// importe à leur tour (sans ça, le torrent déjà noté « importé » ne serait plus examiné).
+async fn grab_integrale(
+    ctx: &TaskContext,
+    arr: &ArrClient,
+    raw: Vec<u8>,
+    release: &Value,
+    pick: &IntegralePick,
+    tag: &str,
+) -> Result<String> {
+    let qbit = qbit_for(ctx, arr).context("aucun qBittorrent pour ce côté")?;
+    let announced = release
+        .get("infoHash")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let before: HashSet<String> = qbit
+        .torrents()
+        .await?
+        .into_iter()
+        .map(|t| t.hash.to_ascii_lowercase())
+        .collect();
+    if !announced.is_empty() && before.contains(&announced) {
+        let files = qbit.files(&announced).await?;
+        let ids = file_ids(&files, &pick.paths);
+        if ids.len() != pick.paths.len() {
+            bail!(
+                "intégrale déjà présente : {} fichier(s) retrouvé(s) sur {}",
+                ids.len(),
+                pick.paths.len()
+            );
+        }
+        qbit.set_file_priority(&announced, &ids, 1).await?;
+        qbit.start(&announced, false).await?;
+        let key = super::torrent_import::state_key(side_name(arr), &announced);
+        ctx.state
+            .update(|s| s.torrent_import.remove(&key))
+            .await
+            .ok();
+        return Ok(format!(
+            "déjà dans qBittorrent : {} fichier(s) ajouté(s) à la sélection",
+            ids.len()
+        ));
+    }
+    qbit.add_torrent_with(raw, "", tag, true).await?;
+    let mut hash = None;
+    for _ in 0..8 {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        hash = qbit.torrents().await?.into_iter().find_map(|t| {
+            let h = t.hash.to_ascii_lowercase();
+            let ours = if announced.is_empty() {
+                !before.contains(&h)
+            } else {
+                h == announced
+            };
+            ours.then_some(h)
+        });
+        if hash.is_some() {
+            break;
+        }
+    }
+    let hash = hash.context("intégrale ajoutée mais introuvable dans qBittorrent")?;
+    let mut files = Vec::new();
+    for _ in 0..8 {
+        files = qbit.files(&hash).await.unwrap_or_default();
+        if !files.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    let keep = file_ids(&files, &pick.paths);
+    if keep.len() != pick.paths.len() {
+        // correspondance incertaine : retirée aussitôt (ajoutée arrêtée, rien n'a été écrit)
+        qbit.delete(std::slice::from_ref(&hash), true).await.ok();
+        bail!(
+            "intégrale retirée : {} fichier(s) retrouvé(s) sur {} dans qBittorrent",
+            keep.len(),
+            pick.paths.len()
+        );
+    }
+    let skip: Vec<usize> = (0..files.len()).filter(|i| !keep.contains(i)).collect();
+    qbit.set_file_priority(&hash, &skip, 0).await?;
+    qbit.start(&hash, false).await?;
+    Ok(format!(
+        "ajoutée à qBittorrent ({}) : {} fichier(s) sur {} sélectionné(s)",
+        arr.name,
+        keep.len(),
+        files.len()
+    ))
+}
+
 async fn process_season(
     ctx: &TaskContext,
     prow: &ProwlarrClient,
@@ -1510,7 +1978,8 @@ async fn process_season(
 ) -> Result<SeasonOutcome> {
     let cfg = &ctx.cfg.tasks.series_search;
     let title = series.get("title").and_then(Value::as_str).unwrap_or("?");
-    let (cands, packs, how) = season_candidates(ctx, prow, arr, series, todo, throttle).await?;
+    let (cands, packs, integrales, how) =
+        season_candidates(ctx, prow, arr, series, todo, throttle).await?;
     if how == "budget" {
         return Ok(SeasonOutcome::new("pending", String::new(), Vec::new()));
     }
@@ -1620,6 +2089,14 @@ async fn process_season(
     }
     let chosen = pack.or_else(|| pick(false));
     let Some(c) = chosen else {
+        // rien d'acceptable : une intégrale peut contenir la saison (jamais pendant une panne de C411)
+        if how != "secours" {
+            if let Some(r) =
+                try_integrale(ctx, prow, arr, series, todo, integrales, &allowed, throttle).await?
+            {
+                return Ok(r);
+            }
+        }
         return Ok(SeasonOutcome::new(
             if how == "secours" {
                 "fallback_none"
@@ -2905,5 +3382,164 @@ mod tests {
         let m = Target::Movie { movie_id: 66 };
         assert!(m.in_queue(&json!({"movieId": 66})) && !m.in_queue(&json!({"movieId": 67})));
         assert_eq!(m.tag(), "homelab:movie=66");
+    }
+
+    #[test]
+    fn an_integrale_is_a_pack_without_a_readable_season() {
+        // Space Dandy, 2026-10-03 : Sonarr ne renvoie rien du tout pour le titre de l'intégrale
+        assert!(season_less_pack(&json!({"title": "Space.Dandy.INTEGRALE"})));
+        assert!(season_less_pack(
+            &json!({"parsedEpisodeInfo": null, "title": "x"})
+        ));
+        assert!(season_less_pack(
+            &json!({"parsedEpisodeInfo": {"seasonNumber": 1, "isMultiSeason": true}})
+        ));
+        assert!(!season_less_pack(
+            &json!({"parsedEpisodeInfo": {"seasonNumber": 1, "fullSeason": true}})
+        ));
+        assert!(!season_less_pack(
+            &json!({"parsedEpisodeInfo": {"seasonNumber": 2, "episodeNumbers": [5]}})
+        ));
+    }
+
+    #[test]
+    fn the_quality_of_an_integrale_is_read_with_a_season_marker() {
+        assert_eq!(
+            integrale_quality_title(
+                "Space.Dandy.INTEGRALE.MULTI.VFF.1080p.BluRay.AAC.2.0.x265-NOTAG"
+            )
+            .as_deref(),
+            Some("Space.Dandy.S01.MULTI.VFF.1080p.BluRay.AAC.2.0.x265-NOTAG")
+        );
+        assert_eq!(
+            integrale_quality_title("Naruto L'INTÉGRALE VOSTFR 720p").as_deref(),
+            Some("Naruto L'S01 VOSTFR 720p")
+        );
+        assert_eq!(
+            integrale_quality_title("Breaking Bad COMPLETE MULTi 1080p").as_deref(),
+            Some("Breaking Bad S01 MULTi 1080p")
+        );
+        // sans marqueur : S01 devant la première étiquette de langue ou de qualité
+        assert_eq!(
+            integrale_quality_title("Space.Dandy.MULTI.VFF.1080p.BluRay").as_deref(),
+            Some("Space.Dandy.S01.MULTI.VFF.1080p.BluRay")
+        );
+        // « Complètement » n'est pas un marqueur
+        assert_eq!(
+            integrale_quality_title("Complètement.Cramé.FRENCH.720p").as_deref(),
+            Some("Complètement.Cramé.S01.FRENCH.720p")
+        );
+        assert_eq!(integrale_quality_title("Space Dandy"), None);
+    }
+
+    /// Les 26 fichiers de l'intégrale de Space Dandy : `01xNN` puis `02xNN` (numérotation TMDB), que Sonarr
+    /// rattache à S01E01–E26 (TVDB) par scene mapping.
+    fn space_dandy() -> Vec<IntegraleFile> {
+        (1..=26)
+            .map(|n| IntegraleFile {
+                path: if n <= 13 {
+                    format!("Space.Dandy.S01/Space.Dandy.01x{n:02}.mkv")
+                } else {
+                    format!("Space.Dandy.S02/Space.Dandy.02x{:02}.mkv", n - 13)
+                },
+                size: 300_000_000,
+                episodes: vec![(1, n)],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_integrale_gives_every_missing_episode_of_the_season() {
+        let missing: HashSet<i64> = (1..=26).collect();
+        let p = integrale_pick(&space_dandy(), 1, &missing).unwrap();
+        assert_eq!(p.paths.len(), 26);
+        assert_eq!(p.covered, (1..=26).collect::<BTreeSet<i64>>());
+        assert_eq!(p.bytes, 26 * 300_000_000);
+        assert!(p
+            .paths
+            .contains(&"Space.Dandy.S02/Space.Dandy.02x01.mkv".to_string()));
+    }
+
+    #[test]
+    fn an_integrale_never_replaces_a_file_nor_touches_another_season() {
+        // E01–13 déjà là : seuls les fichiers des épisodes 14 à 26
+        let missing: HashSet<i64> = (14..=26).collect();
+        let p = integrale_pick(&space_dandy(), 1, &missing).unwrap();
+        assert_eq!(p.paths.len(), 13);
+        assert!(p.paths.iter().all(|x| x.contains("02x")));
+        // un fichier lu sur une autre saison n'est jamais pris
+        let mut files = space_dandy();
+        files.push(IntegraleFile {
+            path: "Space.Dandy.S03/Space.Dandy.03x01.mkv".into(),
+            size: 1,
+            episodes: vec![(2, 1)],
+        });
+        let p = integrale_pick(&files, 1, &(1..=26).collect()).unwrap();
+        assert_eq!(p.paths.len(), 26);
+        // un fichier double (E03-E04) dont un épisode est déjà là : écarté
+        let files = vec![IntegraleFile {
+            path: "E03-E04.mkv".into(),
+            size: 1,
+            episodes: vec![(1, 3), (1, 4)],
+        }];
+        assert!(integrale_pick(&files, 1, &[3].into_iter().collect()).is_err());
+        // rien qui tombe dans le trou, ou des fichiers que Sonarr ne rattache pas à la fiche
+        assert!(integrale_pick(&space_dandy(), 2, &(1..=5).collect()).is_err());
+        let unknown = vec![IntegraleFile {
+            path: "01. Titre.mkv".into(),
+            size: 1,
+            episodes: vec![],
+        }];
+        assert!(integrale_pick(&unknown, 1, &(1..=26).collect()).is_err());
+    }
+
+    #[test]
+    fn two_versions_of_one_episode_are_refused() {
+        let mut files = space_dandy();
+        files.push(IntegraleFile {
+            path: "Extras/Space.Dandy.01x05.v2.mkv".into(),
+            size: 1,
+            episodes: vec![(1, 5)],
+        });
+        assert_eq!(
+            integrale_pick(&files, 1, &(1..=26).collect()),
+            Err("deux fichiers pour un même épisode")
+        );
+    }
+
+    #[test]
+    fn the_season_less_query_waits_for_old_episodes() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-03T12:00:00Z")
+            .unwrap()
+            .timestamp();
+        assert!(aired_before("2014-03-29T15:00:00Z", now, 14));
+        assert!(aired_before("2026-09-19T12:00:00Z", now, 14));
+        assert!(!aired_before("2026-09-30T12:00:00Z", now, 14));
+        assert!(!aired_before("", now, 14));
+    }
+
+    #[test]
+    fn qbittorrent_files_are_matched_by_exact_path() {
+        let f = |name: &str| TorrentFile {
+            name: name.into(),
+            size: 1,
+            progress: 0.0,
+            priority: 1,
+        };
+        let files = vec![
+            f("Space.Dandy/Space.Dandy.S01/Space.Dandy.01x01.mkv"),
+            f("Space.Dandy/Space.Dandy.S01/Space.Dandy.01x02.mkv"),
+            f("Space.Dandy/Bonus/Space.Dandy.S01/Space.Dandy.01x01.mkv"),
+            f("Space.Dandy/Space.Dandy.nfo"),
+        ];
+        let wanted = vec!["Space.Dandy.S01/Space.Dandy.01x01.mkv".to_string()];
+        // le même nom plus profond (Bonus/…) n'est pas pris : comparaison exacte sous la racine
+        assert_eq!(file_ids(&files, &wanted), vec![0]);
+        // torrent mono-fichier : le nom seul
+        let single = vec![f("Film.2023.1080p.mkv")];
+        assert_eq!(
+            file_ids(&single, &["Film.2023.1080p.mkv".to_string()]),
+            vec![0]
+        );
     }
 }

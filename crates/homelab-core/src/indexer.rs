@@ -120,6 +120,16 @@ pub async fn search_tmdb(
     .await
 }
 
+/// Recherche d'une série par identifiant TMDB **sans saison** (intégrales), mêmes règles.
+pub async fn search_series_tmdb_all(
+    ctx: &TaskContext,
+    prow: &ProwlarrClient,
+    tmdb: i64,
+    manual: bool,
+) -> Result<Option<Vec<Value>>> {
+    run(ctx, prow, manual, |id| prow.search_series_by_tmdb(tmdb, id)).await
+}
+
 /// Recherche en texte libre, mêmes règles.
 pub async fn search_text(
     ctx: &TaskContext,

@@ -157,6 +157,23 @@ numérotés en suite, aucun épisode déjà pourvu. Le décalage part dans l'ét
 (`EpisodeSource::OursOnly` : ni les épisodes de Sonarr ni `map_episodes`, tous deux lisant la mauvaise saison).
 Le pack n'est jamais confié à l'Arr. Réglages : `cour_packs`, `cour_max_files`.
 
+**Intégrale** (2026-10-03) : un pack sans numéro de saison (`Space.Dandy.INTEGRALE.MULTI.VFF.1080p…`) n'est jamais
+renvoyé par `{TmdbId}{Season}`, et le `parse` de Sonarr n'en lit rien, pas même la qualité. *Space Dandy*, demandé par
+un membre, restait donc « 0 candidat » alors que C411 l'avait. Quand **rien d'autre n'est acceptable** pour une saison
+(et jamais pendant une panne de C411), `try_integrale` reprend les intégrales vues dans les résultats (même `tmdbId`,
+`season_less_pack` : aucune saison lisible ou pack de plusieurs saisons). S'il n'y en a pas, il fait **une** requête
+`{TmdbId}` sans saison (type `tvsearch`), seulement si le dernier épisode manquant est sorti depuis
+`integrale_min_age_days` (14). La qualité est lue en remplaçant le marqueur par `S01` (`integrale_quality_title`).
+Le classement suit les mêmes clés que `choose`, puis le `.torrent` des deux meilleures est lu (aucune annonce).
+Chaque fichier vidéo passe au `parse` de Sonarr, scene mapping compris : `02x01` → S01E14. `integrale_pick` ne garde
+que les fichiers dont **tous** les épisodes manquent dans CETTE saison ; deux fichiers pour un même épisode, c'est un
+refus. Le torrent est ajouté **arrêté** ; les fichiers non retenus sont désélectionnés (`file_ids`, chemin exact sous
+la racine), puis il démarre avec l'étiquette `homelab:series=<id>:season=<n>`, et `torrent_import` importe. Si
+l'intégrale est déjà dans qBittorrent pour une autre saison, les fichiers rejoignent sa sélection et son passage dans
+`torrent_import` est effacé, pour qu'il les importe à leur tour. Une intégrale dont les fichiers ne portent pas le nom
+de la série (« 01. Titre.mkv ») est écartée : l'API `parse` de Sonarr ne prend pas de chemin. Réglages :
+`integrale_packs`, `integrale_max_files` (300), `integrale_min_age_days`.
+
 **Le VPS ne cherche plus** (2026-09-18) : `[downloads] auto_sides = ["seedbox"]` retire les Arrs du VPS de la
 boucle, et leur indexer C411 est en `enableRss = false`. Le VPS n'entame plus aucun téléchargement.
 **Envoi** — Arr du **VPS** : `POST /api/v3/release/push` (Sonarr suit, importe, renomme) avec le lien Prowlarr

@@ -58,20 +58,38 @@ impl ProwlarrClient {
         season: Option<i64>,
         indexer_id: i64,
     ) -> Result<Vec<Value>> {
-        let query = match season {
-            Some(n) => format!("{{TmdbId:{tmdb_id}}}{{Season:{n}}}"),
-            None => format!("{{TmdbId:{tmdb_id}}}"),
-        };
-        let (kind, cat) = if season.is_some() {
-            ("tvsearch", "5000")
-        } else {
-            ("movie", "2000")
-        };
+        match season {
+            Some(n) => {
+                let q = format!("{{TmdbId:{tmdb_id}}}{{Season:{n}}}");
+                self.tmdb_search(&q, "tvsearch", "5000", indexer_id).await
+            }
+            None => {
+                let q = format!("{{TmdbId:{tmdb_id}}}");
+                self.tmdb_search(&q, "movie", "2000", indexer_id).await
+            }
+        }
+    }
+
+    /// Toutes les releases d'une **série** portant cet identifiant, toutes saisons confondues (`{TmdbId}` sans
+    /// `{Season}`, recherche TV). C'est la seule requête qui renvoie une **intégrale** : la recherche par saison
+    /// ne la voit pas (Space Dandy, 2026-10-03 : 0 par saison, l'intégrale MULTi 1080p ici).
+    pub async fn search_series_by_tmdb(&self, tmdb_id: i64, indexer_id: i64) -> Result<Vec<Value>> {
+        let q = format!("{{TmdbId:{tmdb_id}}}");
+        self.tmdb_search(&q, "tvsearch", "5000", indexer_id).await
+    }
+
+    async fn tmdb_search(
+        &self,
+        query: &str,
+        kind: &str,
+        cat: &str,
+        indexer_id: i64,
+    ) -> Result<Vec<Value>> {
         let id = indexer_id.to_string();
         let resp = self
             .req(Method::GET, "api/v1/search")
             .query(&[
-                ("query", query.as_str()),
+                ("query", query),
                 ("indexerIds", id.as_str()),
                 ("categories", cat),
                 ("type", kind),

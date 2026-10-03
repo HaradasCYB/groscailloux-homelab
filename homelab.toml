@@ -215,6 +215,15 @@ cour_max_files = 30         # au-delà, ce n'est plus un cours
 # séries dont une saison suivie a eu une diffusion dans la fenêtre et n'est pas complète.
 undated_episodes = true
 undated_window_days = 730
+# INTÉGRALES (2026-10-03) : un pack sans numéro de saison (« Space.Dandy.INTEGRALE.MULTI.VFF.1080p… ») n'apparaît
+# pas dans la recherche par saison et Sonarr ne lit rien dans son nom. Space Dandy est resté « introuvable » alors
+# que C411 avait cette intégrale. Quand rien d'autre n'est acceptable pour une saison : intégrales vues dans les
+# résultats (même identifiant TMDB), sinon UNE requête par identifiant sans saison ; liste des fichiers lue dans
+# le .torrent (aucune annonce), chaque fichier rattaché par le parse de Sonarr (scene mapping compris), et seuls
+# les fichiers des épisodes manquants sont téléchargés (les autres désélectionnés avant le démarrage).
+integrale_packs = true
+integrale_max_files = 300     # au-delà, pas examinée (un parse Sonarr par fichier)
+integrale_min_age_days = 14   # requête « toutes saisons » seulement si le dernier épisode manquant a 14 j ou plus
 
 [tasks.movie_search]
 # Recherche des films suivis encore manquants, par identifiant TMDB chez C411, dès le passage qui suit
