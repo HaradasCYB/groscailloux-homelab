@@ -35,9 +35,12 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   - **Nouvelle interface** : navigateurs, Jellyfin Desktop et téléphones passent d'office sur la nouvelle
     interface de Jellyfin. Les bibliothèques sont dans la barre du haut. L'ancienne interface reste au choix dans
     Réglages → Affichage → « Mode d'affichage » ; les télés ne changent pas.
-  - **Accueil** : 4 rangées manquent pour l'instant (Tendances, Anime, Les mieux notés, Films français). Leur
-    extension n'a pas encore de version pour Jellyfin 12.
+  - **Accueil** : 4 rangées ont manqué une nuit (Tendances, Anime, Les mieux notés, Films français), revenues le
+    04/10 (voir plus haut).
   - **Retour en arrière** possible pendant 7 jours.
+- **Accueil complet (04/10)** : les rangées Tendances cette semaine, Anime, Les mieux notés et Films français sont de
+  retour. Leur extension n'avait pas de version pour Jellyfin 12 : elle a été recompilée en attendant que son auteur
+  l'intègre à Home Screen Sections.
 - **Première connexion plus rapide (04/10)** : sur un nouvel appareil, la page ne se recharge plus pour passer en
   français (une dizaine de secondes gagnées). Elle ne revient plus non plus, parfois, à l'écran de connexion juste
   après avoir saisi son mot de passe.

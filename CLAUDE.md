@@ -579,9 +579,13 @@ journalctl -u homelabd -f
     DD00031/jellyfin-plugin-collection-sections (3541f2e : cible 12 + 3 petits fichiers, aucune logique changée), SDK
     .NET 10 en conteneur. Une copie compilée pour 12.0 n'est pas sûre en 12.1 : Home Screen Sections 3.0.1 (12.0)
     cassait en 12.1. Même GUID, donc configuration reprise. Testée sur l'instance d'essai : « Active », 4 rangées et
-    leur contenu. Paquet, `install.sh` et `rollback.sh` dans `backups/jellyfin-collectionsections-20261004/`.
-    L'installation redémarre Jellyfin et se lance à la main (`sudo bash …/install.sh`, refus si lecture en cours).
+    leur contenu. **Installée en prod le 04/10 à 02:17** (autorisation de l'utilisateur) : 16 rangées pour un membre,
+    dont les 4 de Collection Sections (10 à 16 titres). Paquet, `install.sh` (refus si lecture en cours, redémarre
+    Jellyfin) et `rollback.sh` dans `backups/jellyfin-collectionsections-20261004/`, avec l'ancienne version 2.3.10.0.
     Provisoire : l'auteur intègre la fonction à Home Screen Sections ; à sa sortie, basculer et retirer ce paquet.
+  - **Intro Skipper au démarrage** : « ffmpeg did not exit within 2000ms » quand la machine est chargée par un
+    redémarrage. Sans gravité : un échec n'est pas retenu (`FFmpegVersionGate` revérifie au prochain usage), seul un
+    avertissement reste affiché dans sa page de réglages jusqu'au redémarrage suivant.
   - **Nouvelle interface par défaut** : la 12.1 a deux interfaces. « modern » (React, barre `header.MuiAppBar-root`)
     est celle des navigateurs sans réglage (`layout` absent → `modern`) **et** des applis dont `NativeShell` répond
     `desktop`/`mobile` (Jellyfin Desktop, applis iPhone/Android). L'ancienne n'est servie que pour `desktop-legacy`,
