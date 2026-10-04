@@ -32,6 +32,11 @@
   var POLL_MS = TV ? 4000 : 2000;   // cadence de surveillance de l'image
   var HIDE_MS = TV ? 15000 : 25000; // le bandeau s'efface tout seul
   var START_GRACE_S = 10;   // les hésitations des 10 premières secondes ne comptent pas
+  // Après un saut (barre de progression, « Passer l'intro », ±10 s) ou un (re)chargement du flux (reprise en milieu de
+  // film, changement de piste, de sous-titres ou de qualité), la mise en tampon n'est pas un signe de connexion faible :
+  // ces 8 s-là ne comptent pas (banc du 04/10 sous 12.1 : un seul saut comptait pour un blocage, trois sauts en
+  // 3 minutes affichaient le bandeau à tort). Un vrai blocage qui dure au-delà est encore vu par le relevé de l'image.
+  var QUIET_MS = 8000;
   var BITRATE = 2000000;    // 2 Mbit/s : ~3x de marge sur un 1080p en lecture directe
 
   /* L'image a-t-elle cessé d'avancer entre deux relevés ? hls.js absorbe les événements « waiting » :
@@ -62,8 +67,9 @@
   }
 
   /* Mémoire du palier posé par ce script (localStorage de jellyfin-web, clés `maxbitrate-Video-<réseau>` et
-     `enableautobitratebitrate-Video-<réseau>`). `snap` = valeurs juste après notre choix ; `restore` remet « Auto »
-     pour chaque clé encore identique (le membre n'y a pas touché) et oublie la note. (testable sans navigateur) */
+     `enableautobitratebitrate-Video-<réseau>`, inchangées en 12.1). `snap` = clés qui portent NOTRE palier juste
+     après le choix (`value`) — jamais celles d'un autre réseau, que le membre a pu fixer lui-même ; `restore` remet
+     « Auto » pour chaque clé encore identique (le membre n'y a pas touché) et oublie la note. (testable sans navigateur) */
   var MARK = 'gc-quality-lowered';
   function bitrateKeys(store) {
     var out = [];
@@ -73,11 +79,20 @@
     }
     return out;
   }
-  function snap(store) {
+  function snap(store, value) {
     var keys = bitrateKeys(store), m = {};
-    keys.forEach(function (k) { m[k] = store.getItem(k); });
+    keys.forEach(function (k) {
+      var v = store.getItem(k);
+      if (value === undefined || v === String(value)) m[k] = v;
+    });
     store.setItem(MARK, JSON.stringify(m));
     return m;
+  }
+  /* jellyfin-web écrit ses clés après la fermeture de la feuille, de façon asynchrone : relevé quand notre palier
+     y est (10 s au plus), au lieu d'un délai fixe qu'un appareil lent dépasserait (note prise trop tôt = ancienne
+     valeur = « choix du membre » = jamais remis en Auto). */
+  function hasValue(store, value) {
+    return bitrateKeys(store).some(function (k) { return store.getItem(k) === String(value); });
   }
   function restore(store) {
     var raw = store.getItem(MARK);
@@ -94,7 +109,8 @@
   }
 
   root.__gcQuality = { isStall: isStall, prune: prune, shouldOffer: shouldOffer, pickBitrate: pickBitrate,
-    snap: snap, restore: restore, WINDOW_MS: WINDOW_MS, MIN_STALLS: MIN_STALLS, BITRATE: BITRATE };
+    snap: snap, restore: restore, hasValue: hasValue, WINDOW_MS: WINDOW_MS, MIN_STALLS: MIN_STALLS, BITRATE: BITRATE,
+    QUIET_MS: QUIET_MS };
 
   if (typeof window === 'undefined' || root !== window || !window.document) return; // tests
 
@@ -104,7 +120,9 @@
   restoreAuto(); // un palier laissé par une lecture précédente (onglet fermé en pleine lecture)
 
   var stalls = [], offered = false, banner = null, hideTimer = null, keyHandler = null,
-    watched = null, last = null, lastCount = 0;
+    watched = null, last = null, lastCount = 0, quietUntil = 0;
+
+  function quiet() { quietUntil = Date.now() + QUIET_MS; }
 
   function style() {
     if (document.getElementById('gc-quality-style')) return;
@@ -119,6 +137,10 @@
       '.gc-q .gc-q-yes[disabled]{opacity:.6;cursor:default}',
       '.gc-q .gc-q-no{background:#232b3a;color:#e8edf5}',
       '.gc-q button:focus-visible{outline:2px solid #fff;outline-offset:2px}',
+      // ordinateur et tablette (04/10, 12.1) : à 11vh du bas, le bandeau couvrait la rangée de boutons du lecteur
+      // (Sous-titres, Favori, Minuterie, Aperçu des épisodes) pendant 25 s, dans les deux interfaces. En haut, sous la
+      // barre Retour / SyncPlay / Diffuser ; sous les menus de Jellyfin (1300) et ses feuilles. Télé inchangée.
+      TV ? '' : '@media (min-width:481px) and (min-height:501px){.gc-q{top:calc(env(safe-area-inset-top,0px) + 64px);bottom:auto;z-index:1200}}',
       // téléphone (04/10) : en bas, le bandeau couvrait les commandes du lecteur 12.1 (pause, audio, sous-titres,
       // barre de progression) pendant 25 s et captait les appuis. Portrait : dans la bande noire sous la barre du
       // haut ; paysage : une ligne compacte sous la barre. Sous les menus de Jellyfin (1300) et ses feuilles.
@@ -204,9 +226,17 @@
       if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
       setBitrate().then(function (choice) {
         stalls = [];
+        quiet(); // la lecture repart (nouveau flux) : sa mise en tampon ne compte pas
         window.__gcQualityApplied = choice;
-        // jellyfin-web écrit ses clés juste après le clic : on relève un peu plus tard
-        setTimeout(function () { try { snap(window.localStorage); } catch (e) { /* stockage bloqué */ } }, 1500);
+        // jellyfin-web écrit ses clés peu après le clic : relevé dès que notre palier y est (10 s au plus)
+        var tries = 0;
+        var wait = setInterval(function () {
+          try {
+            if (!hasValue(window.localStorage, choice) && ++tries < 40) return;
+            clearInterval(wait);
+            window.__gcQualitySnap = snap(window.localStorage, choice);
+          } catch (e) { clearInterval(wait); /* stockage bloqué */ }
+        }, 250);
         close();
       }).catch(function (e) {
         window.__gcQualityError = String((e && e.message) || e);
@@ -228,8 +258,9 @@
 
   function onStall() {
     var now = Date.now();
-    // Les hésitations du démarrage (mise en tampon initiale) ne comptent pas.
+    // Les hésitations du démarrage (mise en tampon initiale) ne comptent pas, ni celles d'un saut ou d'un rechargement.
     if (!watched || !(watched.currentTime > START_GRACE_S)) return;
+    if (watched.seeking || now < quietUntil) return;
     if (now - lastCount < COOLDOWN_MS) return; // un même blocage ne compte qu'une fois
     lastCount = now;
     stalls = prune(stalls.concat(now), now);
@@ -249,6 +280,10 @@
     offered = false;
     last = null;
     close();
+    quiet(); // reprise en milieu de film : la mise en tampon du départ ne compte pas
+    video.addEventListener('seeking', quiet);
+    video.addEventListener('seeked', quiet);
+    video.addEventListener('loadstart', quiet);
     video.addEventListener('waiting', onStall);
     video.addEventListener('stalled', onStall);
     video.addEventListener('ended', close);

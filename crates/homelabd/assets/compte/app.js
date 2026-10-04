@@ -59,6 +59,9 @@
     ].concat(TV ? [
       // Télé (29/09, revue LG) : 15 px se lisait mal à 3 m ; texte ×1,45, focus de télécommande bien visible
       '.gc-acc{width:min(1200px,94vw);font-size:22px;padding:1.2em 1.5em}',
+      // le panneau dépassait de 45 px sous l'écran en 1080p (marges ajoutées à max-height) : les boutons de taille
+      // des sous-titres, en bas, n'avaient que 17 px visibles une fois sélectionnés (banc LG T6, 04/10)
+      '.gc-acc{box-sizing:border-box;max-height:100%}',
       '.gc-acc .btn:focus,.gc-acc select:focus,.gc-acc a:focus,.gc-acc .close:focus{outline:3px solid #8fd3fb;outline-offset:3px}',
       '.gc-acc .gc-choices{display:flex;flex-wrap:wrap;gap:.5em}.gc-acc .gc-choices .btn{padding:.6em 1em}'
     ] : [
@@ -208,6 +211,8 @@
   var SIZE_EM = { smaller: '.8em', small: 'inherit', normal: '1.36em', large: '1.72em', larger: '2em', extralarge: '2.2em' };
   // Téléphone : en px bornés par le petit côté de l'écran (même taille en portrait et en paysage) ; « Normale » = 1
   var SIZE_K = { smaller: .6, small: .75, normal: 1, large: 1.26, larger: 1.47, extralarge: 1.62 };
+  // Télé : taille « Normale » en hauteur d'écran (vh)
+  var TV_VH = 4.8;
   // téléphone et tablette tactile (même taille en portrait et en paysage ; un iPad en paysage repassait à 1.2vw)
   var PHONE_MQ = '(pointer: coarse) and (max-width: 1366px), (pointer: coarse) and (max-height: 500px)';
   function phone() { try { return !TV && window.matchMedia(PHONE_MQ).matches; } catch (e) { return false; } }
@@ -234,11 +239,14 @@
   function applySubtitleSize() {
     var size = subtitleSize(), em = SIZE_EM[size], el = document.getElementById('gc-sub-size');
     if (!em) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
-    // Télé : lue à 3 m, la même taille paraît minuscule (27/09, LG) → ×1,4 et un contour pour les images claires.
+    // Télé : lue à 3 m, il faut plus grand que les 1.2vw de Jellyfin Enhanced (23 px en 1080p, 27/09, LG), et un
+    // contour pour les images claires. En vh (hauteur de l'écran) et non en em : la mise en page TV de jellyfin-web
+    // grossit déjà la police de base (.videoSubtitles = 45,9 px en 1080p) ; ×1,4 sur ses em donnait 87 / 110 / 141 px
+    // (Normale / Grande / Très grande), une réplique de 2 lignes couvrait un tiers de l'écran (banc LG T6, 04/10).
+    // 4,8vh × coefficient : 52 / 65 / 84 px en 1080p. Valeur simple en vh (pas de calc ni de clamp : vieux webOS).
     var extra = '', inline = null;
     if (TV) {
-      var n = parseFloat(em) || 1;
-      em = (Math.round(n * 1.4 * 100) / 100) + 'em';
+      em = (Math.round(TV_VH * (SIZE_K[size] || 1.26) * 100) / 100) + 'vh';
       extra = ';text-shadow:0 0 .12em #000,0 0 .12em #000,.06em .06em .1em #000 !important';
       inline = em;
     }

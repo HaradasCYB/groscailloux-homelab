@@ -57,6 +57,12 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
     services français (caché sur téléphone).
   - **Panneaux** : Mon compte tient dans l'écran avec sa croix toujours visible ; le tchat montre ses 4 onglets ; le
     bandeau d'annonce ne recouvre plus le menu ; boutons plus faciles à toucher ; calendrier à l'heure française (17:00).
+- **Télés LG et aide à la qualité (05/10)** : sur télé, la taille des sous-titres choisie dans Mon compte donnait des
+  lignes géantes depuis la veille (jusqu'à 141 px) ; elles font maintenant 52, 65 ou 84 px selon le réglage
+  (« Grande » par défaut). Les rangées de l'accueil se chargent de nouveau jusqu'en bas sur télé, et le panneau Mon
+  compte ne dépasse plus de l'écran. Dans le lecteur, un saut (barre, « Passer l'intro ») ne compte plus comme une
+  coupure : l'aide « Ta connexion ne tient pas la qualité maximale » ne s'affiche plus à tort ; sur PC, elle passe en
+  haut au lieu de cacher quatre boutons du lecteur.
 - **Journaux gardés 14 jours (04/10)** : Jellyfin n'en gardait que 3, malgré le réglage du 03/10 (ce n'était pas le
   bon). Un souci signalé par un membre peut maintenant être retrouvé deux semaines après.
 - **Surveillance des lectures relancées en boucle (04/10)** : l'admin est prévenu quand un lecteur fait relancer

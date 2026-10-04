@@ -440,6 +440,10 @@ journalctl -u homelabd -f
   `enableautobitratebitrate-Video-<réseau>` à `false` dans `localStorage`) et ~60 lectures en 10 jours restaient
   réencodées à 1–3 Mbit/s ; le script note ce qu'il a posé (`gc-quality-lowered`) et remet « Auto » à la sortie du
   lecteur, sauf si le membre a changé la qualité entre-temps (banc : `backups/quality-tests-20260916/`, phases 5–6).
+  **Revu sous 12.1 (05/10)** : un saut ou un rechargement de flux ouvre 8 s de calme (`QUIET_MS`, `seeking`/`seeked`/
+  `loadstart`) — un saut comptait pour un blocage ; bandeau en haut aussi sur PC et tablette (il cachait 4 boutons du
+  lecteur 12.1) ; la note du palier attend que jellyfin-web l'ait écrit (au plus 10 s) et ne garde que les clés de notre
+  palier. Banc `backups/jellyfin12-test-20261003/t8_run.sh t8_quality.js`.
 - **« Lire sur » (diffuser vers un autre appareil)** : filtré par `branding/jellyfin/gc-cast-filter.js`
   (JavaScript Injector, déployé avec `scripts/jellyfin-js-apply.py`) : **seulement ses propres appareils
   connectés**, quel que soit le réseau. Jusqu'au 2026-09-19 il exigeait aussi la même adresse publique que
@@ -692,9 +696,12 @@ journalctl -u homelabd -f
     `video.htmlvideoplayer::cue` (plus spécifique que la nôtre) et style **inline `!important`** sur
     `.videoSubtitlesInner`. Sur iPhone en portrait, 1.2vw = ~5 px. **Décision de l'utilisateur (04/10) : sur téléphone
     et TV, la taille de Mon compte l'emporte** (`applySubtitleSize` de `compte/app.js` : règle
-    `video.htmlvideoplayer.htmlvideoplayer::cue` (0,2,2) et style inline réécrit à chaque tour ; téléphone = px bornés
-    par le petit côté de l'écran, `clamp(14px, 4.2vmin, 22px)` × coefficient du réglage). Sur PC, rien n'est décidé :
-    Jellyfin Enhanced garde la main.
+    `video.htmlvideoplayer.htmlvideoplayer::cue` (0,2,2) et style inline remis par un `MutationObserver` sur l'attribut
+    style, car Jellyfin Enhanced le réécrit à chaque réplique ; téléphone et tablette = px bornés par le petit côté de
+    l'écran, `clamp(14px, 4.2vmin, 22px)` × coefficient du réglage ; **télé = `4.8vh` × coefficient** (52 / 65 / 84 px
+    en 1080p : en em, la mise en page TV partant de 45,9 px, le ×1,4 donnait 87 à 141 px, régression du 04/10 corrigée
+    le 05/10, banc `backups/lg-tv-20260929/t6_run.sh t6_subs.js "tv:0"`). Sur PC, rien n'est décidé : Jellyfin Enhanced
+    garde la main.
 - **Journaux Jellyfin** : `jellyfin/config/config/logging.json` (copie de `logging.default.json`) :
   - extensions bavardes en `Warning` : Playback Reporting (61 % du volume), Collection Sections, Jellysleep ;
   - traductions manquantes de Home Screen Sections en `Error` ;

@@ -140,11 +140,19 @@
      plus défiler, et les paquets suivants (Séries ajoutées, Anime, Collections…) ne viendraient jamais. Tant que
      la page n'est pas défilable et que HSS n'a pas fini, on appelle son gestionnaire comme l'aurait fait un
      défilement. Dès que la page dépasse l'écran, HSS reprend seul. */
+  /* Même blocage quand un paquet entier est fait de rangées cachées sur TV (Les mieux notés, Films français, Découvrir,
+     Mes demandes) : la page ne grandit pas, mais HSS a retenu la position de défilement prise pendant son indicateur de
+     chargement (LastScrollHeight), qui n'est plus atteignable ; il ne charge plus rien et la rangée Collections n'arrivait
+     jamais (banc LG T6, 04/10 : paquets 1 à 3 seulement). On oublie cette position : HSS charge le paquet suivant dès que
+     la sélection est en bas de page (son gestionnaire vérifie lui-même qu'on est en bas). */
   setInterval(function () {
     var m = window.HssPageMeta;
     if (!m || typeof m.ScrollHandler !== 'function' || m.Finished === true || m.IsLoading === true) return;
-    if (document.documentElement.scrollHeight > window.innerHeight + m.ScrollThreshold) return;
     if (!document.querySelector('.homeSectionsContainer')) return;
+    var de = document.documentElement;
+    var notScrollable = de.scrollHeight <= window.innerHeight + m.ScrollThreshold;
+    var stuck = m.LastScrollHeight > 0 && de.scrollHeight - window.innerHeight <= m.LastScrollHeight;
+    if (!notScrollable && !stuck) return;
     try { m.LastScrollHeight = -1; m.ScrollHandler(); } catch (e) { /* HSS absent ou changé : rien à faire */ }
   }, 1500);
 })();
