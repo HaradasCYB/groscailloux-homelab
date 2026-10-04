@@ -276,9 +276,15 @@ journalctl -u homelabd -f
   « Favorites », « Ends at 11:09 PM », alors que « Découvrir/Demandes/Calendrier » (renommés par notre CSS) et les
   titres des rangées (Home Screen Sections) restaient en français. Script **public** `branding/jellyfin/gc-lang.js`
   (« Groscailloux Langue ») : pose `fr` pour les comptes connus de l'appareil (`jellyfin_credentials`) avant le
-  démarrage de l'appli, et à la première connexion pose la clé puis recharge une fois (garde `sessionStorage`).
-  Une clé `language` déjà présente = choix du membre, rien n'est touché. Test : `backups/cast-tests-20260919/
-  lang_test.js` (navigateur en-US, 6 cas, `NO_INJECT=1` après déploiement).
+  démarrage de l'appli. **Première connexion (04/10)** : la clé est posée dès la réponse du serveur à la connexion
+  (XHR et fetch de `/Users/AuthenticateByName` et `AuthenticateWithQuickConnect`, `User.Id`), avant que l'appli ne la
+  lise : français **sans rechargement**. Avant, la clé était posée après coup puis la page rechargée : l'appli mettait
+  ~10 s à retrouver le compte, et un rechargement parti pendant la connexion la faisait redémarrer sur l'écran de
+  connexion (mise en page « legacy », 12.1). Filet : un rechargement unique, jamais sur `#/login` ni avant que les
+  identifiants soient enregistrés (garde `sessionStorage`). Une clé `language` déjà présente = choix du membre, rien
+  n'est touché. Banc : `backups/jellyfin12-test-20261003/runprod.sh lang_nr.js ":desktop desktop-legacy:desktop"`
+  (navigateur anglais, 9 cas). Une sonde qui écoute `beforeunload` dans tous les cadres voit aussi les iframes YouTube
+  de Media Bar : ce ne sont pas des rechargements de la page.
 - **Saut du lecteur Jellyfin** : `skipForwardLength` / `skipBackLength` à **10 s** (`[accounts] skip_forward_ms`
   et `skip_back_ms`, posés à la création d'un compte par `jellyfin::set_skip_lengths`). Jellyfin met **30 s en
   avant** par défaut. Le bouton d'avance rapide **et** les flèches gauche/droite passent par le même réglage
@@ -568,7 +574,14 @@ journalctl -u homelabd -f
     Chromecast lit ses flux ainsi. Le couper un jour = passer d'abord homelabd, `scripts/` et nos scripts à
     `Authorization: MediaBrowser Token="…"` (accepté par 10.11 et 12.x).
   - **Collection Sections n'a pas de version 12.x** (`MissingMethodException IUserManager.get_Users` au démarrage) :
-    ses 4 rangées d'accueil (Tendances, Anime, Les mieux notés, Films français) manquent jusqu'à une version 12.
+    ses 4 rangées d'accueil (Tendances, Anime, Les mieux notés, Films français) manquaient. **Recompilée le 04/10**
+    (validé par l'utilisateur) contre Jellyfin 12.1.0 depuis le code relu de la copie communautaire
+    DD00031/jellyfin-plugin-collection-sections (3541f2e : cible 12 + 3 petits fichiers, aucune logique changée), SDK
+    .NET 10 en conteneur. Une copie compilée pour 12.0 n'est pas sûre en 12.1 : Home Screen Sections 3.0.1 (12.0)
+    cassait en 12.1. Même GUID, donc configuration reprise. Testée sur l'instance d'essai : « Active », 4 rangées et
+    leur contenu. Paquet, `install.sh` et `rollback.sh` dans `backups/jellyfin-collectionsections-20261004/`.
+    L'installation redémarre Jellyfin et se lance à la main (`sudo bash …/install.sh`, refus si lecture en cours).
+    Provisoire : l'auteur intègre la fonction à Home Screen Sections ; à sa sortie, basculer et retirer ce paquet.
   - **Nouvelle interface par défaut** : la 12.1 a deux interfaces. « modern » (React, barre `header.MuiAppBar-root`)
     est celle des navigateurs sans réglage (`layout` absent → `modern`) **et** des applis dont `NativeShell` répond
     `desktop`/`mobile` (Jellyfin Desktop, applis iPhone/Android). L'ancienne n'est servie que pour `desktop-legacy`,

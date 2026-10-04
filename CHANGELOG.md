@@ -38,6 +38,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   - **Accueil** : 4 rangées manquent pour l'instant (Tendances, Anime, Les mieux notés, Films français). Leur
     extension n'a pas encore de version pour Jellyfin 12.
   - **Retour en arrière** possible pendant 7 jours.
+- **Première connexion plus rapide (04/10)** : sur un nouvel appareil, la page ne se recharge plus pour passer en
+  français (une dizaine de secondes gagnées). Elle ne revient plus non plus, parfois, à l'écran de connexion juste
+  après avoir saisi son mot de passe.
 - **Tchat et Mon compte dans la nouvelle interface (03/10)** : leurs boutons avaient disparu après le passage à
   Jellyfin 12.1. Ils sont de retour dans la barre du haut, dans toutes les mises en page.
 - **La nouvelle interface retrouve ses repères (04/10)** :
