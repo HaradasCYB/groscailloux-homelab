@@ -57,6 +57,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
     services français (caché sur téléphone).
   - **Panneaux** : Mon compte tient dans l'écran avec sa croix toujours visible ; le tchat montre ses 4 onglets ; le
     bandeau d'annonce ne recouvre plus le menu ; boutons plus faciles à toucher ; calendrier à l'heure française (17:00).
+- **Sauvegardes plus sûres (05/10)** : les bases de données des services (Jellyfin, historique de lecture, Intro Skipper,
+  notifications, Jellyseerr, Sonarr/Radarr…) sont copiées proprement avant l'archive hebdomadaire au lieu d'être prises
+  en pleine écriture : une restauration repart d'une base cohérente. Historique de lecture gardé sans limite (il
+  s'effaçait au-delà de 3 mois) ; scripts et styles de l'interface envoyés compressés (pages plus légères).
 - **Télés LG et aide à la qualité (05/10)** : sur télé, la taille des sous-titres choisie dans Mon compte donnait des
   lignes géantes depuis la veille (jusqu'à 141 px) ; elles font maintenant 52, 65 ou 84 px selon le réglage
   (« Grande » par défaut). Les rangées de l'accueil se chargent de nouveau jusqu'en bas sur télé, et le panneau Mon

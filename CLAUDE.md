@@ -903,6 +903,17 @@ journalctl -u homelabd -f
   torrent_import côté VPS, tuile Homarr rouge). Toujours `docker compose up -d --force-recreate --no-deps
   qbittorrent` après un `up -d` qui a recréé gluetun, puis reposer le port transféré (`/tmp/gluetun/forwarded_port` →
   `setPreferences listen_port`, le hook ne rejoue pas seul).
+- **Bases SQLite dans la sauvegarde (05/10)** : `[backup] sqlite` liste les bases des services ; chacune est copiée par
+  l'API de sauvegarde SQLite (rusqlite `backup`, lecture seule, `quick_check`) dans `state/backup-snapshots/<chemin>`, et la
+  base vivante (+ `-wal`, `-shm`, `-journal`) sort de l'archive. Restauration : les bases sont sous
+  `state/backup-snapshots/`, pas à leur place (recettes dans docs/DEPLOY.md). La sauvegarde tourne par
+  `homelab-backup.service` (root), pas dans homelabd. Nouvelle base d'un service = l'ajouter à la liste.
+- **Historique de lecture** : Playback Reporting en conservation illimitée depuis le 05/10 (`MaxDataAge = -1` dans la
+  configuration NOMMÉE `GET|POST /System/Configuration/playback_reporting`, pas dans `/Plugins/<id>/Configuration` ;
+  **0 effacerait tout**). Il gardait 3 mois et effaçait chaque nuit un jour de plus (base au 07/07 le 05/10).
+- **Compression NPM (05/10)** : l'hôte 1 a `gzip_types` js/css/json/svg (+ `gzip_proxied any`, `gzip_vary on`) dans sa
+  configuration avancée (base et `1.conf`, sauvegarde `backups/npm-20261005-gzip/`) : `gzip on` de NPM ne visait que le
+  HTML, et Jellyfin ne compresse plus derrière `X-Forwarded-Proto: https` (InPlayerPreview 393 → 116 Ko).
 - **Sauvegarde d'état (`homelabctl backup`, tâche `backup`)** : tout dossier volumineux sous `/opt/homelab` doit être
   dans `[backup] excludes` — le 2026-09-20, `cache/rclone` (fichiers **creux** de plusieurs centaines de Go) a produit
   une archive de **149 Go** (au lieu de 3) et poussé le disque à 92 %. Après un nouveau dossier de cache ou de données

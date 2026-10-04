@@ -106,16 +106,37 @@ Les bibliothèques et le pipeline du VPS ne sont jamais touchés par ces étapes
 `backups/` (700) : `homelab-state-<ts>.tar.zst` (tout `/opt/homelab` hors `[backup] excludes` : `library/`,
 `influxdb/`, caches, journaux, vignettes de défilement et photos d'acteurs de Jellyfin ; ~3 Go), `.sha256`,
 `.list.gz` (manifeste), `guacdb-<ts>.sql.gz`, `systemd-<ts>.tar.gz` (unités, crontab, compose rendu) et
-`images-<ts>.txt`. Les bases SQLite de l'état sont copiées par `VACUUM INTO` ; l'archive est relue (`zstd -t`) avant
-qu'on supprime les anciennes ; les 4 dernières sont gardées. Tout nouveau dossier volumineux sous `/opt/homelab`
-doit rejoindre `[backup] excludes`. Les sauvegardes restent sur le même disque (copie hors site à l'étude).
+`images-<ts>.txt`. Les bases SQLite des services en marche (`[backup] sqlite` : homelabd, Jellyfin et ses
+extensions, Jellyseerr, Arrs, Prowlarr, Homarr, Grafana, NPM, pyLoad) sont d'abord copiées par l'API de sauvegarde
+SQLite (lecture seule, ~2 s, ~120 Mo, `quick_check` de chaque copie, propriétaire et droits gardés) dans
+`state/backup-snapshots/<chemin d'origine>` ; la base vivante et ses `-wal`/`-shm`/`-journal` sortent de l'archive (un
+tar les lisait à des instants différents). Une base qui ne se copie pas reste dans l'archive telle quelle et
+`homelabctl backup` l'écrit en avertissement. L'archive est relue (`zstd -t`) avant qu'on supprime les anciennes ; les
+4 dernières sont gardées. Tout nouveau dossier volumineux sous `/opt/homelab` doit rejoindre `[backup] excludes`, toute
+nouvelle base SQLite d'un service `[backup] sqlite`. Les sauvegardes restent sur le même disque (copie hors site à l'étude).
 `library/` (médias, téléchargements) n'est pas sauvegardé : trop gros, re-téléchargeable.
 
-Restaurer un service :
+Restaurer un service (les bases SQLite sont dans l'archive sous `homelab/state/backup-snapshots/`, pas à leur place :
+les remettre service arrêté, après avoir retiré les `-wal`/`-shm` de la base actuelle, sinon SQLite les rejouerait sur
+la copie) :
 ```bash
 docker compose stop sonarr
 sudo tar -xpf backups/homelab-state-<ts>.tar.zst -C /opt --numeric-owner homelab/sonarr
+sudo tar -xpf backups/homelab-state-<ts>.tar.zst -C /tmp --numeric-owner homelab/state/backup-snapshots/sonarr
+for db in sonarr.db logs.db; do
+  sudo rm -f "sonarr/config/$db-wal" "sonarr/config/$db-shm"
+  sudo cp -p "/tmp/homelab/state/backup-snapshots/sonarr/config/$db" "sonarr/config/$db"
+done
 docker compose start sonarr
+sudo rm -rf /tmp/homelab
+```
+Restauration complète (tous les services arrêtés, archive entière extraite dans `/opt`) : aucune base n'est alors à sa
+place, toutes sont sous `state/backup-snapshots/`. Les remettre puis retirer le dossier (et `homelab/state` seul = la
+même boucle limitée à `state/backup-snapshots/state`) :
+```bash
+cd /opt/homelab && sudo find state/backup-snapshots -type f | while read -r f; do
+  d=${f#state/backup-snapshots/}; sudo rm -f "$d-wal" "$d-shm" "$d-journal"; sudo cp -p "$f" "$d"
+done && sudo rm -rf state/backup-snapshots
 ```
 Guacamole : `zcat backups/guacdb-<ts>.sql.gz | docker exec -i guacdb mysql -uroot -p"$MYSQL_ROOT_PASSWORD"`.
 

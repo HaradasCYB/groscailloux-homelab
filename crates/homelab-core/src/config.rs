@@ -1275,6 +1275,10 @@ impl Default for Cleanup {
 pub struct Backup {
     /// Sous-chemins de `paths.base` exclus de l'archive d'état.
     pub excludes: Vec<String>,
+    /// Bases SQLite copiées par l'API de sauvegarde SQLite avant l'archive (chemins relatifs à `paths.base`, `*`
+    /// permis dans le seul nom de fichier). La copie entre dans l'archive sous `state/backup-snapshots/<chemin>` ;
+    /// la base vivante et ses `-wal`, `-shm`, `-journal` en sortent.
+    pub sqlite: Vec<String>,
     pub keep_last: usize,
     pub mysql_container: String,
 }
@@ -1293,6 +1297,23 @@ impl Default for Backup {
                 "logs",
                 "jellyfin/config/data/trickplay",
                 "jellyfin/config/metadata/People",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            sqlite: [
+                "state/*.db",
+                "jellyfin/config/data/*.db",
+                "jellyfin/config/data/introskipper/*.db",
+                "jellyfin/config/data/NotifySync/*.db",
+                "jellyseerr/config/db/db.sqlite3",
+                "sonarr/config/*.db",
+                "radarr/config/*.db",
+                "prowlarr/config/*.db",
+                "homarr/db/db.sqlite",
+                "grafana/grafana.db",
+                "npm/data/database.sqlite",
+                "pyload/config/data/pyload.db",
             ]
             .iter()
             .map(|s| s.to_string())

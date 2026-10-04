@@ -419,6 +419,14 @@ async fn main() -> Result<()> {
             for f in out.files {
                 println!("{}", f.display());
             }
+            println!(
+                "bases SQLite copiées ({}) : {}",
+                out.sqlite.len(),
+                out.sqlite.join(", ")
+            );
+            for w in &out.warnings {
+                eprintln!("avertissement : {w}");
+            }
         }
         Cmd::Status => {
             let runs = ctx.state.read(|s| s.task_runs.clone()).await;
