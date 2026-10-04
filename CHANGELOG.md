@@ -38,6 +38,27 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   - **Accueil** : 4 rangées ont manqué une nuit (Tendances, Anime, Les mieux notés, Films français), revenues le
     04/10 (voir plus haut).
   - **Retour en arrière** possible pendant 7 jours.
+- **Interface revue pour le téléphone (04/10)** : 28 défauts de la nouvelle interface relevés sur téléphone et
+  tablette, tous corrigés et vérifiés sur iPhone, Android, iPad, PC, ancienne interface et TV.
+  - **Accueil** : sur PC, les rangées apparaissent de nouveau au premier écran (elles étaient sous le bas de l'écran) et
+    ne remontent plus sur la bannière après un défilement. Sur téléphone, la ligne d'infos de la bannière est lisible
+    (« 1 saison », âge et genre entiers) et la roue des réglages en anglais a disparu.
+  - **Barre du haut** : sur PC, les onglets Accueil… Calendrier montent dans la barre quand il y a la place (une ligne
+    de moins) ; sur téléphone, le bouton ☰ (bibliothèques) n'est plus recouvert par d'autres icônes et les onglets
+    défilent avec un fondu, l'onglet ouvert restant visible ; la barre devient opaque au défilement ; le logo revient sur tablette et
+    dans le menu ☰.
+  - **Sous-titres lisibles sur téléphone et télé** : la taille choisie dans Mon compte s'applique enfin (environ 5 px
+    sur iPhone auparavant).
+  - **Lecteur** : SyncPlay et « Lire sur » ne disparaissent plus derrière un titre long ; « Passer le générique » ne
+    gêne plus les commandes ; l'aide à la qualité s'affiche en haut au lieu de couvrir les boutons.
+  - **Fiches et bibliothèques** : plus de 140 px de vide sous la barre ; titres des affiches sur deux lignes ; la barre
+    A–Z ne mord plus sur les affiches ; noms de pistes audio lisibles ; langues et tailles en français ; plus de
+    collections techniques (« Tendances cette semaine ») dans les fiches ; le bloc « Également disponible » montre les
+    services français (caché sur téléphone).
+  - **Panneaux** : Mon compte tient dans l'écran avec sa croix toujours visible ; le tchat montre ses 4 onglets ; le
+    bandeau d'annonce ne recouvre plus le menu ; boutons plus faciles à toucher ; calendrier à l'heure française (17:00).
+- **Journaux gardés 14 jours (04/10)** : Jellyfin n'en gardait que 3, malgré le réglage du 03/10 (ce n'était pas le
+  bon). Un souci signalé par un membre peut maintenant être retrouvé deux semaines après.
 - **Surveillance des lectures relancées en boucle (04/10)** : l'admin est prévenu quand un lecteur fait relancer
   sa conversion plus de 30 fois en une heure pour le même titre (une télé et un Chromecast l'ont fait ces derniers
   jours sans être repérés). L'ancien repère avait disparu avec Jellyfin 12.1.
@@ -64,8 +85,7 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   Il faut redémarrer l'appli une fois pour en profiter. Le correctif définitif viendra avec Jellyfin 12.1, déjà testé
   sur une instance d'essai.
 - **Serveur allégé (03/10)** : la page Téléchargements se rafraîchit toutes les 2 minutes au lieu de 30 secondes. Une
-  page laissée ouverte faisait à elle seule près des deux tiers des requêtes du serveur. Journaux plus lisibles et
-  gardés 14 jours. Les mises à jour d'extensions se font désormais à la main, après vérification.
+  page laissée ouverte faisait à elle seule près des deux tiers des requêtes du serveur. Journaux plus lisibles. Les mises à jour d'extensions se font désormais à la main, après vérification.
 - **Collections (03/10)** : *Les Gardiens de la Galaxie Vol. 3*, remplacé par une version 1080p, est revenu dans
   ses collections (Univers Marvel, Tendances, Les mieux notés).
 - **Épisodes numérotés « - 07 » (03/10)** : une série téléchargée dont les fichiers s'appellent « Titre - 07 » au lieu

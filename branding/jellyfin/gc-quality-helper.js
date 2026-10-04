@@ -119,7 +119,12 @@
       '.gc-q .gc-q-yes[disabled]{opacity:.6;cursor:default}',
       '.gc-q .gc-q-no{background:#232b3a;color:#e8edf5}',
       '.gc-q button:focus-visible{outline:2px solid #fff;outline-offset:2px}',
-      '@media (max-width:480px){.gc-q{bottom:14vh;left:.6em;right:.6em;transform:none;max-width:none}}',
+      // téléphone (04/10) : en bas, le bandeau couvrait les commandes du lecteur 12.1 (pause, audio, sous-titres,
+      // barre de progression) pendant 25 s et captait les appuis. Portrait : dans la bande noire sous la barre du
+      // haut ; paysage : une ligne compacte sous la barre. Sous les menus de Jellyfin (1300) et ses feuilles.
+      '@media (max-width:480px){.gc-q{top:calc(env(safe-area-inset-top,0px) + 144px);bottom:auto;z-index:1200;left:.6em;right:.6em;transform:none;max-width:none}}',
+      '@media (max-height:500px) and (orientation:landscape){.gc-q{top:calc(env(safe-area-inset-top,0px) + 56px);bottom:auto;z-index:1200;flex-wrap:nowrap;gap:.5em;padding:.45em .7em;font-size:13px;max-width:min(calc(100vw - 1.2em),640px)}',
+      '.gc-q p{flex:1 1 auto;min-width:0}.gc-q small{display:none}.gc-q button{flex:none;white-space:nowrap;padding:.35em .75em}}',
       TV ? '.gc-q{box-shadow:none;font-size:17px}' : ''
     ].join('');
     var el = document.createElement('style');
@@ -184,7 +189,7 @@
     var p = document.createElement('p');
     p.textContent = 'Ta connexion ne tient pas la qualité maximale.';
     var s = document.createElement('small');
-    s.textContent = 'Passer en qualité réduite ? Le film continue où tu en es.';
+    s.textContent = 'Passer en qualité réduite ? La lecture continue où tu en es.';
     p.appendChild(s);
     var yes = document.createElement('button');
     yes.className = 'gc-q-yes';

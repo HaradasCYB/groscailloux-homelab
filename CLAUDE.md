@@ -637,6 +637,50 @@ journalctl -u homelabd -f
   - **Media Bar 3.0** : son bloc texte `.slide-content` est ancré en haut (20 px) **et** en bas, avec débordement
     masqué. Le descendre par `top` le rétrécit et coupe les boutons ; le calque le décale par `translate` sous
     l'en-tête. Les règles Media Bar 2.x du calque (`.plot-container`, `.info-container`…) sont à revoir.
+    - **Il place lui-même les rangées** (`.homeSectionsContainer { margin-top: calc(--slideshow-content-top −
+      --slideshow-page-offset) }`) : le calque **remplace** cette marge (`80vh − 8.5em` en paysage ; en portrait sur
+      téléphone, `--slideshow-content-top − --gc-header-h` et bannière à `--slideshow-height`). Un `top` ajouté
+      par-dessus (règle 2.x) faisait un double décalage : sur PC, 1re rangée à 1 276 px sur 900, aucune rangée au
+      premier écran (04/10).
+    - **`--slideshow-page-offset` est faux** : `LayoutSync.update()` mesure `document.querySelector('.page')`, la
+      première page du DOM, toujours cachée (`#loginPage`, page Jellyfin Enhanced) ; la valeur devient la position de
+      défilement à chaque chargement de rangées, et les rangées remontent sur la bannière jusqu'à disparaître. Figée à
+      0 dans le calque (`:root`, `!important` de feuille contre le style inline du plugin).
+    - Ligne d'infos (`.spec-line`) : 8,6–9,4 px et éléments coupés sur téléphone en portrait ; 11 px dans le calque,
+      seul le genre se raccourcit.
+  - **Interface mobile (revue du 04/10, gc-header v3 + calque + app.js)** : 28 défauts relevés sur téléphone et
+    tablette, chacun contre-vérifié au banc avant correction (`backups/jellyfin12-test-20261003/mfix_home.js`, avant /
+    après, `CANDIDATE_DIR` avec `chat.js`/`compte.js`). Points durables :
+    - la barre moderne débordait **à gauche, sur ☰** (seul accès aux bibliothèques) : Jellyfin Enhanced force
+      `flex-wrap: nowrap` sur la boîte des boutons, qui rétrécit sous son contenu, et `justify-content: flex-end` jette
+      le surplus à gauche. Sous 600 px : boutons de Jellyfin Enhanced cachés (⋯, Aléatoire), icônes à 40 px, ☰ au-dessus,
+      SyncPlay caché sous 360 px (380 px avec le bouton Retour des applis). **Contrôle : balayage `elementFromPoint` de
+      ☰**, pas la présence des boutons ;
+    - `.gc-tabs` servait à deux de nos scripts (rangée d'accueil et onglets du tchat) : les règles de `gc-header.js`
+      visent `header.MuiAppBar-root > nav.gc-tabs`, celles du tchat `.gc-panel .gc-tabs` ;
+    - bandeau d'annonce du tchat à `z-index` 1050 dans la nouvelle interface (sous la barre MUI 1100, le tiroir 1200,
+      les menus 1300) : à 99999 il couvrait « Accueil » et « Favoris » du menu ☰ ;
+    - bibliothèques : ElegantFin remet le décalage de l'ancien en-tête (2 × 5 em) que jellyfin-web 12.1 annule ;
+      `html.gc-modern .libraryPage…{padding-top:.5em}` ;
+    - barre opaque sur écran tactile dès que la page défile (`html.gc-scrolled`, posé par `gc-header.js`) ;
+    - aide à la qualité : en haut sur téléphone (en bas, elle couvrait les commandes du lecteur 25 s) ;
+    - bloc « Également disponible » (Elsewhere) caché sur téléphone ; région du plugin = France ; calendrier de Jellyfin
+      Enhanced en 24 h (`CalendarTimeFormat = 17:00/17:30`) ; sauvegardes `backups/jellyfin-mobile-ui-20261004/` ;
+    - PC : la rangée d'onglets monte **dans** la barre (`nav.gc-tabs.gc-inline`, position absolue, centrée dans la
+      fenêtre ou dans l'espace libre) quand elle tient entre les bibliothèques et les boutons de droite avec 16 px de
+      marge, en version compacte (`gc-compact` : 14 px, sans icônes) si la normale ne tient pas ; sinon elle reste
+      dessous. Mesuré : en 1920 px avec 7 bibliothèques (comptes admin), 490 px libres pour 561 px de rangée normale ;
+    - sous 900 px (MUI `md`), jellyfin-web ne dessine **ni son logo ni les bibliothèques** : `gc-header.js` (v4) insère
+      son propre `a.gc-logo` après ☰ seulement s'il reste 192 px (tablette en portrait, téléphone en paysage) ;
+    - la section « Collections » des fiches (nouvelle en 12.1) cache les 4 collections techniques des rangées d'accueil
+      par leur id (`data-id`, chemin `collections/<nom> [boxset]`) : **une collection renommée ou ajoutée réapparaît**,
+      mettre son id dans le calque ;
+    - barre A–Z des bibliothèques React : 12 px réservés à droite et cartes réduites d'autant (`--effectiveWidth`
+      d'ElegantFin) ; à revoir après une montée d'ElegantFin ;
+    - roue de réglages de Media Bar cachée sur écran tactile seulement (`@media (hover: none)`) ;
+    - texte blanc sur fond bleu : `#1b6fd8` sur téléphone (contraste 4,9:1), `#2f8fff` inchangé ailleurs ;
+    - libellés anglais des extensions (Jellyfin Enhanced, langues audio `Intl.DisplayNames`, tailles « Go ») traduits
+      par `gc-header.js` dans toutes les interfaces, sans jamais remplacer un nœud.
 - **Jellyfin Enhanced (audit du 03/10)** :
   - **Rafraîchissement** : page Téléchargements toutes les **120 s**, au lieu de 30 (`DownloadsPollIntervalSeconds`).
     À 30 s, avec un appel `arr/*` par carte, deux admins dont la page restait ouverte derrière le lecteur de Jellyfin
@@ -644,13 +688,28 @@ journalctl -u homelabd -f
   - **Mises à jour des extensions : manuelles**. La tâche « Mettre à jour les extensions » n'a plus de déclencheur
     (sauvegarde `backups/jellyfin-tuning-20261004/`). Une mise à jour automatique s'activait au redémarrage suivant,
     sans vérification.
-  - **Sous-titres** : Jellyfin Enhanced impose `font-size: 1.2vw` en style **inline `!important`** sur
-    `.videoSubtitlesInner`, et notre réglage Mon compte perd sur LG. La cause est trouvée par le diagnostic du 30/09 ;
-    choisir qui fait foi est **en suspens** (décision de l'utilisateur).
+  - **Sous-titres** : Jellyfin Enhanced impose sa taille en `vw` (1.2vw par défaut) : règle
+    `video.htmlvideoplayer::cue` (plus spécifique que la nôtre) et style **inline `!important`** sur
+    `.videoSubtitlesInner`. Sur iPhone en portrait, 1.2vw = ~5 px. **Décision de l'utilisateur (04/10) : sur téléphone
+    et TV, la taille de Mon compte l'emporte** (`applySubtitleSize` de `compte/app.js` : règle
+    `video.htmlvideoplayer.htmlvideoplayer::cue` (0,2,2) et style inline réécrit à chaque tour ; téléphone = px bornés
+    par le petit côté de l'écran, `clamp(14px, 4.2vmin, 22px)` × coefficient du réglage). Sur PC, rien n'est décidé :
+    Jellyfin Enhanced garde la main.
 - **Journaux Jellyfin** : `jellyfin/config/config/logging.json` (copie de `logging.default.json`) :
   - extensions bavardes en `Warning` : Playback Reporting (61 % du volume), Collection Sections, Jellysleep ;
   - traductions manquantes de Home Screen Sections en `Error` ;
-  - **14 jours** gardés au lieu de 3.
+  - **durée de garde : c'est `LogFileRetentionDays` de `config/system.xml` qui compte**, passé de 3 à **14 jours** le
+    04/10 (accord de l'utilisateur ; `GET /System/Configuration`, ce seul champ changé, `POST` de l'objet entier, sans
+    redémarrage ; sauvegarde `backups/jellyfin-mobile-ui-20261004/`, ~75 Mo de journaux). La tâche quotidienne
+    « Supprimer les fichiers journaux » efface tout ce qui dépasse dans `config/log` (journaux principaux, `FFmpeg.*`,
+    `upload_*`). Le `retainedFileCountLimit` (14) de `logging.json` ne compte que les `log_*.log` : il n'agissait
+    jamais tant que la garde était à 3 jours. Jamais d'édition à la main de `system.xml` Jellyfin démarré.
+- **Mise en pause des conversions (throttling) : elle marche**, en 10.11 comme en 12.1 (vérifié le 04/10). Piège de
+  lecture : le patch de pause de jellyfin-ffmpeg exclut le temps en pause de `speed=` et `elapsed=` et n'écrit rien
+  pendant une pause ; un job bridé ressemble donc à une conversion continue à 6× (un film Chromecast : 118 « Transcoding
+  is paused », ~73 min de pause sur 84). Chaque « Transcoding is paused » = une pause. Avance réelle = dernier segment
+  écrit (`Opening … N.mp4` du journal FFmpeg) − dernier `hls1/main/N.mp4` demandé (journal NPM, UTC) : 60 à 72 segments
+  de 3 s attendus (seuil 180 s). Un job inactif reste vivant tant que le client envoie `/Sessions/Playing/Ping`.
 - **Collections après un remplacement de fichier** :
   - le nouveau fichier crée un nouvel élément Jellyfin, et les collections gardent un **lien mort** vers l'ancien
     chemin (« Unable to find linked item », 217 avertissements en 3 jours) ;

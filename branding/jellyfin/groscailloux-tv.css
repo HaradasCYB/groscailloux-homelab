@@ -9,6 +9,12 @@
 @import url("https://cdn.jsdelivr.net/gh/lscambo13/ElegantFin@26.09.05/Theme/ElegantFin-jellyfin-theme-build-latest-minified.css");
 @import url("https://cdn.jsdelivr.net/gh/lscambo13/ElegantFin@26.09.05/Theme/assets/add-ons/media-bar-plugin-support-latest-min.css");
 
+/* Nouvelle interface 12.1 (classe html.gc-modern posée par gc-header.js) : la page commence déjà sous la barre React,
+   qui porte aussi la barre d'outils des bibliothèques ; jellyfin-web 12.1 y remet le haut de page à 0, mais ElegantFin
+   rajoute le décalage de l'ancien en-tête (2 × 5 em) : ~140 px de vide sur téléphone, 81 px sur PC (04/10). */
+html.gc-modern .libraryPage:not(.noSecondaryNavPage):not(.homePage) { padding-top: .5em !important; }
+html.gc-modern #myPreferencesMenuPage { padding-top: .5em !important; }
+
 :root { --gc-accent: #2f8fff; --gc-accent-hover: #5aa6ff; }  /* bleu galet (rouge Netflix : #e50914 / #f6121d) */
 :root { --loginPageText: "Connecte-toi"; }  /* titre de l'écran de connexion (ElegantFin : anglais) */
 
@@ -64,10 +70,22 @@
   #slides-container .slide-content { translate: 0 calc(var(--gc-header-h, 5em) + 1em - 20px) !important; }
 }
 
-/* Rangées calées sous la bannière (80vh), quelle que soit la hauteur d'écran : Media Bar les plaçait à
-   65vh et, sur un écran large et bas, « Mes médias » passait sous les boutons. */
+/* Rangées calées sous la bannière (80vh), quelle que soit la hauteur d'écran. Media Bar 3.0 place lui-même les rangées
+   (margin-top: 65vh ou 68vh moins un décalage) : on REMPLACE cette marge. Avant le 04/10 c'était un `top` ajouté
+   par-dessus, écrit pour Media Bar 2.x : double décalage, 220 à 670 px de noir sous la bannière, aucune rangée au
+   premier écran sur PC et tablette. .layout-tv garde sa propre règle, plus spécifique. */
 @media only screen and (orientation: landscape) {
-  .homeSectionsContainer { top: calc(80vh - 8.5em) !important; }
+  .homeSectionsContainer { margin-top: calc(80vh - 8.5em) !important; }
+}
+/* Media Bar 3.0 mesure --slideshow-page-offset sur le PREMIER .page du document (#loginPage ou une page de Jellyfin
+   Enhanced, toujours cachés) : la valeur devient la position de défilement dès que des rangées se chargent pendant un
+   défilement, et les rangées remontent d'autant sur la bannière, jusqu'à devenir inaccessibles. Figée à 0, sa valeur
+   au chargement (un !important de feuille l'emporte sur le style inline posé par le plugin). */
+:root { --slideshow-page-offset: 0px !important; }
+/* Téléphone en paysage : logo moins haut et bloc un peu descendu, sinon le titre passe sous la barre et les onglets */
+@media only screen and (orientation: landscape) and (max-height: 500px) {
+  html #slides-container.layout-marquee { --mq-logo-height: clamp(2.2rem, 10vh, 3.2rem); }
+  #slides-container .slide-content { translate: 0 calc(var(--gc-header-h, 5em) + 1em - 12px) !important; }
 }
 @media only screen and (orientation: landscape) and (max-height: 760px) {
   .plot-container { display: none !important; }
@@ -87,10 +105,27 @@
 #je-native-tab-btn-requests .emby-button-foreground::after { content: "Demandes"; }
 #je-native-tab-btn-calendar .emby-button-foreground::after { content: "Calendrier"; }
 
-/* Téléphone en portrait : bannière un peu moins haute, logo remonté au-dessus des notes */
+/* Téléphone en portrait : bannière un peu moins haute, logo remonté au-dessus des notes (ancienne interface) */
 @media only screen and (max-width: 767px) and (orientation: portrait) {
   #slides-container { height: 72vh !important; }
   .logo-container { top: calc(100% - 18.5em) !important; max-width: 70vw !important; }
+  /* Nouvelle interface : Media Bar 3.0 fixe la bannière à 66vh (--slideshow-height) et place carte, points et rangées
+     d'après elle ; à 72vh la carte descendait de ~50 px et « Mes médias » touchait les boutons Lire/Infos/Favori.
+     Rangées calées sur la hauteur réelle de la barre (gc-header.js), pas sur le décalage mesuré par le plugin. */
+  html.gc-modern #slides-container { height: var(--slideshow-height, 66vh) !important; }
+  html.gc-modern .homeSectionsContainer { margin-top: calc(var(--slideshow-content-top) - var(--gc-header-h, 0px)) !important; }
+  /* Ligne d'infos de la bannière (année, note, durée, genres, âge) : Media Bar 3.0 l'écrit en 8,6 à 9,4 px et ses
+     éléments passaient sur deux lignes dans une boîte de hauteur fixe, donc coupés (« 1 SEASON », « FR-12 », genre).
+     11 px, éléments fixes sur une ligne, seul le genre se raccourcit (avec « … »). */
+  html #slides-container.layout-marquee .spec-line { font-size: 11px !important; letter-spacing: .05em !important; }
+  html #slides-container.layout-marquee .spec-item,
+  html #slides-container.layout-marquee .spec-cert { flex-shrink: 0 !important; white-space: nowrap !important; }
+  html #slides-container.layout-marquee .spec-item { padding-left: .6em !important; padding-right: .6em !important; }
+  html #slides-container.layout-marquee .spec-item:first-child { padding-left: 0 !important; }
+  html #slides-container.layout-marquee .spec-cert { margin-left: .6em !important; }
+  html #slides-container.layout-marquee .spec-item + .spec-cert::before { left: -.6em !important; }
+  html #slides-container.layout-marquee .spec-item.spec-genre { flex: 0 1 auto !important; min-width: 0 !important; display: block !important;
+    line-height: calc(1.7em - .2em - 2px) !important; overflow: hidden !important; text-overflow: ellipsis !important; }
 }
 
 /* Boutons : « Lire » blanc plein, « Plus d'infos » gris translucide (bannière et fiches) */
@@ -112,6 +147,12 @@
 
 /* En-tête : dégradé sans flou (le flou coûte cher sur les TV et les vieux PC) */
 .skinHeader { background: var(--headerColorGradient) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+/* Nouvelle interface 12.1, téléphone et tablette : dès que la page défile (html.gc-scrolled, gc-header.js), barre
+   opaque et sans flou. ElegantFin lui donne --headerColor (.55) + flou : affiches et textes passaient derrière les
+   icônes et la barre d'outils des bibliothèques. Tout en haut de l'accueil, elle reste translucide sur la bannière. */
+@media (pointer: coarse), (max-width: 600px) {
+  html.gc-scrolled header.MuiAppBar-root { background: var(--darkerGradientPoint, #08090b) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+}
 .layout-tv * { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 
 /* Téléviseurs (disposition TV, 2026-09-19) : jellyfin-web laisse l'en-tête défiler hors écran dès qu'une carte a le
@@ -145,6 +186,14 @@
 .layout-tv .streaming-lookup-container, .layout-tv #streaming-result-container, .layout-tv .audio-languages-container,
 .layout-tv .je-secondary-actions, .layout-tv .je-series-request-more-styles { display: none !important; }
 
+/* Téléphones, nouvelle interface (04/10) : le bloc « Également disponible en … sur » de Jellyfin Enhanced (Elsewhere)
+   repoussait saisons et épisodes de 200 à 430 px. Caché sur téléphone ; tablette, PC, ancienne interface et TV inchangés
+   (TV : règle plus haut). Sa région est réglée sur la France dans le plugin. */
+@media only screen and (max-width: 767px), only screen and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+  html.gc-modern.layout-mobile .streaming-lookup-container,
+  html.gc-modern.layout-mobile #streaming-result-container { display: none !important; }
+}
+
 /* Fenêtre « Épisode suivant » (29/09) : un titre d'épisode au nom de fichier (« Re.ZERO.Starting.Life…-TLC », un seul
    mot pour le navigateur) élargissait la colonne ; la rangée de boutons, calée à droite, sortait de l'écran —
    plus de « Cacher », plus de « Démarrer maintenant ». Colonne bornée, titre coupé n'importe où (2 lignes max). */
@@ -153,3 +202,128 @@
 .upNextDialog-title { overflow-wrap: anywhere !important; word-break: break-word !important; display: -webkit-box !important;
   -webkit-line-clamp: 2 !important; -webkit-box-orient: vertical !important; overflow: hidden !important; }
 .upNextDialog-buttons { justify-content: flex-end !important; flex-wrap: wrap !important; gap: .5em; max-width: 100% !important; }
+
+/* Lecteur, nouvelle interface (12.1), sous 1200 px : jellyfin-web laisse la barre du haut passer à la ligne dans un
+   en-tête de 7,5 em qui coupe ce qui dépasse ; un titre sur 2 lignes poussait SyncPlay et « Lire sur » hors de
+   l'en-tête, invisibles et intouchables (04/10). Tout sur une rangée, titre sur 2 lignes au plus. */
+@media (max-width: 1199.98px) {
+  .osdHeader .videoOsd-appBar { flex-wrap: nowrap !important; }
+  .osdHeader .videoOsd-appBar > p.MuiTypography-root {
+    flex: 0 1 auto; min-width: 0;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden; overflow-wrap: anywhere;
+  }
+}
+
+/* Lecteur, téléphone en portrait : « Passer le générique » est fixe à 9rem du bas (ElegantFin) et chevauchait la 2ᵉ
+   rangée de commandes d'un épisode ; boutons de 31 à 34 px, sous la taille d'un doigt. */
+@media (max-width: 33.75em) and (orientation: portrait) {
+  html:not(.layout-tv) .skip-button-container { bottom: calc(9rem + 3.5em); }
+  html:not(.layout-tv) .videoOsdBottom .buttons > .paper-icon-button-light,
+  html:not(.layout-tv) .videoOsdBottom .buttons > div > .paper-icon-button-light:not(.btnPause) { padding: .75em; }
+}
+@media (max-width: 33.75em) and (orientation: portrait) {
+  /* « Aperçu des épisodes » sur un film : n'ouvre que la fiche du film lui-même (règle seule : sans :has(), seule
+     elle tombe) */
+  html:not(.layout-tv) .videoOsdBottom .buttons:has(.btnPreviousTrack.hide):has(.btnNextTrack.hide) > #popupPreviewButton { display: none !important; }
+}
+
+/* Téléphones, nouvelle interface : texte blanc sur le bleu de la marque #2f8fff = 3,2:1 (il faut 4,5:1). Fond plus
+   foncé sous le texte blanc (4,9:1) ; #2f8fff reste pour les contours, liens et barres de progression. PC, ancienne
+   interface et TV inchangés. */
+:root { --gc-accent-fill: #1b6fd8; }
+@media only screen and (max-width: 767px), only screen and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+  html.gc-modern.layout-mobile { --btnSubmitColor: var(--gc-accent-fill); }
+  html.gc-modern.layout-mobile .MuiDrawer-paper .MuiListItemButton-root.Mui-selected { background-color: var(--gc-accent-fill) !important; }
+  html.gc-modern.layout-mobile .gc-panel .gc-tab[aria-selected=true], html.gc-modern.layout-mobile .gc-panel .gc-send,
+  html.gc-modern.layout-mobile .gc-panel .gc-role, html.gc-modern.layout-mobile .gc-chat-btn .gc-badge { background: var(--gc-accent-fill); }
+  html.gc-modern.layout-mobile .gc-panel .gc-role { font-size: 11px; }
+}
+
+/* Fiches (jellyfin-web 12.1) : la nouvelle section « Collections » listait les collections techniques des rangées
+   d'accueil (Tendances cette semaine = tâche trending ; Anime, Les mieux notés, Films français = Auto Collections) :
+   8 Mile « appartenait » à « Tendances cette semaine ». Ids = chemin /config/data/collections/<nom> [boxset], stables
+   tant que le nom ne change pas ; une collection renommée réapparaît simplement. */
+#collectionsCollapsible .card[data-id="c7af7d24f7d4c6fca658efd652cb4d65"],
+#collectionsCollapsible .card[data-id="5d2b21dab9ed44fb2c00837ff363792e"],
+#collectionsCollapsible .card[data-id="854a0397ed7e1bb097115dffaf9d9804"],
+#collectionsCollapsible .card[data-id="4db743d896106d0d5b6ad5e45bd0c6b2"] { display: none !important; }
+/* Section vide une fois ces cartes cachées (règle à part : sans :has(), seule elle tombe) */
+#collectionsCollapsible:not(:has(.card:not([data-id="c7af7d24f7d4c6fca658efd652cb4d65"]):not([data-id="5d2b21dab9ed44fb2c00837ff363792e"]):not([data-id="854a0397ed7e1bb097115dffaf9d9804"]):not([data-id="4db743d896106d0d5b6ad5e45bd0c6b2"]))) { display: none !important; }
+
+/* Zones de toucher, nouvelle interface sur téléphone et tablette tactile (04/10) : avatar 27 px collé à « Mon compte »,
+   ♥/⋮ des épisodes 24 px, puces IMDb/TMDB 19 px, Infos/Favori de la bannière 33 px. Zones d'appui agrandies par des
+   pseudo-éléments invisibles : l'apparence ne change pas. */
+@media (max-width: 600px), (pointer: coarse) {
+  html.gc-modern header.MuiAppBar-root .MuiBox-root:has(> [aria-controls="app-user-menu"]) { margin-left: 6px; }
+  html.gc-modern header.MuiAppBar-root [aria-controls="app-user-menu"]::after { content: ""; position: absolute; inset: -10px -11px -10px -6px; }
+  html.gc-modern .listItem .listViewUserDataButtons .listItemButton { min-width: 40px; min-height: 40px; }
+  html.gc-modern .itemExternalLinks > a::after { content: ""; position: absolute; inset: -9px -3px; }
+  html.gc-modern #slides-container .detail-button, html.gc-modern #slides-container .favorite-button { position: relative; }
+  html.gc-modern #slides-container .detail-button::after, html.gc-modern #slides-container .favorite-button::after { content: ""; position: absolute; inset: -8px; }
+  html.gc-modern #notification-dropdown .filter-pill { font-size: 13px; padding: .5em 1em; }
+  html.gc-modern #closeSettingsPanel { min-width: 40px; min-height: 40px; }
+  /* Android : la zone de glissement du menu (MUI, 20 px au bord gauche) prenait les 8 premiers px de ☰ */
+  html.gc-modern .PrivateSwipeArea-root { top: var(--gc-header-h, 48px) !important; }
+}
+
+/* Bibliothèques (pages React de la 12.1), téléphone : la barre A–Z (18 px, à .4em du bord) couvrait la 3ᵉ colonne
+   d'affiches. 12 px réservés et cartes réduites d'autant : toujours 3 colonnes. */
+@media (max-width: 700px) {
+  .alphaPicker-fixed-right.MuiBox-root ~ .itemsContainer.vertical-wrap { padding-right: calc(var(--sidePadding) + 12px) !important; }
+  .alphaPicker-fixed-right.MuiBox-root ~ .itemsContainer.vertical-wrap > .card { --effectiveWidth: calc(100vw - var(--padding)*2 - var(--sidePadding)*2 - 12px); }
+}
+
+/* Téléphones, nouvelle interface : titres des cartes sur 2 lignes au lieu d'une ligne coupée à ~13 caractères (les
+   « Twilight, chapit… » se ressemblaient tous) ; 2 lignes réservées pour garder l'année alignée ; tuiles de
+   bibliothèque exclues (nom caché par ElegantFin). Noms de pistes : la flèche des listes recouvrait la fin du nom
+   (ElegantFin retire la place réservée), et dans les feuilles Audio/Sous-titres du lecteur le nom était coupé net. */
+@media only screen and (max-width: 767px), only screen and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+  html.gc-modern.layout-mobile .card:not([data-type=CollectionFolder]):not([data-type=UserView]) .cardText-first {
+    white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden; overflow-wrap: break-word; line-height: 1.25; min-height: 2.5em;
+  }
+  /* sans ça, un titre sur 2 lignes faisait 2,5 px de plus et son année n'était plus alignée sur la rangée */
+  html.gc-modern.layout-mobile .card:not([data-type=CollectionFolder]):not([data-type=UserView]) .cardText-first > * { vertical-align: top; }
+  html.gc-modern.layout-mobile .trackSelections .emby-select:not([disabled]) { padding-right: 2.2em !important; }
+  html.gc-modern.layout-mobile .actionSheetItemText { white-space: normal !important; overflow-wrap: anywhere; }
+}
+
+/* Nouvelle interface, téléphone et tablette tactile : pages Jellyfin Enhanced (Demandes, Calendrier) en 9 px et
+   boutons de 21 px ; onglet Favoris vide sans un mot (message après 2,5 s, le temps que les rangées se chargent). */
+@media (max-width: 600px), (pointer: coarse) and (max-width: 1024px) {
+  html.gc-modern .je-requests-status-chip, html.gc-modern .je-release-date-chip { font-size: 11px; }
+  html.gc-modern .je-calendar-nav-btn { height: 36px; min-width: 36px; font-size: 15px; }
+  html.gc-modern .je-calendar-nav-btn.je-calendar-nav-today { padding: 0 14px; font-size: 13px; }
+  html.gc-modern .je-calendar-view-btn { min-height: 36px; font-size: 13px; }
+  html.gc-modern .je-calendar-legend { font-size: 13px; }
+  html.gc-modern .jellyfinenhanced.requests .je-active-downloads-section { margin-top: .4em !important; }
+  html.gc-modern .jellyfinenhanced.calendar .je-calendar-header { padding-top: .4em; }
+  html.gc-modern #favoritesTab .sections:not(:has(> .verticalSection:not(.hide)))::before {
+    content: "Aucun favori pour l’instant. Touche ♡ sur un film ou une série pour le retrouver ici.";
+    display: block; padding: 3em 1.5em; text-align: center; font-size: 15px; line-height: 1.4; color: rgba(255, 255, 255, .72);
+    opacity: 0; animation: gcFavEmpty .3s 2.5s forwards;
+  }
+}
+@keyframes gcFavEmpty { to { opacity: 1; } }
+
+/* Nouvelle interface : en-tête du menu ☰ = notre logo (au lieu de l'icône Jellyfin, du nom et du numéro de version) ;
+   textes du menu et du menu du compte à 15 px sur téléphone (13 px). */
+html.gc-modern .MuiDrawer-paper a[href="#/"] > .MuiListItemIcon-root,
+html.gc-modern .MuiDrawer-paper a[href="#/"] > .MuiListItemText-root { display: none !important; }
+html.gc-modern .MuiDrawer-paper a[href="#/"]::after { content: ""; display: block; width: 176px; height: 25px; margin: 6px 0;
+  background: url("/web/banner-light.gc.png") left center / contain no-repeat; }
+@media only screen and (max-width: 767px), only screen and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+  html.gc-modern.layout-mobile .MuiDrawer-paper .MuiListItemText-primary,
+  html.gc-modern.layout-mobile .MuiMenu-paper .MuiMenuItem-root,
+  html.gc-modern.layout-mobile .MuiDrawer-paper .jellyfinEnhancedSection .navMenuOptionText { font-size: max(15px, 1rem) !important; }
+  html.gc-modern.layout-mobile .MuiDrawer-paper .MuiListSubheader-root,
+  html.gc-modern.layout-mobile .MuiDrawer-paper .jellyfinEnhancedSection .sidebarHeader { font-size: max(13px, .875rem) !important; }
+}
+
+/* Media Bar 3.0 : la roue « Slideshow settings » ne se cache qu'au survol de la souris ; sur écran tactile elle restait
+   posée sur le logo du titre et ouvrait un panneau de réglages en anglais. Cachée là ; à la souris, inchangée. */
+@media (hover: none) {
+  html.gc-modern #slides-container .ss-settings-toggle { display: none !important; }
+}
+

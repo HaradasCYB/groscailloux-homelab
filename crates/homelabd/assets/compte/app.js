@@ -54,13 +54,27 @@
       '.gc-acc .note{margin:.6em 0 0;padding:.6em .8em;border-radius:8px;background:#1b2430;font-size:.92em}',
       '.gc-acc .err{background:#4a1f1f}.gc-acc .ok{background:#1f4a2c}',
       '.gc-acc ul{margin:.3em 0;padding-left:1.2em}.gc-acc li{margin:.15em 0}',
-      '@media (max-width:600px){.gc-acc-wrap{padding:3.8em .5em .5em}.gc-acc{padding:.9em}}'
+      '@media (max-width:600px){.gc-acc-wrap{padding:3.8em .5em .5em}.gc-acc{padding:.9em}}',
+      '.gc-acc-head{display:flex;align-items:center;justify-content:space-between;gap:.5em;margin:0 0 .3em}.gc-acc-head h2{margin:0}.gc-acc-head .close{float:none}'
     ].concat(TV ? [
       // Télé (29/09, revue LG) : 15 px se lisait mal à 3 m ; texte ×1,45, focus de télécommande bien visible
       '.gc-acc{width:min(1200px,94vw);font-size:22px;padding:1.2em 1.5em}',
       '.gc-acc .btn:focus,.gc-acc select:focus,.gc-acc a:focus,.gc-acc .close:focus{outline:3px solid #8fd3fb;outline-offset:3px}',
       '.gc-acc .gc-choices{display:flex;flex-wrap:wrap;gap:.5em}.gc-acc .gc-choices .btn{padding:.6em 1em}'
-    ] : []).join('\n');
+    ] : [
+      // PC : la croix partait au défilement et le bas du panneau dépassait de 12 px (marges comptées en plus)
+      '.gc-acc{box-sizing:border-box}',
+      '.gc-acc-head{position:sticky;top:-1.1em;z-index:1;margin:-1.1em -1.2em .3em;padding:.6em .6em .4em 1.2em;background:#141a22;border-bottom:1px solid #222b35}',
+      // Téléphone (04/10) : la liste de langue et l'adresse d'inscription dépassaient du panneau (défilement de côté),
+      // la croix (25 px) partait au défilement, et en paysage le bas du panneau sortait de l'écran.
+      '@media (max-width:600px),(max-height:500px){'
+      + '.gc-acc{box-sizing:border-box;max-height:100%;padding:.9em}'
+      + '.gc-acc-head{position:sticky;top:-.9em;z-index:1;margin:-.9em -.9em .3em;padding:.3em .3em .3em .9em;background:#141a22;border-bottom:1px solid #222b35}'
+      + '.gc-acc .close{min-width:44px;min-height:44px;font-size:1.6em}'
+      + '.gc-acc select.btn{display:block;width:100%;max-width:100%;box-sizing:border-box;text-overflow:ellipsis}'
+      + '.gc-acc p,.gc-acc li{overflow-wrap:anywhere}'
+      + '.gc-acc .btn+.muted{display:block;margin-top:.4em}}'
+    ]).join('\n');
     document.head.appendChild(st);
   }
   function icon() {
@@ -74,8 +88,9 @@
 
   function render(d) {
     var box = S.el.box; box.innerHTML = '';
-    box.appendChild(h('button', { class: 'close', type: 'button', 'aria-label': 'Fermer', onclick: close }, ['×']));
-    box.appendChild(h('h2', { text: 'Mon compte' }));
+    // titre et croix dans une même ligne, épinglée en haut du panneau sur téléphone (la croix ne part plus au défilement)
+    box.appendChild(h('div', { class: 'gc-acc-head' }, [h('h2', { text: 'Mon compte' }),
+      h('button', { class: 'close', type: 'button', 'aria-label': 'Fermer', onclick: close }, ['×'])]));
     box.appendChild(h('p', { class: 'muted', text: d.name }));
     var st = h('span', { class: 'st ' + d.status, text: d.status_label });
     var line = h('div', { class: 'row' }, [h('span', { text: 'Abonnement' }), st]);
@@ -117,7 +132,7 @@
     }
 
     box.appendChild(h('h3', { text: 'Langue de lecture' }));
-    var LANGS = [['fr', 'Fran\u00e7ais quand il existe (VF, sinon VO sous-titr\u00e9e)'], ['vo', 'Toujours en VO, sous-titres fran\u00e7ais']];
+    var LANGS = [['fr', 'VF quand elle existe, sinon VO sous-titr\u00e9e'], ['vo', 'Toujours en VO, sous-titres fran\u00e7ais']];
     if (TV) {
       box.appendChild(choices(LANGS, d.language, function (v, b) { setLanguage(v, b); }));
     } else {
@@ -186,21 +201,58 @@
   // moment où le lecteur crée l'élément de sous-titres. Changer le réglage pendant une lecture ne bougeait donc
   // rien tant qu'on ne changeait pas de piste (d'où le détour par le sous-titre secondaire, qui en affiche deux).
   // Une règle de feuille de style `!important` l'emporte sur un style inline : la taille s'applique aussitôt.
+  // Jellyfin Enhanced impose AUSSI sa taille, en vw (1.2vw par défaut) : règle `video.htmlvideoplayer::cue`, plus
+  // spécifique que la nôtre, et style inline `!important` sur .videoSubtitlesInner. Sur téléphone, 1.2vw = ~5 px en
+  // portrait, illisible. Choix de l'admin (04/10) : sur téléphone et télé, la taille de Mon compte l'emporte —
+  // règle plus spécifique (0,2,2) et style inline réécrit à chaque tour ; sur PC, rien ne change.
   var SIZE_EM = { smaller: '.8em', small: 'inherit', normal: '1.36em', large: '1.72em', larger: '2em', extralarge: '2.2em' };
+  // Téléphone : en px bornés par le petit côté de l'écran (même taille en portrait et en paysage) ; « Normale » = 1
+  var SIZE_K = { smaller: .6, small: .75, normal: 1, large: 1.26, larger: 1.47, extralarge: 1.62 };
+  // téléphone et tablette tactile (même taille en portrait et en paysage ; un iPad en paysage repassait à 1.2vw)
+  var PHONE_MQ = '(pointer: coarse) and (max-width: 1366px), (pointer: coarse) and (max-height: 500px)';
+  function phone() { try { return !TV && window.matchMedia(PHONE_MQ).matches; } catch (e) { return false; } }
+  // Jellyfin Enhanced réécrit sa taille en ligne à chaque réplique (mutation du body, ≤ 100 ms) : la nôtre ne revenait
+  // qu'au tour suivant (1 s) et la taille sautait d'une réplique à l'autre. On observe l'attribut style de l'élément et
+  // on remet notre taille aussitôt ; lui n'observe que les ajouts de nœuds, donc pas de ping-pong.
+  var inlineWanted = null, inlineObs = null;
+  function keepInline(st) {
+    var w = inlineWanted;
+    if (w && (st.getPropertyValue('font-size') !== w || st.getPropertyPriority('font-size') !== 'important')) st.setProperty('font-size', w, 'important');
+  }
+  function forceInlineSize(v) {
+    inlineWanted = v;
+    var els = document.querySelectorAll('.videoSubtitlesInner,.videoSecondarySubtitlesInner');
+    for (var i = 0; i < els.length; i++) {
+      keepInline(els[i].style);
+      if (window.MutationObserver && !els[i].__gcSizeObs) {
+        if (!inlineObs) inlineObs = new MutationObserver(function (recs) { for (var k = 0; k < recs.length; k++) keepInline(recs[k].target.style); });
+        inlineObs.observe(els[i], { attributes: true, attributeFilter: ['style'] });
+        els[i].__gcSizeObs = true;
+      }
+    }
+  }
   function applySubtitleSize() {
-    var em = SIZE_EM[subtitleSize()], el = document.getElementById('gc-sub-size');
+    var size = subtitleSize(), em = SIZE_EM[size], el = document.getElementById('gc-sub-size');
     if (!em) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
     // Télé : lue à 3 m, la même taille paraît minuscule (27/09, LG) → ×1,4 et un contour pour les images claires.
-    var extra = '';
+    var extra = '', inline = null;
     if (TV) {
       var n = parseFloat(em) || 1;
       em = (Math.round(n * 1.4 * 100) / 100) + 'em';
       extra = ';text-shadow:0 0 .12em #000,0 0 .12em #000,.06em .06em .1em #000 !important';
+      inline = em;
     }
     var css = '.videoSubtitlesInner,.videoSecondarySubtitlesInner{font-size:' + em + ' !important' + extra + '}'
       + 'video::cue{font-size:' + em + ' !important' + extra + '}';
+    if (TV) css += 'video.htmlvideoplayer.htmlvideoplayer::cue{font-size:' + em + ' !important' + extra + '}';
+    else {
+      var px = 'calc(clamp(14px, 4.2vmin, 22px) * ' + (SIZE_K[size] || 1.26) + ')';
+      css += '@media ' + PHONE_MQ + '{video.htmlvideoplayer.htmlvideoplayer::cue{font-size:' + px + ' !important}}';
+      if (phone()) inline = px;
+    }
     if (!el) { el = document.createElement('style'); el.id = 'gc-sub-size'; (document.head || document.documentElement).appendChild(el); }
     if (el.textContent !== css) el.textContent = css;
+    if (inline) forceInlineSize(inline); else inlineWanted = null;
   }
   function setSubtitleSize(v) {
     var u = userId(); if (!u) { note('Appareil non reconnu.', 'err'); return; }
@@ -282,6 +334,7 @@
     try { list[n].scrollIntoView({ block: 'nearest' }); } catch (e) { list[n].scrollIntoView(false); }
   }
   function toggle() { S.open ? close() : open(); }
+  if (!TV) window.addEventListener('hashchange', close); // geste Retour d'Android, navigation : le panneau se ferme
   window.addEventListener('keydown', function (ev) {
     if (!S.open) return;
     var k = ev.keyCode;

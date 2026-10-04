@@ -104,10 +104,11 @@
     if (document.getElementById('gc-chat-css')) return;
     var c = [
       '.gc-chat-btn[hidden],.gc-panel [hidden],.gc-badge[hidden]{display:none!important}',
-      '.gc-chat-btn{position:relative}',
+      // jellyfin-web rogne ses boutons ronds (overflow: hidden) : la pastille des non-lus apparaissait en croissant
+      '.gc-chat-btn{position:relative;overflow:visible!important}',
       '.gc-chat-btn svg{width:1.45em;height:1.45em;fill:currentColor;display:block}',
       '.gc-badge{position:absolute;top:.15em;right:.1em;min-width:1.25em;height:1.25em;padding:0 .3em;border-radius:1em;background:var(--accentColor,#2f8fff);color:#fff;font:700 .68em/1.25em Inter,system-ui,sans-serif;text-align:center;box-sizing:border-box}',
-      '.gc-badge.dot{min-width:.6em;width:.6em;height:.6em;padding:0;top:.35em;right:.35em}',
+      '.gc-badge.gc-dot{min-width:.6em;width:.6em;height:.6em;padding:0;top:.35em;right:.35em}',
       '.gc-panel{position:fixed;top:0;right:0;bottom:0;width:min(430px,100vw);z-index:100000;display:flex;flex-direction:column;background:#0b0f16;color:#e8edf5;border-left:1px solid #232b3a;box-shadow:-12px 0 40px rgba(0,0,0,.45);font:15px/1.45 Inter,system-ui,sans-serif;transform:translateX(105%);transition:transform .22s ease}',
       '.gc-panel.open{transform:none}',
       '@media (prefers-reduced-motion:reduce){.gc-panel{transition:none}}',
@@ -115,7 +116,7 @@
       '.gc-head strong{font-size:1.1em;flex:1}',
       '.gc-x{background:none;border:0;color:#8d99ad;font-size:1.6em;line-height:1;cursor:pointer;padding:.1em .3em;border-radius:.3em}',
       '.gc-x:hover,.gc-x:focus-visible{color:#fff;outline:2px solid var(--accentColor,#2f8fff)}',
-      '.gc-tabs{display:flex;flex-wrap:wrap;gap:.35em .3em;padding:0 .8em .6em}',
+      '.gc-panel .gc-tabs{display:flex;flex-wrap:wrap;gap:.35em .3em;padding:0 .8em .6em;overflow:visible}',
       '.gc-tab{flex:none;position:relative;background:#151b26;border:1px solid #232b3a;color:#c9d2df;border-radius:2em;padding:.35em .85em;font:inherit;font-size:.88em;cursor:pointer}',
       '.gc-tab[aria-selected=true]{background:var(--accentColor,#2f8fff);border-color:transparent;color:#fff}',
       '.gc-tab:focus-visible{outline:2px solid #fff}',
@@ -161,7 +162,11 @@
       '.gc-banner{position:fixed;left:50%;top:5.2em;transform:translateX(-50%);z-index:99999;width:min(640px,calc(100vw - 2em));display:flex;gap:.8em;align-items:center;background:#0b0f16;color:#e8edf5;border:1px solid rgba(47,143,255,.5);border-left:4px solid var(--accentColor,#2f8fff);border-radius:.8em;padding:.7em .9em;box-shadow:0 10px 30px rgba(0,0,0,.45);font:14px/1.4 Inter,system-ui,sans-serif}',
       '.gc-banner p{margin:0;flex:1;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}',
       '.gc-banner button{flex:none;background:none;border:0;color:#8cc4ff;cursor:pointer;font:inherit}',
-      '@media (max-width:600px){.gc-panel{width:100vw;border-left:0}.gc-banner{top:4.6em}}'
+      '@media (max-width:600px){.gc-panel{width:100vw;border-left:0}.gc-banner{top:4.6em;box-sizing:border-box}}',
+      // téléphone en paysage : la liste des messages était écrasée (21 px) sous l'en-tête, les onglets et le formulaire
+      // écran tactile : croix et onglets à la taille d'un doigt (la marge négative garde l'en-tête à la même hauteur)
+      '@media (pointer:coarse){.gc-panel .gc-x{min-width:44px;min-height:44px;margin:-8px -8px -8px 0}.gc-panel .gc-tab{min-height:36px}}',
+      '@media (max-height:500px){.gc-panel .gc-intro{display:none}.gc-panel .gc-head{padding:.3em 1em .1em}.gc-panel .gc-form{padding-top:.4em;padding-bottom:calc(.4em + env(safe-area-inset-bottom))}.gc-panel .gc-form textarea{min-height:2.2em}}'
     ].concat(TV ? [
       // Téléviseur : ombres portées et animations coûtent cher au compositeur, et la lecture saccade avec.
       '.gc-banner,.gc-panel{box-shadow:none!important;transition:none!important}',
@@ -221,7 +226,7 @@
     if (!S.el.badge || !S.me) return;
     var n = counts(), b = S.el.badge;
     b.hidden = !(n.strong || n.soft);
-    b.classList.toggle('dot', !n.strong && n.soft > 0);
+    b.classList.toggle('gc-dot', !n.strong && n.soft > 0);
     b.textContent = n.strong ? (n.strong > 9 ? '9+' : String(n.strong)) : '';
     S.el.btn.setAttribute('aria-label', n.strong ? 'Ouvrir le tchat, ' + n.strong + ' non lu(s)' : 'Ouvrir le tchat');
   }

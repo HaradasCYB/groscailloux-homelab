@@ -309,7 +309,7 @@
     return b;
   }
 
-  var VERSION = 5;
+  var VERSION = 6;
   window.__gcAirPlayVersion = VERSION;
   /* « Jouer sur » = la feuille qui suit un appui sur le bouton Cast de l'en-tête (indépendant de la langue) */
   var lastCastTap = 0;
@@ -403,7 +403,7 @@
       if (li.classList.contains('gc-ap-mui')) continue;
       var txt = li.textContent || '';
       if (li.classList.contains('Mui-disabled') && UNSUPPORTED_RE.test(txt)) unsupported = li;
-      else if (li.classList.contains('Mui-disabled') && NO_TARGET_RE.test(txt)) noTarget = li;
+      else if (li.classList.contains('Mui-disabled') && (NO_TARGET_RE.test(txt) || txt === EMPTY_ANDROID || txt === EMPTY_NOTE)) noTarget = li;
       else if (li.getAttribute('role') === 'menuitem' && !li.classList.contains('Mui-disabled')) real++;
     }
     var placeholder = unsupported || noTarget;
@@ -426,6 +426,12 @@
       var ic = placeholder.querySelector('.MuiListItemIcon-root');
       if (ic) ic.style.display = 'none';
       window.__gcAirPlayShown = 'note';
+    }
+    // Android : c'est une consigne à lire, pas une entrée indisponible. MUI grise toute ligne .Mui-disabled
+    // (opacity .38) : on rend l'opacité, la ligne reste inerte (pointer-events: none de .Mui-disabled).
+    if (note === EMPTY_ANDROID) {
+      placeholder.style.opacity = '1';
+      label.style.color = '#c9d2df';
     }
   }
 
