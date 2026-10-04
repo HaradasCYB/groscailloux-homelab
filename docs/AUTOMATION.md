@@ -117,12 +117,18 @@ Résumé : `files=3 arr_managed=67 already_linked=8 imported=2 no_match=1 pendin
 ### hls_loop_watch — 5 min
 Boucle HLS = un client qui redemande sans fin le même segment d'un flux transcodé, ce que le membre voit comme
 « ça charge » (le 13/09/2026, une TV webOS a redemandé deux segments ~950 fois en 6 min, tous servis en 200 avec
-des tailles différentes : le segment était régénéré sous elle). Jellyfin ne journalise que « non-keyframe breaks » ;
-NPM voit chaque requête. La tâche relit les `tail_bytes` derniers octets de `npm_access_log` (horodatages **UTC**),
-garde les requêtes `/videos/<id>/hls1/…/<n>.(ts|mp4|m4s)` de la fenêtre `window_secs`, et compte par (client, média,
-segment) en fenêtre glissante ; `≥ threshold` ⇒ `warn!` + mail admin, une seule fois par (client, média) tant que la
-boucle dure. Le résumé porte aussi les relances HLS du jour (« non-keyframe breaks » dans le journal Jellyfin) et
-les 5xx sur segments — les repères de l'audit lecture du 2026-09-18. Rien n'est modifié.
+des tailles différentes : le segment était régénéré sous elle). NPM voit chaque requête. La tâche relit les
+`tail_bytes` derniers octets de `npm_access_log` (horodatages **UTC**), garde les requêtes
+`/videos/<id>/hls1/…/<n>.(ts|mp4|m4s)` de la fenêtre `window_secs`, et compte par (client, média, segment) en
+fenêtre glissante ; `≥ threshold` ⇒ `warn!` + mail admin, une seule fois par (client, média) tant que la boucle dure.
+**Rafales de ffmpeg** (2026-10-04) : un lecteur peut aussi faire relancer son flux en boucle sans redemander le même
+segment — télé Samsung, 116 remux en une heure le 30/09 ; Chromecast, 42 lancements en 22 min le 04/10 — et la règle
+des segments ne le voit pas. Chaque lancement laisse un `FFmpeg.<Transcode|Remux|DirectStream>-<date>_<heure>_<id>_<n>.log`
+(heure locale) dans `cleanup.jellyfin_log_dir` : la tâche compte les lancements des 60 dernières minutes par titre, sans
+les titres du canari (`state.canary.items`), et alerte au-delà de `max_jobs_per_item_hour` (30 ; lecture normale :
+17 au plus), une fois par titre et par jour (mémoire du daemon : un redémarrage peut renvoyer un mail). L'ancien
+repère « non-keyframe breaks » a disparu en 12.x (et ne comptait que le canari, qui demandait `BreakOnNonKeyFrames`).
+Le résumé porte le plus grand nombre de lancements d'un titre dans l'heure et les 5xx sur segments. Rien n'est modifié.
 
 ### series_search — 10 min (remplace unknown_series_grab)
 Les séries se cherchent **par identifiant TMDB**, par homelabd, plus par Sonarr. Pourquoi : Sonarr interroge

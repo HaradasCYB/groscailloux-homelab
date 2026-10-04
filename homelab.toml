@@ -128,12 +128,17 @@ mount_check = "/mnt/seedbox/media"
 # Boucles HLS (audit lecture du 2026-09-18) : un client qui redemande sans fin le même segment d'un flux
 # transcodé — ce que le membre voit comme « ça charge ». Le 13/09, une TV webOS a redemandé 2 segments
 # ~950 fois en 6 min. Lu dans le journal d'accès NPM (UTC) ; au-delà du seuil : avertissement + mail admin,
-# une fois par (client, média). Relève aussi les relances HLS du jour (« non-keyframe breaks ») et les 5xx.
+# une fois par (client, média). Relève aussi les 5xx sur les segments.
+# Rafales de ffmpeg (2026-10-04) : un lecteur qui relance son flux en boucle sans redemander le même segment
+# (télé Samsung : 116 remux en 1 h le 30/09 ; Chromecast : 42 en 22 min le 04/10). Compté par titre sur
+# l'heure écoulée d'après les journaux FFmpeg.* de Jellyfin, sans les titres du canari ; mail une fois par
+# titre et par jour. Lecture normale : 17 au plus.
 interval_secs = 300
 npm_access_log = "/opt/homelab/npm/data/logs/proxy-host-1_access.log"
 tail_bytes = 4194304        # 4 Mio relus en fin de journal
 window_secs = 300
 threshold = 20              # demandes d'un même segment dans la fenêtre
+max_jobs_per_item_hour = 30 # lancements de ffmpeg pour un même titre dans l'heure
 
 [tasks.trending]
 # Rangée « Tendances cette semaine » de l'accueil Jellyfin : titres les plus regardés (spectateurs

@@ -38,6 +38,9 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
   - **Accueil** : 4 rangées ont manqué une nuit (Tendances, Anime, Les mieux notés, Films français), revenues le
     04/10 (voir plus haut).
   - **Retour en arrière** possible pendant 7 jours.
+- **Surveillance des lectures relancées en boucle (04/10)** : l'admin est prévenu quand un lecteur fait relancer
+  sa conversion plus de 30 fois en une heure pour le même titre (une télé et un Chromecast l'ont fait ces derniers
+  jours sans être repérés). L'ancien repère avait disparu avec Jellyfin 12.1.
 - **Accueil complet (04/10)** : les rangées Tendances cette semaine, Anime, Les mieux notés et Films français sont de
   retour. Leur extension n'avait pas de version pour Jellyfin 12 : elle a été recompilée en attendant que son auteur
   l'intègre à Home Screen Sections.

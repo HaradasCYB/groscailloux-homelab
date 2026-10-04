@@ -1108,6 +1108,9 @@ pub struct HlsLoopWatch {
     /// Fenêtre glissante (secondes) et nombre de demandes d'un même segment qui font une boucle.
     pub window_secs: i64,
     pub threshold: usize,
+    /// Lancements de ffmpeg pour un même titre dans l'heure écoulée (hors canari) au-delà desquels on
+    /// alerte : un lecteur qui relance son flux en boucle (normal : 17 au plus ; rafales vues : 33 à 116).
+    pub max_jobs_per_item_hour: usize,
 }
 
 impl Default for HlsLoopWatch {
@@ -1118,6 +1121,7 @@ impl Default for HlsLoopWatch {
             tail_bytes: 4 * 1024 * 1024,
             window_secs: 300,
             threshold: 20,
+            max_jobs_per_item_hour: 30,
         }
     }
 }

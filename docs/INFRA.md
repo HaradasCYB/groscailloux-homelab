@@ -216,7 +216,7 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 | Levier | Réglage |
 |---|---|
 | Lien seedbox | cache rclone de 120 Go (éviction avant le seuil du disque), blocs de 4 Mo, 32 connexions SFTP |
-| Transcodage | un seul transcodage 1080p tient en temps réel (pas de GPU) ; 98 % des lectures sont directes |
+| Transcodage | un seul transcodage 1080p tient en temps réel (pas de GPU) ; 65 % des lectures sont directes (30 j au 04/10/2026), le Chromecast fait 63 % des conversions vidéo |
 | tmpfs des transcodages | 4 Go, purgé chaque minute ; urgence à 85 % (sinon segments vides = « chargement infini ») |
 | Tâches Jellyfin lourdes | fenêtre 05–13 h ; vignettes de défilement plus générées pour la seedbox |
 | Ajout d'un titre | aucune analyse qui lit la vidéo à l'ajout |

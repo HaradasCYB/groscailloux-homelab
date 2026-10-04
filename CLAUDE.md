@@ -177,7 +177,11 @@ journalctl -u homelabd -f
   la seule en français (cas courant des animés sur C411).
 - **La vraie limite : UN SEUL transcodage 1080p à la fois** (mesuré le 2026-09-18) : 1 flux 1,42× ; **2 flux
   0,82×/0,85×** ; 3 flux 0,60×/0,69× — dès deux transcodages simultanés on passe sous le temps réel et ça
-  saccade pour tout le monde. D'où l'intérêt de la lecture directe (98 %) et de `gc-quality-helper.js`.
+  saccade pour tout le monde. D'où l'intérêt de la lecture directe et de `gc-quality-helper.js`. **Lecture directe :
+  65 % des lectures et des heures** (mesuré le 04/10/2026 sur 30 j, lectures ≥ 60 s ; l'ancien « 98 % » était faux,
+  et la baisse date du 14 au 26/09, sous 10.11.8) : remux 18 % du temps, son seul 7,5 %, vidéo 9,4 %. Le Chromecast
+  fait 63 % des conversions vidéo (sources HEVC + règle NPM 720p) ; l'appli iOS remuxe presque tout (MKV) ou
+  convertit le son (DTS) ; Jellyfin Desktop, Android TV et JellyWatch lisent en direct.
 - **C411 annonce sur deux domaines** : `c411.org` **et** `tk.c411.tw`. Toute règle par tracker doit viser les deux
   (`tracker_ratio.unlimited`, décision torrent de `deletion_cleanup`). Jusqu'au 2026-09-14, 24 torrents
   `c411.tw` héritaient de la limite globale de qBittorrent (ratio 1 / 7 j puis **arrêt**) : 53 torrents C411
@@ -421,7 +425,8 @@ journalctl -u homelabd -f
   afficher) — le bouton Supprimer du tchat était inerte pour cette raison ; confirmer dans la page.
 - **Saccades en cours de lecture** : Jellyfin choisit **une seule qualité par session** (pas d'ABR). En « Auto »,
   un 1080p part tel quel (~5 Mbit/s) : si le débit du membre baisse, la lecture cale et jellyfin-web relance le
-  flux toutes les ~30 s (journal : « non-keyframe breaks »), ce qui aggrave le retard. Le 2026-09-15, un membre a
+  flux toutes les ~30 s, ce qui aggrave le retard (en 12.x, un journal `FFmpeg.*` par relance ; `hls_loop_watch`
+  alerte au-delà de 30 relances d'un titre dans l'heure). Le 2026-09-15, un membre a
   eu ce cas (4,7 Mbit/s demandés, 2 à 4 Mbit/s disponibles ; serveur à 80 % de CPU libre, fichier déjà à 93 % dans
   le cache rclone) ; à 1,5 Mbit/s la même lecture a tenu 55 min sans une relance. Pour diagnostiquer : taille et
   cadence des segments dans `npm/data/logs/proxy-host-1_access.log` (horodatage **UTC**), journaux ffmpeg
@@ -583,6 +588,15 @@ journalctl -u homelabd -f
     dont les 4 de Collection Sections (10 à 16 titres). Paquet, `install.sh` (refus si lecture en cours, redémarre
     Jellyfin) et `rollback.sh` dans `backups/jellyfin-collectionsections-20261004/`, avec l'ancienne version 2.3.10.0.
     Provisoire : l'auteur intègre la fonction à Home Screen Sections ; à sa sortie, basculer et retirer ce paquet.
+  - **Intro Skipper 12.0.4 réanalyse toute la médiathèque** (constaté le 04/10) : la migration de ses données
+    (1.10.11.19 → 12.0.4, obligatoire en 12.1) a importé 18 087 analyses **sans `ConfigHash`**, donc toutes jugées
+    « à refaire », et son cache d'empreintes a été recréé vide (ancien schéma incompatible). Le passage de 05:30
+    s'arrête sur sa butée de 3 h et lit ~74 Go par matin par le lien seedbox (cache rclone renouvelé à ~57 %) :
+    ~2 000 éléments, environ 8 matinées, jusque vers le 12/10. Aucun membre gêné (aucune lecture dans ce créneau) ;
+    gain réel (recaps 34 → 76, génériques et aperçus en plus), aucun segment perdu. **Pendant ce rattrapage, ne
+    toucher à AUCUN réglage d'Intro Skipper** : chaque réglage entre dans le hash et remettrait toute la médiathèque
+    en file. Suivi : `Detect and Analyze Media Segments` passe de « Cancelled » à « Completed » en quelques minutes,
+    et `rclone_core.bytes` de 03 à 07Z retombe sous 20 Go.
   - **Intro Skipper au démarrage** : « ffmpeg did not exit within 2000ms » quand la machine est chargée par un
     redémarrage. Sans gravité : un échec n'est pas retenu (`FFmpegVersionGate` revérifie au prochain usage), seul un
     avertissement reste affiché dans sa page de réglages jusqu'au redémarrage suivant.

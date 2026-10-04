@@ -2,13 +2,19 @@
 //!
 //! C'est le symptôme que le membre voit comme « ça saccade / ça charge » : le 13/09/2026, une TV webOS a
 //! redemandé deux segments ~950 fois en 6 min (tous servis en 200, avec des tailles différentes : le
-//! segment était régénéré sous elle). Jellyfin ne journalise que « non-keyframe breaks » ; NPM, lui, voit
-//! chaque requête. On lit donc la fin du journal d'accès de NPM (horodatages **UTC**) et on compte, sur une
-//! fenêtre glissante, les requêtes par (client, média, segment). Au-delà du seuil : avertissement dans le
-//! journal et mail à l'admin, une fois par (client, média) et par fenêtre. Rien n'est modifié.
+//! segment était régénéré sous elle). NPM voit chaque requête : on lit la fin de son journal d'accès
+//! (horodatages **UTC**) et on compte, sur une fenêtre glissante, les requêtes par (client, média, segment).
+//! Au-delà du seuil : avertissement dans le journal et mail à l'admin, une fois par (client, média) et par
+//! fenêtre. Rien n'est modifié.
 //!
-//! Le compteur « non-keyframe breaks » du jour et les 500 sur `hls1/` sont relevés au passage (résumé du
-//! rapport), pour suivre l'effet des réglages de lecture sans rouvrir les journaux à la main.
+//! **Rafales de ffmpeg** (2026-10-04) : un lecteur qui relance son flux en boucle ne redemande pas forcément
+//! le même segment — une télé Samsung a fait relancer son remux ~2 fois par minute pendant 2 h 30 (116
+//! lancements en une heure, le 30/09), un Chromecast 42 en 22 min (04/10), sans jamais déclencher la règle
+//! des segments. Chaque lancement laisse un `FFmpeg.<Type>-<AAAA-MM-JJ>_<HH-MM-SS>_<id>_<n>.log` (heure locale)
+//! dans le dossier des journaux Jellyfin : on compte, par titre, les lancements des 60 dernières minutes (sans
+//! les titres du canari), et au-delà de `max_jobs_per_item_hour` : mail à l'admin, une fois par titre et par
+//! jour. L'ancien repère « non-keyframe breaks » n'existe plus en 12.x et ne comptait de toute façon que le
+//! canari. Les 5xx sur `hls1/` restent relevés dans le résumé.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};
@@ -178,15 +184,97 @@ pub fn tail(path: &Path, max_bytes: u64) -> Result<String> {
     Ok(buf)
 }
 
-/// Compte les lignes d'un fichier contenant `needle` (journal Jellyfin du jour).
-pub fn count_lines_with(path: &Path, needle: &str) -> usize {
-    std::fs::read_to_string(path)
-        .map(|s| s.lines().filter(|l| l.contains(needle)).count())
-        .unwrap_or(0)
+/// Un lancement de ffmpeg par Jellyfin, lu dans le nom de son journal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobStart {
+    /// Secondes « heure locale naïve » (celle du nom de fichier), comparables entre elles seulement.
+    pub at: i64,
+    /// `Transcode`, `Remux` ou `DirectStream`.
+    pub kind: String,
+    /// Identifiant Jellyfin en 32 caractères hexadécimaux minuscules.
+    pub item: String,
+}
+
+/// `FFmpeg.Remux-2026-10-04_14-09-09_2d171b6c855ed6d055e724023cdc905d_2b7e5cf7.log` → lancement.
+/// Les autres journaux (`log_*.log`, `FFmpeg.Subtitles-…`, extraction d'images…) ne renvoient rien.
+pub fn parse_job_log_name(name: &str) -> Option<JobStart> {
+    let rest = name.strip_prefix("FFmpeg.")?.strip_suffix(".log")?;
+    let (kind, rest) = rest.split_once('-')?;
+    if !matches!(kind, "Transcode" | "Remux" | "DirectStream") {
+        return None;
+    }
+    let mut parts = rest.splitn(4, '_');
+    let date = parts.next()?;
+    let time = parts.next()?;
+    let item = parts.next()?.to_ascii_lowercase();
+    if item.len() != 32 || !item.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let dt = chrono::NaiveDateTime::parse_from_str(&format!("{date} {time}"), "%Y-%m-%d %H-%M-%S")
+        .ok()?;
+    Some(JobStart {
+        at: dt.and_utc().timestamp(),
+        kind: kind.to_string(),
+        item,
+    })
+}
+
+/// Une rafale : `count` lancements de ffmpeg pour le même titre dans la fenêtre.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Burst {
+    pub item: String,
+    pub count: usize,
+    /// Nombre de lancements par type (`Remux: 40`…), pour le mail.
+    pub kinds: BTreeMap<String, usize>,
+}
+
+/// Titres lancés au moins `threshold` fois depuis `since` (même échelle que `JobStart::at`), hors `exclude`
+/// (titres du canari, en 32 caractères hexadécimaux). Les plus touchés d'abord.
+pub fn find_bursts(
+    jobs: &[JobStart],
+    since: i64,
+    threshold: usize,
+    exclude: &HashSet<String>,
+) -> Vec<Burst> {
+    let mut by: BTreeMap<&str, BTreeMap<String, usize>> = BTreeMap::new();
+    for j in jobs
+        .iter()
+        .filter(|j| j.at >= since && !exclude.contains(&j.item))
+    {
+        *by.entry(&j.item)
+            .or_default()
+            .entry(j.kind.clone())
+            .or_default() += 1;
+    }
+    let mut out: Vec<Burst> = by
+        .into_iter()
+        .map(|(item, kinds)| Burst {
+            item: item.to_string(),
+            count: kinds.values().sum(),
+            kinds,
+        })
+        .filter(|b| b.count >= threshold)
+        .collect();
+    out.sort_by_key(|b| std::cmp::Reverse(b.count));
+    out
+}
+
+/// Identifiant Jellyfin ramené à la forme des noms de journaux (32 hexadécimaux minuscules, sans tirets).
+pub fn compact_id(id: &str) -> String {
+    id.chars()
+        .filter(|c| *c != '-')
+        .collect::<String>()
+        .to_ascii_lowercase()
 }
 
 /// Boucles déjà signalées (client, média) : pas de second mail dans la même fenêtre.
 fn reported() -> &'static Mutex<HashSet<(String, String)>> {
+    static SET: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Rafales déjà signalées (jour, titre) : un mail par titre et par jour (perdu au redémarrage, sans gravité).
+fn bursts_reported() -> &'static Mutex<HashSet<(String, String)>> {
     static SET: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
     SET.get_or_init(|| Mutex::new(HashSet::new()))
 }
@@ -224,14 +312,70 @@ impl Task for HlsLoopWatch {
         let errors_5xx = hits.iter().filter(|h| h.status >= 500).count();
         let loops = find_loops(&hits, cfg.window_secs, cfg.threshold);
 
-        // repères du jour dans le journal Jellyfin (relance HLS après blocage)
+        // rafales de ffmpeg : lancements par titre dans l'heure écoulée, d'après les noms des journaux FFmpeg.*
+        let log_dir = &ctx.cfg.cleanup.jellyfin_log_dir;
+        let local_now = chrono::Local::now().naive_local().and_utc().timestamp();
+        let jobs: Vec<JobStart> = std::fs::read_dir(log_dir)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter_map(|e| parse_job_log_name(&e.file_name().to_string_lossy()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let canary: HashSet<String> = ctx
+            .state
+            .read(|s| s.canary.items.values().map(|v| compact_id(v)).collect())
+            .await;
+        let bursts = find_bursts(&jobs, local_now - 3600, cfg.max_jobs_per_item_hour, &canary);
         let day = chrono::Local::now().format("%Y%m%d").to_string();
-        let jf_log = ctx
-            .cfg
-            .cleanup
-            .jellyfin_log_dir
-            .join(format!("log_{day}.log"));
-        let breaks = count_lines_with(&jf_log, "non-keyframe breaks");
+        let fresh_bursts: Vec<&Burst> = {
+            let mut seen = bursts_reported().lock().expect("mutex sain");
+            seen.retain(|(d, _)| d == &day);
+            bursts
+                .iter()
+                .filter(|b| seen.insert((day.clone(), b.item.clone())))
+                .collect()
+        };
+        for b in &fresh_bursts {
+            warn!(
+                task = "hls_loop_watch",
+                item = %b.item,
+                count = b.count,
+                "rafale de ffmpeg : le lecteur relance son flux en boucle"
+            );
+        }
+        if !fresh_bursts.is_empty() && !ctx.dry_run {
+            let body = fresh_bursts
+                .iter()
+                .map(|b| {
+                    let kinds = b
+                        .kinds
+                        .iter()
+                        .map(|(k, n)| format!("{k} {n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "- média {} : {} lancements de ffmpeg en 60 min ({kinds})",
+                        b.item, b.count
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let subject = format!(
+                "[Groscailloux] {} lecture(s) relancée(s) en boucle",
+                fresh_bursts.len()
+            );
+            let body = format!(
+                "Un lecteur fait relancer ffmpeg sans arrêt pour le même titre : le membre voit une lecture qui \
+                 recharge, et le processeur travaille pour rien.\n\n{body}\n\nJournaux : \
+                 jellyfin/config/log/FFmpeg.*_<id>_*.log et /opt/homelab/npm/data/logs/proxy-host-1_access.log (UTC)."
+            );
+            crate::alerts::admin(ctx, crate::alerts::Level::Warn, &subject, &body).await;
+        }
+        let max_jobs = find_bursts(&jobs, local_now - 3600, 1, &canary)
+            .first()
+            .map(|b| b.count)
+            .unwrap_or(0);
 
         let mut fresh: Vec<&Loop> = Vec::new();
         {
@@ -277,10 +421,10 @@ impl Task for HlsLoopWatch {
             let subject = format!("[Groscailloux] {} lecture(s) en boucle HLS", fresh.len());
             let body = format!(
                 "Un ou plusieurs lecteurs redemandent sans fin le même segment (flux transcodé) : le membre \
-                 voit une lecture qui charge ou saccade.\n\n{body}\n\nRepères du jour : \
-                 {breaks} relance(s) HLS (« non-keyframe breaks »), {errors_5xx} erreur(s) 5xx sur des \
-                 segments dans la fenêtre.\n\nJournal : /opt/homelab/npm/data/logs/proxy-host-1_access.log \
-                 (UTC) et jellyfin/config/log/log_{day}.log."
+                 voit une lecture qui charge ou saccade.\n\n{body}\n\nRepères : {max_jobs} lancement(s) de \
+                 ffmpeg au plus pour un même titre dans l'heure, {errors_5xx} erreur(s) 5xx sur des segments \
+                 dans la fenêtre.\n\nJournal : /opt/homelab/npm/data/logs/proxy-host-1_access.log (UTC) et \
+                 jellyfin/config/log/log_{day}.log."
             );
             crate::alerts::admin(ctx, crate::alerts::Level::Warn, &subject, &body).await;
         }
@@ -288,17 +432,19 @@ impl Task for HlsLoopWatch {
             task = "hls_loop_watch",
             segments = hits.len(),
             loops = loops.len(),
-            breaks,
+            bursts = bursts.len(),
+            max_jobs,
             errors_5xx,
             "passage"
         );
         Ok(Report::new(
             format!(
-                "segments={} boucles={} relances_jour={breaks} 5xx={errors_5xx}",
+                "segments={} boucles={} rafales_ffmpeg={} max_ffmpeg_titre_heure={max_jobs} 5xx={errors_5xx}",
                 hits.len(),
-                loops.len()
+                loops.len(),
+                bursts.len()
             ),
-            fresh.len() as u32,
+            (fresh.len() + fresh_bursts.len()) as u32,
         ))
     }
 }
@@ -377,6 +523,79 @@ mod tests {
         // et 25 demandes étalées sur une heure ne sont pas une boucle
         let slow: Vec<SegmentHit> = (0..25).map(|i| hit(i * 150, "58.ts")).collect();
         assert!(find_loops(&slow, 300, 20).is_empty());
+    }
+
+    #[test]
+    fn ffmpeg_log_names_are_parsed() {
+        let j = parse_job_log_name(
+            "FFmpeg.Remux-2026-10-04_14-09-09_2d171b6c855ed6d055e724023cdc905d_2b7e5cf7.log",
+        )
+        .unwrap();
+        assert_eq!(j.kind, "Remux");
+        assert_eq!(j.item, "2d171b6c855ed6d055e724023cdc905d");
+        let expect = chrono::NaiveDate::from_ymd_opt(2026, 10, 4)
+            .unwrap()
+            .and_hms_opt(14, 9, 9)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(j.at, expect);
+        assert!(parse_job_log_name(
+            "FFmpeg.Transcode-2026-10-04_13-56-46_F047B6578C173C539AD4AA5B2972A2F3_2326c39e.log"
+        )
+        .is_some());
+        assert!(parse_job_log_name("log_20261004.log").is_none());
+        assert!(parse_job_log_name(
+            "FFmpeg.Subtitles-2026-10-04_13-56-46_f047b6578c173c539ad4aa5b2972a2f3_1.log"
+        )
+        .is_none());
+        assert!(
+            parse_job_log_name("FFmpeg.Remux-2026-10-04_14-09-09_pasunid_2b7e5cf7.log").is_none()
+        );
+    }
+
+    fn job(at: i64, item: &str, kind: &str) -> JobStart {
+        JobStart {
+            at,
+            kind: kind.into(),
+            item: item.into(),
+        }
+    }
+
+    #[test]
+    fn a_relaunch_storm_is_a_burst_but_normal_viewing_is_not() {
+        let storm = "a".repeat(32);
+        let calm = "b".repeat(32);
+        let canary = "c".repeat(32);
+        // Samsung du 30/09 : remux relancé toutes les ~31 s ; un film normal : 4 lancements (départ + 3 sauts)
+        let mut jobs: Vec<JobStart> = (0..116)
+            .map(|i| job(10_000 + i * 31, &storm, "Remux"))
+            .collect();
+        jobs.extend((0..4).map(|i| job(12_000 + i * 600, &calm, "Transcode")));
+        // le canari, deux fois par heure : jamais compté
+        jobs.extend((0..60).map(|i| job(10_000 + i * 60, &canary, "Transcode")));
+        let exclude: HashSet<String> = [canary.clone()].into_iter().collect();
+        let since = 10_000 + 116 * 31 - 3600;
+        let b = find_bursts(&jobs, since, 30, &exclude);
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].item, storm);
+        assert!(b[0].count >= 30 && b[0].count <= 116);
+        assert_eq!(b[0].kinds.get("Remux"), Some(&b[0].count));
+        // sous le seuil, ou hors de la fenêtre : rien
+        assert!(find_bursts(&jobs, since, 200, &exclude).is_empty());
+        assert!(find_bursts(&jobs, 1_000_000, 1, &exclude).is_empty());
+        // sans exclusion, le canari ressortirait
+        assert!(find_bursts(&jobs, 0, 30, &HashSet::new())
+            .iter()
+            .any(|x| x.item == canary));
+    }
+
+    #[test]
+    fn ids_are_compared_without_dashes() {
+        assert_eq!(
+            compact_id("F047B657-8C17-3C53-9AD4-AA5B2972A2F3"),
+            "f047b6578c173c539ad4aa5b2972a2f3"
+        );
     }
 
     #[test]

@@ -59,8 +59,10 @@ pas affectés.
 Lien mesuré : RTT ~97 ms, 8 à 10 Mo/s par connexion (~30 Mo/s à quatre). Sur la seedbox, les apps tournent en
 conteneurs Docker et joignent qBittorrent (natif, `127.0.0.1` seulement) par le proxy HTTPS de l'hébergeur.
 
-**Lecture fluide.** 98 % des lectures sont en lecture directe (Playback Reporting, 30 j) : le
-buffering vient de l'acheminement, pas du transcodage. Donc :
+**Lecture fluide.** 65 % des lectures (et des heures) sont en lecture directe, mesuré le 04/10/2026 sur 30 j
+(lectures ≥ 60 s, Playback Reporting) : remux 18 % du temps, son seul 7,5 %, vidéo 9,4 % — le Chromecast fait
+63 % des conversions vidéo, l'appli iOS remuxe presque tout (MKV) ou convertit le son (DTS). Le buffering vient
+surtout de l'acheminement, et le remux passe lui aussi par le lien seedbox. Donc :
 - rclone : `chunk_size = 255k` (SFTP), 32 connexions, blocs de lecture de 4 Mo, cache VFS 120 Go avec 80 Go
   d'espace libre gardé (éviction avant le seuil de `disk_pressure`), **pas** de `--vfs-read-ahead` ;
 - **rien ne lit la vidéo à l'ajout d'un titre** : Intro Skipper `AutoDetectIntros=false`, pas de
