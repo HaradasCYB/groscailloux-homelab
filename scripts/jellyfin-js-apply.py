@@ -19,6 +19,8 @@ PLUGIN = "f5a34f7b2e8a4e6aa7223a216a81b374"  # JavaScript Injector
 # nom → (fichier, authentification requise). Un script public (False) part dans public.js, chargé dès l'ouverture
 # de la page, avant la connexion et avant Media Bar ; les autres dans private.js, après connexion.
 SCRIPTS = {
+    # en tête : doit poser son accesseur window.ApiClient avant que jellyfin-web ne crée l'ApiClient (05/10)
+    "Groscailloux Socket unique": ("branding/jellyfin/gc-socket.js", False),
     "Groscailloux TV": ("branding/jellyfin/gc-tv.js", False),
     "Groscailloux Langue": ("branding/jellyfin/gc-lang.js", False),
     "Groscailloux Tchat": ("branding/jellyfin/gc-chat-loader.js", True),

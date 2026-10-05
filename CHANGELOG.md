@@ -57,6 +57,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
     services français (caché sur téléphone).
   - **Panneaux** : Mon compte tient dans l'écran avec sa croix toujours visible ; le tchat montre ses 4 onglets ; le
     bandeau d'annonce ne recouvre plus le menu ; boutons plus faciles à toucher ; calendrier à l'heure française (17:00).
+- **SyncPlay fiable de nouveau (05/10)** : depuis la mise à jour des extensions du matin, une extension ouvrait une
+  seconde connexion en temps réel et le serveur y envoyait parfois les messages de la séance ; l'appli ne savait alors
+  pas qu'elle était dans le groupe (impossible de l'arrêter) ou qu'elle l'avait quitté. Corrigé le soir même ; pour en
+  profiter, recharger la page (Ctrl+R dans Jellyfin Desktop). Le changement de langue VO et « Lire sur » en profitent aussi.
 - **Menu SyncPlay plus clair (05/10)** : chaque groupe tient sur une ligne (participants, nom du groupe, icône
   « rejoindre ») posée sur un fond qui montre ce qui se clique ; toucher n'importe où sur la ligne rejoint le groupe (avant,
   seule la petite icône le faisait). Un double appui ne rejoint qu'une fois. Le groupe où l'on se trouve déjà garde son

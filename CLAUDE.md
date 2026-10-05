@@ -744,6 +744,20 @@ journalctl -u homelabd -f
     sans vérification. **Le catalogue ne remplace pas une compilation 10.11 par la compilation Jellyfin 12 du même numéro**
     (JavaScript Injector 4.0.0.0, NotifySync 5.8.4.0) : à chaque mise à jour manuelle, vérifier `targetAbi` dans
     `meta.json` et le dépôt « jf12 » de l'auteur.
+- **UNE seule connexion temps réel par page (05/10, régression du lot ci-dessous)** : le serveur 12.1 n'envoie un
+  message destiné à une session (GroupJoined/GroupLeft et commandes SyncPlay, `SetAudioStreamIndex` de la bascule VO,
+  « Lire sur », arrêts de `playback_limit`) qu'à **une** de ses websockets, la plus récemment active
+  (`MaxBy(LastActivityDate)`). NotifySync 5.8.4.0 en compilation Jellyfin 12 ouvre **sa propre** websocket sur le même
+  jeton (`/socket?ApiKey=`) dès que `ApiClient.isWebSocketOpen()` est faux — toujours en 12.x, où seul le SDK en ouvre —
+  et jette tout sauf LibraryChanged/UserDataChanged : 3 sockets par page, SyncPlay aléatoire (4 créations sur 44 vues par
+  le client le 05/10 ; groupe affiché « à rejoindre » sans « Quitter », ou « Quitter » refusé en 403). Correctif :
+  `branding/jellyfin/gc-socket.js` (« Groscailloux Socket unique », script **public**, en tête de `public.js`) pose un
+  accesseur sur `window.ApiClient` et, en 12.x seulement, fait répondre vrai à `isWebSocketOpen` et relaie
+  LibraryChanged/UserDataChanged du SDK en événement `message` (cloche toujours en temps réel ; état dans
+  `window.__gcOneSocket`). Contrôle : fermetures de websockets groupées par **2** dans le journal Jellyfin/NPM, et chaque
+  « created group » suivi de « requested Ping ». Toute nouvelle extension qui ouvre une websocket = même piège. Banc
+  `backups/jellyfin12-test-20261003/zz_spns/zz_spns_create.sh "r"`. À signaler à NotifySync (utiliser
+  `ApiClient.subscribe`).
 - **Lot d'extensions du 05/10 (validé, appliqué sans surveillance à 08:47, coupure 52 s, 0 erreur)** : Jellysleep (1 seul
   minuteur en un mois) et GetAvatar (script bloquant dans index.html, galerie jamais ouverte) **retirés** ; JavaScript
   Injector et NotifySync passés sur leurs **compilations Jellyfin 12** (même GUID, configurations reprises, NotifySync sur
