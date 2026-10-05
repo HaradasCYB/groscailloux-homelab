@@ -731,7 +731,19 @@ journalctl -u homelabd -f
     Desktop faisaient 63 % de tout le trafic Jellyfin (39 900 requêtes par jour).
   - **Mises à jour des extensions : manuelles**. La tâche « Mettre à jour les extensions » n'a plus de déclencheur
     (sauvegarde `backups/jellyfin-tuning-20261004/`). Une mise à jour automatique s'activait au redémarrage suivant,
-    sans vérification.
+    sans vérification. **Le catalogue ne remplace pas une compilation 10.11 par la compilation Jellyfin 12 du même numéro**
+    (JavaScript Injector 4.0.0.0, NotifySync 5.8.4.0) : à chaque mise à jour manuelle, vérifier `targetAbi` dans
+    `meta.json` et le dépôt « jf12 » de l'auteur.
+- **Lot d'extensions du 05/10 (validé, appliqué sans surveillance à 08:47, coupure 52 s, 0 erreur)** : Jellysleep (1 seul
+  minuteur en un mois) et GetAvatar (script bloquant dans index.html, galerie jamais ouverte) **retirés** ; JavaScript
+  Injector et NotifySync passés sur leurs **compilations Jellyfin 12** (même GUID, configurations reprises, NotifySync sur
+  sa branche `jellyfin-12`) ; **Fanart 15.0.0.0** installé, juste après TheMovieDb dans les sources d'images Movie et Series
+  (clé projet intégrée ; actif aussi sur les collections, choix de l'utilisateur). Outils, paquets épinglés (MD5 +
+  SHA-256), sauvegarde et retour arrière : `backups/jellyfin-plugins-20261005/` (`apply-restart-batch.sh`,
+  `rollback-restart-batch.sh <dossier apply-prod-*> --yes`, `prepare-test2.sh` pour une instance d'essai sur :18097).
+  Logos posés ensuite par `fanart-logos.py` (`RemoteImages/Download` seulement : aucune fiche rafraîchie, aucune vidéo
+  relue ; langues fr/en/sans, russe pour la voie russe) : 5 titres. **Jamais de `Refresh` sur une série pour une image** :
+  il est récursif (épisodes sondés par le lien seedbox).
   - **Sous-titres** : Jellyfin Enhanced impose sa taille en `vw` (1.2vw par défaut) : règle
     `video.htmlvideoplayer::cue` (plus spécifique que la nôtre) et style **inline `!important`** sur
     `.videoSubtitlesInner`. Sur iPhone en portrait, 1.2vw = ~5 px. **Décision de l'utilisateur (04/10) : sur téléphone
@@ -743,7 +755,8 @@ journalctl -u homelabd -f
     le 05/10, banc `backups/lg-tv-20260929/t6_run.sh t6_subs.js "tv:0"`). Sur PC, rien n'est décidé : Jellyfin Enhanced
     garde la main.
 - **Journaux Jellyfin** : `jellyfin/config/config/logging.json` (copie de `logging.default.json`) :
-  - extensions bavardes en `Warning` : Playback Reporting (61 % du volume), Collection Sections, Jellysleep ;
+  - extensions bavardes en `Warning` : Playback Reporting (61 % du volume), Collection Sections (Jellysleep retiré le
+    05/10) ;
   - traductions manquantes de Home Screen Sections en `Error` ;
   - **durée de garde : c'est `LogFileRetentionDays` de `config/system.xml` qui compte**, passé de 3 à **14 jours** le
     04/10 (accord de l'utilisateur ; `GET /System/Configuration`, ce seul champ changé, `POST` de l'objet entier, sans
@@ -1107,8 +1120,8 @@ journalctl -u homelabd -f
 - **`GET /Devices?userId=` ignore le filtre** et renvoie **tous** les appareils : le 2026-09-15, une boucle
   `DELETE /Devices` dessus a déconnecté tous les membres de toutes leurs applis. Aucune suppression en boucle
   sans vérifier le nombre et le propriétaire (`LastUserId`) de chaque élément.
-- **JavaScript Injector** active aussi les scripts d'autres plugins qui s'y enregistrent (Jellysleep : minuteur
-  de mise en veille dans le lecteur, visible depuis le 2026-09-15).
+- **JavaScript Injector** active aussi les scripts d'autres plugins qui s'y enregistrent, et **ne les purge jamais** :
+  une extension retirée laisse son script dans `PluginJavaScripts` (cas de Jellysleep, retiré le 05/10 avec son entrée).
 - **Rotation de la clé API Jellyseerr** (faite le 2026-09-15, clé exposée dans une conversation) : `POST
   /api/v1/settings/main/regenerate`, puis tous les consommateurs dans la foulée : `.env` (`JELLYSEERR_API_KEY`,
   restart homelabd), `JellyseerrApiKey` de Jellyfin Enhanced **et** de Home Screen Sections (API des plugins),

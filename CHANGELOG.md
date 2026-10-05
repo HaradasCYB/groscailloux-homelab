@@ -57,6 +57,10 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
     services français (caché sur téléphone).
   - **Panneaux** : Mon compte tient dans l'écran avec sa croix toujours visible ; le tchat montre ses 4 onglets ; le
     bandeau d'annonce ne recouvre plus le menu ; boutons plus faciles à toucher ; calendrier à l'heure française (17:00).
+- **Extensions remises à jour (05/10)** : deux extensions inutilisées retirées (minuterie de mise en veille, galerie
+  d'avatars, qui ralentissait l'ouverture de chaque page), deux autres passées sur leur version prévue pour Jellyfin 12
+  (scripts maison, notifications), et une seconde source d'images pour les logos manquants : 5 titres en ont gagné un.
+  Coupure de 52 secondes un matin sans lecture. Dans Jellyfin Desktop, un Ctrl+R suffit pour en profiter.
 - **« Passer l'intro » plus sobre (05/10)** : la mise à jour d'Intro Skipper voulait refaire l'analyse de toute la
   médiathèque (~700 Go relus sur la seedbox en 8 à 9 matinées) alors que la plupart des titres avaient déjà leurs
   boutons. Les segments existants sont conservés tels quels, seuls les génériques douteux seront refaits, et l'analyse des
