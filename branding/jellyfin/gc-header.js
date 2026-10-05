@@ -10,6 +10,7 @@
 //   - la cloche NotifySync, qui s'accroche à l'ancien en-tête (gardé dans la page mais caché), déplacée dans la
 //     barre visible, juste après le tchat. NotifySync ne la recrée pas tant qu'elle existe (`#netflix-bell`).
 //   - PC (v4) : la rangée d'onglets monte au centre de la barre quand elle y tient ;
+//   - menu SyncPlay (v5) : chaque groupe sur une ligne (avatars, nom, « rejoindre »), toute la ligne cliquable ;
 //   - téléphone (v3, 04/10) : la barre ne déborde plus sur ☰, la rangée d'onglets est resserrée, défile avec un
 //     fondu au bord et amène l'onglet actif au centre ; le bandeau d'annonce du tchat passe sous les menus.
 // Rien ne change dans l'ancienne interface ni sur les télés : tout dépend de la barre moderne visible, sauf les
@@ -20,7 +21,7 @@
 (function () {
   'use strict';
   // une version plus récente (déploiement, essai d'un banc) prend la main : celle-ci s'arrête au tour suivant
-  var VERSION = 4;
+  var VERSION = 5;
   if ((window.__gcHeaderV || 0) >= VERSION) return;
   window.__gcHeaderV = VERSION;
 
@@ -53,6 +54,41 @@
   var S = { nav: null, links: [] };
 
   var CSS_ID = 'gc-header-css-' + VERSION;
+  // entrée de groupe du menu SyncPlay de la nouvelle interface (structure relevée le 05/10 sur 12.1)
+  var SP = '#app-sync-play-menu li.MuiListItem-root:has(> .MuiStack-root > .MuiStack-root > button)';
+  function spJoinButton(li) { return li && li.querySelector(':scope > .MuiStack-root > .MuiStack-root > button'); }
+  // même critère que la CSS : sans :has (vieux moteur), la règle tombe, et la ligne ne doit pas devenir une cible invisible
+  function spIs(li) { try { return !!li && li.matches(SP); } catch (x) { return false; } }
+  var spLast = 0;
+  /* clic ou Entrée/Espace n'importe où sur la ligne d'un groupe = clic sur son bouton « Rejoindre » d'origine.
+     Un seul « rejoindre » : double clic, Entrée maintenue et clics rapprochés (1,5 s) ignorés (2 POST /SyncPlay/Join
+     sinon, bancs du 05/10). */
+  function spRowClick(e) {
+    if (window.__gcHeaderV !== VERSION || e.defaultPrevented || !e.target || !e.target.closest) return;
+    var li = e.target.closest('#app-sync-play-menu li.MuiListItem-root');
+    var btn = spIs(li) && spJoinButton(li);
+    if (!btn || btn.contains(e.target)) return; // le bouton lui-même garde son propre comportement
+    if (e.type === 'keydown') {
+      if (e.target !== li || e.repeat || e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'Enter' && e.key !== ' ')) return;
+    } else if (e.detail > 1) { e.preventDefault(); return; }
+    e.preventDefault();
+    var now = Date.now();
+    if (now - spLast < 1500) return;
+    spLast = now;
+    btn.click();
+  }
+  /* clavier : la liste MUI ne s'arrête qu'aux entrées qui ont un attribut tabindex, et seule la 1re ligne de groupe en a
+     un : on le pose sur les autres (attribut seulement, aucun nœud déplacé) avant que la liste ne traite la flèche */
+  function spArrows(e) {
+    if (window.__gcHeaderV !== VERSION || ['ArrowDown', 'ArrowUp', 'Home', 'End'].indexOf(e.key) < 0) return;
+    var m = document.getElementById('app-sync-play-menu');
+    if (!m || !e.target || !m.contains(e.target)) return;
+    var lis = m.querySelectorAll('li.MuiListItem-root');
+    for (var i = 0; i < lis.length; i++) if (spIs(lis[i]) && !lis[i].hasAttribute('tabindex')) lis[i].setAttribute('tabindex', '-1');
+  }
+  document.addEventListener('click', spRowClick);
+  document.addEventListener('keydown', spRowClick);
+  document.addEventListener('keydown', spArrows, true);
   function css() {
     if (document.getElementById(CSS_ID)) return;
     var logo = 'header.MuiAppBar-root .MuiToolbar-root > .MuiStack-root > a[href="#/"]';
@@ -108,6 +144,29 @@
       'header.MuiAppBar-root > nav.gc-tabs.gc-compact{gap:.25em}',
       'header.MuiAppBar-root > nav.gc-tabs.gc-compact a{font-size:14px;padding:.34em .8em}',
       'header.MuiAppBar-root > nav.gc-tabs.gc-compact svg{display:none}',
+      // Menu SyncPlay (05/10) : jellyfin-web 12.1 met le nom du groupe AU-DESSUS d'une rangée avatars + bouton « Rejoindre
+      // groupe », et seul ce bouton de 38 px rejoint. Une seule ligne en grille (avatars | nom | bouton) sans déplacer de
+      // nœud React (la rangée intérieure passe en display: contents), sur un fond qui montre qu'elle se clique ; le clic
+      // sur la ligne entière déclenche le bouton d'origine (spRowClick).
+      // la ligne garde sinon le width:100% de MUI et déborde du menu de la largeur de ses marges (bancs du 05/10)
+      SP + '{display:block;width:auto!important;box-sizing:border-box;margin:6px 8px;padding:6px 6px 6px 10px!important;border-radius:10px;background:rgba(255,255,255,.07);' +
+        'border:1px solid rgba(255,255,255,.08);cursor:pointer;transition:background .15s}',
+      SP + ':hover,' + SP + ':focus-visible{background:rgba(47,143,255,.22);border-color:rgba(47,143,255,.55);outline:none}',
+      SP + ' > .MuiStack-root{display:grid!important;grid-template-columns:minmax(48px,auto) minmax(0,1fr) auto;align-items:center;column-gap:10px}',
+      SP + ' > .MuiStack-root > .MuiBox-root{grid-column:2;grid-row:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;font-size:15px;line-height:1.3}',
+      SP + ' > .MuiStack-root > .MuiStack-root{display:contents!important}',
+      SP + ' > .MuiStack-root > .MuiStack-root > *{margin:0!important}', // l'espacement du Stack MUI (32 px) reste sinon actif
+      // le menu s'élargissait jusqu'à 1 568 px pour un nom long : borné, le nom est coupé avec « … »
+      '#app-sync-play-menu .MuiPaper-root:has(li.MuiListItem-root > .MuiStack-root > .MuiStack-root > button){max-width:min(420px,calc(100vw - 32px))}',
+      // groupe où l'on est déjà (en-tête « Quitter le groupe ») : même mise en page sur une ligne, mais NI fond NI clic
+      '#sync-play-active-subheader > .MuiStack-root{display:grid!important;grid-template-columns:minmax(48px,auto) minmax(0,1fr) auto;align-items:center;column-gap:10px}',
+      '#sync-play-active-subheader > .MuiStack-root > .MuiBox-root{grid-column:2;grid-row:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '#sync-play-active-subheader > .MuiStack-root > .MuiStack-root{display:contents!important}',
+      '#sync-play-active-subheader > .MuiStack-root > .MuiStack-root > .MuiAvatarGroup-root{grid-column:1;grid-row:1}',
+      '#sync-play-active-subheader > .MuiStack-root > .MuiStack-root > button{grid-column:3;grid-row:1}',
+      '#sync-play-active-subheader > .MuiStack-root > .MuiStack-root > *{margin:0!important}',
+      SP + ' > .MuiStack-root > .MuiStack-root > .MuiAvatarGroup-root{grid-column:1;grid-row:1}',
+      SP + ' > .MuiStack-root > .MuiStack-root > button{grid-column:3;grid-row:1}',
       // fondu au bord qui cache encore des onglets (classes posées par edges())
       'nav.gc-tabs.gc-fr{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 32px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 32px),transparent)}',
       'nav.gc-tabs.gc-fl{-webkit-mask-image:linear-gradient(90deg,transparent,#000 32px);mask-image:linear-gradient(90deg,transparent,#000 32px)}',
@@ -346,6 +405,9 @@
     window.removeEventListener('hashchange', tick);
     window.removeEventListener('scroll', scrolled);
     window.removeEventListener('resize', tick);
+    document.removeEventListener('click', spRowClick);
+    document.removeEventListener('keydown', spRowClick);
+    document.removeEventListener('keydown', spArrows, true);
     if (S.nav && S.nav.parentElement) S.nav.parentElement.removeChild(S.nav);
     if (S.logo && S.logo.parentElement) S.logo.parentElement.removeChild(S.logo);
     var st = document.getElementById(CSS_ID);

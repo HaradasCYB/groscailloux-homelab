@@ -669,6 +669,16 @@ journalctl -u homelabd -f
       calent dessous ;
     - dans les deux interfaces, les boutons de la bannière Media Bar 3.0 (« Play », « Details », « Favorite », écrits
       en dur, sans réglage de langue) traduits en « Lire », « Infos », « Favori ».
+    - **menu SyncPlay** (v5, 05/10, demandé par l'utilisateur) : chaque groupe (`#app-sync-play-menu li.MuiListItem-root`
+      dont la rangée contient le bouton « Rejoindre groupe ») passe en grille sur une ligne (avatars | nom | bouton,
+      rangée intérieure en `display: contents`, aucun nœud React déplacé), fond et survol, menu borné à 420 px (nom long
+      coupé) ; un clic, Entrée ou Espace sur la ligne déclenche le bouton d'origine (`spRowClick` : double clic, répétition
+      et clics à moins de 1,5 s ignorés) ; `tabindex=-1` posé sur les lignes pour la navigation aux flèches.
+      `#sync-play-active-subheader` (groupe où l'on est, bouton « Quitter ») : même mise en page, **jamais cliquable**.
+      Banc : `backups/jellyfin12-test-20261003/syncplay_menu.sh "desktop iphone"` (`SP_PREFIX` unique, `CLICK=1` ne clique
+      que le groupe du banc par son nom exact : un vrai groupe de membre peut être ouvert). **Après un banc** : un compte
+      supprimé garde sa session (et son groupe SyncPlay, visible de tous) ; fermer l'appareil de test précis par
+      `DELETE /Devices?id=<id vérifié>`.
     Reprise par version (`VERSION`, `window.__gcHeaderV`) : une version plus récente prend la main et l'ancienne
     s'arrête (rangée et CSS retirés). Un banc qui essaie une candidate retire en plus la version déployée du
     `private.js` servi (`deployed-*.txt` dans `CANDIDATE_DIR`).
