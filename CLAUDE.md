@@ -551,6 +551,20 @@ journalctl -u homelabd -f
 - **NPM hôte 1 (Jellyfin)** : sa configuration avancée contient les réglages SyncPlay (tampons coupés,
   délais 3600 s ; avant le 2026-09-15 ils n'étaient que dans le fichier conf, pas en base) et la route du
   tchat. Toujours éditer base **et** fichier ensemble (sauvegarde `backups/npm-*-chat`).
+- **Faille de Home Screen Sections 3.0.2 fermée par NPM (05/10, issue amont #298, sans correctif publié)** : toute
+  session pouvait enregistrer ou remplacer une rangée d'accueil de tout le monde (`POST /HomeScreen/RegisterSection`),
+  et lire les rangées d'un autre compte en passant son `userId`. Bloc
+  dans la configuration avancée de l'hôte 1 (base et `1.conf`, après `gzip_vary on;`) :
+  - `RegisterSection` et `/CollectionSections/` (inutile depuis l'extérieur) → 403 (aucune extension ne passe par HTTP :
+    0 appel en 6 semaines) ;
+  - `/HomeScreen/Sections`, `/HomeScreen/Section/*`, `/ModularHomeViews/UserSettings` passent d'abord par
+    `auth_request` sur `/UserViews/GroupingOptions?<même chaîne>` : Jellyfin juge lui-même le `userId` (le sien ou
+    session admin) → autre compte 403, sans session 401 ; les écritures (hors GET/HEAD) sont réservées aux admins
+    (`/Plugins`) : un membre ne peut plus enregistrer ses propres rangées (jamais utilisé) ;
+  - une chaîne de requête entièrement encodée n'est décodée ni par la garde ni par HSS (400 « userId requis ») ;
+  - `assets.conf` passe avant : la garde suppose qu'aucune rangée n'a d'id finissant par une extension d'asset.
+  Outils et sauvegarde : `backups/npm-20261005-014624-hss/` (`apply_npm_hss.py --check|--apply|--remove`,
+  `test_hss_guard.sh` : 19/20, l'écart étant le cas encodé ci-dessus). À retirer quand l'auteur publiera un correctif.
 - **SyncPlay bloqué après un saut (audit du 2026-10-03)** :
   - **Symptôme** : roue de chargement, puis pause/lecture obligatoire.
   - **Ce n'est ni NPM** (websocket, délais 3600 s, tampons coupés) **ni la conversion** : les membres lisaient en
@@ -592,15 +606,41 @@ journalctl -u homelabd -f
     dont les 4 de Collection Sections (10 à 16 titres). Paquet, `install.sh` (refus si lecture en cours, redémarre
     Jellyfin) et `rollback.sh` dans `backups/jellyfin-collectionsections-20261004/`, avec l'ancienne version 2.3.10.0.
     Provisoire : l'auteur intègre la fonction à Home Screen Sections ; à sa sortie, basculer et retirer ce paquet.
-  - **Intro Skipper 12.0.4 réanalyse toute la médiathèque** (constaté le 04/10) : la migration de ses données
-    (1.10.11.19 → 12.0.4, obligatoire en 12.1) a importé 18 087 analyses **sans `ConfigHash`**, donc toutes jugées
-    « à refaire », et son cache d'empreintes a été recréé vide (ancien schéma incompatible). Le passage de 05:30
-    s'arrête sur sa butée de 3 h et lit ~74 Go par matin par le lien seedbox (cache rclone renouvelé à ~57 %) :
-    ~2 000 éléments, environ 8 matinées, jusque vers le 12/10. Aucun membre gêné (aucune lecture dans ce créneau) ;
-    gain réel (recaps 34 → 76, génériques et aperçus en plus), aucun segment perdu. **Pendant ce rattrapage, ne
-    toucher à AUCUN réglage d'Intro Skipper** : chaque réglage entre dans le hash et remettrait toute la médiathèque
-    en file. Suivi : `Detect and Analyze Media Segments` passe de « Cancelled » à « Completed » en quelques minutes,
-    et `rclone_core.bytes` de 03 à 07Z retombe sous 20 Go.
+  - **Intro Skipper 12.0.4 : segments figés et réglages sobres (05/10, décidé par l'utilisateur)**. La migration de ses
+    données (1.10.11.19 → 12.0.4) avait importé les analyses **sans `ConfigHash`** : toute la médiathèque était à refaire
+    (~700 Go par le lien seedbox en 8 à 9 matinées, ~74 Go et 1,3 cœur par matin), alors que 1 948 des 2 026 titres en
+    file avaient déjà leurs segments. Aucune base en ligne ne convenait (TheIntroDB : 403 Cloudflare depuis l'IP du VPS,
+    45 % des séries ; chapitres : 24 % ; AniSkip : 34 %). Ce qui a été fait :
+    - **gel** : 3 635 segments passés en Source « User » par l'API officielle du plugin
+      (`PUT /Episode/{itemId}/Segments/{segmentId}`, bornes identiques, même identifiant) — toutes les intros, récaps,
+      aperçus, génériques d'animés et de films. Un segment User n'est **jamais** recalculé, quel que soit le hash. Les 130
+      génériques **suspects** des séries non animées (> 180 s ou début avant la moitié du fichier : l'ancienne version se
+      trompait, ex. *Blacklist* S2 sautait 4 à 6 min) sont restés automatiques pour être refaits. Empreinte de la table
+      Segments identique avant/après ; 861 identifiants réécrits côté Jellyfin (bornes identiques) ;
+    - **réglages** : `ScanRecap = false` (aucune appli ne propose de passer un récap par défaut, Android TV compris ; les
+      76 existants restent servis), `AnalysisLengthLimit = 6`, `MaximumCreditsDuration = 300`,
+      `MaximumMovieCreditsDuration = 600`, `PathExclusions` = les 5 dossiers de films (les génériques de films existants
+      restent servis, les nouveaux films n'en auront plus), `SeriesExclusions` = Mentalist (intros de ~8 s introuvables)
+      et Brooklyn Nine-Nine (génériques introuvables). Attendu : rattrapage ~60–75 Go en 1 à 2 matinées, croisière ~60 Go
+      par semaine au lieu de ~86 ;
+    - **règle vérifiée dans le code** (remplace l'ancien « ne toucher à aucun réglage ») : un changement de réglage ne
+      remet en file que ce qui a été analysé sous le hash courant, jamais un segment User ; `AnalysisLengthLimit` entre
+      dans les hashes Intro/Recap, `Maximum*CreditsDuration` dans celui des génériques ; les `Scan*` et les exclusions
+      dans aucun. **Rallumer `ScanRecap` remettrait toute la médiathèque en file pour les récaps** ;
+    - **INTERDIT en production** (efface aussi les segments User, la file en mémoire étant remplie) : « Exécuter » la tâche à
+      la main, `POST /Intros/ScanSeason` (bouton d'analyse d'une saison), `DELETE /Intros/Show/…`,
+      `POST /Intros/ExcludedTimestamps/Clear` (« Clear excluded timestamp data »), EraseTimestamps,
+      `POST /Intros/AnalyzerActions/UpdateSeason` ; fermer toute page de réglages du plugin ouverte avant un changement par
+      l'API (elle renverrait l'ancienne configuration) ;
+    - **corriger un segment figé faux** : `DELETE /Episode/{itemId}/Segments/{segmentId}` (le supprime ; l'élément est
+      réanalysé au passage suivant, sauf s'il garde un autre segment User du même type ; jamais sur un élément exclu) ;
+    - **fichier remplacé au même chemin** (scripts codec-replace) : supprimer d'abord ses segments User, sinon le vieux
+      segment reste servi pour le nouveau fichier ; **refaire le gel avant toute mise à jour du plugin** ;
+    - outils, journal et sauvegardes : `backups/introskipper-sobre-20261005/` (`freeze.py --dry-run`, `apply-config.py
+      --restore`, `prod-20261005/` : journal CSV, copies cohérentes de la base avant/après, procédure de retour arrière).
+      Le passage du 05/10 à 05:30 a été mis en pause (déclencheur remis à 09:00) ; contrôle du 1er passage sobre :
+      `grep -E '\[Mode: (Introduction|Credits)\] Analyzing' log_<date>.log` (« [Mode: Preview] » est normal : chapitres,
+      0 ffmpeg), tâche « Completed », `rclone_core.bytes` 03–07Z autour de 60 Go.
   - **Intro Skipper au démarrage** : « ffmpeg did not exit within 2000ms » quand la machine est chargée par un
     redémarrage. Sans gravité : un échec n'est pas retenu (`FFmpegVersionGate` revérifie au prochain usage), seul un
     avertissement reste affiché dans sa page de réglages jusqu'au redémarrage suivant.

@@ -57,6 +57,13 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
     services français (caché sur téléphone).
   - **Panneaux** : Mon compte tient dans l'écran avec sa croix toujours visible ; le tchat montre ses 4 onglets ; le
     bandeau d'annonce ne recouvre plus le menu ; boutons plus faciles à toucher ; calendrier à l'heure française (17:00).
+- **« Passer l'intro » plus sobre (05/10)** : la mise à jour d'Intro Skipper voulait refaire l'analyse de toute la
+  médiathèque (~700 Go relus sur la seedbox en 8 à 9 matinées) alors que la plupart des titres avaient déjà leurs
+  boutons. Les segments existants sont conservés tels quels, seuls les génériques douteux seront refaits, et l'analyse des
+  nouveautés lit moins (fenêtre plus courte, plus de récapitulatifs ni de génériques de films). Aucun bouton perdu.
+- **Sécurité de l'accueil (05/10)** : une faille connue de l'extension des rangées d'accueil (signalée chez son auteur,
+  pas encore corrigée) permettait à un compte de lire les rangées d'un autre ou d'en ajouter pour tout le monde. Elle
+  est fermée en amont de Jellyfin, sans rien changer à l'accueil des membres.
 - **Sauvegardes plus sûres (05/10)** : les bases de données des services (Jellyfin, historique de lecture, Intro Skipper,
   notifications, Jellyseerr, Sonarr/Radarr…) sont copiées proprement avant l'archive hebdomadaire au lieu d'être prises
   en pleine écriture : une restauration repart d'une base cohérente. Historique de lecture gardé sans limite (il
