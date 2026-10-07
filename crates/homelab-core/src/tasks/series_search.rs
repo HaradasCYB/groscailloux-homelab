@@ -635,9 +635,39 @@ pub fn choose<'a>(
     max_gb: f64,
     allow_vo: bool,
 ) -> Option<&'a Candidate> {
+    choose_sized(
+        cands,
+        season,
+        want_pack,
+        missing,
+        missing.len(),
+        allowed,
+        max_gb,
+        allow_vo,
+    )
+}
+
+/// `choose`, avec le nombre d'épisodes sur lequel jauger la taille d'un **pack** (`pack_units`).
+///
+/// `choose` y met tous les épisodes manquants. Or les épisodes sans date (`undated_missing`, voulus pour *Le
+/// Voyageur*) gonflent ce nombre sans qu'on sache s'ils sont sortis : Black Clover S02 (03/10), 1 épisode diffusé
+/// sur 13, comptait 11 manquants et son plafond 11 × 3 Gio = 33 Gio laissait passer un pack de 14 Gio qui n'était
+/// pas la saison (51 fichiers de l'ancienne numérotation). `process_season` passe donc ici les seuls épisodes
+/// manquants **datés** (diffusés, sans fichier) : avec le seul E01, ce pack est refusé.
+#[allow(clippy::too_many_arguments)]
+pub fn choose_sized<'a>(
+    cands: &'a [Candidate],
+    season: i64,
+    want_pack: bool,
+    missing: &HashSet<i64>,
+    pack_units: usize,
+    allowed: &HashSet<i64>,
+    max_gb: f64,
+    allow_vo: bool,
+) -> Option<&'a Candidate> {
     let ok = |c: &&Candidate| {
         let units = if c.full_season {
-            missing.len().max(c.episodes.len())
+            pack_units.max(c.episodes.len())
         } else {
             c.episodes.len()
         };
@@ -697,6 +727,36 @@ pub fn choose_episodes<'a>(
             }
         }
     }
+    out
+}
+
+/// Numéros des épisodes **suivis** de la saison dont la diffusion est encore à venir (date connue, postérieure à
+/// `now`). C'est la `FullSeasonSpecification` de Sonarr (« all episodes in full season release have aired ») : un
+/// pack de saison ne peut pas être la saison tant qu'il en reste à diffuser. Elle ne joue pas pour les releases
+/// qui partent directement dans qBittorrent (seedbox : « Prowlarr injoignable depuis la seedbox »), d'où ce
+/// contrôle ici — Black Clover S02 (03/10) : 1 épisode sorti, 2 datés à venir, 10 sans date, et un pack de 51
+/// fichiers de l'ancienne numérotation (14 Gio) pris pour la saison.
+///
+/// Un épisode **sans date** ne compte pas (TheTVDB date tard les séries françaises : *Le Voyageur*, ses épisodes
+/// sans date sont sortis) ; seule une date à venir bloque.
+pub fn future_episodes(
+    episodes: &[Value],
+    season: i64,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<i64> {
+    let mut out: Vec<i64> = episodes
+        .iter()
+        .filter(|e| e.get("seasonNumber").and_then(Value::as_i64) == Some(season))
+        .filter(|e| e.get("monitored").and_then(Value::as_bool) == Some(true))
+        .filter(|e| {
+            e.get("airDateUtc")
+                .and_then(Value::as_str)
+                .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+                .is_some_and(|d| d.with_timezone(&chrono::Utc) > now)
+        })
+        .filter_map(|e| e.get("episodeNumber").and_then(Value::as_i64))
+        .collect();
+    out.sort_unstable();
     out
 }
 
@@ -1189,6 +1249,9 @@ struct SeasonTodo {
     season: i64,
     latest_air: String,
     missing_numbers: HashSet<i64>,
+    /// Parmi `missing_numbers`, ceux qui ont une date de diffusion passée (`wanted/missing`) : les autres sont des
+    /// épisodes sans date, qu'on ne sait pas être sortis. Sert à jauger la taille d'un pack (`choose_sized`).
+    dated_missing: HashSet<i64>,
 }
 
 async fn names_for(ctx: &TaskContext, series: &Value) -> Vec<String> {
@@ -2007,18 +2070,42 @@ async fn process_season(
     let allowed = allowed_qualities(&arr.quality_profile(profile_id).await?);
     let ix = &ctx.cfg.indexers;
     let pick = |pack: bool| {
-        choose(
+        choose_sized(
             &cands,
             todo.season,
             pack,
             &todo.missing_numbers,
+            // taille d'un pack : jaugée sur les seuls épisodes manquants datés (voir `choose_sized`)
+            todo.dated_missing.len(),
             &allowed,
             ix.max_gb_per_episode,
             ix.allow_no_french,
         )
     };
     // pack de saison si possible ; sinon toutes les releases d'épisodes manquants, en une fois
-    let pack = pick(true);
+    let mut pack = pick(true);
+    // Un pack n'est pas la saison tant qu'il reste des épisodes suivis à diffuser (`future_episodes`) : sur la
+    // seedbox la release part directement dans qBittorrent, sans le contrôle de Sonarr. Les épisodes sortis
+    // sont alors pris un à un, comme pour une saison en cours.
+    let mut pack_note = String::new();
+    if let Some(p) = pack {
+        let eps = arr.episodes(todo.series_id).await?;
+        let ahead = future_episodes(&eps, todo.season, chrono::Utc::now());
+        if !ahead.is_empty() {
+            let list: Vec<String> = ahead.iter().map(i64::to_string).collect();
+            info!(
+                task = "series_search",
+                service = arr.name,
+                series = title,
+                season = todo.season,
+                release = %p.title,
+                a_venir = ?ahead,
+                "pack de saison écarté : des épisodes suivis ne sont pas encore diffusés"
+            );
+            pack_note = format!(" ; pack écarté (épisodes à venir : {})", list.join(", "));
+            pack = None;
+        }
+    }
     let singles = if pack.is_some() {
         Vec::new()
     } else {
@@ -2111,7 +2198,7 @@ async fn process_season(
                 )
             } else {
                 format!(
-                    "{} candidat(s) {} (recherche {how}), aucun acceptable",
+                    "{} candidat(s) {} (recherche {how}), aucun acceptable{pack_note}",
                     cands.len(),
                     cfg.indexer
                 )
@@ -2177,8 +2264,10 @@ async fn plan_seasons(
             season,
             latest_air: String::new(),
             missing_numbers: HashSet::new(),
+            dated_missing: HashSet::new(),
         });
         t.missing_numbers.insert(num);
+        t.dated_missing.insert(num);
         if air > t.latest_air {
             t.latest_air = air;
         }
@@ -2203,6 +2292,7 @@ async fn plan_seasons(
                     season,
                     latest_air: String::new(),
                     missing_numbers: HashSet::new(),
+                    dated_missing: HashSet::new(),
                 });
                 t.missing_numbers.insert(num);
                 if latest > t.latest_air {
@@ -3090,6 +3180,76 @@ mod tests {
                 .unwrap()
                 .title,
             "A.S04.VFF.720p.HDTV.x264"
+        );
+    }
+
+    fn utc(s: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    #[test]
+    fn a_pack_waits_for_the_followed_episodes_still_to_air() {
+        // Black Clover S02 le 05/10 : E01 diffusé (03/10), E02-E03 datés à venir, E04-E13 sans date
+        let mut eps = vec![
+            ep(2, 1, Some("2026-10-03T10:00:00Z"), true, true),
+            ep(2, 2, Some("2026-10-10T10:00:00Z"), true, false),
+            ep(2, 3, Some("2026-10-17T10:00:00Z"), true, false),
+        ];
+        eps.extend((4..=13).map(|n| ep(2, n, None, true, false)));
+        let now = utc("2026-10-05T12:00:00Z");
+        assert_eq!(future_episodes(&eps, 2, now), vec![2, 3]);
+        // la veille de la sortie d'E02 comme le jour même : la date à venir bloque encore jusqu'à son heure
+        assert_eq!(
+            future_episodes(&eps, 2, utc("2026-10-10T09:59:59Z")),
+            vec![2, 3]
+        );
+        assert_eq!(
+            future_episodes(&eps, 2, utc("2026-10-10T10:00:00Z")),
+            vec![3],
+            "à l'heure exacte, l'épisode est sorti"
+        );
+        // tout est diffusé ou sans date : plus rien ne bloque
+        assert!(future_episodes(&eps, 2, utc("2026-12-01T00:00:00Z")).is_empty());
+        // une autre saison n'est pas concernée
+        assert!(future_episodes(&eps, 1, now).is_empty());
+        // un épisode non suivi n'empêche pas la saison
+        let unfollowed = vec![ep(2, 2, Some("2026-10-10T10:00:00Z"), false, false)];
+        assert!(future_episodes(&unfollowed, 2, now).is_empty());
+        // Le Voyageur : saison dont les épisodes n'ont pas de date (ou une date illisible) reste servie
+        let undated = vec![
+            ep(4, 1, Some("2025-11-29T20:00:00Z"), true, true),
+            ep(4, 2, None, true, false),
+            ep(4, 3, Some(""), true, false),
+            ep(4, 4, Some("pas une date"), true, false),
+        ];
+        assert!(future_episodes(&undated, 4, now).is_empty());
+    }
+
+    #[test]
+    fn pack_size_is_judged_on_the_dated_missing_episodes() {
+        // Black Clover S02 : « S02 » VOSTFR de 51 fichiers (ancienne numérotation), 15,2 Go
+        let wrong = json!({"title": "Black.Clover.S02.VOSTFR.WebRip.1080p.H265-LTFR", "downloadUrl": "http://p/dl",
+                           "tmdbId": 1, "seeders": 54, "size": 15_210_000_000i64});
+        let cands = vec![series_candidate(&wrong, &info(2, true, &[], 9, 1080), 2, true).unwrap()];
+        let allowed: HashSet<i64> = [9].into_iter().collect();
+        // manquants : E01 (daté, diffusé) + E04-E13 (sans date) = 11 ; un seul est daté
+        let missing: HashSet<i64> = [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].into_iter().collect();
+        // avant : 11 épisodes comptés → 1,3 Gio chacun, sous le plafond de 3 → pack pris
+        assert!(choose(&cands, 2, true, &missing, &allowed, 3.0, true).is_some());
+        // maintenant : 1 épisode daté → 14,2 Gio pour lui seul, pack refusé
+        assert!(choose_sized(&cands, 2, true, &missing, 1, &allowed, 3.0, true).is_none());
+        // une vraie saison de 13 épisodes tous diffusés et manquants reste prise (13 × 1 Gio)
+        let real = json!({"title": "Black.Clover.S02.MULTi.1080p.WEB.x265", "downloadUrl": "http://p/dl",
+                          "tmdbId": 1, "seeders": 20, "size": 13_000_000_000i64});
+        let cands = vec![series_candidate(&real, &info(2, true, &[], 9, 1080), 2, true).unwrap()];
+        let all: HashSet<i64> = (1..=13).collect();
+        assert!(choose_sized(&cands, 2, true, &all, 13, &allowed, 3.0, true).is_some());
+        // `choose` reste `choose_sized` avec tous les manquants
+        assert_eq!(
+            choose(&cands, 2, true, &all, &allowed, 3.0, true).map(|c| &c.title),
+            choose_sized(&cands, 2, true, &all, all.len(), &allowed, 3.0, true).map(|c| &c.title)
         );
     }
 

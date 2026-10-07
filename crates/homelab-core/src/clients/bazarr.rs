@@ -6,7 +6,7 @@ use chrono::NaiveDateTime;
 use reqwest::{Client, Method, RequestBuilder, Url};
 use serde_json::Value;
 
-use super::json;
+use super::{json, SendRetry};
 use crate::secret::Secret;
 
 #[derive(Clone)]
@@ -79,7 +79,7 @@ impl BazarrClient {
         let resp = self
             .req(Method::GET, &format!("api/{list}/history"))
             .query(&[("start", "0"), ("length", &length.to_string())])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "bazarr history").await?;
         Ok(v.get("data")

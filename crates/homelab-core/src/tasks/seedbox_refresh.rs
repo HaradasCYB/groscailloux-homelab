@@ -48,6 +48,17 @@ pub fn new_imports(records: &[Value], cursor: i64) -> Vec<(i64, String)> {
     out
 }
 
+/// Mention de résumé quand des Arrs de la seedbox n'ont pas répondu (`None` si tous ont répondu).
+pub fn unreachable_note(skipped: &[&str], total: usize) -> Option<String> {
+    if skipped.is_empty() {
+        None
+    } else if skipped.len() >= total {
+        Some("seedbox injoignable".to_string())
+    } else {
+        Some(format!("{} injoignable", skipped.join(", ")))
+    }
+}
+
 /// Paramètres `vfs/refresh` : le dossier et chacun de ses parents (un nouveau dossier de
 /// film n'est visible qu'une fois le parent `Movies` relu), en **récursif** : sans cela, le dossier
 /// d'une série tout juste créée est listé vide et Jellyfin enregistre une série sans épisode
@@ -109,9 +120,19 @@ impl Task for SeedboxRefresh {
             .iter()
             .chain(ctx.seedbox_sonarr.iter())
             .collect();
+        let total = arrs.len();
+        let mut skipped: Vec<&str> = Vec::new();
         let mut pending: Vec<(String, i64, Vec<(i64, String)>)> = Vec::new();
         for arr in arrs {
-            let records = arr.recent_imports(100).await?;
+            // un Arr injoignable (applis seedbox arrêtées après un redémarrage de l'hôte) n'est pas une erreur de
+            // la tâche : on saute son côté, le curseur reste en place, `seedbox_health` alerte au bout de 10 min.
+            // Avant, chaque passage échouait : 201 erreurs comptées pour un seul incident (30/09 → 02/10).
+            let Some(records) =
+                super::side_or_skip("seedbox_refresh", arr.name, arr.recent_imports(100).await)
+            else {
+                skipped.push(arr.name);
+                continue;
+            };
             let cursor = ctx
                 .state
                 .read(|s| s.seedbox_history.get(arr.name).copied())
@@ -141,8 +162,12 @@ impl Task for SeedboxRefresh {
                 pending.push((arr.name.to_string(), cursor, news));
             }
         }
+        let down = unreachable_note(&skipped, total);
         if pending.is_empty() {
-            return Ok(Report::new("no new imports", 0));
+            return Ok(Report::new(
+                down.unwrap_or_else(|| "no new imports".to_string()),
+                0,
+            ));
         }
 
         let first_dir = sb.mount_point.join(
@@ -208,10 +233,11 @@ impl Task for SeedboxRefresh {
             ?dirs,
             "jellyfin notified"
         );
-        Ok(Report::new(
-            format!("files={} dirs={}", jf_paths.len(), dirs.len()),
-            jf_paths.len() as u32,
-        ))
+        let mut summary = format!("files={} dirs={}", jf_paths.len(), dirs.len());
+        if let Some(d) = down {
+            summary = format!("{summary} ({d})");
+        }
+        Ok(Report::new(summary, jf_paths.len() as u32))
     }
 }
 
@@ -257,6 +283,20 @@ mod tests {
         assert_eq!(
             got,
             vec![(10, "/m/a.mkv".to_string()), (12, "/m/b.mkv".to_string())]
+        );
+    }
+
+    #[test]
+    fn an_unreachable_arr_is_skipped_not_failed() {
+        assert_eq!(unreachable_note(&[], 2), None);
+        assert_eq!(
+            unreachable_note(&["radarr-seedbox", "sonarr-seedbox"], 2).as_deref(),
+            Some("seedbox injoignable")
+        );
+        // un seul côté muet : les imports de l'autre sont traités, le résumé le nomme
+        assert_eq!(
+            unreachable_note(&["sonarr-seedbox"], 2).as_deref(),
+            Some("sonarr-seedbox injoignable")
         );
     }
 

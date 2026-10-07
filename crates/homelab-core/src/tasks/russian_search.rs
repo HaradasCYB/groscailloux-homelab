@@ -441,7 +441,13 @@ impl Task for RussianSearch {
         let Some(qbit) = ctx.seedbox_qbit.as_ref() else {
             return Ok(Report::new("pas de qBittorrent seedbox", 0));
         };
-        let torrents = qbit.torrents().await?;
+        // seedbox injoignable (qBittorrent ou applis arrêtés) : rien à faire ce passage, pas une erreur de la
+        // tâche — 102 erreurs comptées pour l'arrêt des applis du 30/09 au 02/10 ; `seedbox_health` alerte déjà
+        let Some(torrents) =
+            super::side_or_skip("russian_search", "seedbox", qbit.torrents().await)
+        else {
+            return Ok(Report::new("seedbox injoignable", 0));
+        };
         let records = ctx.state.read(|s| s.russian_title.clone()).await;
         let t = now();
         let mut notes: Vec<String> = Vec::new();
@@ -528,10 +534,14 @@ impl Task for RussianSearch {
             (true, ctx.seedbox_radarr.as_ref()),
         ] {
             let Some(arr) = arr else { continue };
-            let list = if movie {
-                arr.movies().await?
+            let read = if movie {
+                arr.movies().await
             } else {
-                arr.series().await?
+                arr.series().await
+            };
+            let Some(list) = super::side_or_skip("russian_search", arr.name, read) else {
+                notes.push(format!("{} injoignable", arr.name));
+                continue;
             };
             for item in list.iter().filter(|i| russian_route(i, lib)) {
                 if left == 0 {
@@ -559,7 +569,13 @@ impl Task for RussianSearch {
                         continue;
                     }
                 } else {
-                    let eps = arr.episodes(id).await?;
+                    // l'Arr vient de répondre à la liste et plus à ça : on laisse ce côté pour ce passage
+                    let Some(eps) =
+                        super::side_or_skip("russian_search", arr.name, arr.episodes(id).await)
+                    else {
+                        notes.push(format!("{} injoignable", arr.name));
+                        break;
+                    };
                     let abs = absolute_numbers(&eps);
                     se_abs = se_to_abs(&eps, &abs);
                     let today = chrono::Utc::now().to_rfc3339();

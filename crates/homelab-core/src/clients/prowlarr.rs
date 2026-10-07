@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use reqwest::{Client, Method, RequestBuilder, Url};
 use serde_json::Value;
 
-use super::json;
+use super::{json, SendRetry};
 use crate::secret::Secret;
 
 /// Prowlarr sert à une seule chose ici : chercher chez un indexer **en texte libre**. Sonarr ne sait
@@ -33,7 +33,7 @@ impl ProwlarrClient {
 
     /// Indexers configurés (id, nom).
     pub async fn indexers(&self) -> Result<Vec<Value>> {
-        let resp = self.req(Method::GET, "api/v1/indexer").send().await?;
+        let resp = self.req(Method::GET, "api/v1/indexer").send_retry().await?;
         let v = json(resp, "prowlarr indexer").await?;
         Ok(v.as_array().cloned().unwrap_or_default())
     }
@@ -96,6 +96,7 @@ impl ProwlarrClient {
                 ("limit", "100"),
             ])
             .timeout(std::time::Duration::from_secs(120))
+            // une recherche consomme le quota de l'indexer : jamais rejouée
             .send()
             .await?;
         let v = json(resp, "prowlarr search (tmdb)").await?;
@@ -106,7 +107,10 @@ impl ProwlarrClient {
     /// à une recherche par une liste **vide**, sans erreur : sans ce contrôle, une panne de C411 passait pour
     /// « aucune release » et la recherche n'était refaite que 24 h plus tard (3 films d'un membre, 30/09).
     pub async fn indexer_failing(&self, indexer_id: i64) -> Result<bool> {
-        let resp = self.req(Method::GET, "api/v1/indexerstatus").send().await?;
+        let resp = self
+            .req(Method::GET, "api/v1/indexerstatus")
+            .send_retry()
+            .await?;
         let v = json(resp, "prowlarr indexerstatus").await?;
         Ok(failing_in(&v, indexer_id, chrono::Utc::now()))
     }
@@ -117,7 +121,7 @@ impl ProwlarrClient {
     pub async fn indexer_reachable(&self, indexer_id: i64) -> Result<bool> {
         let resp = self
             .req(Method::GET, &format!("api/v1/indexer/{indexer_id}"))
-            .send()
+            .send_retry()
             .await?;
         let def = json(resp, "prowlarr indexer").await?;
         let field = |n: &str| {
@@ -139,7 +143,7 @@ impl ProwlarrClient {
             .http
             .get(&url)
             .timeout(std::time::Duration::from_secs(15))
-            .send()
+            .send_retry()
             .await
         else {
             return Ok(false);
@@ -216,6 +220,7 @@ impl ProwlarrClient {
                 ("limit", lim.as_str()),
             ])
             .timeout(std::time::Duration::from_secs(120))
+            // une recherche consomme le quota de l'indexer : jamais rejouée
             .send()
             .await?;
         let v = json(resp, "prowlarr search").await?;

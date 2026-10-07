@@ -12,6 +12,17 @@ use crate::config::{Config, Secrets};
 use crate::state::StateStore;
 use crate::subscriptions::SubStore;
 
+/// Durée de garde d'une connexion inactive vers Jellyseerr : sous les 5 s de `keepAliveTimeout` de Node.
+const NODE_IDLE_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// Réglages communs des clients HTTP.
+fn http_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(5))
+        .user_agent(concat!("homelabd/", env!("CARGO_PKG_VERSION")))
+}
+
 /// Tout ce dont une tâche a besoin. Cloné par `Arc` entre les boucles du scheduler.
 pub struct TaskContext {
     pub cfg: Arc<Config>,
@@ -55,10 +66,14 @@ impl TaskContext {
     }
 
     fn build(cfg: Config, secrets: Secrets, dry_run: bool, read_only_state: bool) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(5))
-            .user_agent(concat!("homelabd/", env!("CARGO_PKG_VERSION")))
+        let http = http_builder().build()?;
+        // Jellyseerr (Node) ferme ses connexions inactives au bout de 5 s (`keepAliveTimeout` par défaut, vérifié
+        // le 07/10 : aucun réglage dans son code) alors que reqwest garde les siennes 90 s : une requête partait
+        // sur une connexion que le serveur venait de fermer (« connection closed before message completed »).
+        // Client à part, en HTTP local : une connexion neuve ne coûte rien (pas de TLS). Les autres services
+        // gardent le pool par défaut, et `SendRetry` rejoue une fois un GET coupé quelle qu'en soit la cause.
+        let http_node = http_builder()
+            .pool_idle_timeout(NODE_IDLE_TIMEOUT)
             .build()?;
         let state = if read_only_state {
             StateStore::load_read_only(&cfg.paths.state_file)?
@@ -144,7 +159,7 @@ impl TaskContext {
             jellyseerr: JellyseerrClient::new(
                 &cfg.urls.jellyseerr,
                 secrets.jellyseerr_api_key.clone(),
-                http.clone(),
+                http_node,
             )?,
             prowlarr: match secrets.prowlarr_api_key.clone() {
                 Some(k) => Some(ProwlarrClient::new(&cfg.urls.prowlarr, k, http.clone())?),
