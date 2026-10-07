@@ -187,10 +187,13 @@ pub struct Subscriptions {
     /// Prix affiché aux membres (texte libre, ex. « 3,50 € / mois »).
     pub price_text: String,
     /// Abonnement PayPal qui se renouvelle tout seul : heures laissées après l'échéance avant le passage
-    /// en grâce. PayPal encaisse parfois plusieurs heures après la date de facturation annoncée.
+    /// en grâce, et après la date de facturation avant l'alerte « prélèvement en attente ». PayPal
+    /// encaisse parfois plusieurs heures après la date de facturation annoncée.
     pub paypal_margin_hours: u32,
-    /// Fiches retirées au plus d'un coup quand leur compte Jellyfin a disparu ; au-delà, rien n'est
-    /// retiré et l'admin est prévenu (réponse de Jellyfin incomplète ?).
+    /// Compte Jellyfin disparu : fiches avec une échéance, un lien PayPal ou une décision de l'admin
+    /// retirées au plus d'un coup ; au-delà, aucune n'est retirée (le cycle n'y touche plus) et
+    /// l'admin est prévenu (réponse de Jellyfin incomplète ?). Les fiches sans rien à perdre partent
+    /// toujours.
     pub max_orphan_removals_per_run: usize,
 }
 

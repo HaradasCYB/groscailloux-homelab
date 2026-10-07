@@ -684,7 +684,7 @@ async fn subs_cmd(
     };
     match action {
         "list" => {
-            let created = ops::ensure_fiches(ctx).await?;
+            let created = ops::ensure_fiches(ctx).await?.created;
             if created > 0 {
                 println!("{created} fiche(s) créée(s) pour des comptes sans fiche");
             }

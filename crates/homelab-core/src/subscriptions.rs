@@ -15,6 +15,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::config::Subscriptions as SubsConfig;
 
@@ -166,6 +167,67 @@ pub fn other_linked_sub<'a>(s: &'a Subscriber, new_sub: &str) -> Option<&'a str>
     s.paypal_sub_id.as_deref().filter(|l| *l != new_sub)
 }
 
+/// L'abonnement déjà rattaché prélève-t-il encore ? `lookup` = ce que PayPal en dit : `None` sans
+/// client PayPal, `Some(None)` s'il ne le connaît pas (autre environnement : rien n'est prélevé) ou
+/// n'en donne aucun statut, sinon son statut. Sans client, le dernier statut connu de la fiche
+/// (`local`) ; inconnu = actif, par prudence (un second abonnement refusé à tort se rattache à la
+/// main, un second prélèvement se rembourse).
+pub fn linked_still_charges(lookup: Option<Option<&str>>, local: Option<&str>) -> bool {
+    match lookup {
+        Some(Some(st)) => st == PAYPAL_ACTIVE,
+        Some(None) => false,
+        None => local.is_none_or(|st| st == PAYPAL_ACTIVE),
+    }
+}
+
+/// Clé `k` d'un lien `/premium?compte=…` émis par homelabd (mails de rappel et de suspension) :
+/// HMAC-SHA256 du nom de compte (en minuscules, comme `by_username`) par un secret du serveur, 16
+/// caractères hexa. `/premium` est public : sans cette clé, il dirait à n'importe qui qu'un pseudo
+/// existe et paie par PayPal ; il n'affiche donc « déjà abonné » que pour un lien qui la porte.
+pub fn premium_link_key(secret: &str, username: &str) -> String {
+    let msg = format!("gc-premium-v1|{}", username.to_lowercase());
+    hmac_sha256(secret.as_bytes(), msg.as_bytes())[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// `given` est-elle la clé de ce nom de compte ? Comparaison à temps constant.
+pub fn premium_link_ok(secret: &str, username: &str, given: &str) -> bool {
+    let want = premium_link_key(secret, username);
+    want.len() == given.len()
+        && want
+            .bytes()
+            .zip(given.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
+
+/// HMAC-SHA256 (RFC 2104), même construction que la session d'administration de homelabd.
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let mut ipad = [0x36u8; 64];
+    let mut opad = [0x5cu8; 64];
+    for i in 0..64 {
+        ipad[i] ^= k[i];
+        opad[i] ^= k[i];
+    }
+    let inner = Sha256::new()
+        .chain_update(ipad)
+        .chain_update(msg)
+        .finalize();
+    Sha256::new()
+        .chain_update(opad)
+        .chain_update(inner)
+        .finalize()
+        .into()
+}
+
 /// Décisions pures pour une fiche à l'instant `now`.
 pub fn decide(s: &Subscriber, now: i64, cfg: &SubsConfig) -> Vec<Action> {
     let mut out = Vec::new();
@@ -260,26 +322,52 @@ pub struct OrphanPlan<'a> {
     pub held: Vec<&'a Subscriber>,
 }
 
-/// Rien n'est retiré si Jellyfin n'a renvoyé aucun compte (réponse vide ou inattendue), ni si plus de
-/// `max` fiches disparaîtraient d'un coup (« jamais de purge globale ») : liens PayPal, échéances et
-/// décisions de l'admin restent, l'admin tranche.
+impl OrphanPlan<'_> {
+    /// Comptes des fiches gardées : le cycle n'y touche pas (ni mail ni suspension) tant que l'admin
+    /// n'a pas tranché.
+    pub fn held_ids(&self) -> HashSet<String> {
+        self.held.iter().map(|s| s.user_id.clone()).collect()
+    }
+}
+
+/// Fiche qui n'a rien à perdre : ni lien PayPal, ni échéance, et un statut qu'`ensure_fiches` recrée
+/// tel quel si le compte revient (à qualifier, suspendu, exempté). Les comptes de banc (`zz_`…) en
+/// sont, par dizaines.
+pub fn orphan_disposable(s: &Subscriber) -> bool {
+    s.paypal_sub_id.is_none()
+        && s.expires_at.is_none()
+        && matches!(
+            s.status,
+            Status::Unknown | Status::Suspended | Status::Exempt
+        )
+}
+
+/// Rien n'est retiré si Jellyfin n'a renvoyé aucun compte (réponse vide ou inattendue). Sinon, les
+/// fiches sans rien à perdre ([`orphan_disposable`]) partent toutes ; les autres (lien PayPal, échéance,
+/// décision de l'admin) partent aussi, sauf si plus de `max` disparaîtraient d'un coup (« jamais de
+/// purge globale ») : elles sont alors toutes gardées, l'admin tranche.
 pub fn orphan_plan<'a>(
     fiches: &'a [Subscriber],
     jellyfin_ids: &HashSet<String>,
     max: usize,
 ) -> OrphanPlan<'a> {
-    let orphans: Vec<&Subscriber> = fiches
-        .iter()
-        .filter(|s| !jellyfin_ids.contains(&s.user_id))
-        .collect();
-    if jellyfin_ids.is_empty() || orphans.len() > max {
+    let orphans = fiches.iter().filter(|s| !jellyfin_ids.contains(&s.user_id));
+    if jellyfin_ids.is_empty() {
         return OrphanPlan {
             remove: Vec::new(),
-            held: orphans,
+            held: orphans.collect(),
+        };
+    }
+    let (disposable, valued): (Vec<&Subscriber>, Vec<&Subscriber>) =
+        orphans.partition(|s| orphan_disposable(s));
+    if valued.len() > max {
+        return OrphanPlan {
+            remove: disposable,
+            held: valued,
         };
     }
     OrphanPlan {
-        remove: orphans,
+        remove: disposable.into_iter().chain(valued).collect(),
         held: Vec::new(),
     }
 }
@@ -327,8 +415,9 @@ pub enum Reconcile {
     Baseline(i64),
     /// Paiement constaté chez PayPal mais jamais appliqué (webhook perdu) : on l'applique.
     Apply(i64),
-    /// Abonnement actif mais facturation due sans nouveau paiement (prochaine facturation absente ou
-    /// passée, ou échéance de la fiche dépassée) : alerte admin, rien n'est prolongé.
+    /// Abonnement actif mais facturation due sans nouveau paiement (prochaine facturation absente, ou
+    /// passée depuis plus de `paypal_margin_hours`, ou échéance de la fiche dépassée, marge comprise) :
+    /// alerte admin, rien n'est prolongé.
     PendingCharge,
     /// Abonnement arrêté chez PayPal (`CANCELLED`, `SUSPENDED`, `EXPIRED`) ou inconnu de lui : noté,
     /// l'accès va jusqu'à l'échéance déjà payée, le cycle fait le reste.
@@ -350,8 +439,20 @@ pub fn reconcile_decision(s: &Subscriber, p: &PaypalView, now: i64, cfg: &SubsCo
     ) {
         return Reconcile::Nothing;
     }
-    let Some(nb) = p.next_billing.filter(|nb| *nb > now) else {
-        return Reconcile::PendingCharge;
+    // PayPal encaisse parfois des heures après la date de facturation annoncée : une facturation passée
+    // n'est « en attente » qu'après la marge (le contrôle repart de chaque redémarrage de homelabd, il
+    // peut tomber une demi-heure après l'heure de facturation)
+    let margin = cfg.paypal_margin_hours as i64 * 3600;
+    let nb = match p.next_billing {
+        None => return Reconcile::PendingCharge,
+        Some(nb) if nb <= now => {
+            return if now >= nb + margin {
+                Reconcile::PendingCharge
+            } else {
+                Reconcile::Nothing
+            };
+        }
+        Some(nb) => nb,
     };
     if let Some(lp) = p.last_payment {
         match s.paypal_paid_at {
@@ -360,16 +461,19 @@ pub fn reconcile_decision(s: &Subscriber, p: &PaypalView, now: i64, cfg: &SubsCo
             None => {
                 let reflected = s.status == Status::Active
                     && s.expires_at.is_some_and(|e| e >= nb - SAME_PAYMENT_SECS);
-                return if reflected {
-                    Reconcile::Baseline(lp)
-                } else {
-                    Reconcile::Apply(lp)
-                };
+                if reflected {
+                    return Reconcile::Baseline(lp);
+                }
+                // facturation repoussée bien au-delà d'une période après ce paiement (nouvelle tentative
+                // après un échec) : il couvrait la période d'avant, rien de neuf n'a été payé
+                if nb - lp > (cfg.period_days as i64 + 3) * DAY {
+                    return Reconcile::PendingCharge;
+                }
+                return Reconcile::Apply(lp);
             }
         }
     }
     // aucun nouveau paiement : PayPal a pu repousser la facturation (nouvelle tentative après un échec)
-    let margin = cfg.paypal_margin_hours as i64 * 3600;
     if s.expires_at.is_some_and(|e| now >= e + margin) {
         return Reconcile::PendingCharge;
     }
@@ -962,6 +1066,18 @@ pub fn suspended_mail(username: &str, pay_url: &str) -> (String, String) {
     )
 }
 
+/// Suspension d'un abonnement PayPal qui se renouvelle tout seul (prélèvement échoué, abonnement encore
+/// actif chez PayPal, qui retente) : aucun lien de paiement — un second abonnement serait débité puis
+/// refusé, et le membre resterait suspendu.
+pub fn payment_failed_mail(username: &str) -> (String, String) {
+    (
+        "Groscailloux : ton prélèvement PayPal n'est pas passé".to_string(),
+        format!(
+            "Salut {username},\n\nTon prélèvement PayPal n'est pas passé, et ton accès est en pause en attendant. Rien n'est supprimé : ton historique, tes favoris et tes demandes t'attendent.\n\nPour reprendre, mets à jour ton moyen de paiement dans ton compte PayPal → Paiements automatiques. PayPal retente le prélèvement, et l'accès revient tout seul dès qu'il passe. Inutile de t'abonner une deuxième fois : ce serait deux prélèvements.\n\nSi ce message te surprend, réponds à ce mail : on regarde ensemble.\n\nÀ bientôt sur Groscailloux."
+        ),
+    )
+}
+
 pub fn activated_mail(
     username: &str,
     expires_at_text: &str,
@@ -1143,6 +1259,53 @@ mod tests {
     }
 
     #[test]
+    fn the_linked_subscription_blocks_a_second_one_only_while_it_charges() {
+        // PayPal répond : seul ACTIVE prélève encore (refus du second)
+        assert!(linked_still_charges(Some(Some(PAYPAL_ACTIVE)), None));
+        for st in ["CANCELLED", "SUSPENDED", "EXPIRED"] {
+            assert!(
+                !linked_still_charges(Some(Some(st)), Some(PAYPAL_ACTIVE)),
+                "{st}"
+            );
+        }
+        // inconnu de PayPal (404, autre environnement) : rien n'est prélevé, le second se rattache
+        assert!(!linked_still_charges(Some(None), Some(PAYPAL_ACTIVE)));
+        // sans client PayPal : dernier statut connu, inconnu = actif
+        assert!(linked_still_charges(None, None));
+        assert!(linked_still_charges(None, Some(PAYPAL_ACTIVE)));
+        assert!(!linked_still_charges(None, Some("CANCELLED")));
+    }
+
+    #[test]
+    fn premium_link_key_is_tied_to_the_account_and_the_secret() {
+        let k = premium_link_key("secret-serveur", "John");
+        assert_eq!(k.len(), 16);
+        assert!(k.bytes().all(|b| b.is_ascii_hexdigit()));
+        // même nom à la casse près (`by_username` l'ignore aussi)
+        assert!(premium_link_ok("secret-serveur", "john", &k));
+        assert!(!premium_link_ok("secret-serveur", "jane", &k));
+        assert!(!premium_link_ok("autre-secret", "john", &k));
+        assert!(!premium_link_ok("secret-serveur", "john", ""));
+        assert!(!premium_link_ok("secret-serveur", "john", &k[..15]));
+        let last = if k.ends_with('0') { "1" } else { "0" };
+        assert!(!premium_link_ok(
+            "secret-serveur",
+            "john",
+            &format!("{}{last}", &k[..15])
+        ));
+    }
+
+    #[test]
+    fn hmac_matches_rfc4231_case_2() {
+        let mac = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
+        let hex: String = mac.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex,
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    #[test]
     fn stopped_paypal_subscription_gets_the_usual_reminders_and_no_margin() {
         let c = cfg();
         for st in ["CANCELLED", "SUSPENDED", "EXPIRED", PAYPAL_NOT_FOUND] {
@@ -1204,10 +1367,11 @@ mod tests {
 
     #[test]
     fn orphans_removed_only_when_few_and_jellyfin_answered() {
+        // fiches qui ont quelque chose à perdre (échéance) : elles seules comptent dans le plafond
         let fiche = |id: &str| Subscriber {
             user_id: id.into(),
             username: id.into(),
-            ..sub(Status::Unknown, None)
+            ..sub(Status::Active, Some(10.0))
         };
         let fiches: Vec<Subscriber> = ["a", "b", "c", "d"].into_iter().map(fiche).collect();
         let ids = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<HashSet<_>>();
@@ -1224,9 +1388,44 @@ mod tests {
             (p.remove.len(), names(&p.held)),
             (0, vec!["b".into(), "c".into(), "d".into()])
         );
+        assert_eq!(p.held_ids(), ids(&["b", "c", "d"]));
         // Jellyfin n'a renvoyé aucun compte : rien n'est retiré
         let p = orphan_plan(&fiches, &ids(&[]), 10);
         assert_eq!((p.remove.len(), p.held.len()), (0, 4));
+    }
+
+    #[test]
+    fn disposable_orphans_go_without_cap_valued_ones_are_held() {
+        // 5 fiches sans rien à perdre (comptes de banc à qualifier, suspendus ou exemptés, sans
+        // échéance) + 1 liée à PayPal, plafond 0 : les 5 partent, la fiche PayPal reste
+        let mut fiches: Vec<Subscriber> = (0..5)
+            .map(|i| Subscriber {
+                user_id: format!("zz_{i}"),
+                username: format!("zz_{i}"),
+                ..sub(
+                    [Status::Unknown, Status::Suspended, Status::Exempt][i % 3],
+                    None,
+                )
+            })
+            .collect();
+        fiches.push(Subscriber {
+            user_id: "paie".into(),
+            username: "paie".into(),
+            ..paypal(Status::Active, Some(10.0))
+        });
+        let ids: HashSet<String> = ["autre".to_string()].into_iter().collect();
+        let p = orphan_plan(&fiches, &ids, 0);
+        assert_eq!(p.remove.len(), 5);
+        assert!(p.remove.iter().all(|s| s.user_id.starts_with("zz_")));
+        assert_eq!(p.held_ids(), ["paie".to_string()].into_iter().collect());
+        // ce qui a quelque chose à perdre n'est jamais « sans valeur »
+        assert!(!orphan_disposable(&paypal(Status::Suspended, None)));
+        assert!(!orphan_disposable(&sub(Status::Suspended, Some(-5.0))));
+        assert!(!orphan_disposable(&sub(Status::Offered, None)));
+        assert!(!orphan_disposable(&sub(Status::Trial, Some(3.0))));
+        // Jellyfin muet : même les fiches sans valeur restent
+        let p = orphan_plan(&fiches, &HashSet::new(), 10);
+        assert_eq!((p.remove.len(), p.held.len()), (0, 6));
     }
 
     fn view(status: &str, next: Option<i64>, last: Option<i64>) -> PaypalView {
@@ -1258,12 +1457,23 @@ mod tests {
             reconcile_decision(&s, &v, NOW, &c),
             Reconcile::Apply(NOW - 3600)
         );
-        // prochaine facturation absente ou passée : alerte, jamais « maintenant + 31 jours »
-        for nb in [None, Some(NOW - 3600)] {
-            let v = view("ACTIVE", nb, Some(NOW - 3600));
+        // prochaine facturation absente, ou passée depuis plus que la marge : alerte, jamais
+        // « maintenant + 31 jours »
+        for nb in [None, Some(NOW - 37 * 3600)] {
+            let v = view("ACTIVE", nb, Some(NOW - 21 * DAY));
             assert_eq!(
                 reconcile_decision(&s, &v, NOW, &c),
                 Reconcile::PendingCharge
+            );
+        }
+        // facturation passée d'une heure (contrôle juste après un redémarrage) : PayPal encaisse
+        // parfois des heures plus tard, rien à signaler encore
+        for h in [1, 35] {
+            let v = view("ACTIVE", Some(NOW - h * 3600), Some(NOW - 21 * DAY));
+            assert_eq!(
+                reconcile_decision(&s, &v, NOW, &c),
+                Reconcile::Nothing,
+                "{h} h"
             );
         }
         // échéance de la fiche dépassée (marge comprise) sans nouveau paiement : alerte
@@ -1310,6 +1520,21 @@ mod tests {
                 Reconcile::Nothing
             );
         }
+        // fiche sans paiement de référence, mais PayPal a repoussé la facturation après un échec : le
+        // dernier paiement est celui de la période d'avant, il ne réactive ni ne prolonge rien
+        let v = view("ACTIVE", Some(NOW + 3 * DAY), Some(NOW - 33 * DAY));
+        for s in [
+            paypal(Status::Grace, Some(-2.0)),
+            paypal(Status::Suspended, None),
+            paypal(Status::Unknown, None),
+        ] {
+            assert_eq!(
+                reconcile_decision(&s, &v, NOW, &c),
+                Reconcile::PendingCharge,
+                "{:?}",
+                s.status
+            );
+        }
     }
 
     #[test]
@@ -1345,6 +1570,13 @@ mod tests {
     fn renewal_notice_has_no_payment_link() {
         let (subject, body) = renewal_mail("membre", "21/10/2026");
         assert!(subject.contains("21/10/2026") && body.contains("21/10/2026"));
+        assert!(!body.contains("http") && !body.contains("/premium"));
+    }
+
+    #[test]
+    fn failed_charge_suspension_has_no_payment_link() {
+        let (subject, body) = payment_failed_mail("membre");
+        assert!(subject.contains("PayPal") && body.contains("Paiements automatiques"));
         assert!(!body.contains("http") && !body.contains("/premium"));
     }
 

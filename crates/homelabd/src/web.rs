@@ -211,6 +211,24 @@ fn premium_page(
         .replace("{{DEJA}}", if deja { "1" } else { "0" })
 }
 
+/// « Déjà abonné » sur `/premium` ? Seulement pour un lien émis par homelabd (`k` =
+/// [`subscriptions::premium_link_key`] du compte) : la page est publique, et sans cette clé n'importe
+/// qui saurait si un pseudo existe et paie par PayPal. La fiche n'est lue (`fiche`) qu'avec une clé
+/// valide.
+fn premium_deja(
+    secret: Option<&str>,
+    compte: &str,
+    k: Option<&str>,
+    fiche: impl FnOnce(&str) -> Option<subscriptions::Subscriber>,
+) -> bool {
+    let (Some(secret), Some(k)) = (secret, k) else {
+        return false;
+    };
+    !compte.is_empty()
+        && subscriptions::premium_link_ok(secret, compte, k)
+        && fiche(compte).is_some_and(|s| subscriptions::auto_renews(&s))
+}
+
 async fn premium(State(st): State<AppState>, Query(q): Query<HashMap<String, String>>) -> Response {
     let Some((cid, plan, sandbox)) = premium_ids(&st, q.contains_key("test")) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -220,16 +238,15 @@ async fn premium(State(st): State<AppState>, Query(q): Query<HashMap<String, Str
         .map(|c| c.trim())
         .filter(|c| onboard::valid_username(c))
         .unwrap_or("");
-    // fiche locale seulement (aucun appel à PayPal depuis une page publique)
-    let deja = !compte.is_empty()
-        && st.ctx.cfg.subscriptions.enabled
-        && st
-            .ctx
-            .subs
-            .by_username(compte)
-            .ok()
-            .flatten()
-            .is_some_and(|s| subscriptions::auto_renews(&s));
+    // fiche locale seulement (aucun appel à PayPal depuis une page publique), et seulement pour un lien
+    // émis par homelabd (clé `k`)
+    let deja = st.ctx.cfg.subscriptions.enabled
+        && premium_deja(
+            st.ctx.secrets.onboard_token.as_ref().map(|t| t.expose()),
+            compte,
+            q.get("k").map(String::as_str),
+            |c| st.ctx.subs.by_username(c).ok().flatten(),
+        );
     let mut resp = Html(premium_page(
         &cid,
         &plan,
@@ -1717,6 +1734,54 @@ mod tests {
             .unwrap();
         assert!(stop < html.find("paypal.Buttons(").unwrap());
         assert!(!html.contains("{{"));
+    }
+
+    #[test]
+    fn premium_deja_only_for_a_link_signed_by_homelabd() {
+        // fiche qui se renouvelle toute seule par PayPal
+        let auto = || subscriptions::Subscriber {
+            user_id: "id1".into(),
+            username: "john".into(),
+            status: SubStatus::Active,
+            starts_at: 0,
+            expires_at: Some(2_000_000_000),
+            source: "paypal".into(),
+            paypal_sub_id: Some("I-ABCDEFGHIJ12".into()),
+            paypal_email: None,
+            referral_code: "ABCDEFGH".into(),
+            referred_by: None,
+            referral_credited: false,
+            note: String::new(),
+            reminded: 0,
+            updated_at: 0,
+            paypal_status: Some(subscriptions::PAYPAL_ACTIVE.into()),
+            paypal_paid_at: None,
+        };
+        let k = subscriptions::premium_link_key("secret", "john");
+        assert!(premium_deja(Some("secret"), "john", Some(&k), |_| Some(
+            auto()
+        )));
+        // sans clé, clé fausse ou d'un autre compte, ou sans secret : page normale, et la fiche n'est
+        // même pas lue
+        let unread =
+            |_: &str| -> Option<subscriptions::Subscriber> { panic!("fiche lue sans clé valide") };
+        assert!(!premium_deja(Some("secret"), "john", None, unread));
+        assert!(!premium_deja(
+            Some("secret"),
+            "john",
+            Some("0123456789abcdef"),
+            unread
+        ));
+        assert!(!premium_deja(Some("secret"), "jane", Some(&k), unread));
+        assert!(!premium_deja(None, "john", Some(&k), unread));
+        assert!(!premium_deja(Some("secret"), "", Some(&k), unread));
+        // clé valide mais abonnement arrêté chez PayPal, ou pas de fiche : page normale
+        let mut stopped = auto();
+        stopped.paypal_status = Some("CANCELLED".into());
+        assert!(!premium_deja(Some("secret"), "john", Some(&k), |_| Some(
+            stopped
+        )));
+        assert!(!premium_deja(Some("secret"), "john", Some(&k), |_| None));
     }
 
     #[test]

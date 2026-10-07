@@ -1,8 +1,11 @@
 //! Réconciliation PayPal (quotidienne) : pour chaque fiche rattachée à un abonnement, relit son
 //! statut et sa facturation chez PayPal et rejoue un paiement manqué (webhook perdu, daemon
 //! arrêté). Un paiement n'est appliqué que s'il est constaté (dernier paiement PayPal plus récent que
-//! celui déjà appliqué, noté sur la fiche) ; facturation due sans paiement = alerte admin, rien n'est
-//! prolongé ; annulation, suspension ou expiration = notée, l'accès va jusqu'à l'échéance payée.
+//! celui déjà appliqué, noté sur la fiche) ; facturation due sans paiement (passée depuis plus de
+//! `paypal_margin_hours`) = alerte admin, une par abonnement et par jour, rien n'est prolongé ;
+//! annulation, suspension ou expiration = notée, l'accès va jusqu'à l'échéance payée. Comme toute
+//! tâche, elle passe aussi au démarrage de homelabd : l'heure du contrôle quotidien est celle du
+//! dernier redémarrage.
 
 use std::time::Duration;
 

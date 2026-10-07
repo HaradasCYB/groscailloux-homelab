@@ -235,7 +235,9 @@ async fn me(State(st): State<SubsState>, headers: HeaderMap) -> ApiResult<Json<V
         // retrouve un)
         "paypal": subs::auto_renews(&fiche),
         "price_text": cfg.price_text,
-        "pay_url": ops::pay_url(&st.ctx, &u.name),
+        // sans clé « déjà abonné » : bouton absent pour qui se renouvelle tout seul, et lien court à
+        // retaper sur la télé
+        "pay_url": ops::pay_url_short(&st.ctx, &u.name),
         "can_pay": st.ctx.paypal.is_some() || st.ctx.secrets.donation.is_some(),
         "referral_code": fiche.referral_code,
         "referral_days": cfg.referral_days,

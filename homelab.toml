@@ -473,10 +473,13 @@ referral_cap_days_per_year = 90
 exempt = []               # jamais suspendus par le cycle (accounts.protected l'est déjà)
 cycle_dry_run = false     # réel depuis le 2026-09-27 (semaine d observation sans action)
 price_text = "3,50 € / mois"
-paypal_margin_hours = 36  # prélèvement PayPal automatique : grâce seulement 36 h après l'échéance annoncée
-                          # (PayPal encaisse parfois des heures après la date de facturation)
-max_orphan_removals_per_run = 3  # fiches sans compte Jellyfin retirées d'un coup au plus ; au-delà rien
-                                 # n'est retiré, l'admin est prévenu (jamais de purge globale)
+paypal_margin_hours = 36  # prélèvement PayPal automatique : grâce (et alerte « prélèvement en attente »)
+                          # seulement 36 h après la date de facturation (PayPal encaisse parfois des heures après)
+max_orphan_removals_per_run = 3  # compte Jellyfin disparu : fiches avec échéance, lien PayPal ou décision
+                                 # de l'admin retirées d'un coup au plus ; au-delà aucune n'est retirée ni
+                                 # touchée par le cycle, l'admin est prévenu (jamais de purge globale).
+                                 # Les fiches sans rien à perdre (à qualifier, suspendu, exempté, sans
+                                 # échéance ni PayPal : comptes de banc) partent toujours.
 
 [chat]
 # Tchat des membres dans Jellyfin (bulle en haut à droite) : salons Annonces (modérateurs), Entraide,
