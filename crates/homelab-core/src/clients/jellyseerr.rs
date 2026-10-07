@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use reqwest::{Client, Method, RequestBuilder, Url};
 use serde_json::{json, Value};
 
-use super::{check, json};
+use super::{check, json, SendRetry};
 use crate::secret::Secret;
 
 #[derive(Clone)]
@@ -30,13 +30,13 @@ impl JellyseerrClient {
 
     /// GET brut (réglages) ; les réponses de `settings/*` peuvent contenir des secrets : ne jamais les afficher.
     pub async fn get_json(&self, path: &str) -> Result<Value> {
-        let resp = self.req(Method::GET, path).send().await?;
+        let resp = self.req(Method::GET, path).send_retry().await?;
         json(resp, &format!("jellyseerr GET {path}")).await
     }
 
     /// POST brut (réglages, tests).
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<()> {
-        let resp = self.req(Method::POST, path).json(body).send().await?;
+        let resp = self.req(Method::POST, path).json(body).send_retry().await?;
         check(resp, &format!("jellyseerr POST {path}"))
             .await
             .map(|_| ())
@@ -47,7 +47,7 @@ impl JellyseerrClient {
         let resp = self
             .req(Method::GET, &format!("api/v1/tv/{tmdb_id}"))
             .query(&[("language", "fr")])
-            .send()
+            .send_retry()
             .await?;
         json(resp, "jellyseerr tv").await
     }
@@ -56,13 +56,13 @@ impl JellyseerrClient {
         let resp = self
             .req(Method::GET, &format!("api/v1/movie/{tmdb_id}"))
             .query(&[("language", "fr")])
-            .send()
+            .send_retry()
             .await?;
         json(resp, "jellyseerr movie").await
     }
 
     pub async fn status(&self) -> Result<Value> {
-        let resp = self.req(Method::GET, "api/v1/status").send().await?;
+        let resp = self.req(Method::GET, "api/v1/status").send_retry().await?;
         json(resp, "jellyseerr status").await
     }
 
@@ -70,7 +70,7 @@ impl JellyseerrClient {
         let resp = self
             .req(Method::GET, "api/v1/user")
             .query(&[("take", take.to_string())])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyseerr user").await?;
         Ok(v.get("results")
@@ -81,7 +81,10 @@ impl JellyseerrClient {
 
     /// Permissions données par Jellyseerr aux nouveaux comptes (`settings/main`).
     pub async fn default_permissions(&self) -> Result<i64> {
-        let resp = self.req(Method::GET, "api/v1/settings/main").send().await?;
+        let resp = self
+            .req(Method::GET, "api/v1/settings/main")
+            .send_retry()
+            .await?;
         json(resp, "jellyseerr settings/main")
             .await?
             .get("defaultPermissions")
@@ -97,7 +100,7 @@ impl JellyseerrClient {
                 &format!("api/v1/user/{id}/settings/permissions"),
             )
             .json(&json!({ "permissions": permissions }))
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyseerr settings/permissions")
             .await
@@ -108,7 +111,7 @@ impl JellyseerrClient {
     pub async fn media_id(&self, kind: &str, tmdb_id: i64) -> Result<Option<i64>> {
         let resp = self
             .req(Method::GET, &format!("api/v1/{kind}/{tmdb_id}"))
-            .send()
+            .send_retry()
             .await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -123,7 +126,7 @@ impl JellyseerrClient {
     pub async fn delete_media(&self, id: i64) -> Result<()> {
         let resp = self
             .req(Method::DELETE, &format!("api/v1/media/{id}"))
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyseerr DELETE media").await.map(|_| ())
     }
@@ -131,7 +134,7 @@ impl JellyseerrClient {
     pub async fn delete_user(&self, id: i64) -> Result<()> {
         let resp = self
             .req(Method::DELETE, &format!("api/v1/user/{id}"))
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyseerr DELETE user").await.map(|_| ())
     }
@@ -141,7 +144,7 @@ impl JellyseerrClient {
         let resp = self
             .req(Method::POST, "api/v1/user/import-from-jellyfin")
             .json(&body)
-            .send()
+            .send_retry()
             .await?;
         json(resp, "jellyseerr import-from-jellyfin").await
     }
@@ -151,7 +154,7 @@ impl JellyseerrClient {
         let resp = self
             .req(Method::POST, &format!("api/v1/user/{id}/settings/main"))
             .json(&body)
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyseerr settings/main").await.map(|_| ())
     }
@@ -168,7 +171,7 @@ impl JellyseerrClient {
                     ("skip", &skip.to_string()),
                     ("filter", "all"),
                 ])
-                .send()
+                .send_retry()
                 .await?;
             let v = json(resp, "jellyseerr media").await?;
             let page = v
@@ -202,7 +205,7 @@ impl JellyseerrClient {
                     ("skip", &skip.to_string()),
                     ("filter", "all"),
                 ])
-                .send()
+                .send_retry()
                 .await?;
             let v = json(resp, "jellyseerr request").await?;
             let page = v

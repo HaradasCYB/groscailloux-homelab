@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use reqwest::{Client, Method, RequestBuilder, Url};
 use serde_json::{json, Value};
 
-use super::{check, json};
+use super::{check, json, SendRetry};
 use crate::secret::Secret;
 
 #[derive(Clone)]
@@ -31,7 +31,7 @@ impl JellyfinClient {
     }
 
     pub async fn system_info(&self) -> Result<Value> {
-        let resp = self.req(Method::GET, "System/Info").send().await?;
+        let resp = self.req(Method::GET, "System/Info").send_retry().await?;
         json(resp, "jellyfin System/Info").await
     }
 
@@ -43,7 +43,7 @@ impl JellyfinClient {
             .http
             .get(url)
             .header("X-Emby-Token", token)
-            .send()
+            .send_retry()
             .await?;
         if matches!(resp.status().as_u16(), 401 | 403) {
             return Ok(None);
@@ -52,7 +52,7 @@ impl JellyfinClient {
     }
 
     pub async fn users(&self) -> Result<Vec<Value>> {
-        let resp = self.req(Method::GET, "Users").send().await?;
+        let resp = self.req(Method::GET, "Users").send_retry().await?;
         Ok(json(resp, "jellyfin Users")
             .await?
             .as_array()
@@ -83,7 +83,7 @@ impl JellyfinClient {
                 ("EnableImages", "false"),
                 ("EnableUserData", "false"),
             ])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin Items").await?;
         Ok(v.get("Items")
@@ -98,7 +98,7 @@ impl JellyfinClient {
             .req(Method::POST, &format!("Items/RemoteSearch/{kind}"))
             .json(&json!({ "ItemId": item_id, "SearchInfo": { "ProviderIds": ids } }))
             .timeout(Duration::from_secs(300))
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin RemoteSearch").await?;
         Ok(v.as_array().cloned().unwrap_or_default())
@@ -114,7 +114,7 @@ impl JellyfinClient {
             )
             .json(candidate)
             .timeout(Duration::from_secs(420))
-            .send()
+            .send_retry()
             .await;
         if let Err(e) = sent {
             if !e.is_timeout() {
@@ -126,7 +126,7 @@ impl JellyfinClient {
                 Method::POST,
                 &format!("Items/{item_id}/Refresh?Recursive=true&MetadataRefreshMode=FullRefresh&ImageRefreshMode=FullRefresh&ReplaceAllMetadata=true"),
             )
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Items/Refresh").await.map(|_| ())
     }
@@ -140,7 +140,7 @@ impl JellyfinClient {
                 Method::POST,
                 &format!("Items/{item_id}/Refresh?Recursive=false&MetadataRefreshMode=FullRefresh&ImageRefreshMode=None&ReplaceAllMetadata=false&ReplaceAllImages=false"),
             )
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Items/Refresh (streams)")
             .await
@@ -156,7 +156,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::GET, "ScheduledTasks")
             .query(&[("isHidden", "false")])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin ScheduledTasks").await?;
         Ok(v.as_array().is_some_and(|a| {
@@ -168,7 +168,10 @@ impl JellyfinClient {
     }
 
     pub async fn library_refresh(&self) -> Result<()> {
-        let resp = self.req(Method::POST, "Library/Refresh").send().await?;
+        let resp = self
+            .req(Method::POST, "Library/Refresh")
+            .send_retry()
+            .await?;
         check(resp, "jellyfin Library/Refresh").await.map(|_| ())
     }
 
@@ -182,7 +185,7 @@ impl JellyfinClient {
                 ("EnableImages", "false"),
                 ("EnableUserData", "false"),
             ])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin Items").await?;
         Ok(v.get("Items")
@@ -199,7 +202,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::POST, "user_usage_stats/submit_custom_query")
             .json(&json!({ "CustomQueryString": sql, "ReplaceUserId": false }))
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin playback query").await?;
         let cols = v
@@ -244,7 +247,7 @@ impl JellyfinClient {
                     ("Fields", "SeriesId"),
                     ("EnableImages", "false"),
                 ])
-                .send()
+                .send_retry()
                 .await?;
             let v = json(resp, "jellyfin Items?Ids").await?;
             out.extend(
@@ -262,7 +265,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::GET, &format!("Users/{user_id}/Items"))
             .query(&[("Recursive", "true"), ("IncludeItemTypes", "BoxSet")])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin BoxSets").await?;
         Ok(v.get("Items")
@@ -278,7 +281,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::GET, &format!("Users/{user_id}/Items"))
             .query(&[("ParentId", id)])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin collection items").await?;
         Ok(v.get("Items")
@@ -293,7 +296,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::POST, "Collections")
             .query(&[("Name", name), ("Ids", ids.join(",").as_str())])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin POST Collections").await?;
         v.get("Id")
@@ -310,7 +313,7 @@ impl JellyfinClient {
         let resp = self
             .req(method, &format!("Collections/{id}/Items"))
             .query(&[("Ids", ids.join(",").as_str())])
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Collections/{id}/Items")
             .await
@@ -320,19 +323,22 @@ impl JellyfinClient {
     pub async fn delete_user(&self, id: &str) -> Result<()> {
         let resp = self
             .req(Method::DELETE, &format!("Users/{id}"))
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin DELETE Users/{id}").await.map(|_| ())
     }
 
     pub async fn user(&self, id: &str) -> Result<Value> {
-        let resp = self.req(Method::GET, &format!("Users/{id}")).send().await?;
+        let resp = self
+            .req(Method::GET, &format!("Users/{id}"))
+            .send_retry()
+            .await?;
         json(resp, "jellyfin Users/{id}").await
     }
 
     /// Sessions d'un utilisateur (appareils connectés, avec ou sans lecture).
     pub async fn sessions_of(&self, user_id: &str) -> Result<Vec<Value>> {
-        let resp = self.req(Method::GET, "Sessions").send().await?;
+        let resp = self.req(Method::GET, "Sessions").send_retry().await?;
         let v = json(resp, "jellyfin Sessions").await?;
         Ok(v.as_array()
             .map(|a| {
@@ -346,7 +352,7 @@ impl JellyfinClient {
 
     /// Toutes les sessions connues de Jellyfin.
     pub async fn sessions(&self) -> Result<Vec<Value>> {
-        let resp = self.req(Method::GET, "Sessions").send().await?;
+        let resp = self.req(Method::GET, "Sessions").send_retry().await?;
         Ok(json(resp, "jellyfin Sessions")
             .await?
             .as_array()
@@ -365,7 +371,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::POST, &format!("Sessions/{session_id}/Message"))
             .json(&json!({ "Header": header, "Text": text, "TimeoutMs": timeout_ms }))
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Sessions/{id}/Message")
             .await
@@ -375,7 +381,7 @@ impl JellyfinClient {
     /// Appareils connus de Jellyfin (tous comptes : `GET /Devices?userId=` ignore son filtre, on trie
     /// nous-mêmes sur `LastUserId`).
     pub async fn devices(&self) -> Result<Vec<Value>> {
-        let resp = self.req(Method::GET, "Devices").send().await?;
+        let resp = self.req(Method::GET, "Devices").send_retry().await?;
         let v = json(resp, "jellyfin Devices").await?;
         Ok(v.get("Items")
             .and_then(Value::as_array)
@@ -388,7 +394,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::DELETE, "Devices")
             .query(&[("id", device_id)])
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin DELETE Devices").await.map(|_| ())
     }
@@ -396,7 +402,7 @@ impl JellyfinClient {
     pub async fn stop_playback(&self, session_id: &str) -> Result<()> {
         let resp = self
             .req(Method::POST, &format!("Sessions/{session_id}/Playing/Stop"))
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Sessions/{id}/Playing/Stop")
             .await
@@ -408,7 +414,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::POST, "Users/New")
             .json(&body)
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin Users/New").await?;
         v.get("Id")
@@ -423,7 +429,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::POST, &format!("Users/{user_id}/Password"))
             .json(&json!({ "NewPw": new_password.expose(), "ResetPassword": false }))
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Users/Password").await.map(|_| ())
     }
@@ -432,7 +438,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::POST, &format!("Users/{user_id}/Policy"))
             .json(policy)
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Users/{id}/Policy").await.map(|_| ())
     }
@@ -441,7 +447,7 @@ impl JellyfinClient {
     pub async fn library_ids_of_type(&self, kind: &str) -> Result<Vec<String>> {
         let resp = self
             .req(Method::GET, "Library/VirtualFolders")
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin Library/VirtualFolders").await?;
         Ok(v.as_array()
@@ -466,7 +472,7 @@ impl JellyfinClient {
     ) -> Result<()> {
         let resp = self
             .req(Method::GET, &format!("Users/{user_id}"))
-            .send()
+            .send_retry()
             .await?;
         let user = json(resp, "jellyfin Users/{id}").await?;
         let mut cfg = user
@@ -478,7 +484,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::POST, &format!("Users/{user_id}/Configuration"))
             .json(&cfg)
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Users/{id}/Configuration")
             .await
@@ -499,7 +505,7 @@ impl JellyfinClient {
     ) -> Result<()> {
         let resp = self
             .req(Method::GET, &format!("Users/{user_id}"))
-            .send()
+            .send_retry()
             .await?;
         let user = json(resp, "jellyfin Users/{id}").await?;
         let mut cfg = user
@@ -519,7 +525,7 @@ impl JellyfinClient {
     pub async fn set_remember_selections(&self, user_id: &str, remember: bool) -> Result<()> {
         let resp = self
             .req(Method::GET, &format!("Users/{user_id}"))
-            .send()
+            .send_retry()
             .await?;
         let user = json(resp, "jellyfin Users/{id}").await?;
         let mut cfg = user
@@ -535,7 +541,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::POST, &format!("Users/{user_id}/Configuration"))
             .json(cfg)
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Users/{id}/Configuration")
             .await
@@ -544,7 +550,11 @@ impl JellyfinClient {
 
     /// Items (GET /Items) avec les paramètres donnés ; renvoie le tableau `Items`.
     pub async fn items(&self, query: &[(&str, &str)]) -> Result<Vec<Value>> {
-        let resp = self.req(Method::GET, "Items").query(query).send().await?;
+        let resp = self
+            .req(Method::GET, "Items")
+            .query(query)
+            .send_retry()
+            .await?;
         Ok(json(resp, "jellyfin Items")
             .await?
             .get("Items")
@@ -564,7 +574,11 @@ impl JellyfinClient {
             let mut q: Vec<(&str, &str)> = query.to_vec();
             q.push(("StartIndex", start.as_str()));
             q.push(("Limit", limit.as_str()));
-            let resp = self.req(Method::GET, "Items").query(&q).send().await?;
+            let resp = self
+                .req(Method::GET, "Items")
+                .query(&q)
+                .send_retry()
+                .await?;
             let v = json(resp, "jellyfin Items (page)").await?;
             let batch = v
                 .get("Items")
@@ -586,7 +600,7 @@ impl JellyfinClient {
             .req(Method::POST, &format!("Items/{item_id}/PlaybackInfo"))
             .query(&[("UserId", user_id)])
             .json(body)
-            .send()
+            .send_retry()
             .await?;
         json(resp, "jellyfin PlaybackInfo").await
     }
@@ -594,6 +608,7 @@ impl JellyfinClient {
     /// GET brut d'un chemin relatif (playlist HLS, segment) : (durée, octets).
     pub async fn get_bytes(&self, path: &str) -> Result<(std::time::Duration, Vec<u8>)> {
         let t0 = std::time::Instant::now();
+        // pas de nouvelle tentative : demander une playlist démarre une conversion
         let resp = self.req(Method::GET, path).send().await?;
         let status = resp.status();
         let body = resp.bytes().await?;
@@ -611,7 +626,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::DELETE, "Videos/ActiveEncodings")
             .query(&[("deviceId", device_id), ("playSessionId", play_session_id)])
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin DELETE Videos/ActiveEncodings")
             .await
@@ -628,7 +643,7 @@ impl JellyfinClient {
         back_ms: i64,
     ) -> Result<()> {
         let path = format!("DisplayPreferences/usersettings?userId={user_id}&client=emby");
-        let resp = self.req(Method::GET, &path).send().await?;
+        let resp = self.req(Method::GET, &path).send_retry().await?;
         let mut prefs = json(resp, "jellyfin DisplayPreferences").await?;
         let custom = prefs
             .get_mut("CustomPrefs")
@@ -636,7 +651,11 @@ impl JellyfinClient {
             .context("DisplayPreferences sans CustomPrefs")?;
         custom.insert("skipForwardLength".into(), json!(forward_ms.to_string()));
         custom.insert("skipBackLength".into(), json!(back_ms.to_string()));
-        let resp = self.req(Method::POST, &path).json(&prefs).send().await?;
+        let resp = self
+            .req(Method::POST, &path)
+            .json(&prefs)
+            .send_retry()
+            .await?;
         check(resp, "jellyfin DisplayPreferences").await.map(|_| ())
     }
 
@@ -649,7 +668,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::POST, "Library/Media/Updated")
             .json(&json!({ "Updates": updates }))
-            .send()
+            .send_retry()
             .await?;
         check(resp, "jellyfin Library/Media/Updated")
             .await
@@ -661,7 +680,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::GET, "Sessions")
             .query(&[("activeWithinSeconds", "120")])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin Sessions").await?;
         Ok(v.as_array()
@@ -678,7 +697,7 @@ impl JellyfinClient {
         let resp = self
             .req(Method::GET, "Sessions")
             .query(&[("activeWithinSeconds", "300")])
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, "jellyfin Sessions").await?;
         Ok(v.as_array()

@@ -5,7 +5,7 @@ use reqwest::{Client, Method, RequestBuilder, Response, StatusCode, Url};
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
-use super::{check, json};
+use super::{check, json, SendRetry};
 use crate::secret::Secret;
 
 /// qBittorrent WebUI API v2.
@@ -129,7 +129,7 @@ impl QbitClient {
             .http
             .post(self.url("api/v2/auth/login"))
             .form(&[("username", user.as_str()), ("password", password.expose())])
-            .send()
+            .send_retry()
             .await?;
         let resp = check(resp, "qbit auth/login").await?;
         let cookie = resp
@@ -154,7 +154,7 @@ impl QbitClient {
     ) -> Result<Response> {
         if self.login.is_none() {
             return Ok(build(self.http.request(method, self.url(path)))
-                .send()
+                .send_retry()
                 .await?);
         }
         for attempt in 0..2 {
@@ -167,7 +167,7 @@ impl QbitClient {
             };
             let resp = build(self.http.request(method.clone(), self.url(path)))
                 .header(reqwest::header::COOKIE, cookie)
-                .send()
+                .send_retry()
                 .await?;
             if resp.status() != StatusCode::FORBIDDEN || attempt == 1 {
                 return Ok(resp);

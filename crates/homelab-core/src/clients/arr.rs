@@ -3,7 +3,7 @@ use reqwest::{Client, Method, RequestBuilder, Url};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::{check, json};
+use super::{check, json, SendRetry};
 use crate::secret::Secret;
 
 /// Sonarr et Radarr partagent l'API v3 ; `name` sert aux logs et à l'état.
@@ -54,22 +54,26 @@ impl ArrClient {
     }
 
     pub async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
-        let resp = self.req(Method::GET, path).query(query).send().await?;
+        let resp = self
+            .req(Method::GET, path)
+            .query(query)
+            .send_retry()
+            .await?;
         json(resp, &format!("{} GET {path}", self.name)).await
     }
 
     pub async fn post(&self, path: &str, body: &Value) -> Result<Value> {
-        let resp = self.req(Method::POST, path).json(body).send().await?;
+        let resp = self.req(Method::POST, path).json(body).send_retry().await?;
         json(resp, &format!("{} POST {path}", self.name)).await
     }
 
     pub async fn put(&self, path: &str, body: &Value) -> Result<Value> {
-        let resp = self.req(Method::PUT, path).json(body).send().await?;
+        let resp = self.req(Method::PUT, path).json(body).send_retry().await?;
         json(resp, &format!("{} PUT {path}", self.name)).await
     }
 
     pub async fn ping(&self) -> Result<()> {
-        let resp = self.req(Method::GET, "ping").send().await?;
+        let resp = self.req(Method::GET, "ping").send_retry().await?;
         check(resp, &format!("{} ping", self.name))
             .await
             .map(|_| ())
@@ -118,7 +122,7 @@ impl ArrClient {
                 ("skipRedownload", "false"),
                 ("changeCategory", "false"),
             ])
-            .send()
+            .send_retry()
             .await?;
         check(resp, &format!("{} DELETE queue/{id}", self.name))
             .await
@@ -144,7 +148,7 @@ impl ArrClient {
             .req(Method::GET, "api/v3/manualimport")
             .query(&[("folder", folder), ("filterExistingFiles", "true")])
             .timeout(std::time::Duration::from_secs(300))
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, &format!("{} GET manualimport", self.name)).await?;
         Ok(v.as_array().cloned().unwrap_or_default())
@@ -183,7 +187,7 @@ impl ArrClient {
             .req(Method::PUT, &format!("api/v3/downloadclient/{id}"))
             .query(&[("forceSave", "true")])
             .json(client)
-            .send()
+            .send_retry()
             .await?;
         check(resp, &format!("{} PUT downloadclient/{id}", self.name))
             .await
@@ -211,7 +215,7 @@ impl ArrClient {
                 ("filterExistingFiles", "false"),
             ])
             .timeout(std::time::Duration::from_secs(300))
-            .send()
+            .send_retry()
             .await?;
         let v = json(resp, &format!("{} GET manualimport", self.name)).await?;
         Ok(v.as_array().cloned().unwrap_or_default())
@@ -304,6 +308,7 @@ impl ArrClient {
             // ~200 s en pratique (tous les indexers interactifs sont interrogés) ; le proxy de la
             // seedbox coupe à 300 s, on reste juste en dessous.
             .timeout(std::time::Duration::from_secs(280))
+            // recherche interactive : jamais rejouée (quota des indexers)
             .send()
             .await?;
         let v = json(resp, &format!("{} GET release (épisode)", self.name)).await?;
@@ -317,6 +322,7 @@ impl ArrClient {
             .req(Method::GET, "api/v3/release")
             .query(&[("seriesId", s.as_str()), ("seasonNumber", n.as_str())])
             .timeout(std::time::Duration::from_secs(300))
+            // recherche interactive : jamais rejouée (quota des indexers)
             .send()
             .await?;
         let v = json(resp, &format!("{} GET release", self.name)).await?;
@@ -369,7 +375,11 @@ impl ArrClient {
 
     /// `DELETE` avec paramètres (fiche film / série). Réponse ignorée.
     pub async fn delete(&self, path: &str, query: &[(&str, &str)]) -> Result<()> {
-        let resp = self.req(Method::DELETE, path).query(query).send().await?;
+        let resp = self
+            .req(Method::DELETE, path)
+            .query(query)
+            .send_retry()
+            .await?;
         check(resp, &format!("{} DELETE {path}", self.name))
             .await
             .map(|_| ())
