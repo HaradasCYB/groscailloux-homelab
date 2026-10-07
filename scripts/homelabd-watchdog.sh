@@ -5,9 +5,14 @@
 # systemd relance déjà homelabd s'il s'ARRÊTE (Restart=always). Ce script couvre l'autre cas : homelabd vivant mais
 # figé (plus de recherches, d'imports ni de pages membres, sans alerte). `/health` qui ne répond pas 3 fois de suite
 # (≈ 6 min) → `systemctl restart homelabd` + message Discord admin ; un second message quand il répond de nouveau.
+# `/health` répond 503 (donc `curl -f` échoue) quand plus aucune boucle de tâche n'a fait de tour depuis 20 min au moins :
+# un ordonnanceur figé est relancé au bout de ≈ 26 min (battement de cœur, `scheduler::stale_after`).
 #
 #   homelabd-watchdog.sh            un passage
 #   homelabd-watchdog.sh --check    état seulement, ne relance rien
+#
+# Journal (2026-10-07) : l'unité est en LogLevelMax=notice. Le script n'écrit rien tant que /health répond ; ses
+# lignes `logger` portent une priorité explicite (warning : échec et relance, notice : retour à la normale).
 set -u
 MODE="${1:-}"
 URL="${HOMELABD_HEALTH_URL:-http://127.0.0.1:8766/health}"
@@ -34,7 +39,7 @@ discord() { # $1 = titre, $2 = texte, $3 = couleur
 
 if curl -fsS -m 10 "$URL" >/dev/null 2>&1; then
   if [ -f "$ALERTED" ]; then
-    logger -t homelabd-watchdog "homelabd répond de nouveau"
+    logger -t homelabd-watchdog -p user.notice "homelabd répond de nouveau"
     [ "$MODE" = "--check" ] || discord "homelabd répond de nouveau" "Le chien de garde l'avait relancé ; /health répond." 3066993
     rm -f "$ALERTED"
   fi
@@ -46,14 +51,14 @@ fi
 n=$(( $(cat "$FAILS" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$FAILS"
 state=$(systemctl is-active homelabd 2>/dev/null)
-logger -t homelabd-watchdog "homelabd ne répond pas sur /health (échec $n/$LIMIT, état systemd : $state)"
+logger -t homelabd-watchdog -p user.warning "homelabd ne répond pas sur /health (échec $n/$LIMIT, état systemd : $state)"
 if [ "$MODE" = "--check" ]; then
   echo "homelabd ne répond pas (échec $n/$LIMIT, état systemd : $state)"
   exit 0
 fi
 [ "$n" -lt "$LIMIT" ] && exit 0
 
-logger -t homelabd-watchdog "relance de homelabd"
+logger -t homelabd-watchdog -p user.warning "relance de homelabd"
 systemctl restart homelabd
 rm -f "$FAILS"
 touch "$ALERTED"

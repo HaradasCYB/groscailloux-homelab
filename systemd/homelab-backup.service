@@ -1,6 +1,9 @@
 [Unit]
 Description=Homelab state backup (tar+zstd of service state, guacdb dump)
 After=docker.service
+# Échec franc (code ≠ 0) : message Discord admin avec les 20 dernières lignes (scripts/homelab-alert.sh). Avant le
+# 2026-10-07 rien ne prévenait ; le contrôle de fraîcheur (tâche backup_watch) couvre le minuteur qui ne tourne plus.
+OnFailure=homelab-alert@%n.service
 
 [Service]
 Type=oneshot

@@ -4,9 +4,12 @@
 pub mod anime_library;
 pub mod auto_import;
 pub mod backup;
+pub mod backup_watch;
+pub mod cert_watch;
 pub mod cleanup;
 pub mod deletion_cleanup;
 pub mod disk_pressure;
+pub mod diun_watch;
 pub mod hls_loop_watch;
 pub mod id_match_import;
 pub mod identity_check;
@@ -70,6 +73,9 @@ pub fn registry() -> Vec<Box<dyn Task>> {
     vec![
         Box::new(stack_health::StackHealth),
         Box::new(seedbox_health::SeedboxHealth),
+        Box::new(cert_watch::CertWatch),
+        Box::new(backup_watch::BackupWatch),
+        Box::new(diun_watch::DiunWatch),
         Box::new(seedbox_refresh::SeedboxRefresh),
         Box::new(tracker_ratio::TrackerRatio),
         Box::new(stuck_handler::StuckHandler),

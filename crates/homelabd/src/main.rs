@@ -22,8 +22,11 @@ use homelab_core::{Config, Secrets, TaskContext};
 use tracing::{error, info, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
+/// `git describe --tags --always --dirty` au moment du build (voir build.rs), à défaut la version de Cargo.toml.
+pub const VERSION: &str = env!("HOMELAB_VERSION");
+
 #[derive(Parser, Debug)]
-#[command(version, about = "Homelab automation daemon")]
+#[command(version = VERSION, about = "Homelab automation daemon")]
 struct Args {
     #[arg(long, default_value = "/opt/homelab/homelab.toml")]
     config: PathBuf,
@@ -76,7 +79,7 @@ async fn main() -> Result<()> {
     let cfg = Config::load(&args.config)?;
     let secrets = Secrets::load(Some(&args.env_file)).context("chargement des secrets")?;
     let ctx = Arc::new(TaskContext::new(cfg, secrets, dry_run)?);
-    info!(version = env!("CARGO_PKG_VERSION"), dry_run, config = %args.config.display(), "homelabd starting");
+    info!(version = VERSION, dry_run, config = %args.config.display(), "homelabd starting");
     if dry_run {
         warn!("DRY-RUN : aucune écriture ne sera faite");
     }

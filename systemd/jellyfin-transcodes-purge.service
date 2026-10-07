@@ -1,9 +1,16 @@
 [Unit]
 Description=Jellyfin: purge du tmpfs de transcodage (segments abandonnés ; urgence si saturé)
 After=docker.service
+OnFailure=homelab-alert@%n.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/homelab
 ExecStart=/opt/homelab/scripts/jellyfin-transcodes-purge.sh
 Nice=10
+# Code 2 = « toujours saturé après la purge d'urgence » : le script a déjà posté son propre message Discord, ce n'est
+# pas une panne de l'unité (sinon OnFailure en ajouterait un second).
+SuccessExitStatus=2
+# Passage chaque minute (30 000 lignes « Starting / Finished / Deactivated » par semaine de PID 1, 20 000 du script).
+# Seules les lignes préfixées <5> (purge faite) ou <4> (urgence) restent au journal ; rien tant qu'il n'y a rien à purger.
+LogLevelMax=notice

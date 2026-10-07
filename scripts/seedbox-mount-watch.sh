@@ -18,7 +18,12 @@ RC=http://127.0.0.1:5572
 MODE=act
 case "${1:-}" in --check) MODE=check ;; "") ;; *) echo "usage: $0 [--check]" >&2; exit 1 ;; esac
 
-log() { echo "[$(date '+%F %T')] $*"; }
+# Journal (2026-10-07) : l'unité est en LogLevelMax=notice et passe toutes les 5 min. Sous systemd (JOURNAL_STREAM),
+# tout ce qui est écrit ici signale un ffprobe bloqué : <5> pour les constats et actions, <4> pour le redémarrage du
+# montage. Rien n'est écrit quand rien n'est bloqué. Dans un terminal, pas de préfixe.
+if [ -n "${JOURNAL_STREAM:-}" ]; then N='<5>'; W='<4>'; else N=''; W=''; fi
+log() { echo "${N}[$(date '+%F %T')] $*"; }
+warn() { echo "${W}[$(date '+%F %T')] $*"; }
 env_get() { grep -E "^$1=" /opt/homelab/.env 2>/dev/null | cut -d= -f2- | tr -d '"'; }
 alert() {
   local url; url=$(env_get DISCORD_WEBHOOK_ADMIN)
@@ -50,7 +55,7 @@ if [ -z "$LIST" ]; then
   [ "$MODE" = check ] && log "aucun ffprobe bloqué (> $STUCK_MIN min)"
   exit 0
 fi
-log "ffprobe bloqués (> $STUCK_MIN min) :"; echo "$LIST" | sed 's/^/  /'
+log "ffprobe bloqués (> $STUCK_MIN min) :"; echo "$LIST" | sed "s/^/${N}  /"
 [ "$MODE" = check ] && exit 0
 
 # 1. oublier les fichiers dans rclone (suffit si le fichier n'est plus tenu ouvert)
@@ -70,10 +75,10 @@ if [ "$playing" -gt 0 ] && [ "$oldest" -lt "$HARD_MIN" ]; then
   log "toujours bloqué ($oldest min) ; $playing lecture(s) seedbox en cours : redémarrage au prochain passage"
   exit 0
 fi
-log "redémarrage du montage (bloqué depuis $oldest min, lectures seedbox en cours : $playing)"
+warn "redémarrage du montage (bloqué depuis $oldest min, lectures seedbox en cours : $playing)"
 systemctl restart homelab-seedbox-mount
 sleep 10
 left=$(stuck | grep -c . || true)
 msg="Montage seedbox redémarré : ffprobe de Jellyfin bloqué depuis ${oldest} min sur ${files} (fichier supprimé resté dans le cache rclone). Lectures seedbox coupées : ${playing}. Restant bloqués : ${left}."
-log "$msg"
+warn "$msg"
 alert "$msg"

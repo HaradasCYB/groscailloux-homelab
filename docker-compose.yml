@@ -439,7 +439,7 @@ services:
 
   glances:
     <<: *base
-    image: nicolargo/glances:v4.5.4@sha256:8e138cbfa3cf1eea59633e3a173c38b0c98267db9d506bf47c2a20678c9e9f37
+    image: nicolargo/glances:4.5.4@sha256:a11e836511ff83cd123b460c21bb4cf2795ac149ac7a18f9b01587bfcb5a5033
     container_name: glances
     pid: host
     privileged: true

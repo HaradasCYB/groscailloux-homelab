@@ -47,6 +47,24 @@ renew_per_hour = 3            # renvois de lien par adresse et par heure
 announcements = true          # annonces du tchat → salon des membres
 admin_alerts = true           # alertes admin (boucles HLS, indexeur, inscriptions, relances) → salon admin
 
+[alerts]
+# Règles communes des alertes admin (revue Kaizen du 2026-10-07). Avant, une tâche qui échouait à chaque passage
+# pendant des heures n'était visible que sur /status.html et dans le journal.
+# Tâche en échec persistant : UNE alerte (mail + Discord) quand elle échoue `fail_streak` fois de suite pendant au
+# moins `fail_minutes` minutes, puis un message quand elle repasse. Les erreurs intermittentes (monitor_sync,
+# seedbox_refresh : une ou deux à la suite) ne déclenchent rien ; une tâche toutes les 20 s ne déclenche pas non
+# plus en 2 minutes grâce à la durée minimale.
+fail_streak = 6
+fail_minutes = 30
+# Plafond commun : quand Jellyfin ou la seedbox tombe, plusieurs tâches échouent ensemble ; au plus
+# `fail_alerts_max` messages « tâche en échec répété » par fenêtre de `fail_alerts_window_mins` minutes. Une série
+# non signalée repart au prochain échec (rien n'est perdu), les autres alertes (canari, seedbox_health) ne sont pas limitées.
+fail_alerts_max = 3
+fail_alerts_window_mins = 10
+# Seuils de capacité (disk_pressure.alert_pct, seedbox_health.quota_alert_pct) : une alerte par franchissement ;
+# la suivante n'arrive qu'après être redescendu de `capacity_rearm_pts` points sous le seuil.
+capacity_rearm_pts = 3
+
 [tasks]
 # Tâches non planifiées par le daemon (restent lançables via `homelabctl run`).
 disabled = ["tba_bypass"]  # tba_bypass inutile depuis episodeTitleRequired = never ; gardée comme filet
@@ -59,6 +77,9 @@ interval_secs = 300
 restart_cooldown_secs = 600
 unhealthy_grace_secs = 120
 ignore = []
+# Relance en ÉCHEC (ou service encore cassé après action) : message Discord admin, au plus un par service et par
+# heure. Avant le 2026-10-07 seule une relance réussie prévenait ; un échec n'écrivait qu'une ligne de journal.
+alert_every_secs = 3600
 
 # Sonde Guacamole : de faux identifiants doivent produire 403 INVALID_CREDENTIALS ;
 # 500 = extension MySQL morte (guacdb n'était pas prêt au démarrage). ≥ 5 min entre
@@ -131,6 +152,9 @@ vps_paths = [
 interval_secs = 300
 alert_after_mins = 10
 mount_check = "/mnt/seedbox/media"
+# Quota du compte seedbox (quota.json écrit par la seedbox toutes les 15 min, lu par le montage) : alerte admin à
+# ce pourcentage, une fois par franchissement (56,6 % le 07/10, +17 Gio/jour). 0 = pas de contrôle.
+quota_alert_pct = 85
 
 [tasks.hls_loop_watch]
 # Boucles HLS (audit lecture du 2026-09-18) : un client qui redemande sans fin le même segment d'un flux
@@ -177,6 +201,30 @@ max_default_ass_mb = 8     # au-delà, l'ASS complet n'est pas marqué par défa
 interval_secs = 900
 max_first_segment_secs = 20
 skip_if_transcodes_at_least = 2
+
+[tasks.cert_watch]
+# Certificat TLS unique des hôtes NPM (Let's Encrypt, défi DNS-01 DuckDNS ; expire le 26/11/2026) : NPM le renouvelle
+# seul dès J-30 mais ne remonte rien en cas d'échec, et le canari passe par localhost:8096 (ni NPM ni TLS). Une fois
+# par jour : connexion TLS sur `connect` avec le nom de l'hôte public de Jellyfin (JELLYFIN_PUBLIC_URL, jamais en dur),
+# lecture de la date d'expiration, `GET <hôte public><health_path>` pour la chaîne NPM → Jellyfin, et contrôle que la
+# chaîne est reconnue pour ce nom. Alerte admin (mail + Discord) sous `warn_days` jours, puis chaque jour tant que ça dure.
+interval_secs = 86400
+warn_days = 21
+connect = "127.0.0.1:443"
+health_path = "/health"
+
+[tasks.backup_watch]
+# Fraîcheur de la sauvegarde d'état (homelab-backup.timer : dimanche 04:30, hors homelabd) : alerte admin si la dernière
+# archive homelab-state-*.tar.zst a plus de `max_age_days` jours. Un échec franc de l'unité prévient déjà par
+# OnFailure=homelab-alert@ ; ceci couvre le minuteur qui ne tourne plus du tout.
+interval_secs = 86400
+max_age_days = 8
+
+[tasks.diun_watch]
+# diun/images.yml relu chaque jour avec le même contrôle strict que `homelabctl check` (clés en double, une entrée par
+# image du compose) : du 18/09 au 07/10 une clé en double a rendu diun aveugle (« No image found » chaque matin) sans
+# que rien ne le signale. Alerte admin (mail + Discord) tant que le fichier est invalide.
+interval_secs = 86400
 
 [tasks.subscription_cycle]
 # Rappels, passage en grâce, suspension à la fin de la grâce, réactivation (voir [subscriptions]).
@@ -339,6 +387,7 @@ pattern = "stalled|metadata|no connections"
 
 [tasks.disk_pressure]
 interval_secs = 900
+alert_pct = 85              # alerte admin (une par franchissement) bien avant hard_pct, qui supprime sans prévenir
 hard_pct = 95               # supprime les torrents arrêtés les plus anciens
 crit_pct = 98               # log seulement, action manuelle
 max_actions_per_run = 5

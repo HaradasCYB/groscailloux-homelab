@@ -463,8 +463,24 @@ Epoch : {epoch}\n\
     )
 }
 
-async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok", "version": env!("CARGO_PKG_VERSION") }))
+/// Santé du daemon, lue par le chien de garde (`scripts/homelabd-watchdog.sh`) : 200 tant que l'ordonnanceur tourne,
+/// 503 quand plus aucune boucle de tâche n'a fait de tour depuis `scheduler::stale_after` (20 min au moins). Avant,
+/// la réponse était toujours « ok » : un ordonnanceur figé ne déclenchait aucune relance.
+async fn health() -> (StatusCode, Json<Value>) {
+    let h = crate::scheduler::health();
+    let code = if h.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (
+        code,
+        Json(json!({
+            "status": if h.ok { "ok" } else { "scheduler_stale" },
+            "version": crate::VERSION,
+            "scheduler_idle_secs": h.age_secs,
+        })),
+    )
 }
 
 /// `/status` et `/status.html` exposent l'activité interne : si `HOMELABD_STATUS_TOKEN` est
@@ -547,6 +563,7 @@ async fn status_html(
         .and_then(|r| r.ok())
         .unwrap_or((None, None, Some(false)));
     let tasks = homelab_core::tasks::names();
+    let alerts = st.ctx.state.read(|s| s.alerts.clone()).await;
     let html = status_page::render(&status_page::PageData {
         now: homelab_core::state::now(),
         runs: &runs,
@@ -557,6 +574,7 @@ async fn status_html(
         stuck_torrents: &status_page::unmatched(&imports, homelab_core::state::now(), 15),
         blocked_seasons: &status_page::blocked_seasons(&seasons, homelab_core::state::now(), 15),
         canary: canary_text(&st.ctx).await,
+        alerts: &alerts,
     });
     (StatusCode::OK, Html(html))
 }

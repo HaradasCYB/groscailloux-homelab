@@ -12,11 +12,14 @@
 //! lancements en une heure, le 30/09), un Chromecast 42 en 22 min (04/10), sans jamais déclencher la règle
 //! des segments. Chaque lancement laisse un `FFmpeg.<Type>-<AAAA-MM-JJ>_<HH-MM-SS>_<id>_<n>.log` (heure locale)
 //! dans le dossier des journaux Jellyfin : on compte, par titre, les lancements des 60 dernières minutes (sans
-//! les titres du canari), et au-delà de `max_jobs_per_item_hour` : mail à l'admin, une fois par titre et par
-//! jour. L'ancien repère « non-keyframe breaks » n'existe plus en 12.x et ne comptait de toute façon que le
-//! canari. Les 5xx sur `hls1/` restent relevés dans le résumé.
+//! les titres du canari), et au-delà de `max_jobs_per_item_hour` : mail à l'admin, **une fois par rafale** (2026-10-07).
+//! Le titre signalé est mémorisé dans `state.burst_alerts` jusqu'à ce que son compteur horaire retombe sous le seuil :
+//! une seconde rafale du même jour alerte de nouveau (avant : une fois par titre et par jour, en mémoire, perdu à
+//! chaque redémarrage), et un redémarrage de homelabd ne répète pas une rafale déjà signalée. L'alerte donne le
+//! titre Jellyfin et pas seulement son identifiant. L'ancien repère « non-keyframe breaks » n'existe plus en 12.x
+//! et ne comptait de toute façon que le canari. Les 5xx sur `hls1/` restent relevés dans le résumé.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -24,6 +27,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use serde_json::Value;
 use tracing::{info, warn};
 
 use super::{Report, Task};
@@ -267,14 +271,98 @@ pub fn compact_id(id: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Boucles déjà signalées (client, média) : pas de second mail dans la même fenêtre.
-fn reported() -> &'static Mutex<HashSet<(String, String)>> {
-    static SET: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
-    SET.get_or_init(|| Mutex::new(HashSet::new()))
+/// Rafales à signaler et à réarmer. `current` : titres en rafale à ce passage ; `alerted` : titres déjà signalés
+/// (`state.burst_alerts`). Un titre en rafale non encore signalé donne une alerte ; un titre signalé dont le
+/// compteur horaire est retombé sous le seuil (absent de `current`) est réarmé : la rafale suivante alertera.
+pub fn burst_transitions(
+    current: &[String],
+    alerted: &BTreeMap<String, i64>,
+) -> (Vec<String>, Vec<String>) {
+    let fresh = current
+        .iter()
+        .filter(|id| !alerted.contains_key(*id))
+        .cloned()
+        .collect();
+    let cleared = alerted
+        .keys()
+        .filter(|id| !current.contains(id))
+        .cloned()
+        .collect();
+    (fresh, cleared)
 }
 
-/// Rafales déjà signalées (jour, titre) : un mail par titre et par jour (perdu au redémarrage, sans gravité).
-fn bursts_reported() -> &'static Mutex<HashSet<(String, String)>> {
+/// Libellé lisible d'un élément Jellyfin : « Série S01E03 — Titre », « Film (2021) » ou son nom seul.
+pub fn item_title(item: &Value) -> Option<String> {
+    let name = item
+        .get("Name")
+        .and_then(Value::as_str)
+        .filter(|n| !n.is_empty());
+    match item.get("Type").and_then(Value::as_str) {
+        Some("Episode") => {
+            let series = item.get("SeriesName").and_then(Value::as_str)?;
+            let num = |k: &str| item.get(k).and_then(Value::as_u64);
+            let code = match (num("ParentIndexNumber"), num("IndexNumber")) {
+                (Some(s), Some(e)) => format!(" S{s:02}E{e:02}"),
+                _ => String::new(),
+            };
+            Some(match name {
+                Some(n) => format!("{series}{code} — {n}"),
+                None => format!("{series}{code}"),
+            })
+        }
+        Some("Movie") => {
+            let year = item.get("ProductionYear").and_then(Value::as_u64);
+            Some(match (name?, year) {
+                (n, Some(y)) => format!("{n} ({y})"),
+                (n, None) => n.to_string(),
+            })
+        }
+        _ => name.map(str::to_string),
+    }
+}
+
+/// « « Titre » (id) » quand le titre est connu, sinon « média id » : l'identifiant reste dans le message, c'est
+/// lui que portent les journaux de Jellyfin et de NPM.
+pub fn describe_item(id: &str, titles: &HashMap<String, String>) -> String {
+    match titles.get(&compact_id(id)) {
+        Some(t) => format!("« {t} » ({id})"),
+        None => format!("média {id}"),
+    }
+}
+
+/// Titres Jellyfin des médias d'une alerte (clé : identifiant compact). Au mieux : Jellyfin injoignable, ou un
+/// titre disparu, laisse l'identifiant seul dans le message.
+async fn titles_of(ctx: &TaskContext, ids: &[String]) -> HashMap<String, String> {
+    let wanted: Vec<String> = ids
+        .iter()
+        .map(|i| compact_id(i))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if wanted.is_empty() {
+        return HashMap::new();
+    }
+    match ctx.jellyfin.items_by_ids(&wanted).await {
+        Ok(items) => items
+            .iter()
+            .filter_map(|it| {
+                let id = it.get("Id").and_then(Value::as_str)?;
+                Some((compact_id(id), item_title(it)?))
+            })
+            .collect(),
+        Err(e) => {
+            warn!(
+                task = "hls_loop_watch",
+                error = format!("{e:#}"),
+                "titres Jellyfin non lus pour l'alerte"
+            );
+            HashMap::new()
+        }
+    }
+}
+
+/// Boucles déjà signalées (client, média) : pas de second mail dans la même fenêtre.
+fn reported() -> &'static Mutex<HashSet<(String, String)>> {
     static SET: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
     SET.get_or_init(|| Mutex::new(HashSet::new()))
 }
@@ -328,14 +416,24 @@ impl Task for HlsLoopWatch {
             .await;
         let bursts = find_bursts(&jobs, local_now - 3600, cfg.max_jobs_per_item_hour, &canary);
         let day = chrono::Local::now().format("%Y%m%d").to_string();
-        let fresh_bursts: Vec<&Burst> = {
-            let mut seen = bursts_reported().lock().expect("mutex sain");
-            seen.retain(|(d, _)| d == &day);
-            bursts
-                .iter()
-                .filter(|b| seen.insert((day.clone(), b.item.clone())))
-                .collect()
-        };
+        // une alerte par rafale : le titre signalé reste dans l'état jusqu'à ce que son compteur retombe sous le seuil
+        let in_burst: Vec<String> = bursts.iter().map(|b| b.item.clone()).collect();
+        let alerted = ctx.state.read(|s| s.burst_alerts.clone()).await;
+        let (fresh_ids, cleared) = burst_transitions(&in_burst, &alerted);
+        if !cleared.is_empty() && !ctx.dry_run {
+            let _ = ctx
+                .state
+                .update(|s| {
+                    for id in &cleared {
+                        s.burst_alerts.remove(id);
+                    }
+                })
+                .await;
+        }
+        let fresh_bursts: Vec<&Burst> = bursts
+            .iter()
+            .filter(|b| fresh_ids.contains(&b.item))
+            .collect();
         for b in &fresh_bursts {
             warn!(
                 task = "hls_loop_watch",
@@ -345,6 +443,8 @@ impl Task for HlsLoopWatch {
             );
         }
         if !fresh_bursts.is_empty() && !ctx.dry_run {
+            let ids: Vec<String> = fresh_bursts.iter().map(|b| b.item.clone()).collect();
+            let titles = titles_of(ctx, &ids).await;
             let body = fresh_bursts
                 .iter()
                 .map(|b| {
@@ -355,8 +455,9 @@ impl Task for HlsLoopWatch {
                         .collect::<Vec<_>>()
                         .join(", ");
                     format!(
-                        "- média {} : {} lancements de ffmpeg en 60 min ({kinds})",
-                        b.item, b.count
+                        "- {} : {} lancements de ffmpeg en 60 min ({kinds})",
+                        describe_item(&b.item, &titles),
+                        b.count
                     )
                 })
                 .collect::<Vec<_>>()
@@ -370,7 +471,19 @@ impl Task for HlsLoopWatch {
                  recharge, et le processeur travaille pour rien.\n\n{body}\n\nJournaux : \
                  jellyfin/config/log/FFmpeg.*_<id>_*.log et /opt/homelab/npm/data/logs/proxy-host-1_access.log (UTC)."
             );
-            crate::alerts::admin(ctx, crate::alerts::Level::Warn, &subject, &body).await;
+            let sent = crate::alerts::admin(ctx, crate::alerts::Level::Warn, &subject, &body).await;
+            // signalées, sauf si rien n'est parti alors qu'un canal existe : on réessaiera au passage suivant
+            if !crate::alerts::retry_later(sent, crate::alerts::configured(ctx)) {
+                let at = chrono::Utc::now().timestamp();
+                let _ = ctx
+                    .state
+                    .update(|s| {
+                        for id in &ids {
+                            s.burst_alerts.insert(id.clone(), at);
+                        }
+                    })
+                    .await;
+            }
         }
         let max_jobs = find_bursts(&jobs, local_now - 3600, 1, &canary)
             .first()
@@ -404,12 +517,14 @@ impl Task for HlsLoopWatch {
             );
         }
         if !fresh.is_empty() && !ctx.dry_run {
+            let ids: Vec<String> = fresh.iter().map(|l| l.item.clone()).collect();
+            let titles = titles_of(ctx, &ids).await;
             let body = fresh
                 .iter()
                 .map(|l| {
                     format!(
-                        "- média {} : segment {} redemandé {} fois en {} s par {}",
-                        l.item,
+                        "- {} : segment {} redemandé {} fois en {} s par {}",
+                        describe_item(&l.item, &titles),
                         l.segment,
                         l.count,
                         l.last - l.first,
@@ -588,6 +703,70 @@ mod tests {
         assert!(find_bursts(&jobs, 0, 30, &HashSet::new())
             .iter()
             .any(|x| x.item == canary));
+    }
+
+    #[test]
+    fn a_burst_alerts_once_and_again_only_after_the_count_fell_below_the_threshold() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut alerted: BTreeMap<String, i64> = BTreeMap::new();
+        // 1re rafale (le 04/10 à 18:34) : alerte
+        let (fresh, cleared) = burst_transitions(&ids(&["a"]), &alerted);
+        assert_eq!((fresh, cleared), (ids(&["a"]), vec![]));
+        alerted.insert("a".into(), 100);
+        // elle dure : silence, même au passage suivant et après un redémarrage (l'état est sur disque)
+        let (fresh, cleared) = burst_transitions(&ids(&["a"]), &alerted);
+        assert!(fresh.is_empty() && cleared.is_empty());
+        // le compteur horaire retombe sous le seuil (2 à 19:34) : réarmé
+        let (fresh, cleared) = burst_transitions(&[], &alerted);
+        assert_eq!((fresh, cleared), (vec![], ids(&["a"])));
+        alerted.clear();
+        // seconde rafale du même titre le même jour (32 à 00:12) : nouvelle alerte
+        let (fresh, _) = burst_transitions(&ids(&["a"]), &alerted);
+        assert_eq!(fresh, ids(&["a"]));
+        // un autre titre en même temps ne dépend pas du premier
+        alerted.insert("a".into(), 100);
+        let (fresh, cleared) = burst_transitions(&ids(&["a", "b"]), &alerted);
+        assert_eq!((fresh, cleared), (ids(&["b"]), vec![]));
+    }
+
+    #[test]
+    fn item_titles_read_like_a_library() {
+        let ep = serde_json::json!({
+            "Type": "Episode", "Name": "La chute", "SeriesName": "Bleach",
+            "ParentIndexNumber": 17, "IndexNumber": 3
+        });
+        assert_eq!(item_title(&ep).unwrap(), "Bleach S17E03 — La chute");
+        let ep_no_num =
+            serde_json::json!({"Type": "Episode", "Name": "Pilote", "SeriesName": "Série"});
+        assert_eq!(item_title(&ep_no_num).unwrap(), "Série — Pilote");
+        let movie =
+            serde_json::json!({"Type": "Movie", "Name": "Your Name", "ProductionYear": 2016});
+        assert_eq!(item_title(&movie).unwrap(), "Your Name (2016)");
+        let movie_no_year = serde_json::json!({"Type": "Movie", "Name": "Sans année"});
+        assert_eq!(item_title(&movie_no_year).unwrap(), "Sans année");
+        // type inconnu : le nom seul ; rien d'exploitable : pas de titre
+        assert_eq!(
+            item_title(&serde_json::json!({"Type": "Video", "Name": "Clip"})).unwrap(),
+            "Clip"
+        );
+        assert!(item_title(&serde_json::json!({"Type": "Movie"})).is_none());
+        assert!(item_title(&serde_json::json!({"Type": "Episode", "Name": "x"})).is_none());
+    }
+
+    #[test]
+    fn the_alert_names_the_title_and_keeps_the_id() {
+        let mut titles = HashMap::new();
+        titles.insert(
+            compact_id("bc146385-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            "Bleach S17E03 — La chute".to_string(),
+        );
+        // l'identifiant de l'alerte peut porter des tirets et des majuscules (chemin NPM) : même média
+        assert_eq!(
+            describe_item("BC146385-AAAA-AAAA-AAAA-AAAAAAAAAAAA", &titles),
+            "« Bleach S17E03 — La chute » (BC146385-AAAA-AAAA-AAAA-AAAAAAAAAAAA)"
+        );
+        // titre inconnu (Jellyfin injoignable ou élément disparu) : l'identifiant seul, comme avant
+        assert_eq!(describe_item("zzz", &titles), "média zzz");
     }
 
     #[test]

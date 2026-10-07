@@ -1,7 +1,12 @@
 [Unit]
 Description=Chien de garde de homelabd (/health ; relance si figé)
 After=homelabd.service
+# Si le script lui-même plante, personne ne surveillait le chien de garde (2026-10-07).
+OnFailure=homelab-alert@%n.service
 
 [Service]
 Type=oneshot
 ExecStart=/opt/homelab/scripts/homelabd-watchdog.sh
+# Passage toutes les 2 min : les lignes « Starting / Finished / Deactivated » de PID 1 (11 000 par semaine) sont
+# écartées ; le script écrit en `logger -p user.warning` / `user.notice` ce qui compte (échec de /health, relance).
+LogLevelMax=notice

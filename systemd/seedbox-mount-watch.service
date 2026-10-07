@@ -1,9 +1,13 @@
 [Unit]
 Description=Seedbox : chien de garde du montage rclone (ffprobe de Jellyfin bloqué sur un fichier supprimé)
 After=homelab-seedbox-mount.service docker.service
+OnFailure=homelab-alert@%n.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/homelab
 ExecStart=/opt/homelab/scripts/seedbox-mount-watch.sh
 Nice=10
+# Passage toutes les 5 min : PID 1 écrit 3 lignes par passage, le script rien tant qu'aucun ffprobe n'est bloqué.
+# Seules les lignes préfixées <5> / <4> par le script (actions, redémarrage du montage) restent au journal.
+LogLevelMax=notice
