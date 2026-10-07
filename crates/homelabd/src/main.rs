@@ -107,6 +107,10 @@ async fn main() -> Result<()> {
     for h in handles {
         h.abort();
     }
+    // tenue des passages différée (`update_lazy`) : écrite avant de partir
+    if let Err(e) = ctx.state.flush().await {
+        warn!(error = format!("{e:#}"), "state flush failed");
+    }
     Ok(())
 }
 
