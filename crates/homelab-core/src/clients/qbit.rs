@@ -12,7 +12,7 @@ use crate::secret::Secret;
 ///
 /// Sans identifiants (qBittorrent du VPS) : l'IP du daemon est whitelistée côté qBit.
 /// Avec identifiants (qBittorrent de la seedbox, derrière le proxy HTTPS de l'hébergeur) :
-/// session par cookie `SID`, ouverte à la première requête et rouverte sur 403.
+/// session par cookie `SID` (`QBT_SID_<port>` depuis la 5.2), ouverte à la première requête et rouverte sur 403.
 #[derive(Clone)]
 pub struct QbitClient {
     base: Url,
@@ -384,11 +384,18 @@ impl QbitClient {
     }
 }
 
-/// `SID=abc; HttpOnly; path=/` → `SID=abc`.
+/// `SID=abc; HttpOnly; path=/` → `SID=abc`. qBittorrent 5.2 suffixe le nom du cookie par le port de la WebUI
+/// (`QBT_SID_8080=abc`) : les deux formes sont acceptées, et la paire est renvoyée telle quelle dans l'en-tête
+/// `Cookie` (le nom n'est jamais reconstruit). Le suffixe doit être un port numérique : un autre cookie posé
+/// par un proxy (`QBT_SID_x`, `SIDE=…`) n'est pas pris pour la session.
 fn sid_cookie(header: &str) -> Option<String> {
     let pair = header.split(';').next()?.trim();
-    let value = pair.strip_prefix("SID=")?;
-    (!value.is_empty()).then(|| pair.to_string())
+    let (name, value) = pair.split_once('=')?;
+    let session = name == "SID"
+        || name
+            .strip_prefix("QBT_SID_")
+            .is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()));
+    (session && !value.is_empty()).then(|| pair.to_string())
 }
 
 /// `-1` reste `-1`, sinon deux décimales (ce que qBit renvoie dans `ratio_limit`).
@@ -418,6 +425,21 @@ mod tests {
             Some("SID=AbC123")
         );
         assert_eq!(sid_cookie("SID=; path=/"), None);
-        assert_eq!(sid_cookie("QBT_SID_8080=x; path=/"), None);
+        // qBittorrent 5.2 : le nom porte le port de la WebUI (« Session cookie name appended with port number »)
+        assert_eq!(
+            sid_cookie("QBT_SID_8080=x; HttpOnly; path=/").as_deref(),
+            Some("QBT_SID_8080=x")
+        );
+        assert_eq!(
+            sid_cookie("QBT_SID_16141=AbC123==; path=/; SameSite=Strict").as_deref(),
+            Some("QBT_SID_16141=AbC123==")
+        );
+        assert_eq!(sid_cookie("QBT_SID_8080=; path=/"), None, "valeur vide");
+        // pas une session de qBittorrent
+        assert_eq!(sid_cookie("QBT_SID_=x"), None);
+        assert_eq!(sid_cookie("QBT_SID_web=x"), None);
+        assert_eq!(sid_cookie("SIDE=x"), None);
+        assert_eq!(sid_cookie("lang=fr; path=/"), None);
+        assert_eq!(sid_cookie(""), None);
     }
 }
