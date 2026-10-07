@@ -66,6 +66,27 @@ pub trait Task: Send + Sync {
     async fn run(&self, ctx: &TaskContext) -> Result<Report>;
 }
 
+/// Lecture d'un côté (Arr, qBittorrent de la seedbox) : `None` s'il est injoignable, avec un avertissement
+/// « côté sauté » (chaîne de causes complète) au lieu d'une erreur qui ferait échouer tout le passage.
+///
+/// Les applis de la seedbox ne repartent pas seules après un redémarrage de l'hôte (30/09 → 02/10 : 16 h) : trois
+/// tâches échouaient alors à chaque passage (`seedbox_refresh` 201 fois, `monitor_sync` 100, `russian_search` 102)
+/// pour un incident que `seedbox_health` signale déjà. `deletion_cleanup` et `torrent_import` faisaient déjà ainsi.
+pub fn side_or_skip<T>(task: &str, side: &str, read: Result<T>) -> Option<T> {
+    match read {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!(
+                task,
+                side,
+                error = format!("{e:#}"),
+                "arr unreachable: side skipped this run"
+            );
+            None
+        }
+    }
+}
+
 pub fn registry() -> Vec<Box<dyn Task>> {
     vec![
         Box::new(stack_health::StackHealth),
@@ -113,6 +134,19 @@ pub fn label_of(name: &str) -> String {
         .find(|t| t.name() == name)
         .map(|t| t.label().to_string())
         .unwrap_or_else(|| name.to_string())
+}
+
+#[cfg(test)]
+mod side_tests {
+    use super::*;
+
+    #[test]
+    fn an_unreachable_side_is_skipped_not_failed() {
+        assert_eq!(side_or_skip("t", "seedbox", Ok(3)), Some(3));
+        let down: Result<i32> =
+            Err(anyhow::anyhow!("connexion refusée").context("sonarr-seedbox GET api/v3/series"));
+        assert_eq!(side_or_skip("t", "seedbox", down), None);
+    }
 }
 
 #[cfg(test)]

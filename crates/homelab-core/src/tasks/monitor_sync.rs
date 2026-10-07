@@ -8,6 +8,8 @@
 //! Plusieurs Sonarr (VPS, seedbox) : chaque demande est routée vers le Sonarr dont
 //! l'id Jellyseerr vaut `media.serviceId` — les ids de séries diffèrent d'une instance
 //! à l'autre, un mauvais routage modifierait une autre série.
+//! Un Sonarr injoignable est sauté (avertissement, passage réussi). Tant qu'un côté est muet, l'autre ne peut pas
+//! savoir ce que le premier possède déjà : il n'ajoute alors aucun suivi (il peut encore en retirer).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -146,16 +148,29 @@ pub fn seasons_with_files(all_series: &[Value]) -> BTreeMap<i64, BTreeSet<i64>> 
 
 /// Applique la règle sur la copie de `series`. `elsewhere` : saisons déjà présentes sur l'autre
 /// machine (jamais suivies ici, sinon doublon dans Jellyfin). Renvoie (avant, après).
+///
+/// `may_enable` : faux quand l'autre machine n'a pas répondu à ce passage — `elsewhere` est alors incomplet, et
+/// suivre une nouvelle saison risquerait un doublon. On peut encore **retirer** le suivi, jamais l'ajouter ; ce
+/// sera fait au passage suivant, quand l'autre machine répond.
 pub fn apply_with(
     series: &mut Value,
     requested: &BTreeSet<i64>,
     elsewhere: &BTreeSet<i64>,
+    may_enable: bool,
 ) -> (Vec<i64>, Vec<i64>) {
     let wanted: BTreeSet<i64> = requested.difference(elsewhere).copied().collect();
-    apply(series, &wanted)
+    apply_inner(series, &wanted, may_enable)
 }
 
 pub fn apply(series: &mut Value, requested: &BTreeSet<i64>) -> (Vec<i64>, Vec<i64>) {
+    apply_inner(series, requested, true)
+}
+
+fn apply_inner(
+    series: &mut Value,
+    requested: &BTreeSet<i64>,
+    may_enable: bool,
+) -> (Vec<i64>, Vec<i64>) {
     let before = monitored(series);
     if let Some(seasons) = series.get_mut("seasons").and_then(Value::as_array_mut) {
         for s in seasons.iter_mut() {
@@ -168,10 +183,17 @@ pub fn apply(series: &mut Value, requested: &BTreeSet<i64>) -> (Vec<i64>, Vec<i6
                 .and_then(Value::as_i64)
                 .unwrap_or(0)
                 > 0;
-            s["monitored"] = Value::Bool(requested.contains(&n) || has_files);
+            let was = s.get("monitored").and_then(Value::as_bool).unwrap_or(false);
+            s["monitored"] =
+                Value::Bool((requested.contains(&n) && (may_enable || was)) || has_files);
         }
     }
     (before, monitored(series))
+}
+
+/// Une autre machine que la `i`-ième n'a-t-elle pas répondu à ce passage ?
+pub fn others_down(down: &[bool], i: usize) -> bool {
+    down.iter().enumerate().any(|(j, d)| j != i && *d)
 }
 
 fn monitored(series: &Value) -> Vec<i64> {
@@ -193,6 +215,7 @@ async fn sync_one(
     all_series: Vec<Value>,
     map: &BTreeMap<i64, BTreeSet<i64>>,
     elsewhere: &BTreeMap<i64, BTreeSet<i64>>,
+    may_enable: bool,
 ) -> Result<u32> {
     if map.is_empty() {
         return Ok(0);
@@ -211,7 +234,7 @@ async fn sync_one(
             .to_string();
         let tvdb = series.get("tvdbId").and_then(Value::as_i64).unwrap_or(0);
         let other = elsewhere.get(&tvdb).unwrap_or(&empty);
-        let (before, after) = apply_with(&mut series, req, other);
+        let (before, after) = apply_with(&mut series, req, other, may_enable);
         if before == after {
             continue;
         }
@@ -260,15 +283,28 @@ impl Task for MonitorSync {
         }
         let deleted = ctx.state.read(|s| s.deletions.seasons.clone()).await;
         // séries de chaque Sonarr, puis saisons présentes « ailleurs » pour chacun
-        let mut lists = Vec::new();
-        for (sonarr, _, _) in &targets {
-            lists.push(sonarr.series().await?);
+        // Un Sonarr injoignable (applis seedbox arrêtées) saute son côté sans faire échouer le passage : 100 erreurs
+        // en 17 h pour un seul incident (30/09), et le Sonarr du VPS restait lui aussi à l'écart.
+        let mut lists: Vec<Option<Vec<Value>>> = Vec::new();
+        for (sonarr, _, side) in &targets {
+            lists.push(super::side_or_skip(
+                "monitor_sync",
+                side,
+                sonarr.series().await,
+            ));
         }
-        let files: Vec<BTreeMap<i64, BTreeSet<i64>>> =
-            lists.iter().map(|l| seasons_with_files(l)).collect();
+        let down: Vec<bool> = lists.iter().map(Option::is_none).collect();
+        let files: Vec<BTreeMap<i64, BTreeSet<i64>>> = lists
+            .iter()
+            .map(|l| l.as_deref().map(seasons_with_files).unwrap_or_default())
+            .collect();
         let mut changes = 0u32;
         let mut summary = Vec::new();
         for (i, ((sonarr, server, side), list)) in targets.into_iter().zip(lists).enumerate() {
+            let Some(list) = list else {
+                summary.push(format!("{}=injoignable", sonarr.name));
+                continue;
+            };
             // saisons supprimées ici : traitées comme « déjà ailleurs » (jamais re-surveillées)
             let mut elsewhere = deleted_seasons(&deleted, side, &requests);
             for (j, f) in files.iter().enumerate() {
@@ -279,7 +315,9 @@ impl Task for MonitorSync {
                 }
             }
             let subset = for_server(&map, server);
-            changes += sync_one(ctx, sonarr, list, &subset, &elsewhere).await?;
+            // l'autre machine muette : on ne sait pas ce qu'elle a déjà, rien de nouveau n'est suivi ici
+            let may_enable = !others_down(&down, i);
+            changes += sync_one(ctx, sonarr, list, &subset, &elsewhere, may_enable).await?;
             summary.push(format!("{}={}", sonarr.name, subset.len()));
         }
         Ok(Report::new(
@@ -362,7 +400,39 @@ mod tests {
             {"seasonNumber": 9, "monitored": false, "statistics": {"episodeFileCount": 0}},
             {"seasonNumber": 10, "monitored": true, "statistics": {"episodeFileCount": 0}},
             {"seasonNumber": 14, "monitored": false, "statistics": {"episodeFileCount": 24}}]});
-        let (_, after) = apply_with(&mut sb, &BTreeSet::from([9, 10, 14]), &elsewhere[&72368]);
+        let (_, after) = apply_with(
+            &mut sb,
+            &BTreeSet::from([9, 10, 14]),
+            &elsewhere[&72368],
+            true,
+        );
         assert_eq!(after, vec![9, 14]);
+    }
+
+    #[test]
+    fn a_silent_other_machine_blocks_new_monitoring_only() {
+        let sonarr =
+            |s: &mut Value| apply_with(s, &BTreeSet::from([1, 2, 3]), &BTreeSet::new(), false).1;
+        let mut s = json!({"id":5,"seasons":[
+            {"seasonNumber":0,"monitored":true},
+            {"seasonNumber":1,"monitored":true,"statistics":{"episodeFileCount":0}},
+            {"seasonNumber":2,"monitored":false,"statistics":{"episodeFileCount":0}},
+            {"seasonNumber":3,"monitored":false,"statistics":{"episodeFileCount":4}},
+            {"seasonNumber":4,"monitored":true,"statistics":{"episodeFileCount":0}},
+        ]});
+        // S1 déjà suivie et demandée : gardée ; S2 demandée mais pas suivie : pas ajoutée sans connaître l'autre
+        // machine ; S3 a des fichiers : suivie comme toujours ; S4 plus demandée : le suivi est bien retiré
+        assert_eq!(sonarr(&mut s), vec![0, 1, 3]);
+        // la même fiche quand l'autre machine répond : S2 est suivie
+        let (_, after) = apply_with(&mut s, &BTreeSet::from([1, 2, 3]), &BTreeSet::new(), true);
+        assert_eq!(after, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn only_the_silent_machine_counts_as_down_for_the_others() {
+        assert!(!others_down(&[false, false], 0));
+        assert!(others_down(&[false, true], 0), "la seedbox est muette");
+        assert!(!others_down(&[false, true], 1), "elle-même ne compte pas");
+        assert!(!others_down(&[true], 0));
     }
 }
