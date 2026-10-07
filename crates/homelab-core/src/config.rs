@@ -482,6 +482,9 @@ pub struct SubtitleSync {
     pub failed_retry_days: u64,
     /// Au-delà de cette taille, l'ASS complet n'est pas marqué `.default` (le SRT dérivé l'est).
     pub max_default_ass_mb: u64,
+    /// Heure locale du balayage complet quotidien (premier passage qui la suit) ; les autres passages ne relisent que
+    /// les éléments que Jellyfin a modifiés depuis le passage précédent.
+    pub full_scan_hour: u32,
 }
 
 impl Default for SubtitleSync {
@@ -494,6 +497,7 @@ impl Default for SubtitleSync {
             retry_hours: 6,
             failed_retry_days: 7,
             max_default_ass_mb: 8,
+            full_scan_hour: 5,
         }
     }
 }
