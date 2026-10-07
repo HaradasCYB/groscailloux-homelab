@@ -127,8 +127,29 @@ async fn run_probe(ctx: &TaskContext, p: &Probe) -> Result<(u16, String)> {
     Ok((status, body))
 }
 
-/// `verb` = "start" (→ `up -d`, respecte depends_on) ou "restart".
-async fn compose_action(ctx: &TaskContext, verb: &str, service: &str) -> bool {
+/// Une relance ratée n'a de sens pour l'admin qu'une fois par service et par `alert_every_secs` : le passage suivant
+/// (5 min plus tard) réessaie sans reprévenir. `last` = date de la dernière alerte pour ce service.
+pub fn failure_alert_due(last: Option<i64>, ts: i64, every_secs: i64) -> bool {
+    last.is_none_or(|t| ts - t >= every_secs)
+}
+
+/// Texte du message Discord pour une relance en échec : `what` = ce qui a été tenté (déjà rédigé), `why` = l'erreur,
+/// coupée (le stderr de compose peut être long).
+pub fn failure_text(service: &str, what: &str, why: &str, every_secs: i64) -> (String, String) {
+    let why: String = why.chars().take(300).collect();
+    (
+        format!("Relance en échec : {service}"),
+        format!(
+            "{what} (stack_health) a échoué : {why}\n\
+             Le service reste cassé ou à moitié remis en état. stack_health réessaie à chaque passage et ne \
+             reprévient pas avant {} min. Voir `journalctl -u homelabd` et `docker compose logs {service}`.",
+            every_secs / 60
+        ),
+    )
+}
+
+/// `verb` = "start" (→ `up -d`, respecte depends_on) ou "restart". `Err` = pourquoi la commande a échoué.
+async fn compose_action(ctx: &TaskContext, verb: &str, service: &str) -> Result<(), String> {
     let args: &[&str] = match verb {
         "start" => &["up", "-d", service],
         "recreate" => &["up", "-d", "--force-recreate", "--no-deps", service],
@@ -139,7 +160,7 @@ async fn compose_action(ctx: &TaskContext, verb: &str, service: &str) -> bool {
             task = "stack_health",
             service, "dry-run: would run compose {verb}"
         );
-        return true;
+        return Ok(());
     }
     match docker::compose(&ctx.cfg.paths.base, args).await {
         Ok(_) => {
@@ -155,11 +176,16 @@ async fn compose_action(ctx: &TaskContext, verb: &str, service: &str) -> bool {
                 )
                 .await;
             }
-            true
+            Ok(())
         }
         Err(e) => {
-            error!(task = "stack_health", service, error = %e, "compose {verb} failed");
-            false
+            error!(
+                task = "stack_health",
+                service,
+                error = format!("{e:#}"),
+                "compose {verb} failed"
+            );
+            Err(format!("{e:#}"))
         }
     }
 }
@@ -196,6 +222,8 @@ impl Task for StackHealth {
         let ts = now();
         let (mut started, mut restarted, mut waiting, mut failed) =
             (vec![], vec![], vec![], vec![]);
+        // service → (ce qui a été tenté, pourquoi ça a échoué) : le texte du message d'alerte
+        let mut reasons: BTreeMap<String, (String, String)> = BTreeMap::new();
 
         for svc in &expected {
             let c = containers.get(svc);
@@ -217,10 +245,15 @@ impl Task for StackHealth {
                 Action::Start => {
                     let state = c.map(|c| c.state.as_str()).unwrap_or("absent");
                     warn!(task = "stack_health", service = %svc, state, "not running");
-                    if compose_action(ctx, "start", svc).await {
-                        started.push(svc.clone());
-                    } else {
-                        failed.push(svc.clone());
+                    match compose_action(ctx, "start", svc).await {
+                        Ok(()) => started.push(svc.clone()),
+                        Err(why) => {
+                            reasons.insert(
+                                svc.clone(),
+                                (format!("`docker compose up -d {svc}`"), why),
+                            );
+                            failed.push(svc.clone());
+                        }
                     }
                 }
                 Action::Wait => {
@@ -234,16 +267,23 @@ impl Task for StackHealth {
                 }
                 Action::Restart => {
                     warn!(task = "stack_health", service = %svc, since = ts - since.unwrap_or(ts), "unhealthy too long");
-                    if compose_action(ctx, "restart", svc).await {
-                        restarted.push(svc.clone());
-                        ctx.state
-                            .update(|s| {
-                                s.restarts.insert(svc.clone(), ts);
-                                s.unhealthy_since.remove(svc);
-                            })
-                            .await?;
-                    } else {
-                        failed.push(svc.clone());
+                    match compose_action(ctx, "restart", svc).await {
+                        Ok(()) => {
+                            restarted.push(svc.clone());
+                            ctx.state
+                                .update(|s| {
+                                    s.restarts.insert(svc.clone(), ts);
+                                    s.unhealthy_since.remove(svc);
+                                })
+                                .await?;
+                        }
+                        Err(why) => {
+                            reasons.insert(
+                                svc.clone(),
+                                (format!("`docker compose restart {svc}`"), why),
+                            );
+                            failed.push(svc.clone());
+                        }
                     }
                 }
             }
@@ -313,24 +353,43 @@ impl Task for StackHealth {
             } else {
                 "restart"
             };
-            if compose_action(ctx, verb, &p.service).await {
-                if !p.post_exec_in.is_empty() && !p.post_exec.is_empty() && !ctx.dry_run {
-                    let cmd: Vec<&str> = p.post_exec.iter().map(String::as_str).collect();
-                    match crate::docker::exec_in(&p.post_exec_in, &cmd).await {
-                        Ok(out) => {
-                            info!(task = "stack_health", service = %p.service, into = %p.post_exec_in, out = %out.trim(), "post_exec ok")
-                        }
-                        Err(e) => {
-                            warn!(task = "stack_health", service = %p.service, error = %e, "post_exec en échec")
+            match compose_action(ctx, verb, &p.service).await {
+                Ok(()) => {
+                    if !p.post_exec_in.is_empty() && !p.post_exec.is_empty() && !ctx.dry_run {
+                        let cmd: Vec<&str> = p.post_exec.iter().map(String::as_str).collect();
+                        match crate::docker::exec_in(&p.post_exec_in, &cmd).await {
+                            Ok(out) => {
+                                info!(task = "stack_health", service = %p.service, into = %p.post_exec_in, out = %out.trim(), "post_exec ok")
+                            }
+                            Err(e) => {
+                                warn!(task = "stack_health", service = %p.service, error = %e, "post_exec en échec");
+                                // relancé mais pas remis en état (qBittorrent : port transféré non reposé)
+                                reasons.insert(
+                                    p.service.clone(),
+                                    (
+                                        format!(
+                                            "la commande lancée dans {} après la relance de {}",
+                                            p.post_exec_in, p.service
+                                        ),
+                                        format!("{e:#}"),
+                                    ),
+                                );
+                                failed.push(p.service.clone());
+                            }
                         }
                     }
+                    restarted.push(p.service.clone());
+                    ctx.state
+                        .update(|s| s.restarts.insert(p.service.clone(), ts))
+                        .await?;
                 }
-                restarted.push(p.service.clone());
-                ctx.state
-                    .update(|s| s.restarts.insert(p.service.clone(), ts))
-                    .await?;
-            } else {
-                failed.push(p.service.clone());
+                Err(why) => {
+                    reasons.insert(
+                        p.service.clone(),
+                        (format!("`docker compose {verb} {}`", p.service), why),
+                    );
+                    failed.push(p.service.clone());
+                }
             }
         }
 
@@ -359,6 +418,29 @@ impl Task for StackHealth {
                 ?failed,
                 "services still broken after action"
             );
+            // Avant le 2026-10-07 seul le succès prévenait : une relance qui échouait n'écrivait que cette ligne.
+            if ctx.cfg.discord.admin_alerts && !ctx.dry_run {
+                for (svc, (what, why)) in &reasons {
+                    let last = ctx.state.read(|s| s.stack_failures.get(svc).copied()).await;
+                    if !failure_alert_due(last, ts, cfg.alert_every_secs) {
+                        continue;
+                    }
+                    let (title, text) = failure_text(svc, what, why, cfg.alert_every_secs);
+                    let posted = crate::discord::notify(
+                        ctx,
+                        crate::discord::Channel::Admin,
+                        crate::discord::Embed::error(title, text),
+                    )
+                    .await;
+                    info!(task = "stack_health", service = %svc, posted, "relance en échec signalée");
+                    // non posté (webhook absent ou en échec) : on réessaiera au passage suivant
+                    if posted {
+                        ctx.state
+                            .update(|s| s.stack_failures.insert(svc.clone(), ts))
+                            .await?;
+                    }
+                }
+            }
         }
         Ok(Report::new(
             format!(
@@ -449,6 +531,37 @@ mod tests {
                 &cfg
             ),
             Action::Restart
+        );
+    }
+
+    #[test]
+    fn a_failed_restart_alerts_once_per_service_per_hour() {
+        // jamais signalé : on prévient
+        assert!(failure_alert_due(None, 1000, 3600));
+        // signalé il y a 5 min (le passage précédent) : silence
+        assert!(!failure_alert_due(Some(700), 1000, 3600));
+        assert!(!failure_alert_due(Some(1000 - 3599), 1000, 3600));
+        // une heure plus tard, toujours cassé : on reprévient
+        assert!(failure_alert_due(Some(1000 - 3600), 1000, 3600));
+    }
+
+    #[test]
+    fn the_failure_message_names_the_service_the_command_and_the_cause() {
+        let long = "x".repeat(900);
+        let (title, text) = failure_text(
+            "guacamole",
+            "`docker compose restart guacamole`",
+            &format!("no such service {long}"),
+            3600,
+        );
+        assert_eq!(title, "Relance en échec : guacamole");
+        assert!(text.contains(
+            "`docker compose restart guacamole` (stack_health) a échoué : no such service"
+        ));
+        assert!(text.contains("pas avant 60 min"), "{text}");
+        assert!(
+            text.chars().count() < 700,
+            "la cause est coupée à 300 caractères"
         );
     }
 

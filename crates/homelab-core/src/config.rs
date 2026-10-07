@@ -32,6 +32,8 @@ pub struct Config {
     #[serde(default)]
     pub discord: Discord,
     #[serde(default)]
+    pub alerts: Alerts,
+    #[serde(default)]
     pub chat: Chat,
     #[serde(default)]
     pub subscriptions: Subscriptions,
@@ -384,6 +386,28 @@ impl Default for Discord {
     }
 }
 
+/// Règles communes des alertes admin (2026-10-07, revue Kaizen) : tâche en échec persistant, seuils de capacité.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Alerts {
+    /// Une tâche qui échoue au moins ce nombre de fois de suite **et** pendant au moins `fail_minutes` minutes
+    /// déclenche une alerte admin (puis un message au retour). Les erreurs intermittentes ne déclenchent rien.
+    pub fail_streak: u32,
+    pub fail_minutes: i64,
+    /// Points sous le seuil de capacité (disque, quota) avant que la prochaine montée alerte de nouveau.
+    pub capacity_rearm_pts: u8,
+}
+
+impl Default for Alerts {
+    fn default() -> Self {
+        Self {
+            fail_streak: 6,
+            fail_minutes: 30,
+            capacity_rearm_pts: 3,
+        }
+    }
+}
+
 /// Onboarding des membres : lien de bienvenue (définir son mot de passe) et page publique d'inscription.
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
@@ -462,6 +486,54 @@ pub struct Tasks {
     pub subscription_reconcile: Interval86400,
     #[serde(default)]
     pub subtitle_sync: SubtitleSync,
+    #[serde(default)]
+    pub cert_watch: CertWatch,
+    #[serde(default)]
+    pub backup_watch: BackupWatch,
+    #[serde(default)]
+    pub diun_watch: Interval86400,
+}
+
+/// Certificat TLS des hôtes publics et chaîne NPM → Jellyfin (voir `tasks::cert_watch`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct CertWatch {
+    pub interval_secs: u64,
+    /// Alerte admin si le certificat expire dans moins de N jours.
+    pub warn_days: i64,
+    /// Où joindre NPM (sonde faite depuis l'hôte, vers le nom public résolu ici).
+    pub connect: String,
+    /// Chemin servi par Jellyfin à travers NPM (`GET https://<hôte public>/health`).
+    pub health_path: String,
+}
+
+impl Default for CertWatch {
+    fn default() -> Self {
+        Self {
+            interval_secs: 86_400,
+            warn_days: 21,
+            connect: "127.0.0.1:443".into(),
+            health_path: "/health".into(),
+        }
+    }
+}
+
+/// Fraîcheur de la sauvegarde d'état (voir `tasks::backup_watch`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct BackupWatch {
+    pub interval_secs: u64,
+    /// Alerte admin si la dernière archive `homelab-state-*.tar.zst` a plus de N jours (la sauvegarde est hebdomadaire).
+    pub max_age_days: i64,
+}
+
+impl Default for BackupWatch {
+    fn default() -> Self {
+        Self {
+            interval_secs: 86_400,
+            max_age_days: 8,
+        }
+    }
 }
 
 /// Sous-titres extraits par le Bazarr de la seedbox → rafraîchissement des fiches Jellyfin
@@ -907,6 +979,9 @@ pub struct StackHealth {
     pub ignore: Vec<String>,
     /// Sondes applicatives, en plus du healthcheck Docker.
     pub probes: Vec<Probe>,
+    /// Une relance qui ÉCHOUE (ou un service qui reste cassé après action) prévient le salon Discord admin, au plus
+    /// une fois par service et par intervalle (le passage suivant, 5 min plus tard, retente sans reprévenir).
+    pub alert_every_secs: i64,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
@@ -949,6 +1024,7 @@ impl Default for StackHealth {
             restart_cooldown_secs: 600,
             unhealthy_grace_secs: 120,
             ignore: vec![],
+            alert_every_secs: 3600,
             probes: vec![Probe {
                 service: "guacamole".into(),
                 method: "POST".into(),
@@ -1084,6 +1160,9 @@ pub struct SeedboxHealth {
     pub alert_after_mins: i64,
     /// Dossier du montage rclone à lire (vide = pas de contrôle du montage).
     pub mount_check: PathBuf,
+    /// Alerte admin quand le quota de la seedbox (`quota.json`, écrit par la seedbox) atteint ce pourcentage,
+    /// une fois par franchissement (0 = pas de contrôle).
+    pub quota_alert_pct: u8,
 }
 
 impl Default for SeedboxHealth {
@@ -1092,6 +1171,7 @@ impl Default for SeedboxHealth {
             interval_secs: 300,
             alert_after_mins: 10,
             mount_check: "/mnt/seedbox/media".into(),
+            quota_alert_pct: 85,
         }
     }
 }
@@ -1130,6 +1210,9 @@ impl Default for HlsLoopWatch {
 #[serde(deny_unknown_fields, default)]
 pub struct DiskPressure {
     pub interval_secs: u64,
+    /// Alerte admin quand le disque du VPS atteint ce pourcentage, une fois par franchissement (0 = pas d'alerte).
+    /// Bien avant `hard_pct`, qui supprime des torrents sans prévenir.
+    pub alert_pct: u8,
     pub hard_pct: u8,
     pub crit_pct: u8,
     pub max_actions_per_run: usize,
@@ -1139,6 +1222,7 @@ impl Default for DiskPressure {
     fn default() -> Self {
         Self {
             interval_secs: 900,
+            alert_pct: 85,
             hard_pct: 95,
             crit_pct: 98,
             max_actions_per_run: 5,
@@ -1374,6 +1458,28 @@ impl Config {
         }
         if self.tasks.disk_pressure.hard_pct >= self.tasks.disk_pressure.crit_pct {
             bail!("tasks.disk_pressure : hard_pct doit être < crit_pct");
+        }
+        if self.tasks.disk_pressure.alert_pct > 100
+            || self.tasks.seedbox_health.quota_alert_pct > 100
+        {
+            bail!(
+                "seuils d'alerte de capacité : un pourcentage (0 à 100, 0 = désactivé) est attendu"
+            );
+        }
+        if self.alerts.fail_streak == 0 {
+            bail!("[alerts] fail_streak doit être au moins 1");
+        }
+        if self
+            .tasks
+            .cert_watch
+            .connect
+            .parse::<std::net::SocketAddr>()
+            .is_err()
+        {
+            bail!(
+                "[tasks.cert_watch] connect : adresse « ip:port » attendue, reçu {:?}",
+                self.tasks.cert_watch.connect
+            );
         }
         for url in [
             &self.urls.sonarr,
@@ -1723,6 +1829,49 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.deletion_cleanup.vps_paths.len(), 4);
         assert_eq!(cfg.tasks.deletion_cleanup.c411_min_seed_days, 7);
         assert_eq!(cfg.tasks.trending.size, 10);
+        // alertes admin (revue du 2026-10-07)
+        assert_eq!((cfg.alerts.fail_streak, cfg.alerts.fail_minutes), (6, 30));
+        assert_eq!(cfg.alerts.capacity_rearm_pts, 3);
+        assert_eq!(cfg.tasks.disk_pressure.alert_pct, 85);
+        assert_eq!(cfg.tasks.seedbox_health.quota_alert_pct, 85);
+        assert_eq!(cfg.tasks.stack_health.alert_every_secs, 3600);
+        assert_eq!(cfg.tasks.cert_watch.warn_days, 21);
+        assert_eq!(cfg.tasks.cert_watch.connect, "127.0.0.1:443");
+        assert_eq!(cfg.tasks.backup_watch.max_age_days, 8);
+    }
+
+    #[test]
+    fn alert_settings_are_validated() {
+        let base = r#"
+[paths]
+base = "/tmp"
+downloads = "/tmp"
+[urls]
+sonarr = "http://s"
+radarr = "http://r"
+prowlarr = "http://p"
+qbittorrent = "http://q"
+jellyfin = "http://j"
+jellyseerr = "http://js"
+"#;
+        let parse = |extra: &str| toml::from_str::<Config>(&format!("{base}{extra}")).unwrap();
+        parse("").validate().unwrap();
+        assert!(parse("[alerts]\nfail_streak = 0\n").validate().is_err());
+        assert!(parse("[tasks.disk_pressure]\nalert_pct = 101\n")
+            .validate()
+            .is_err());
+        assert!(parse("[tasks.seedbox_health]\nquota_alert_pct = 120\n")
+            .validate()
+            .is_err());
+        assert!(parse("[tasks.cert_watch]\nconnect = \"localhost\"\n")
+            .validate()
+            .is_err());
+        // 0 = contrôle de capacité désactivé
+        parse("[tasks.disk_pressure]\nalert_pct = 0\n")
+            .validate()
+            .unwrap();
+        // clé inconnue refusée dans les nouvelles sections aussi
+        assert!(toml::from_str::<Config>(&format!("{base}[alerts]\nfail_streek = 6\n")).is_err());
     }
 
     #[test]

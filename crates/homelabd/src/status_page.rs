@@ -5,16 +5,10 @@
 use std::collections::BTreeMap;
 
 use homelab_core::html::esc;
-use homelab_core::state::RunInfo;
-use serde::Deserialize;
+use homelab_core::state::{AlertStats, RunInfo};
 
-/// Quota écrit par la seedbox (cron `quota -w`) dans `~/media/.homelab/quota.json`.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-pub struct SeedboxQuota {
-    pub used_kb: u64,
-    pub quota_kb: u64,
-    pub at: i64,
-}
+/// Quota écrit par la seedbox (cron `quota -w`) dans `~/media/.homelab/quota.json` (aussi lu par `seedbox_health`).
+pub use homelab_core::quota::SeedboxQuota;
 
 pub struct PageData<'a> {
     pub now: i64,
@@ -31,6 +25,8 @@ pub struct PageData<'a> {
     pub blocked_seasons: &'a [String],
     /// Dernier résultat du canari de lecture (`state.canary`), texte prêt à afficher.
     pub canary: Option<(bool, String)>,
+    /// Alertes admin parties (ou non) par `alerts::admin` : la preuve qu'un message a bien été livré.
+    pub alerts: &'a AlertStats,
 }
 
 /// Saisons dont le dernier passage a laissé des épisodes sans aucune release, les plus récentes
@@ -138,6 +134,38 @@ pub fn task_state(r: Option<&RunInfo>) -> &'static str {
     }
 }
 
+/// « Alertes admin » : compteurs, date de la dernière livrée et les 8 dernières (la plus récente en haut). Vide si
+/// aucune alerte n'est passée depuis l'ajout de cette trace (2026-10-07).
+fn alerts_section(a: &AlertStats, now: i64) -> String {
+    if a.recent.is_empty() && a.delivered == 0 && a.failed == 0 {
+        return String::new();
+    }
+    let last = a
+        .last_delivered_at
+        .map(|t| format!("dernière livrée {}", ago(now, t)))
+        .unwrap_or_else(|| "aucune livrée".into());
+    let rows: String = a
+        .recent
+        .iter()
+        .rev()
+        .take(8)
+        .map(|r| {
+            format!(
+                r#"<tr><td class="w">{when}</td><td class="w">{channels}</td><td class="s">{subject}</td></tr>"#,
+                when = esc(&ago(now, r.at)),
+                channels = esc(r.channels()),
+                subject = esc(&r.subject)
+            )
+        })
+        .collect();
+    format!(
+        r#"<h1 style="margin:14px 0 6px">Alertes admin · {ok} livrée(s), {ko} non livrée(s) · {last}</h1><table>{rows}</table>"#,
+        ok = a.delivered,
+        ko = a.failed,
+        last = esc(&last)
+    )
+}
+
 fn gauge(title: &str, pct: Option<u8>, detail: &str) -> String {
     let (p, cls) = match pct {
         Some(p) if p >= 90 => (p, "err"),
@@ -171,8 +199,12 @@ pub fn render(d: &PageData<'_>) -> String {
         let summary: String = r
             .map(|r| r.last_summary.chars().take(90).collect())
             .unwrap_or_default();
+        let note = r
+            .and_then(|r| r.error_note(d.now))
+            .map(|n| format!(r#"<div class="e">{}</div>"#, esc(&n)))
+            .unwrap_or_default();
         rows.push_str(&format!(
-            r#"<tr><td><i class="dot {st}"></i>{name}</td><td class="w">{when}</td><td class="s" title="{full}">{sum}</td></tr>"#,
+            r#"<tr><td><i class="dot {st}"></i>{name}</td><td class="w">{when}</td><td class="s" title="{full}">{sum}{note}</td></tr>"#,
             name = esc(&homelab_core::tasks::label_of(t)),
             when = esc(&when),
             full = esc(&summary),
@@ -224,11 +256,13 @@ table{{width:100%;border-collapse:collapse}}td{{padding:5px 4px;border-top:1px s
 td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1%}}td.s{{color:#8591a0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;word-break:break-word}}
 .dot{{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:1px}}
 .dot.ok{{background:#22c55e}}.dot.err{{background:#ef4444}}.dot.none{{background:#4b5563}}
+.e{{margin-top:2px;color:#d6a45a}}
 </style></head><body>
 <header><h1>Automatisation homelabd</h1><div>{headline} {mount}</div></header>
 <div class="gs">{vps}{sb}</div>
-<table>{rows}</table>{canary}{stuck}{blocked}
+<table>{rows}</table>{canary}{stuck}{blocked}{alerts}
 </body></html>"#,
+        alerts = alerts_section(d.alerts, d.now),
         vps = gauge(
             "Disque VPS",
             d.vps_disk_pct,
@@ -283,7 +317,63 @@ mod tests {
             last_summary: summary.into(),
             runs: 1,
             errors: 0,
+            ..Default::default()
         }
+    }
+
+    #[test]
+    fn the_last_error_shows_only_when_recent_or_current() {
+        let now = 1_790_000_000;
+        // jamais d'erreur datée (ancien état) : rien
+        assert_eq!(run(Some(true), now, "ok").error_note(now), None);
+        // erreur d'il y a 3 jours, tâche rétablie : la note dit combien et quand
+        let mut r = run(Some(true), now, "ok");
+        r.record_outcome(
+            now - 3 * 86_400,
+            false,
+            "error: sonarr-seedbox: connection refused",
+        );
+        r.record_outcome(now - 3 * 86_400 + 60, true, "ok");
+        let n = r.error_note(now).expect("note");
+        assert!(n.contains("0 aujourd'hui, 1 sur 7 j"), "{n}");
+        assert!(n.ends_with(": sonarr-seedbox: connection refused"), "{n}");
+        // erreur d'il y a 20 jours, tâche rétablie depuis : plus rien (l'ancien compteur cumulé faisait peur)
+        let mut old = run(Some(true), now, "ok");
+        old.record_outcome(now - 20 * 86_400, false, "error: x");
+        old.record_outcome(now - 20 * 86_400 + 60, true, "ok");
+        assert_eq!(old.error_note(now), None);
+        // tâche en échec en ce moment : toujours affichée, avec la série
+        let mut cur = run(Some(true), now, "ok");
+        for i in 0..3 {
+            cur.record_outcome(
+                now - 600 + i * 60,
+                false,
+                "error: jellyfin Items: operation timed out",
+            );
+        }
+        let n = cur.error_note(now).expect("note");
+        assert!(n.starts_with("3 échecs de suite · 3 aujourd'hui"), "{n}");
+    }
+
+    #[test]
+    fn delivered_and_missed_alerts_are_listed_newest_first() {
+        let mut a = AlertStats::default();
+        assert_eq!(
+            alerts_section(&a, 1000),
+            "",
+            "rien tant qu'aucune alerte n'est passée"
+        );
+        a.record(100, "Seedbox : Sonarr injoignable", true, true);
+        a.record(500, "<b>Disque</b> à 86 %", false, false);
+        let html = alerts_section(&a, 1000);
+        assert!(html.contains("1 livrée(s), 1 non livrée(s)"), "{html}");
+        assert!(html.contains("dernière livrée il y a 15 min"), "{html}");
+        assert!(html.contains("mail + Discord") && html.contains("non livrée"));
+        assert!(html.contains("&lt;b&gt;Disque&lt;/b&gt;") && !html.contains("<b>Disque</b>"));
+        assert!(
+            html.find("Disque").unwrap() < html.find("Sonarr").unwrap(),
+            "la plus récente en haut"
+        );
     }
 
     #[test]
@@ -314,6 +404,7 @@ mod tests {
             stuck_torrents: &[],
             blocked_seasons: &[],
             canary: None,
+            alerts: &AlertStats::default(),
             seedbox: Some(SeedboxQuota {
                 used_kb: 1_429_000_000,
                 quota_kb: 3_725_000_000,
@@ -402,6 +493,7 @@ mod tests {
             stuck_torrents: &[],
             blocked_seasons: &[],
             canary: None,
+            alerts: &AlertStats::default(),
         });
         assert!(html.contains("quota non disponible"));
     }

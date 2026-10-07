@@ -427,6 +427,35 @@ async fn main() -> Result<()> {
             for w in &out.warnings {
                 eprintln!("avertissement : {w}");
             }
+            // Les bases non copiées (occupée 2 min, quick_check…) n'allaient qu'au journal : la sauvegarde « réussit »
+            // mais une base reste en copie à chaud dans l'archive. Un message de fin les remonte à l'admin.
+            if !out.warnings.is_empty() {
+                let shown: Vec<String> = out
+                    .warnings
+                    .iter()
+                    .take(10)
+                    .map(|w| format!("- {w}"))
+                    .collect();
+                let more = out.warnings.len().saturating_sub(10);
+                let archive = out
+                    .archive
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                homelab_core::alerts::admin(
+                    &ctx,
+                    homelab_core::alerts::Level::Warn,
+                    &format!("Sauvegarde : {} avertissement(s)", out.warnings.len()),
+                    &format!(
+                        "L'archive {archive} est faite, avec des réserves :\n{}{}\n\nLes bases signalées « laissée telle \
+                         quelle » sont dans l'archive en copie à chaud (restauration incertaine) ; voir `journalctl -u \
+                         homelab-backup`.",
+                        shown.join("\n"),
+                        if more > 0 { format!("\n… et {more} autre(s)") } else { String::new() }
+                    ),
+                )
+                .await;
+            }
         }
         Cmd::Status => {
             let runs = ctx.state.read(|s| s.task_runs.clone()).await;
@@ -434,6 +463,7 @@ async fn main() -> Result<()> {
                 "{:<16} {:<8} {:<20} {:<6} {:<6} summary",
                 "task", "last_ok", "last_end", "runs", "errors"
             );
+            let ts = homelab_core::state::now();
             for (name, r) in runs {
                 let end = r
                     .last_end
@@ -455,6 +485,34 @@ async fn main() -> Result<()> {
                     r.errors,
                     r.last_summary
                 );
+                // `errors` est un total depuis l'origine de l'état : la note dit combien et QUAND (sept derniers
+                // jours) et rappelle la dernière erreur, qui survit au passage réussi suivant.
+                if let Some(note) = r.error_note(ts) {
+                    println!("{:>16}   ↳ erreurs : {note}", "");
+                }
+            }
+            let alerts = ctx.state.read(|s| s.alerts.clone()).await;
+            if alerts.delivered + alerts.failed > 0 {
+                println!(
+                    "\nalertes admin : {} livrée(s), {} non livrée(s){}",
+                    alerts.delivered,
+                    alerts.failed,
+                    alerts
+                        .last_delivered_at
+                        .map(|t| format!(
+                            ", dernière livrée le {}",
+                            homelab_core::state::short_date(t)
+                        ))
+                        .unwrap_or_default()
+                );
+                for a in alerts.recent.iter().rev().take(5) {
+                    println!(
+                        "  {}  {:<14}  {}",
+                        homelab_core::state::short_date(a.at),
+                        a.channels(),
+                        a.subject
+                    );
+                }
             }
             let stuck = ctx.state.read(|s| s.stuck.len()).await;
             println!(
@@ -568,8 +626,38 @@ async fn main() -> Result<()> {
                     );
                 }
             }
+            // diun/images.yml : du 18/09 au 07/10 une clé en double a rendu diun aveugle (« No image found » chaque
+            // matin) sans que rien ne le dise. Contrôle strict : clés en double, une entrée par image du compose.
+            let base = &ctx.cfg.paths.base;
+            match (
+                std::fs::read_to_string(base.join("diun/images.yml")),
+                std::fs::read_to_string(base.join("docker-compose.yml")),
+            ) {
+                (Ok(images), Ok(compose)) => {
+                    let f = homelab_core::diun::check(&images, &compose);
+                    if f.errors.is_empty() {
+                        println!(
+                            "✓ diun         images.yml : {} entrée(s), YAML strict OK",
+                            f.entries.len()
+                        );
+                    } else {
+                        ok = false;
+                        println!("✗ diun         images.yml : {} problème(s)", f.errors.len());
+                        for e in &f.errors {
+                            println!("    {e}");
+                        }
+                    }
+                    for w in &f.warnings {
+                        println!("!   diun       {w}");
+                    }
+                }
+                (Err(e), _) => println!("! diun         images.yml illisible ({e}) : non vérifié"),
+                (_, Err(e)) => {
+                    println!("! diun         docker-compose.yml illisible ({e}) : non vérifié")
+                }
+            }
             if !ok {
-                bail!("au moins un service injoignable");
+                bail!("au moins un service injoignable ou un contrôle en échec");
             }
         }
         Cmd::List | Cmd::Install => unreachable!(),

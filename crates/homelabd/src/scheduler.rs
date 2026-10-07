@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use homelab_core::alerts;
 use homelab_core::state::{now, RunInfo};
 use homelab_core::tasks::{registry, Task};
 use homelab_core::TaskContext;
@@ -133,17 +134,95 @@ where
 }
 
 async fn record_panic(ctx: &TaskContext, name: &'static str) {
-    let _ = ctx
+    settle(
+        ctx,
+        name,
+        false,
+        "panique : passage abandonné (voir le journal)".into(),
+    )
+    .await;
+}
+
+/// Enregistre l'issue d'un passage (résumé, compteurs d'erreurs, dernière erreur, série d'échecs) puis prévient
+/// l'admin quand une série d'échecs dépasse les seuils de `[alerts]` — une seule fois —, et quand la tâche repasse.
+/// Avant le 2026-10-07 un échec n'était qu'un `warn!` et un compteur cumulé : une tâche cassée pendant des heures
+/// passait inaperçue.
+async fn settle(ctx: &TaskContext, name: &'static str, ok: bool, summary: String) {
+    let (min_failures, min_mins) = (ctx.cfg.alerts.fail_streak, ctx.cfg.alerts.fail_minutes);
+    let ts = now();
+    let result = ctx
         .state
         .update(|s| {
-            if let Some(e) = s.task_runs.get_mut(name) {
-                e.last_end = Some(now());
-                e.last_ok = Some(false);
-                e.last_summary = "panique : passage abandonné (voir le journal)".into();
-                e.errors += 1;
-            }
+            let e = s.task_runs.get_mut(name)?;
+            let back = e.record_outcome(ts, ok, &summary);
+            let alert = if ok {
+                None
+            } else {
+                e.take_streak_alert(ts, min_failures, min_mins)
+            };
+            Some((back, alert))
         })
         .await;
+    let (back, alert) = match result {
+        Ok(Some(x)) => x,
+        Ok(None) => return,
+        Err(e) => {
+            warn!(task = name, error = format!("{e:#}"), "état non enregistré");
+            return;
+        }
+    };
+    let label = homelab_core::tasks::label_of(name);
+    if let Some(a) = alert {
+        let lasted = homelab_core::tasks::seedbox_health::human(ts - a.since);
+        let body = format!(
+            "La tâche « {label} » ({name}) échoue depuis {} passages de suite, depuis le {} ({lasted}).\n\n\
+             Dernière erreur : {}\n\n\
+             Voir `homelabctl status` et `journalctl -u homelabd | grep {name}`. Un message partira quand \
+             la tâche repassera ; les erreurs isolées ne préviennent pas.",
+            a.failures,
+            homelab_core::state::short_date(a.since),
+            a.last_error
+        );
+        let sent = alerts::admin(
+            ctx,
+            alerts::Level::Error,
+            &format!("Tâche en échec répété : {label}"),
+            &body,
+        )
+        .await;
+        warn!(
+            task = name,
+            failures = a.failures,
+            mailed = sent.0,
+            posted = sent.1,
+            "échecs répétés signalés"
+        );
+        if !alerts::delivered(sent) && !ctx.dry_run {
+            // rien n'est parti : la série n'est pas « signalée », le prochain échec réessaiera
+            let _ = ctx
+                .state
+                .update(|s| {
+                    if let Some(e) = s.task_runs.get_mut(name) {
+                        e.streak_alerted = false;
+                    }
+                })
+                .await;
+        }
+    }
+    if let Some(r) = back {
+        let lasted = homelab_core::tasks::seedbox_health::human(ts - r.since);
+        alerts::admin(
+            ctx,
+            alerts::Level::Info,
+            &format!("Tâche rétablie : {label}"),
+            &format!(
+                "La tâche « {label} » ({name}) repasse après {} échecs de suite ({lasted} depuis le {}).",
+                r.failures,
+                homelab_core::state::short_date(r.since)
+            ),
+        )
+        .await;
+    }
 }
 
 /// Un passage de la tâche. `false` : elle tournait déjà, rien n'a été lancé.
@@ -157,13 +236,9 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
     let _ = ctx
         .state
         .update(|s| {
-            let e = s.task_runs.entry(name.into()).or_insert(RunInfo {
+            let e = s.task_runs.entry(name.into()).or_insert_with(|| RunInfo {
                 last_start: start,
-                last_end: None,
-                last_ok: None,
-                last_summary: String::new(),
-                runs: 0,
-                errors: 0,
+                ..Default::default()
             });
             e.last_start = start;
             e.last_end = None;
@@ -190,19 +265,7 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
             (false, "timeout".into())
         }
     };
-    let _ = ctx
-        .state
-        .update(|s| {
-            if let Some(e) = s.task_runs.get_mut(name) {
-                e.last_end = Some(now());
-                e.last_ok = Some(ok);
-                e.last_summary = summary;
-                if !ok {
-                    e.errors += 1;
-                }
-            }
-        })
-        .await;
+    settle(ctx, name, ok, summary).await;
     true
 }
 

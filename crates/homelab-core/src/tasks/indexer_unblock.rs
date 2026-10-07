@@ -275,8 +275,10 @@ fn prune_backups(dir: &Path, key: &str, days: u64) {
     }
 }
 
-async fn notify(ctx: &TaskContext, subject: &str, body: &str) {
-    crate::alerts::admin(ctx, crate::alerts::Level::Warn, subject, body).await;
+/// `true` si au moins un canal (mail, Discord) a pris l'alerte.
+async fn notify(ctx: &TaskContext, subject: &str, body: &str) -> bool {
+    let sent = crate::alerts::admin(ctx, crate::alerts::Level::Warn, subject, body).await;
+    crate::alerts::delivered(sent)
 }
 
 fn fmt_time(secs: i64) -> String {
@@ -383,7 +385,7 @@ impl Task for IndexerUnblock {
                         *counts.entry("given_up").or_default() += 1;
                         let last = alerts.get(&k).copied().unwrap_or(0);
                         if t - last >= 24 * 3600 && !ctx.dry_run {
-                            notify(
+                            let sent = notify(
                                 ctx,
                                 &format!("Indexeur {} toujours en panne ({})", row.name, app.key),
                                 &format!(
@@ -398,8 +400,14 @@ impl Task for IndexerUnblock {
                                 ),
                             )
                             .await;
-                            let k2 = k.clone();
-                            ctx.state.update(|s| s.indexer_alerts.insert(k2, t)).await?;
+                            // « déjà signalé » seulement si l'alerte est partie : sinon le passage suivant réessaie
+                            // (avant le 2026-10-07 le résultat était ignoré, une alerte perdue ne revenait que 24 h après)
+                            if sent {
+                                let k2 = k.clone();
+                                ctx.state.update(|s| s.indexer_alerts.insert(k2, t)).await?;
+                            } else {
+                                warn!(task = "indexer_unblock", indexer = %row.name, app = %app.key, "alerte non livrée, nouvel essai au prochain passage");
+                            }
                         }
                     }
                 }

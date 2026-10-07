@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use tracing::{error, info, warn};
 
 use super::{Report, Task};
+use crate::alerts;
 use crate::clients::Torrent;
 use crate::config::Config;
 use crate::context::TaskContext;
@@ -62,6 +63,19 @@ impl Task for DiskPressure {
     async fn run(&self, ctx: &TaskContext) -> Result<Report> {
         let cfg = &ctx.cfg.tasks.disk_pressure;
         let pct = disk::usage_percent(&ctx.cfg.paths.base)?;
+        // Prévenir bien avant l'action : le 20/09 une archive de 149 Go avait poussé le disque à 92 % sans un mot.
+        alerts::capacity(
+            ctx,
+            "disque_vps",
+            "Disque du VPS",
+            pct,
+            cfg.alert_pct,
+            "Médias, téléchargements, état des services et sauvegardes se partagent ce disque \
+             (`df -h /`, `du -xh --max-depth=2 /opt/homelab | sort -h | tail`). À partir de \
+             tasks.disk_pressure.hard_pct, les torrents arrêtés les plus anciens sont supprimés \
+             avec leurs fichiers, sans autre avertissement.",
+        )
+        .await;
         match level(pct, cfg.hard_pct, cfg.crit_pct) {
             Level::Ok => {
                 info!(task = "disk_pressure", use_pct = pct, "ok");

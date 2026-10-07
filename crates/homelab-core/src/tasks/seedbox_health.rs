@@ -154,14 +154,6 @@ impl Task for SeedboxHealth {
                 warn!(task = "seedbox_health", service = %name, error = %why, "service seedbox injoignable");
             }
         }
-        if !ctx.dry_run {
-            ctx.state
-                .update(|s| {
-                    s.seedbox_down = new_down.clone();
-                    s.seedbox_alerted = new_alerted.clone();
-                })
-                .await?;
-        }
         if !alerts_to_send.is_empty() {
             let names: Vec<&str> = alerts_to_send.iter().map(|(n, _)| n.as_str()).collect();
             let subject = format!("Seedbox : {} injoignable(s)", names.join(", "));
@@ -176,8 +168,25 @@ impl Task for SeedboxHealth {
                  Si ça persiste : ssh seedbox 'app-sonarr start; app-radarr start; app-bazarr start' \
                  et journal ~/.local/state/homelab-apps-watch/watch.log.",
             );
-            alerts::admin(ctx, Level::Warn, &subject, &body).await;
-            info!(task = "seedbox_health", services = ?names, "alerte envoyée");
+            let sent = alerts::admin(ctx, Level::Warn, &subject, &body).await;
+            if alerts::delivered(sent) {
+                info!(task = "seedbox_health", services = ?names, mailed = sent.0, posted = sent.1, "alerte envoyée");
+            } else {
+                // Rien n'est parti : la panne n'est pas « signalée », le passage suivant réessaiera. Avant le
+                // 2026-10-07 on écrivait « alerte envoyée » sans regarder le résultat.
+                warn!(task = "seedbox_health", services = ?names, "alerte NON livrée, nouvel essai au prochain passage");
+                for (n, _) in &alerts_to_send {
+                    new_alerted.remove(n);
+                }
+            }
+        }
+        if !ctx.dry_run {
+            ctx.state
+                .update(|s| {
+                    s.seedbox_down = new_down.clone();
+                    s.seedbox_alerted = new_alerted.clone();
+                })
+                .await?;
         }
         if !recovered.is_empty() {
             let txt: Vec<String> = recovered
@@ -192,10 +201,36 @@ impl Task for SeedboxHealth {
             )
             .await;
         }
+        // Quota du compte seedbox (relevé écrit par la seedbox toutes les 15 min) : il n'était qu'affiché sur
+        // /status.html. Illisible (montage absent) : ignoré ici, le contrôle du montage ci-dessus prévient déjà.
+        let mut quota_note = String::new();
+        if cfg.quota_alert_pct > 0 {
+            if let Some(q) = crate::quota::read(ctx).await {
+                if let Some(pct) = q.percent() {
+                    quota_note = format!(" · quota {pct} %");
+                    let detail = format!(
+                        "{} (relevé du {}). C'est l'espace utile du compte, pas le `df` du disque partagé de \
+                         l'hébergeur : `ssh seedbox quota -s`. Pistes : `scripts/seedbox-cleanup.py`, titres \
+                         jamais regardés.",
+                        q.describe(),
+                        crate::state::short_date(q.at)
+                    );
+                    alerts::capacity(
+                        ctx,
+                        "quota_seedbox",
+                        "Quota de la seedbox",
+                        pct,
+                        cfg.quota_alert_pct,
+                        &detail,
+                    )
+                    .await;
+                }
+            }
+        }
         let summary = if failing.is_empty() {
-            format!("{} service(s) joignables", results.len())
+            format!("{} service(s) joignables{quota_note}", results.len())
         } else {
-            format!("injoignable(s) : {}", failing.join(", "))
+            format!("injoignable(s) : {}{quota_note}", failing.join(", "))
         };
         Ok(Report::new(
             summary,
