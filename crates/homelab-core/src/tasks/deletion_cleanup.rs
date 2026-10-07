@@ -17,8 +17,9 @@
 //! - torrents d'origine retirés avec leurs fichiers s'ils ne servent plus à rien d'autre ; C411 (ou
 //!   tracker inconnu) seulement une fois `c411_min_ratio` ou `c411_min_seed_days` atteint.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -241,6 +242,162 @@ async fn missing_among(paths: Vec<(String, PathBuf)>) -> Option<BTreeSet<String>
         .await
         .ok()
         .and_then(|r| r.ok())
+}
+
+/// Ce qui bouge dans la liste des séries quand leurs fichiers changent : nombre de fichiers, taille, dossier.
+pub type FilesSig = (i64, i64, String);
+
+pub fn files_signature(series: &Value) -> FilesSig {
+    (
+        series
+            .pointer("/statistics/episodeFileCount")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        series
+            .pointer("/statistics/sizeOnDisk")
+            .and_then(Value::as_i64)
+            .unwrap_or(-1),
+        str_of(series, "path").unwrap_or_default(),
+    )
+}
+
+/// Liste des fichiers lue à un passage précédent encore utilisable : même signature, lue depuis moins de
+/// `max_age_secs`. Elle ne sert qu'à repérer un fichier absent : la décision se prend toujours sur une liste fraîche.
+pub fn cache_usable(
+    cached: &FilesSig,
+    cached_at: i64,
+    sig: &FilesSig,
+    now: i64,
+    max_age_secs: i64,
+) -> bool {
+    cached == sig && now - cached_at < max_age_secs
+}
+
+struct CachedFiles {
+    sig: FilesSig,
+    at: i64,
+    files: Vec<Value>,
+}
+
+/// Listes `episodefile` des séries, clé `côté:id série` (mémoire seulement).
+fn files_cache() -> &'static std::sync::Mutex<HashMap<String, CachedFiles>> {
+    static CACHE: OnceLock<std::sync::Mutex<HashMap<String, CachedFiles>>> = OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn cached_files(side: &str, id: i64, sig: &FilesSig, now: i64, max_age: i64) -> Option<Vec<Value>> {
+    let cache = files_cache().lock().unwrap_or_else(|e| e.into_inner());
+    cache
+        .get(&format!("{side}:{id}"))
+        .filter(|c| cache_usable(&c.sig, c.at, sig, now, max_age))
+        .map(|c| c.files.clone())
+}
+
+fn store_files(side: &str, id: i64, sig: FilesSig, now: i64, files: &[Value]) {
+    files_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(
+            format!("{side}:{id}"),
+            CachedFiles {
+                sig,
+                at: now,
+                files: files.to_vec(),
+            },
+        );
+}
+
+fn forget_files(side: &str, id: i64) {
+    files_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&format!("{side}:{id}"));
+}
+
+/// Séries disparues ou sans fichier : leur liste n'a plus à être gardée.
+fn forget_files_except(side: &str, ids: &HashSet<i64>) {
+    let prefix = format!("{side}:");
+    files_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|k, _| {
+            k.strip_prefix(&prefix)
+                .and_then(|id| id.parse::<i64>().ok())
+                .is_none_or(|id| ids.contains(&id))
+        });
+}
+
+/// Ce que la tâche lit d'un fichier d'épisode (le reste, `mediaInfo` compris, n'est pas gardé).
+fn slim_episode_file(f: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for k in ["id", "path", "dateAdded", "originalFilePath", "sceneName"] {
+        if let Some(v) = f.get(k) {
+            out.insert(k.into(), v.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+/// Fichiers d'une série ; une nouvelle tentative : le Sonarr de la seedbox passe par un proxy HTTPS parfois lent.
+async fn fetch_episode_files(side: &Side<'_>, id: i64) -> Result<Vec<Value>> {
+    let all = match side.sonarr.episode_files(id).await {
+        Ok(v) => v,
+        Err(_) => {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            side.sonarr.episode_files(id).await?
+        }
+    };
+    Ok(all.iter().map(slim_episode_file).collect())
+}
+
+/// Séries construites sur une liste en cache dont un fichier semble absent : à relire avant d'aller plus loin (un
+/// film de même numéro n'est pas concerné).
+fn stale_titles(
+    titles: &[Title],
+    from_cache: &HashSet<i64>,
+    missing: &BTreeSet<String>,
+) -> Vec<usize> {
+    titles
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| {
+            matches!(t.kind, Kind::Series { .. })
+                && from_cache.contains(&t.id)
+                && t.files.iter().any(|f| missing.contains(&f.key))
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Fichiers d'une série assez anciens pour être jugés, avec leur chemin sur l'hôte et dans Jellyfin.
+fn series_files(
+    all: &[Value],
+    maps: &[PathMap],
+    side: &str,
+    now: i64,
+    min_age_mins: i64,
+) -> Vec<FileRef> {
+    all.iter()
+        .filter(|f| {
+            old_enough(
+                f.get("dateAdded").and_then(Value::as_str),
+                now,
+                min_age_mins,
+            )
+        })
+        .filter_map(|f| {
+            let path = str_of(f, "path")?;
+            let (host, jellyfin) = map_path(maps, &path)?;
+            Some(FileRef {
+                id: f.get("id").and_then(Value::as_i64)?,
+                key: format!("{side}:{path}"),
+                host,
+                jellyfin,
+                original: str_of(f, "originalFilePath"),
+                scene: str_of(f, "sceneName"),
+            })
+        })
+        .collect()
 }
 
 /// Montage seedbox utilisable : quota écrit par la seedbox lisible et dossier des films listable.
@@ -500,6 +657,13 @@ async fn titles_with_missing_files(
             }],
         });
     }
+    // seedbox : liste des fichiers d'une série gardée d'un passage à l'autre tant que la série ne change pas (83
+    // requêtes par le proxy HTTPS toutes les 5 min avant le 07/10, pour 2 requêtes utiles)
+    let max_age = (side.name == "seedbox")
+        .then_some(cfg.episode_files_cache_mins * 60)
+        .filter(|a| *a > 0);
+    let mut from_cache: HashSet<i64> = HashSet::new();
+    let mut seen: HashSet<i64> = HashSet::new();
     for s in side.sonarr.series().await? {
         let count = s
             .pointer("/statistics/episodeFileCount")
@@ -511,36 +675,22 @@ async fn titles_with_missing_files(
         if count == 0 {
             continue;
         }
-        // une nouvelle tentative : le Sonarr de la seedbox passe par un proxy HTTPS parfois lent
-        let all = match side.sonarr.episode_files(id).await {
-            Ok(v) => v,
-            Err(_) => {
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                side.sonarr.episode_files(id).await?
+        seen.insert(id);
+        let sig = files_signature(&s);
+        let cached = max_age.and_then(|max| cached_files(side.name, id, &sig, now, max));
+        let all = match cached {
+            Some(all) => {
+                from_cache.insert(id);
+                all
+            }
+            None => {
+                let all = fetch_episode_files(side, id).await?;
+                if max_age.is_some() {
+                    store_files(side.name, id, sig, now, &all);
+                }
+                all
             }
         };
-        let files: Vec<FileRef> = all
-            .iter()
-            .filter(|f| {
-                old_enough(
-                    f.get("dateAdded").and_then(Value::as_str),
-                    now,
-                    cfg.min_file_age_mins,
-                )
-            })
-            .filter_map(|f| {
-                let path = str_of(f, "path")?;
-                let (host, jellyfin) = map_path(&maps, &path)?;
-                Some(FileRef {
-                    id: f.get("id").and_then(Value::as_i64)?,
-                    key: format!("{}:{path}", side.name),
-                    host,
-                    jellyfin,
-                    original: str_of(f, "originalFilePath"),
-                    scene: str_of(f, "sceneName"),
-                })
-            })
-            .collect();
         titles.push(Title {
             kind: Kind::Series {
                 tvdb: s.get("tvdbId").and_then(Value::as_i64).unwrap_or(0),
@@ -549,8 +699,11 @@ async fn titles_with_missing_files(
             id,
             tmdb: s.get("tmdbId").and_then(Value::as_i64).unwrap_or(0),
             name: str_of(&s, "title").unwrap_or_default(),
-            files,
+            files: series_files(&all, &maps, side.name, now, cfg.min_file_age_mins),
         });
+    }
+    if max_age.is_some() {
+        forget_files_except(side.name, &seen);
     }
     let probe: Vec<(String, PathBuf)> = titles
         .iter()
@@ -564,6 +717,35 @@ async fn titles_with_missing_files(
         );
         return Ok(None);
     };
+    // une liste en cache peut être périmée sans que la série change de signature (fichiers renommés : même nombre,
+    // même taille) : une série qui semble avoir perdu un fichier est relue sur une liste fraîche avant toute
+    // conclusion. Rien n'est donc jamais décidé sur une liste en cache.
+    for i in stale_titles(&titles, &from_cache, &missing) {
+        let t = &mut titles[i];
+        let all = fetch_episode_files(side, t.id).await?;
+        forget_files(side.name, t.id); // relue au passage suivant
+        for f in &t.files {
+            missing.remove(&f.key);
+        }
+        t.files = series_files(&all, &maps, side.name, now, cfg.min_file_age_mins);
+        if let Kind::Series { total_files, .. } = &mut t.kind {
+            *total_files = all.len();
+        }
+        let probe: Vec<(String, PathBuf)> = t
+            .files
+            .iter()
+            .map(|f| (f.key.clone(), f.host.clone()))
+            .collect();
+        let Some(fresh) = missing_among(probe).await else {
+            warn!(
+                task = "deletion_cleanup",
+                side = side.name,
+                "disk check timed out"
+            );
+            return Ok(None);
+        };
+        missing.extend(fresh);
+    }
     if side.name == "seedbox" && !missing.is_empty() {
         // le cache rclone peut ignorer un fichier fraîchement importé : on rafraîchit, puis on revérifie
         let recheck: Vec<(String, PathBuf)> = titles
@@ -1367,5 +1549,131 @@ mod tests {
         let p = plan_series(&BTreeSet::from([11, 12, 21, 22]), &eps, 4);
         assert!(p.whole);
         assert_eq!(p.seasons, vec![1, 2]);
+    }
+
+    #[test]
+    fn cached_episode_files_follow_the_series_signature() {
+        let s = json!({"id": 7, "path": "/home/u/media/TV Shows/A [tvdbid-1]",
+            "statistics": {"episodeFileCount": 12, "sizeOnDisk": 12_000}});
+        let sig = files_signature(&s);
+        assert_eq!(
+            sig,
+            (
+                12,
+                12_000,
+                "/home/u/media/TV Shows/A [tvdbid-1]".to_string()
+            )
+        );
+        let now = 1_000_000;
+        assert!(cache_usable(&sig, now - 600, &sig, now, 3600));
+        assert!(
+            !cache_usable(&sig, now - 3600, &sig, now, 3600),
+            "une fois par heure"
+        );
+        // un import, un remplacement, une suppression vue par Sonarr, un déplacement (anime_library)
+        for other in [
+            (13, 13_000, sig.2.clone()),
+            (12, 11_500, sig.2.clone()),
+            (12, 12_000, "/home/u/media/Anime/A [tvdbid-1]".to_string()),
+        ] {
+            assert!(!cache_usable(&sig, now - 60, &other, now, 3600));
+        }
+        // sans statistiques : jamais égal à une série qui en a
+        assert_eq!(files_signature(&json!({"id": 7})), (0, -1, String::new()));
+    }
+
+    #[test]
+    fn episode_files_cache_store_forget_and_prune() {
+        // côtés propres à ce test : le cache est global au processus
+        let sig = (3, 300, "/x".to_string());
+        let f = vec![json!({"id": 1, "path": "/x/a.mkv"})];
+        store_files("t-cache", 1, sig.clone(), 100, &f);
+        store_files("t-cache", 2, sig.clone(), 100, &f);
+        store_files("t-other", 1, sig.clone(), 100, &f);
+        assert_eq!(cached_files("t-cache", 1, &sig, 200, 3600), Some(f.clone()));
+        assert_eq!(
+            cached_files("t-cache", 1, &(4, 400, "/x".into()), 200, 3600),
+            None
+        );
+        assert_eq!(cached_files("t-cache", 1, &sig, 100 + 3600, 3600), None);
+        forget_files("t-cache", 1);
+        assert_eq!(cached_files("t-cache", 1, &sig, 200, 3600), None);
+        // série disparue : oubliée ; l'autre côté n'est pas touché
+        forget_files_except("t-cache", &HashSet::from([1]));
+        assert_eq!(cached_files("t-cache", 2, &sig, 200, 3600), None);
+        assert_eq!(cached_files("t-other", 1, &sig, 200, 3600), Some(f));
+    }
+
+    #[test]
+    fn slim_files_keep_what_the_task_reads() {
+        let full = json!({"id": 5, "path": "/home/u/media/TV Shows/A/S01E01.mkv",
+            "dateAdded": "2026-10-01T10:00:00Z", "sceneName": "A.S01E01", "size": 1,
+            "mediaInfo": {"audioCodec": "AAC"}, "quality": {}});
+        let slim = slim_episode_file(&full);
+        assert_eq!(
+            slim,
+            json!({"id": 5, "path": "/home/u/media/TV Shows/A/S01E01.mkv",
+                "dateAdded": "2026-10-01T10:00:00Z", "sceneName": "A.S01E01"})
+        );
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-07T21:00:00Z")
+            .unwrap()
+            .timestamp();
+        let recent = json!({"id": 6, "path": "/home/u/media/TV Shows/A/S01E02.mkv",
+            "dateAdded": "2026-10-07T20:30:00Z"});
+        let elsewhere = json!({"id": 7, "path": "/ailleurs/S01E03.mkv",
+            "dateAdded": "2026-10-01T10:00:00Z"});
+        let files = series_files(&[slim, recent, elsewhere], &maps(), "seedbox", now, 60);
+        assert_eq!(
+            files.len(),
+            1,
+            "import récent et chemin hors racine écartés"
+        );
+        assert_eq!(files[0].id, 5);
+        assert_eq!(files[0].key, "seedbox:/home/u/media/TV Shows/A/S01E01.mkv");
+        assert_eq!(
+            files[0].host,
+            PathBuf::from("/mnt/sb/TV Shows/A/S01E01.mkv")
+        );
+        assert_eq!(files[0].jellyfin, "/seedbox/media/TV Shows/A/S01E01.mkv");
+        assert_eq!(files[0].scene.as_deref(), Some("A.S01E01"));
+    }
+
+    #[test]
+    fn only_cached_series_with_a_missing_file_are_reread() {
+        let file = |k: &str| FileRef {
+            id: 1,
+            key: k.into(),
+            host: PathBuf::new(),
+            jellyfin: String::new(),
+            original: None,
+            scene: None,
+        };
+        let title = |kind: Kind, id: i64, key: &str| Title {
+            kind,
+            id,
+            tmdb: 0,
+            name: String::new(),
+            files: vec![file(key)],
+        };
+        let series = || Kind::Series {
+            tvdb: 1,
+            total_files: 1,
+        };
+        let titles = vec![
+            // film de même numéro qu'une série en cache : pas concerné
+            title(Kind::Movie, 4, "seedbox:/m"),
+            // série en cache avec un fichier absent : relue
+            title(series(), 4, "seedbox:/a"),
+            // série lue fraîche à ce passage : déjà sûre
+            title(series(), 5, "seedbox:/b"),
+            // série en cache, rien d'absent
+            title(series(), 6, "seedbox:/c"),
+        ];
+        let from_cache = HashSet::from([4, 6]);
+        let missing: BTreeSet<String> = ["seedbox:/m", "seedbox:/a", "seedbox:/b"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(stale_titles(&titles, &from_cache, &missing), vec![1]);
     }
 }

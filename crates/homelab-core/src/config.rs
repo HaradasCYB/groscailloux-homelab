@@ -590,6 +590,10 @@ pub struct DeletionCleanup {
     pub c411_min_seed_days: i64,
     /// VPS : [racine vue par l'Arr, même dossier sur l'hôte, même dossier vu par Jellyfin].
     pub vps_paths: Vec<[String; 3]>,
+    /// Seedbox : liste des fichiers d'une série relue seulement si son nombre de fichiers, sa taille ou son dossier
+    /// change, ou après ce délai (0 = relue à chaque passage). Un fichier qui semble absent est toujours revu sur une
+    /// liste fraîche.
+    pub episode_files_cache_mins: i64,
 }
 
 impl Default for DeletionCleanup {
@@ -624,6 +628,7 @@ impl Default for DeletionCleanup {
                     "/media/anime".into(),
                 ],
             ],
+            episode_files_cache_mins: 60,
         }
     }
 }

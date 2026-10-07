@@ -115,6 +115,9 @@ vps_paths = [
   ["/anime-films", "/opt/homelab/library/media/anime-films", "/media/anime-films"],
   ["/anime", "/opt/homelab/library/media/anime", "/media/anime"],
 ]
+episode_files_cache_mins = 60       # seedbox : fichiers d'une série relus si leur nombre, leur taille ou le dossier change,
+                                    # sinon une fois par heure (07/10 : 83 requêtes par passage) ; un fichier qui semble
+                                    # absent est toujours revu sur une liste fraîche avant toute décision
 
 [tasks.seedbox_health]
 # Santé de la seedbox vue du VPS (2026-10-02) : le 01/10, l'hôte de la seedbox a redémarré et Sonarr, Radarr, Bazarr…
