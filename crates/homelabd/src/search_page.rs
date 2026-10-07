@@ -42,10 +42,7 @@ pub fn router(ctx: Arc<TaskContext>) -> Router {
 }
 
 fn allowed(st: &SearchState, given: &str) -> bool {
-    match &st.ctx.secrets.onboard_token {
-        Some(t) => !given.is_empty() && given == t.expose(),
-        None => false,
-    }
+    crate::admin_auth::token_matches(st.ctx.secrets.onboard_token.as_ref(), Some(given))
 }
 
 fn denied() -> Response {

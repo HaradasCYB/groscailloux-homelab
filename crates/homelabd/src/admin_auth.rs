@@ -11,22 +11,31 @@
 //! - Échecs limités par adresse (`MAX_FAILS` par `FAIL_WINDOW`) et au total.
 //! - IP de la maison (`HOMELABD_ADMIN_TRUSTED_IPS`) : session admin d'office, sans formulaire, et cookie posé au
 //!   passage (si l'IP de la box change, le navigateur reste connecté). Demandé le 2026-09-23 : la connexion gênait
-//!   la gestion depuis Homarr (iframe État comprise).
+//!   la gestion depuis Homarr (iframe État comprise). Cette IP n'est lue que dans un `X-Forwarded-For` posé par NPM
+//!   (`client_addr`) : jamais celui d'une connexion locale ou d'un autre conteneur (2026-10-07).
+//! - Portes (2026-10-07) : les chemins d'administration (`is_admin_path`) répondent 404 sur un autre hôte que
+//!   celui de `ONBOARD_PUBLIC_URL` ou une adresse locale — l'hôte premium (NPM 20) envoie tout à homelabd sans
+//!   l'auth HTTP « admin-outils » de l'hôte d'onboarding. Les routes de la CLI (`/admin/*`) ne répondent qu'à un
+//!   appel local (`homelabctl` → `127.0.0.1:8766`). Un POST sans session compte ses échecs comme `/connexion`.
 
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{header, HeaderValue, Method, StatusCode, Uri};
 use axum::middleware::Next;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Json, Response};
+use axum::Extension;
 use homelab_core::html::esc;
 use homelab_core::{Secret, TaskContext};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+
+use crate::client_addr::{Client, ProxyTrust};
 
 pub const COOKIE: &str = "gc_admin";
 const SESSION_SECS: u64 = 365 * 24 * 3600;
@@ -64,24 +73,132 @@ pub fn required(path: &str) -> Option<Scope> {
     }
 }
 
+/// Chemins d'administration : servis seulement sur l'hôte d'onboarding ou une adresse locale. Les pages
+/// publiques (`/premium`, `/inscription`, `/bienvenue`, `/guide`, `/paypal/webhook`, `/chat`, `/compte`…) restent
+/// servies partout.
+pub fn is_admin_path(path: &str) -> bool {
+    required(path).is_some()
+        || path == "/connexion"
+        || path == "/admin"
+        || path.starts_with("/admin/")
+}
+
+/// Nom d'hôte sans port, en minuscules, sans point final ni crochets (`[::1]:8766` → `::1`).
+fn bare_host(raw: &str) -> String {
+    let h = raw.trim().to_ascii_lowercase();
+    let h = match h.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or("").to_string(),
+        None => match h.rsplit_once(':') {
+            Some((name, port))
+                if !name.contains(':') && port.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                name.to_string()
+            }
+            _ => h,
+        },
+    };
+    h.trim_end_matches('.').to_string()
+}
+
+/// Hôte d'une adresse publique (`https://hôte[:port]/…`, `ONBOARD_PUBLIC_URL`).
+pub fn url_host(url: &str) -> Option<String> {
+    let url = url.trim();
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let h = bare_host(authority.rsplit('@').next().unwrap_or(authority));
+    (!h.is_empty()).then_some(h)
+}
+
+/// `localhost` ou une adresse IP locale ou privée : la CLI (`127.0.0.1:8766`), un conteneur qui vise la passerelle
+/// (`172.18.0.1:8766`). Depuis Internet, un tel hôte tombe sur le serveur par défaut de NPM, jamais sur homelabd.
+fn is_local_host(h: &str) -> bool {
+    if h == "localhost" {
+        return true;
+    }
+    match h.parse::<IpAddr>().map(|ip| ip.to_canonical()) {
+        Ok(IpAddr::V4(a)) => a.is_loopback() || a.is_private(),
+        Ok(IpAddr::V6(a)) => a.is_loopback() || a.is_unique_local(),
+        Err(_) => false,
+    }
+}
+
+/// L'en-tête `Host` permet-il un chemin d'administration ? `onboard` : hôte de `ONBOARD_PUBLIC_URL` ; absent, pas
+/// de filtre (comportement d'origine, plutôt que d'enfermer l'admin dehors).
+pub fn host_allowed(host: Option<&str>, onboard: Option<&str>) -> bool {
+    let Some(onboard) = onboard else {
+        return true;
+    };
+    match host.map(bare_host) {
+        Some(h) if !h.is_empty() => h == onboard || is_local_host(&h),
+        _ => false,
+    }
+}
+
+/// Jeton attendu, donné et égal, comparé à temps constant. Aucun jeton configuré = refus.
+pub fn token_matches(expected: Option<&Secret>, given: Option<&str>) -> bool {
+    match (expected, given) {
+        (Some(t), Some(g)) => !g.is_empty() && ct_eq(g.as_bytes(), t.expose().as_bytes()),
+        _ => false,
+    }
+}
+
+/// Plafond d'échecs atteint ? Le plafond global ne bloque pas un appel local (la CLI) : un balayage depuis
+/// Internet ne doit pas fermer `homelabctl` à l'admin.
+fn over_limit(mine: usize, total: usize, local: bool) -> bool {
+    mine >= MAX_FAILS || (!local && total >= MAX_FAILS_TOTAL)
+}
+
 #[derive(Clone)]
 pub struct AdminAuth {
-    ctx: Arc<TaskContext>,
+    onboard_token: Option<Secret>,
+    status_token: Option<Secret>,
+    /// IP de la maison (`HOMELABD_ADMIN_TRUSTED_IPS`).
+    home_ips: Arc<Vec<String>>,
     fails: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
+    proxy: Arc<ProxyTrust>,
+    /// Hôte de `ONBOARD_PUBLIC_URL`, seul hôte public des pages d'administration.
+    onboard_host: Option<String>,
 }
 
 impl AdminAuth {
     pub fn new(ctx: Arc<TaskContext>) -> Self {
+        let onboard_host = ctx.secrets.onboard_public_url.as_deref().and_then(url_host);
+        if onboard_host.is_none() {
+            warn!(
+                task = "admin",
+                "ONBOARD_PUBLIC_URL absente : pages d'administration servies sur tous les hôtes"
+            );
+        }
+        Self::from_parts(
+            ctx.secrets.onboard_token.clone(),
+            ctx.secrets.status_token.clone(),
+            ctx.secrets.admin_trusted_ips.clone(),
+            onboard_host,
+            ProxyTrust::new(&ctx.cfg.web),
+        )
+    }
+
+    fn from_parts(
+        onboard_token: Option<Secret>,
+        status_token: Option<Secret>,
+        home_ips: Vec<String>,
+        onboard_host: Option<String>,
+        proxy: ProxyTrust,
+    ) -> Self {
         Self {
-            ctx,
+            onboard_token,
+            status_token,
+            home_ips: Arc::new(home_ips),
             fails: Arc::new(Mutex::new(HashMap::new())),
+            proxy: Arc::new(proxy),
+            onboard_host,
         }
     }
 
     fn token(&self, scope: Scope) -> Option<&Secret> {
         match scope {
-            Scope::Admin => self.ctx.secrets.onboard_token.as_ref(),
-            Scope::Status => self.ctx.secrets.status_token.as_ref(),
+            Scope::Admin => self.onboard_token.as_ref(),
+            Scope::Status => self.status_token.as_ref(),
         }
     }
 
@@ -118,7 +235,7 @@ impl AdminAuth {
     }
 
     /// Trop d'échecs (cette adresse ou au total) : on ne regarde même plus le jeton.
-    async fn blocked(&self, ip: &str) -> bool {
+    async fn blocked(&self, c: &Client) -> bool {
         let mut f = self.fails.lock().await;
         let cutoff = Instant::now() - FAIL_WINDOW;
         f.retain(|_, v| {
@@ -126,17 +243,17 @@ impl AdminAuth {
             !v.is_empty()
         });
         let total: usize = f.values().map(Vec::len).sum();
-        f.get(ip).map(Vec::len).unwrap_or(0) >= MAX_FAILS || total >= MAX_FAILS_TOTAL
+        over_limit(f.get(&c.ip).map(Vec::len).unwrap_or(0), total, c.local)
     }
 
-    async fn fail(&self, ip: &str) {
+    async fn fail(&self, ip: &str, path: &str) {
         self.fails
             .lock()
             .await
             .entry(ip.to_string())
             .or_default()
             .push(Instant::now());
-        warn!(task = "admin", ip, "admin login: wrong token");
+        warn!(task = "admin", ip, path, "jeton admin incorrect");
     }
 }
 
@@ -207,22 +324,10 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// L'adresse (dernier saut de `X-Forwarded-For`, posé par NPM) est-elle une adresse de confiance ? Une requête sans
-/// cet en-tête (`local`) ne l'est jamais.
-fn trusted(ip: &str, list: &[String]) -> bool {
-    ip != "local" && list.iter().any(|t| t == ip)
-}
-
-/// Adresse du client : le **dernier** élément de `X-Forwarded-For` (celui que NPM ajoute ; les précédents viennent
-/// du client et se falsifient).
-fn client_ip(headers: &axum::http::HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.rsplit(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "local".into())
+/// Le client est-il l'admin à la maison ? Seulement par l'adresse que NPM a vue (`X-Forwarded-For` d'un proxy de
+/// confiance) : jamais une connexion locale ni un autre conteneur, même si leur adresse est listée.
+fn at_home(c: &Client, list: &[String]) -> bool {
+    c.via_proxy && list.iter().any(|t| t == &c.ip)
 }
 
 fn cookie_of(req: &Request) -> Option<String> {
@@ -358,12 +463,12 @@ pub struct LoginForm {
 /// `POST /connexion` : le jeton dans le corps (jamais dans l'adresse), cookie, retour à la page demandée.
 pub async fn login_post(
     State(auth): State<AdminAuth>,
-    headers: axum::http::HeaderMap,
+    Extension(client): Extension<Client>,
     axum::Form(form): axum::Form<LoginForm>,
 ) -> Response {
-    let ip = client_ip(&headers);
+    let ip = client.ip.as_str();
     let next = safe_next(&form.next);
-    if auth.blocked(&ip).await {
+    if auth.blocked(&client).await {
         return login_page(
             &next,
             "Trop d'essais, réessaie dans 15 minutes.",
@@ -389,15 +494,65 @@ pub async fn login_post(
             redirect(&next, auth.set_cookie(scope))
         }
         None => {
-            auth.fail(&ip).await;
+            auth.fail(ip, "/connexion").await;
             login_page(&next, "Jeton incorrect.", StatusCode::UNAUTHORIZED)
         }
     }
 }
 
-/// Couche posée sur toute l'application.
+fn not_found() -> Response {
+    StatusCode::NOT_FOUND.into_response()
+}
+
+/// Réponse d'un POST bloqué : JSON pour `/onboard` (lu par la page de création), HTML ailleurs.
+fn too_many(path: &str) -> Response {
+    const MSG: &str = "Trop d'essais, réessaie dans 15 minutes.";
+    if path == "/onboard" {
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "success": false, "error": MSG })),
+        )
+            .into_response()
+    } else {
+        (StatusCode::TOO_MANY_REQUESTS, Html(format!("<p>{MSG}</p>"))).into_response()
+    }
+}
+
+/// Couche posée sur toute l'application : pose `Client` dans les extensions de chaque requête, puis garde les
+/// portes d'administration.
 pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
+    let peer = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip());
+    let client = auth.proxy.client(peer, req.headers()).await;
+    req.extensions_mut().insert(client.clone());
+    if is_admin_path(&path) {
+        let host = req
+            .headers()
+            .get(header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .or_else(|| req.uri().authority().map(|a| a.to_string()));
+        if !host_allowed(host.as_deref(), auth.onboard_host.as_deref()) {
+            return not_found();
+        }
+    }
+    // Routes de la CLI : appel local seulement, jamais à travers NPM ni depuis un conteneur.
+    if path.starts_with("/admin/") {
+        if !client.local {
+            if req.method() == Method::POST {
+                warn!(task = "admin", ip = %client.ip, path, "API admin refusée : appel non local");
+            }
+            return not_found();
+        }
+        let resp = next.run(req).await;
+        if resp.status() == StatusCode::UNAUTHORIZED {
+            warn!(task = "admin", path, "API admin : jeton incorrect");
+        }
+        return resp;
+    }
     let Some(need) = required(&path) else {
         return next.run(req).await;
     };
@@ -407,12 +562,12 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
     }
     let query = req.uri().query().unwrap_or("").to_string();
     let (given, rest) = split_token(&query);
-    let ip = client_ip(req.headers());
+    let ip = client.ip.as_str();
     let is_get = req.method() == Method::GET || req.method() == Method::HEAD;
 
     // Ancien lien avec `?token=` : ouvre la session et renvoie vers l'adresse sans jeton.
     if let (Some(given), true) = (given.as_deref(), is_get) {
-        if auth.blocked(&ip).await {
+        if auth.blocked(&client).await {
             return login_page(
                 &with_query(&path, &rest),
                 "Trop d'essais, réessaie dans 15 minutes.",
@@ -436,7 +591,7 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
                 )
             }
             _ => {
-                auth.fail(&ip).await;
+                auth.fail(ip, &path).await;
                 login_page(
                     &with_query(&path, &rest),
                     "Jeton incorrect.",
@@ -447,7 +602,7 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
     }
 
     let cookie = cookie_of(&req).and_then(|c| auth.verify(&c, now()));
-    let from_home = trusted(&ip, &auth.ctx.secrets.admin_trusted_ips);
+    let from_home = at_home(&client, &auth.home_ips);
     let session = if from_home {
         Some(Scope::Admin)
     } else {
@@ -490,10 +645,16 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
             resp
         }
         // Pas de session : une page s'ouvre sur le formulaire ; un POST garde son propre contrôle (jeton du
-        // formulaire ou de l'en-tête, pour la CLI).
+        // formulaire ou de l'en-tête, pour la CLI), et ses échecs comptent comme ceux de `/connexion`.
         _ if is_get => login_page(&with_query(&path, &rest), "", StatusCode::UNAUTHORIZED),
         _ => {
+            if auth.blocked(&client).await {
+                return too_many(&path);
+            }
             let mut resp = next.run(req).await;
+            if resp.status() == StatusCode::UNAUTHORIZED {
+                auth.fail(ip, &path).await;
+            }
             strip_location(&mut resp);
             resp
         }
@@ -592,13 +753,126 @@ mod tests {
         assert_eq!(check_cookie("garbage", 1_000, tok), None);
     }
 
+    fn client(ip: &str, via_proxy: bool, local: bool) -> Client {
+        Client {
+            ip: ip.into(),
+            via_proxy,
+            local,
+        }
+    }
+
     #[test]
-    fn trusted_ips() {
-        let list = vec!["203.0.113.9".to_string()];
-        assert!(trusted("203.0.113.9", &list));
-        assert!(!trusted("203.0.113.10", &list));
-        assert!(!trusted("local", &["local".to_string()]));
-        assert!(!trusted("203.0.113.9", &[]));
+    fn home_ip_only_through_the_proxy() {
+        let list = vec!["203.0.113.9".to_string(), "127.0.0.1".to_string()];
+        assert!(at_home(&client("203.0.113.9", true, false), &list));
+        assert!(!at_home(&client("203.0.113.10", true, false), &list));
+        assert!(!at_home(&client("203.0.113.9", true, false), &[]));
+        // même listée, une adresse qui ne vient pas de NPM n'ouvre rien (processus local, autre conteneur)
+        assert!(!at_home(&client("127.0.0.1", false, true), &list));
+        assert!(!at_home(&client("203.0.113.9", false, false), &list));
+    }
+
+    #[test]
+    fn admin_paths() {
+        for p in [
+            "/",
+            "/accounts",
+            "/accounts/delete",
+            "/recherche/telecharger",
+            "/status",
+            "/status.html",
+            "/onboard",
+            "/connexion",
+            "/admin/run",
+            "/admin/chat/announce",
+        ] {
+            assert!(is_admin_path(p), "{p}");
+        }
+        for p in [
+            "/premium",
+            "/premium/lier",
+            "/inscription",
+            "/bienvenue/abc",
+            "/premiers-pas",
+            "/guide",
+            "/paypal/webhook",
+            "/chat/api/me",
+            "/compte/api/me",
+            "/health",
+            "/healthz",
+            "/don",
+            "/administration",
+        ] {
+            assert!(!is_admin_path(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn hosts_are_normalized() {
+        assert_eq!(
+            url_host("https://Onboarder.Example.org/").as_deref(),
+            Some("onboarder.example.org")
+        );
+        assert_eq!(
+            url_host("https://user@onboarder.example.org:8443/x?y").as_deref(),
+            Some("onboarder.example.org")
+        );
+        assert_eq!(
+            url_host("onboarder.example.org").as_deref(),
+            Some("onboarder.example.org")
+        );
+        assert_eq!(url_host("https://"), None);
+        assert_eq!(bare_host("127.0.0.1:8766"), "127.0.0.1");
+        assert_eq!(bare_host("[::1]:8766"), "::1");
+        assert_eq!(bare_host("Onboarder.Example.org."), "onboarder.example.org");
+    }
+
+    #[test]
+    fn admin_paths_only_on_the_onboarding_host_or_locally() {
+        let ob = Some("onboarder.example.org");
+        assert!(host_allowed(Some("onboarder.example.org"), ob));
+        assert!(host_allowed(Some("ONBOARDER.example.org:443"), ob));
+        // l'hôte premium (NPM 20) et l'hôte de Jellyfin : 404
+        assert!(!host_allowed(Some("premium.example.org"), ob));
+        assert!(!host_allowed(Some("jellyfin.example.org"), ob));
+        assert!(!host_allowed(
+            Some("onboarder.example.org.evil.example"),
+            ob
+        ));
+        assert!(!host_allowed(None, ob));
+        assert!(!host_allowed(Some(""), ob));
+        // la CLI, un conteneur qui vise la passerelle
+        assert!(host_allowed(Some("127.0.0.1:8766"), ob));
+        assert!(host_allowed(Some("localhost:8766"), ob));
+        assert!(host_allowed(Some("[::1]:8766"), ob));
+        assert!(host_allowed(Some("172.18.0.1:8766"), ob));
+        // une IP publique n'est pas « locale »
+        assert!(!host_allowed(Some("203.0.113.9"), ob));
+        // sans ONBOARD_PUBLIC_URL : pas de filtre (comportement d'origine)
+        assert!(host_allowed(Some("premium.example.org"), None));
+    }
+
+    #[test]
+    fn tokens_compare_in_constant_time_and_never_match_nothing() {
+        let t = Secret::new("s3cret-token");
+        assert!(token_matches(Some(&t), Some("s3cret-token")));
+        assert!(!token_matches(Some(&t), Some("s3cret-tokeN")));
+        assert!(!token_matches(Some(&t), Some("")));
+        assert!(!token_matches(Some(&t), None));
+        assert!(!token_matches(None, Some("s3cret-token")));
+        assert!(!token_matches(Some(&Secret::new("")), Some("")));
+    }
+
+    #[test]
+    fn global_cap_never_locks_the_cli_out() {
+        assert!(!over_limit(MAX_FAILS - 1, 0, false));
+        assert!(over_limit(MAX_FAILS, 0, false));
+        assert!(
+            over_limit(MAX_FAILS, 0, true),
+            "la CLI garde sa propre limite"
+        );
+        assert!(over_limit(0, MAX_FAILS_TOTAL, false));
+        assert!(!over_limit(0, MAX_FAILS_TOTAL, true));
     }
 
     #[test]
@@ -606,5 +880,345 @@ mod tests {
         assert!(ct_eq(b"abc", b"abc"));
         assert!(!ct_eq(b"abc", b"abd"));
         assert!(!ct_eq(b"abc", b"abcd"));
+    }
+
+    /// La couche entière, devant de fausses pages : pair TCP, `Host` et `X-Forwarded-For` choisis par le test.
+    mod gates {
+        use super::super::*;
+        use axum::routing::{get, post};
+        use axum::Router;
+        use tower::ServiceExt;
+
+        const ONBOARD: &str = "onboarder.example.org";
+        const PREMIUM: &str = "premium.example.org";
+        const HOME: &str = "203.0.113.9";
+        const NPM: &str = "172.18.0.19";
+        const TOKEN: &str = "jeton-admin-de-test";
+
+        fn app() -> Router {
+            // réseau Docker seul : aucun `docker inspect` pendant les tests
+            let web = homelab_core::config::Web {
+                trusted_proxy_container: String::new(),
+                ..Default::default()
+            };
+            let auth = AdminAuth::from_parts(
+                Some(Secret::new(TOKEN)),
+                None,
+                vec![HOME.to_string()],
+                Some(ONBOARD.to_string()),
+                ProxyTrust::new(&web),
+            );
+            let whoami = |Extension(c): Extension<Client>| async move {
+                format!("{}|{}|{}", c.ip, c.via_proxy, c.local)
+            };
+            // la page vérifie le jeton réinjecté par la session, comme les vraies
+            let accounts = |axum::extract::Query(q): axum::extract::Query<
+                HashMap<String, String>,
+            >| async move {
+                if token_matches(
+                    Some(&Secret::new(TOKEN)),
+                    q.get("token").map(String::as_str),
+                ) {
+                    (StatusCode::OK, "comptes")
+                } else {
+                    (StatusCode::UNAUTHORIZED, "refusé")
+                }
+            };
+            let onboard = |headers: axum::http::HeaderMap| async move {
+                let given = headers.get("x-onboard-token").and_then(|v| v.to_str().ok());
+                if token_matches(Some(&Secret::new(TOKEN)), given) {
+                    StatusCode::OK
+                } else {
+                    StatusCode::UNAUTHORIZED
+                }
+            };
+            Router::new()
+                .route("/accounts", get(accounts))
+                .route("/onboard", post(onboard))
+                .route("/admin/run", post(|| async { "passage lancé" }))
+                .route("/premium", get(|| async { "page publique" }))
+                .route("/whoami", get(whoami))
+                .route("/connexion", get(login_get).post(login_post))
+                .with_state(auth.clone())
+                .layer(axum::middleware::from_fn_with_state(auth, layer))
+        }
+
+        fn req(method: Method, path: &str, host: &str, peer: &str, xff: Option<&str>) -> Request {
+            let mut b = Request::builder()
+                .method(method)
+                .uri(path)
+                .header(header::HOST, host);
+            if let Some(x) = xff {
+                b = b.header("x-forwarded-for", x);
+            }
+            let mut r = b.body(Body::empty()).unwrap();
+            let peer: SocketAddr = format!("{peer}:40000").parse().unwrap();
+            r.extensions_mut().insert(ConnectInfo(peer));
+            r
+        }
+
+        async fn send(app: &Router, r: Request) -> (StatusCode, bool, String) {
+            let resp = app.clone().oneshot(r).await.unwrap();
+            let status = resp.status();
+            let cookie = resp.headers().contains_key(header::SET_COOKIE);
+            let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (status, cookie, String::from_utf8_lossy(&body).into_owned())
+        }
+
+        #[tokio::test]
+        async fn forged_home_ip_from_the_host_gets_nothing() {
+            let app = app();
+            // `curl -H 'X-Forwarded-For: <IP de la maison>' http://127.0.0.1:8766/accounts`
+            let (st, cookie, _) = send(
+                &app,
+                req(
+                    Method::GET,
+                    "/accounts",
+                    "127.0.0.1:8766",
+                    "127.0.0.1",
+                    Some(HOME),
+                ),
+            )
+            .await;
+            assert_eq!(st, StatusCode::UNAUTHORIZED);
+            assert!(!cookie, "aucune session");
+            // forme « client, IP de confiance » : pareil
+            let (st, cookie, _) = send(
+                &app,
+                req(
+                    Method::GET,
+                    "/accounts",
+                    "127.0.0.1:8766",
+                    "127.0.0.1",
+                    Some(&format!("192.0.2.7, {HOME}")),
+                ),
+            )
+            .await;
+            assert_eq!(st, StatusCode::UNAUTHORIZED);
+            assert!(!cookie);
+        }
+
+        #[tokio::test]
+        async fn home_ip_through_npm_still_opens_the_session() {
+            let app = app();
+            let (st, cookie, body) = send(
+                &app,
+                req(
+                    Method::GET,
+                    "/accounts",
+                    ONBOARD,
+                    NPM,
+                    Some(&format!("192.0.2.7, {HOME}")),
+                ),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "{body}");
+            assert!(cookie, "cookie posé au passage");
+            assert_eq!(body, "comptes");
+        }
+
+        #[tokio::test]
+        async fn client_address_is_the_npm_hop_only_from_npm() {
+            let app = app();
+            let (_, _, b) = send(
+                &app,
+                req(
+                    Method::GET,
+                    "/whoami",
+                    PREMIUM,
+                    NPM,
+                    Some("1.1.1.1, 198.51.100.7"),
+                ),
+            )
+            .await;
+            assert_eq!(b, "198.51.100.7|true|false");
+            let (_, _, b) = send(
+                &app,
+                req(
+                    Method::GET,
+                    "/whoami",
+                    "127.0.0.1:8766",
+                    "127.0.0.1",
+                    Some("198.51.100.7"),
+                ),
+            )
+            .await;
+            assert_eq!(b, "127.0.0.1|false|false");
+            let (_, _, b) = send(
+                &app,
+                req(Method::GET, "/whoami", "127.0.0.1:8766", "127.0.0.1", None),
+            )
+            .await;
+            assert_eq!(b, "127.0.0.1|false|true");
+            // hors du réseau Docker : l'en-tête est ignoré
+            let (_, _, b) = send(
+                &app,
+                req(Method::GET, "/whoami", PREMIUM, "10.9.8.7", Some(HOME)),
+            )
+            .await;
+            assert_eq!(b, "10.9.8.7|false|false");
+        }
+
+        #[tokio::test]
+        async fn cli_routes_answer_local_calls_only() {
+            let app = app();
+            let (st, _, b) = send(
+                &app,
+                req(
+                    Method::POST,
+                    "/admin/run",
+                    "127.0.0.1:8766",
+                    "127.0.0.1",
+                    None,
+                ),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK);
+            assert_eq!(b, "passage lancé");
+            // à travers NPM, sur l'hôte d'onboarding comme sur l'hôte premium
+            for host in [ONBOARD, PREMIUM] {
+                let (st, _, _) =
+                    send(&app, req(Method::POST, "/admin/run", host, NPM, Some(HOME))).await;
+                assert_eq!(st, StatusCode::NOT_FOUND, "{host}");
+            }
+            // un autre conteneur qui vise la passerelle
+            let (st, _, _) = send(
+                &app,
+                req(
+                    Method::POST,
+                    "/admin/run",
+                    "172.18.0.1:8766",
+                    "172.18.0.5",
+                    None,
+                ),
+            )
+            .await;
+            assert_eq!(st, StatusCode::NOT_FOUND);
+            // local mais relayé
+            let (st, _, _) = send(
+                &app,
+                req(
+                    Method::POST,
+                    "/admin/run",
+                    "127.0.0.1:8766",
+                    "127.0.0.1",
+                    Some("198.51.100.7"),
+                ),
+            )
+            .await;
+            assert_eq!(st, StatusCode::NOT_FOUND);
+        }
+
+        #[tokio::test]
+        async fn admin_paths_are_hidden_on_other_hosts() {
+            let app = app();
+            for path in ["/accounts", "/connexion"] {
+                let (st, cookie, _) =
+                    send(&app, req(Method::GET, path, PREMIUM, NPM, Some(HOME))).await;
+                assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+                assert!(!cookie, "{path}");
+            }
+            // l'hôte d'onboarding sert le formulaire de connexion
+            let (st, _, b) = send(
+                &app,
+                req(
+                    Method::GET,
+                    "/connexion",
+                    ONBOARD,
+                    NPM,
+                    Some("198.51.100.7"),
+                ),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK);
+            assert!(b.contains("Jeton d'accès"));
+            // les pages publiques restent servies sur l'hôte premium
+            let (st, _, b) = send(
+                &app,
+                req(Method::GET, "/premium", PREMIUM, NPM, Some("198.51.100.7")),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK);
+            assert_eq!(b, "page publique");
+            // sans en-tête Host : refusé
+            let mut r = req(Method::GET, "/accounts", ONBOARD, NPM, Some(HOME));
+            r.headers_mut().remove(header::HOST);
+            assert_eq!(send(&app, r).await.0, StatusCode::NOT_FOUND);
+        }
+
+        #[tokio::test]
+        async fn token_login_always_works_through_npm() {
+            let app = app();
+            let mut r = req(
+                Method::POST,
+                "/connexion",
+                ONBOARD,
+                NPM,
+                Some("198.51.100.7"),
+            );
+            r.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/x-www-form-urlencoded"),
+            );
+            *r.body_mut() = Body::from(format!("token={TOKEN}&next=%2Faccounts"));
+            let resp = app.clone().oneshot(r).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+            let cookie = resp
+                .headers()
+                .get(header::SET_COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            assert!(cookie.starts_with("gc_admin=a."), "session admin");
+            // le cookie ouvre la page depuis n'importe quelle adresse
+            let value = cookie.split(';').next().unwrap().to_string();
+            let mut r = req(Method::GET, "/accounts", ONBOARD, NPM, Some("192.0.2.50"));
+            r.headers_mut()
+                .insert(header::COOKIE, HeaderValue::from_str(&value).unwrap());
+            let (st, _, b) = send(&app, r).await;
+            assert_eq!(st, StatusCode::OK);
+            assert_eq!(b, "comptes");
+        }
+
+        #[tokio::test]
+        async fn failed_posts_without_session_are_capped_per_address() {
+            let app = app();
+            let post = |ip: &'static str| {
+                let mut r = req(Method::POST, "/onboard", ONBOARD, NPM, Some(ip));
+                r.headers_mut()
+                    .insert("x-onboard-token", HeaderValue::from_static("faux"));
+                r
+            };
+            for _ in 0..MAX_FAILS {
+                assert_eq!(
+                    send(&app, post("198.51.100.7")).await.0,
+                    StatusCode::UNAUTHORIZED
+                );
+            }
+            let (st, _, b) = send(&app, post("198.51.100.7")).await;
+            assert_eq!(st, StatusCode::TOO_MANY_REQUESTS);
+            assert!(
+                b.contains("\"success\":false"),
+                "JSON pour la page de création"
+            );
+            // une autre adresse n'est pas bloquée
+            assert_eq!(
+                send(&app, post("198.51.100.8")).await.0,
+                StatusCode::UNAUTHORIZED
+            );
+            // la CLI non plus (sa propre limite), avec le bon jeton
+            let mut cli = req(
+                Method::POST,
+                "/onboard",
+                "127.0.0.1:8766",
+                "127.0.0.1",
+                None,
+            );
+            cli.headers_mut()
+                .insert("x-onboard-token", HeaderValue::from_static(TOKEN));
+            assert_eq!(send(&app, cli).await.0, StatusCode::OK);
+        }
     }
 }

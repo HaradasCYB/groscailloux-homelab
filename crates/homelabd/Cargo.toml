@@ -18,3 +18,7 @@ rand.workspace = true
 sha2.workspace = true
 axum = { version = "0.8", features = ["json", "http1", "tokio"] }
 notify = "8"
+
+[dev-dependencies]
+# `oneshot` : tests de la couche d'administration (déjà dans l'arbre, via axum)
+tower = { version = "0.5", features = ["util"] }
