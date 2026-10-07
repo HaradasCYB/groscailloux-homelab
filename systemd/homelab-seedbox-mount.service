@@ -22,6 +22,10 @@ ExecStart=/usr/local/bin/rclone mount seedbox:media /mnt/seedbox/media \
   --rc --rc-addr 127.0.0.1:5572 --rc-no-auth \
   --log-level INFO
 ExecStop=/bin/fusermount3 -uz /mnt/seedbox/media
+# rclone sort en 143 (128 + SIGTERM) sur un arrêt voulu : le chien de garde du montage et `systemctl restart` ne
+# doivent pas laisser « Failed with result 'exit-code' » (vu les 14:05 et 17:35 du 27/09). Effet à la prochaine
+# relance voulue, sans en imposer une.
+SuccessExitStatus=143
 Restart=on-failure
 RestartSec=30
 

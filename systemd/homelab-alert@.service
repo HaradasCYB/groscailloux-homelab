@@ -1,0 +1,11 @@
+[Unit]
+Description=Alerte Discord admin : %i en échec
+# Modèle d'unité (2026-10-07) : `OnFailure=homelab-alert@%n.service` sur homelab-backup, homelabd-watchdog,
+# seedbox-mount-watch et jellyfin-transcodes-purge. Volontairement SANS OnFailure ici : une alerte qui échoue ne doit
+# pas en déclencher une autre. Pas d'`enable` : seule une unité en échec la lance.
+
+[Service]
+Type=oneshot
+ExecStart=/opt/homelab/scripts/homelab-alert.sh %i
+Nice=10
+TimeoutStartSec=60
