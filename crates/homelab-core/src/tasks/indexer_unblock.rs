@@ -11,6 +11,13 @@
 //! remis à zéro, application relancée et vérifiée. Au plus un arrêt par application par
 //! `app_cooldown_mins`. Un indexeur débloqué `max_unblocks_per_day` fois en 24 h n'est plus débloqué
 //! (site mort, Cloudflare…) : l'admin reçoit un mail pour décider. Chaque déblocage lui est aussi signalé.
+//!
+//! **Panne du site de C411** (07/10, revue Kaizen) : du 30/09 au 02/10, C411 servait un 503 puis sa page de
+//! maintenance ; chaque pause levée se reposait aussitôt, et la tâche a arrêté 34 fois les Arrs de la seedbox
+//! (~20 s chacun, copie de leur base, une alerte à chaque fois). Avant de lever la pause d'un indexeur C411, on
+//! sonde donc le site (`indexer::c411_reachable` : `caps` sans clé, aucun quota) ; en panne, on ne touche à rien
+//! et l'admin reçoit **une seule** alerte pour l'incident (marqueur dans `indexer_alerts`, retiré au retour du
+//! site). Les copies de base de la seedbox sont purgées une fois par jour, indépendamment des déblocages.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -48,6 +55,67 @@ pub enum Decision {
     Alert,
     /// Dernier échec trop récent, ou pause déjà terminée : rien.
     Wait,
+    /// Le site de C411 est en panne : lever la pause arrêterait l'Arr pour rien, elle serait reposée aussitôt.
+    Outage,
+}
+
+/// Marqueur d'incident dans `indexer_alerts` : date de l'alerte « C411 en panne » (retiré au retour du site).
+const OUTAGE_KEY: &str = "c411_outage";
+/// Date de la dernière purge des copies de base de la seedbox, dans `indexer_alerts`.
+const PURGE_KEY: &str = "purge:seedbox";
+/// Les copies `*.homelab-*` de la seedbox plus vieilles que ça sont supprimées.
+const COPY_RETENTION_DAYS: u32 = 7;
+
+/// L'indexeur de l'Arr est-il C411 ? (nom commençant par celui de la clé Prowlarr, sans tenir compte de la casse :
+/// « C411 », « C411 (2) »)
+pub fn is_c411(name: &str, prefix: &str) -> bool {
+    !prefix.is_empty()
+        && name
+            .to_ascii_lowercase()
+            .starts_with(&prefix.to_ascii_lowercase())
+}
+
+/// Corrige une décision `Unblock` quand le site de C411 ne répond pas. Les autres décisions et les autres
+/// indexeurs (un tracker public en 429 se débloque comme avant) ne changent pas.
+pub fn with_outage(d: Decision, is_c411: bool, c411_up: bool) -> Decision {
+    if d == Decision::Unblock && is_c411 && !c411_up {
+        Decision::Outage
+    } else {
+        d
+    }
+}
+
+/// Suite à donner à la sonde du site : une alerte au début d'un incident, rien tant qu'il dure, et le marqueur
+/// retiré quand C411 répond de nouveau (pour qu'une panne ultérieure soit de nouveau signalée).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutageStep {
+    Announce,
+    Quiet,
+    Clear,
+    Nothing,
+}
+
+/// `marker` : date de l'alerte déjà envoyée ; `down` : résultat de la sonde de ce passage (`None` = pas sondé).
+pub fn outage_step(marker: Option<i64>, down: Option<bool>) -> OutageStep {
+    match (down, marker) {
+        (Some(true), None) => OutageStep::Announce,
+        (Some(true), Some(_)) => OutageStep::Quiet,
+        (Some(false), Some(_)) => OutageStep::Clear,
+        _ => OutageStep::Nothing,
+    }
+}
+
+/// La purge des copies de base de la seedbox est-elle à refaire ? (une fois par 24 h)
+pub fn purge_due(last: Option<i64>, now: i64) -> bool {
+    last.is_none_or(|l| now - l >= 24 * 3600)
+}
+
+/// Commande ssh de purge : `dirs` = dossiers des bases des Arrs de la seedbox.
+pub fn purge_command(dirs: &[String]) -> String {
+    format!(
+        "find {} -maxdepth 1 -name '*.homelab-*' -mtime +{COPY_RETENTION_DAYS} -delete",
+        dirs.join(" ")
+    )
 }
 
 /// Dates des Arrs : `2026-09-17 19:33:45.9033185Z` (SQLite, .NET) → secondes Unix.
@@ -235,9 +303,11 @@ async fn unblock(ctx: &TaskContext, app: &App<'_>, ids: &[i64]) -> Result<()> {
         }
         Place::Seedbox { app: name, db } => {
             let sql = reset_sql(ids);
+            // la purge des vieilles copies `*.homelab-*` n'est plus ici : elle suivait un déblocage, donc ne
+            // se faisait plus quand les déblocages s'arrêtaient (voir `purge_command`, une fois par jour)
             let cmd = format!(
                 "app-{name} stop >/dev/null 2>&1; cp {db} {db}.homelab-{stamp} && chmod 600 {db}.homelab-{stamp} && sqlite3 {db} \"{sql}\"; rc=$?; \
-                 app-{name} start >/dev/null 2>&1; find $(dirname {db}) -maxdepth 1 -name '*.homelab-*' -mtime +7 -delete; exit $rc"
+                 app-{name} start >/dev/null 2>&1; exit $rc"
             );
             ssh(ctx, &cmd).await?;
         }
@@ -358,6 +428,16 @@ impl Task for IndexerUnblock {
             .await;
         let mut counts: BTreeMap<&str, u32> = BTreeMap::new();
         let mut actions = 0;
+        // Sonde du site de C411 : faite seulement si une pause C411 est sur le point d'être levée, ou si un
+        // incident est déjà signalé (pour savoir quand il se termine). Une fois par passage.
+        let prefix = ctx.cfg.manual_search.c411_indexer.as_str();
+        let outage_marker = alerts.get(OUTAGE_KEY).copied();
+        let mut site_up: Option<bool> = if outage_marker.is_some() {
+            Some(c411_site_up(ctx).await)
+        } else {
+            None
+        };
+        let mut outage_apps: Vec<String> = Vec::new();
         for app in &apps {
             let rows = match read_status(ctx, app).await {
                 Ok(r) => r,
@@ -371,8 +451,22 @@ impl Task for IndexerUnblock {
             for row in &rows {
                 let k = format!("{}:{}", app.key, row.provider_id);
                 let past = unblocks.get(&k).cloned().unwrap_or_default();
-                match decide(row, t, cfg.quiet_mins, &past, cfg.max_unblocks_per_day) {
+                let mut d = decide(row, t, cfg.quiet_mins, &past, cfg.max_unblocks_per_day);
+                if d == Decision::Unblock && is_c411(&row.name, prefix) {
+                    if site_up.is_none() {
+                        site_up = Some(c411_site_up(ctx).await);
+                    }
+                    d = with_outage(d, true, site_up.unwrap_or(true));
+                }
+                match d {
                     Decision::Unblock => to_unblock.push(row),
+                    Decision::Outage => {
+                        *counts.entry("c411_down").or_default() += 1;
+                        if !outage_apps.contains(&app.key) {
+                            outage_apps.push(app.key.clone());
+                        }
+                        info!(task = "indexer_unblock", app = %app.key, indexer = %row.name, till = %fmt_time(row.disabled_till.unwrap_or(0)), "C411 en panne : pause laissée, l'application n'est pas arrêtée");
+                    }
                     Decision::Wait => {
                         if row.disabled_till.is_some_and(|d| d > t) {
                             *counts.entry("waiting").or_default() += 1;
@@ -477,13 +571,88 @@ impl Task for IndexerUnblock {
                 }
             }
         }
-        let summary: Vec<String> = counts.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        // incident C411 : une alerte au début, rien ensuite, marqueur retiré quand le site répond de nouveau
+        match outage_step(outage_marker, site_up.map(|up| !up)) {
+            OutageStep::Announce => {
+                warn!(task = "indexer_unblock", apps = ?outage_apps, "C411 en panne : pauses laissées");
+                if !ctx.dry_run {
+                    notify(
+                        ctx,
+                        "C411 en panne : pauses laissées",
+                        &format!(
+                            "Le site de C411 ne répond pas (erreur 503, maintenance, ou page HTML à la place de \
+                             la réponse Torznab).\n\n\
+                             homelabd laisse la pause de l'indexeur C411 dans : {}.\n\
+                             La lever arrêterait l'application ~20 s pour que C411 la remette en pause aussitôt.\n\n\
+                             Les pauses seront levées d'elles-mêmes dès que C411 répond de nouveau. \
+                             Cette alerte est la seule de l'incident.\n",
+                            outage_apps.join(", ")
+                        ),
+                    )
+                    .await;
+                    ctx.state
+                        .update(|s| s.indexer_alerts.insert(OUTAGE_KEY.to_string(), t))
+                        .await?;
+                }
+            }
+            OutageStep::Clear => {
+                info!(
+                    task = "indexer_unblock",
+                    "C411 répond de nouveau : incident clos"
+                );
+                if !ctx.dry_run {
+                    ctx.state
+                        .update(|s| s.indexer_alerts.remove(OUTAGE_KEY))
+                        .await?;
+                }
+            }
+            OutageStep::Quiet | OutageStep::Nothing => {}
+        }
+        // copies de base de la seedbox : purge quotidienne, que des pauses aient été levées ou non
+        let copy_dirs: Vec<String> = apps
+            .iter()
+            .filter_map(|a| match &a.place {
+                Place::Seedbox { db, .. } => Path::new(db)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string()),
+                Place::Vps { .. } => None,
+            })
+            .collect();
+        if !copy_dirs.is_empty() && !ctx.dry_run && purge_due(alerts.get(PURGE_KEY).copied(), t) {
+            let mark = match ssh(ctx, &purge_command(&copy_dirs)).await {
+                Ok(_) => t,
+                Err(e) => {
+                    // seedbox injoignable : nouvel essai dans une heure, pas à chaque passage
+                    warn!(task = "indexer_unblock", error = %e, "purge des copies de base impossible");
+                    t - 23 * 3600
+                }
+            };
+            ctx.state
+                .update(|s| s.indexer_alerts.insert(PURGE_KEY.to_string(), mark))
+                .await?;
+        }
+        let mut summary: Vec<String> = counts
+            .iter()
+            .filter(|(k, _)| **k != "c411_down")
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        if let Some(n) = counts.get("c411_down") {
+            summary.push(format!("C411 en panne : pause laissée ({n})"));
+        }
         let summary = if summary.is_empty() {
             "aucun indexeur en pause".to_string()
         } else {
             summary.join(" ")
         };
         Ok(Report::new(summary, actions))
+    }
+}
+
+/// Le site de C411 répond-il ? Sans Prowlarr pour le sonder, on suppose que oui (comportement d'avant).
+async fn c411_site_up(ctx: &TaskContext) -> bool {
+    match &ctx.prowlarr {
+        Some(prow) => crate::indexer::c411_reachable(ctx, prow).await,
+        None => true,
     }
 }
 
@@ -554,6 +723,67 @@ mod tests {
         assert_eq!(
             decide(&row(Some(now - 7200), Some(now + 3600)), now, 60, &old, 3),
             Decision::Unblock
+        );
+    }
+
+    #[test]
+    fn recognises_the_c411_indexers_of_an_arr() {
+        assert!(is_c411("C411", "C411"));
+        assert!(is_c411("C411 (2)", "C411"));
+        assert!(is_c411("c411", "C411"));
+        assert!(!is_c411("JK-thepiratebay", "C411"));
+        assert!(!is_c411("Nyaa", "C411"));
+        assert!(!is_c411("C411", ""), "préfixe vide : jamais tout");
+    }
+
+    #[test]
+    fn a_c411_outage_leaves_the_pause_alone() {
+        // 30/09 : C411 en maintenance, pause C411 prête à être levée → 34 arrêts d'Arr pour rien
+        assert_eq!(
+            with_outage(Decision::Unblock, true, false),
+            Decision::Outage
+        );
+        // le site répond : on lève la pause comme avant (un 429 sur une clé saine se débloque)
+        assert_eq!(
+            with_outage(Decision::Unblock, true, true),
+            Decision::Unblock
+        );
+        // un autre indexeur n'est pas concerné par la panne de C411
+        assert_eq!(
+            with_outage(Decision::Unblock, false, false),
+            Decision::Unblock
+        );
+        // rien d'autre ne change : ni l'attente, ni l'alerte « toujours en panne »
+        assert_eq!(with_outage(Decision::Wait, true, false), Decision::Wait);
+        assert_eq!(with_outage(Decision::Alert, true, false), Decision::Alert);
+    }
+
+    #[test]
+    fn a_whole_outage_gives_a_single_alert() {
+        // premier passage en panne : alerte
+        assert_eq!(outage_step(None, Some(true)), OutageStep::Announce);
+        // les passages suivants de la même panne : silence
+        assert_eq!(outage_step(Some(1_000), Some(true)), OutageStep::Quiet);
+        // retour de C411 : l'incident est clos, la panne suivante sera signalée de nouveau
+        assert_eq!(outage_step(Some(1_000), Some(false)), OutageStep::Clear);
+        assert_eq!(outage_step(None, Some(false)), OutageStep::Nothing);
+        // pas de sonde ce passage (aucune pause C411 à lever, pas d'incident en cours)
+        assert_eq!(outage_step(None, None), OutageStep::Nothing);
+    }
+
+    #[test]
+    fn seedbox_copies_are_purged_once_a_day_whatever_the_unblocks() {
+        let now = 2_000_000;
+        assert!(purge_due(None, now), "jamais purgé : à faire");
+        assert!(!purge_due(Some(now - 3600), now));
+        assert!(!purge_due(Some(now - 24 * 3600 + 1), now));
+        assert!(purge_due(Some(now - 24 * 3600), now));
+        assert_eq!(
+            purge_command(&[
+                "/home/x/.apps/sonarr".to_string(),
+                "/home/x/.apps/radarr".to_string()
+            ]),
+            "find /home/x/.apps/sonarr /home/x/.apps/radarr -maxdepth 1 -name '*.homelab-*' -mtime +7 -delete"
         );
     }
 

@@ -189,6 +189,20 @@ pub async fn c411_up(ctx: &TaskContext, prow: &ProwlarrClient) -> bool {
     }
 }
 
+/// Le **site** de C411 répond-il ? Joignabilité seule : la page `caps` Torznab, sans clé ni quota, doit être une
+/// vraie réponse Torznab (et non un 503 ou la page HTML « Incident en cours » servie en 200).
+///
+/// Différence avec `c411_up` : celle-ci regarde d'abord `indexerstatus` de Prowlarr, c'est-à-dire l'état de la
+/// clé de **recherche**. Un 429 sur cette clé dirait « en panne » alors que le site répond et que la clé RSS des
+/// Arrs est saine : `indexer_unblock` refuserait à tort de lever leur pause. Inconnue (Prowlarr injoignable,
+/// indexer absent) = on suppose que ça répond, comme avant.
+pub async fn c411_reachable(ctx: &TaskContext, prow: &ProwlarrClient) -> bool {
+    match prow.indexer_id(&ctx.cfg.manual_search.c411_indexer).await {
+        Ok(Some(id)) => prow.indexer_reachable(id).await.unwrap_or(true),
+        _ => true,
+    }
+}
+
 /// Liste vide : panne de l'indexer (notée par Prowlarr, ou page de maintenance) plutôt que « rien trouvé » ?
 async fn indexer_down(prow: &ProwlarrClient, id: i64) -> bool {
     if prow.indexer_failing(id).await.unwrap_or(false) {
