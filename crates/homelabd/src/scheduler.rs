@@ -201,6 +201,7 @@ async fn record_panic(ctx: &TaskContext, name: &'static str) {
         name,
         false,
         "panique : passage abandonné (voir le journal)".into(),
+        false,
     )
     .await;
 }
@@ -208,8 +209,9 @@ async fn record_panic(ctx: &TaskContext, name: &'static str) {
 /// Enregistre l'issue d'un passage (résumé, compteurs d'erreurs, dernière erreur, série d'échecs) puis prévient
 /// l'admin quand une série d'échecs dépasse les seuils de `[alerts]` — une seule fois —, et quand la tâche repasse.
 /// Avant le 2026-10-07 un échec n'était qu'un `warn!` et un compteur cumulé : une tâche cassée pendant des heures
-/// passait inaperçue.
-async fn settle(ctx: &TaskContext, name: &'static str, ok: bool, summary: String) {
+/// passait inaperçue. `quiet` (passage réussi qui répète le précédent, voir [`is_quiet`]) : la tenue part avec la
+/// sauvegarde suivante, au plus tard dans la minute ; un tel passage ne peut ni ouvrir ni clore une série d'échecs.
+async fn settle(ctx: &TaskContext, name: &'static str, ok: bool, summary: String, quiet: bool) {
     let (min_failures, min_mins) = (ctx.cfg.alerts.fail_streak, ctx.cfg.alerts.fail_minutes);
     let (cap, window_secs) = (
         ctx.cfg.alerts.fail_alerts_max as usize,
@@ -218,7 +220,7 @@ async fn settle(ctx: &TaskContext, name: &'static str, ok: bool, summary: String
     let ts = now();
     let result = ctx
         .state
-        .update(|s| {
+        .update_lazy_if(quiet, |s| {
             // plafond commun (Jellyfin ou la seedbox tombe : plusieurs tâches échouent ensemble) : au-delà, la série
             // n'est PAS marquée signalée, elle repart au prochain échec
             let capped = s
@@ -316,10 +318,21 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
         info!(task = name, "already running, pass skipped");
         return false;
     };
+    // résumé du dernier passage réussi : un passage qui le répète sans rien faire n'a rien de neuf à dire
+    let previous = ctx
+        .state
+        .read(|s| {
+            s.task_runs
+                .get(name)
+                .filter(|e| e.last_ok == Some(true))
+                .map(|e| e.last_summary.clone())
+        })
+        .await;
     let start = now();
+    // simple tenue : écrite avec la sauvegarde suivante (au plus tard la fin du passage)
     let _ = ctx
         .state
-        .update(|s| {
+        .update_lazy(|s| {
             let e = s.task_runs.entry(name.into()).or_insert_with(|| RunInfo {
                 last_start: start,
                 ..Default::default()
@@ -333,9 +346,18 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
     let outcome = tokio::time::timeout(RUN_TIMEOUT, task.run(ctx)).await;
     // durée du passage : repérer une tâche qui ralentit bien avant le plafond de 600 s
     let ms = began.elapsed().as_millis() as u64;
+    // seul un passage réussi peut être « calme » : un échec est toujours écrit tout de suite
+    let mut quiet = false;
     let (ok, summary) = match outcome {
         Ok(Ok(rep)) => {
-            info!(task = name, actions = rep.actions, summary = %rep.summary, ms, "run_done");
+            // 88 % des lignes du journal étaient des passages sans action identiques au précédent (revue du
+            // 2026-10-07) : ils passent en `debug`, tout changement reste en `info`
+            quiet = is_quiet(rep.actions, &rep.summary, previous.as_deref());
+            if quiet {
+                debug!(task = name, actions = rep.actions, summary = %rep.summary, ms, "run_done");
+            } else {
+                info!(task = name, actions = rep.actions, summary = %rep.summary, ms, "run_done");
+            }
             (true, rep.summary)
         }
         Ok(Err(e)) => {
@@ -353,13 +375,19 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
             (false, "timeout".into())
         }
     };
-    settle(ctx, name, ok, summary).await;
+    settle(ctx, name, ok, summary, quiet).await;
     true
+}
+
+/// Passage réussi, sans action, dont le résumé répète celui du passage réussi précédent : journalisé en `debug`, et
+/// sa tenue (`last_end`) n'est pas écrite sur disque à elle seule.
+fn is_quiet(actions: u32, summary: &str, previous_ok_summary: Option<&str>) -> bool {
+    actions == 0 && previous_ok_summary == Some(summary)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{contained, evaluate, stale_after, Duration, Health, RUN_TIMEOUT};
+    use super::{contained, evaluate, is_quiet, stale_after, Duration, Health, RUN_TIMEOUT};
 
     #[test]
     fn the_silence_tolerated_never_goes_below_two_full_runs() {
@@ -408,5 +436,19 @@ mod tests {
     async fn a_panicking_run_is_contained() {
         assert!(contained(async { panic!("passage qui plante") }).await);
         assert!(!contained(async {}).await);
+    }
+
+    #[test]
+    fn only_a_repeated_idle_pass_is_quiet() {
+        let idle = "rien à extraire (3 en attente de relance, dont 1 sans piste)";
+        assert!(is_quiet(0, idle, Some(idle)));
+        // une action, un résumé qui change, un premier passage ou un passage précédent en échec : `info`
+        assert!(!is_quiet(1, idle, Some(idle)));
+        assert!(!is_quiet(
+            0,
+            idle,
+            Some("rien à extraire (2 en attente de relance, dont 1 sans piste)")
+        ));
+        assert!(!is_quiet(0, idle, None));
     }
 }
