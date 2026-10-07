@@ -9,7 +9,7 @@ use homelab_core::tasks::{registry, Task};
 use homelab_core::TaskContext;
 use rand::Rng;
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 const RUN_TIMEOUT: Duration = Duration::from_secs(600);
 
@@ -153,10 +153,21 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
         info!(task = name, "already running, pass skipped");
         return false;
     };
+    // résumé du dernier passage réussi : un passage qui le répète sans rien faire n'a rien de neuf à dire
+    let previous = ctx
+        .state
+        .read(|s| {
+            s.task_runs
+                .get(name)
+                .filter(|e| e.last_ok == Some(true))
+                .map(|e| e.last_summary.clone())
+        })
+        .await;
     let start = now();
+    // simple tenue : écrite avec la sauvegarde suivante (au plus tard la fin du passage)
     let _ = ctx
         .state
-        .update(|s| {
+        .update_lazy(|s| {
             let e = s.task_runs.entry(name.into()).or_insert(RunInfo {
                 last_start: start,
                 last_end: None,
@@ -171,9 +182,17 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
         })
         .await;
     let outcome = tokio::time::timeout(RUN_TIMEOUT, task.run(ctx)).await;
+    let mut quiet = false;
     let (ok, summary) = match outcome {
         Ok(Ok(rep)) => {
-            info!(task = name, actions = rep.actions, summary = %rep.summary, "run_done");
+            // 88 % des lignes du journal étaient des passages sans action identiques au précédent (revue du
+            // 2026-10-07) : ils passent en `debug`, tout changement reste en `info`
+            quiet = is_quiet(rep.actions, &rep.summary, previous.as_deref());
+            if quiet {
+                debug!(task = name, actions = rep.actions, summary = %rep.summary, "run_done");
+            } else {
+                info!(task = name, actions = rep.actions, summary = %rep.summary, "run_done");
+            }
             (true, rep.summary)
         }
         Ok(Err(e)) => {
@@ -190,9 +209,10 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
             (false, "timeout".into())
         }
     };
+    // passage sans rien de neuf : sa tenue part avec la sauvegarde suivante, au plus tard dans la minute
     let _ = ctx
         .state
-        .update(|s| {
+        .update_lazy_if(quiet, |s| {
             if let Some(e) = s.task_runs.get_mut(name) {
                 e.last_end = Some(now());
                 e.last_ok = Some(ok);
@@ -206,13 +226,33 @@ pub async fn run_once(ctx: &TaskContext, task: &dyn Task) -> bool {
     true
 }
 
+/// Passage réussi, sans action, dont le résumé répète celui du passage réussi précédent : journalisé en `debug`, et
+/// sa tenue (`last_end`) n'est pas écrite sur disque à elle seule.
+fn is_quiet(actions: u32, summary: &str, previous_ok_summary: Option<&str>) -> bool {
+    actions == 0 && previous_ok_summary == Some(summary)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::contained;
+    use super::{contained, is_quiet};
 
     #[tokio::test]
     async fn a_panicking_run_is_contained() {
         assert!(contained(async { panic!("passage qui plante") }).await);
         assert!(!contained(async {}).await);
+    }
+
+    #[test]
+    fn only_a_repeated_idle_pass_is_quiet() {
+        let idle = "rien à extraire (3 en attente de relance, dont 1 sans piste)";
+        assert!(is_quiet(0, idle, Some(idle)));
+        // une action, un résumé qui change, un premier passage ou un passage précédent en échec : `info`
+        assert!(!is_quiet(1, idle, Some(idle)));
+        assert!(!is_quiet(
+            0,
+            idle,
+            Some("rien à extraire (2 en attente de relance, dont 1 sans piste)")
+        ));
+        assert!(!is_quiet(0, idle, None));
     }
 }
