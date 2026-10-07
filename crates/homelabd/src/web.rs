@@ -431,8 +431,24 @@ Epoch : {epoch}\n\
     )
 }
 
-async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok", "version": env!("CARGO_PKG_VERSION") }))
+/// Santé du daemon, lue par le chien de garde (`scripts/homelabd-watchdog.sh`) : 200 tant que l'ordonnanceur tourne,
+/// 503 quand plus aucune boucle de tâche n'a fait de tour depuis `scheduler::stale_after` (20 min au moins). Avant,
+/// la réponse était toujours « ok » : un ordonnanceur figé ne déclenchait aucune relance.
+async fn health() -> (StatusCode, Json<Value>) {
+    let h = crate::scheduler::health();
+    let code = if h.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (
+        code,
+        Json(json!({
+            "status": if h.ok { "ok" } else { "scheduler_stale" },
+            "version": crate::VERSION,
+            "scheduler_idle_secs": h.age_secs,
+        })),
+    )
 }
 
 /// `/status` et `/status.html` exposent l'activité interne : si `HOMELABD_STATUS_TOKEN` est

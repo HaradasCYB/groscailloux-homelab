@@ -48,6 +48,11 @@ admin_alerts = true           # alertes admin (boucles HLS, indexeur, inscriptio
 # plus en 2 minutes grâce à la durée minimale.
 fail_streak = 6
 fail_minutes = 30
+# Plafond commun : quand Jellyfin ou la seedbox tombe, plusieurs tâches échouent ensemble ; au plus
+# `fail_alerts_max` messages « tâche en échec répété » par fenêtre de `fail_alerts_window_mins` minutes. Une série
+# non signalée repart au prochain échec (rien n'est perdu), les autres alertes (canari, seedbox_health) ne sont pas limitées.
+fail_alerts_max = 3
+fail_alerts_window_mins = 10
 # Seuils de capacité (disk_pressure.alert_pct, seedbox_health.quota_alert_pct) : une alerte par franchissement ;
 # la suivante n'arrive qu'après être redescendu de `capacity_rearm_pts` points sous le seuil.
 capacity_rearm_pts = 3

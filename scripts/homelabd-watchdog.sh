@@ -5,6 +5,8 @@
 # systemd relance déjà homelabd s'il s'ARRÊTE (Restart=always). Ce script couvre l'autre cas : homelabd vivant mais
 # figé (plus de recherches, d'imports ni de pages membres, sans alerte). `/health` qui ne répond pas 3 fois de suite
 # (≈ 6 min) → `systemctl restart homelabd` + message Discord admin ; un second message quand il répond de nouveau.
+# `/health` répond 503 (donc `curl -f` échoue) quand plus aucune boucle de tâche n'a fait de tour depuis 20 min au moins :
+# un ordonnanceur figé est relancé au bout de ≈ 26 min (battement de cœur, `scheduler::stale_after`).
 #
 #   homelabd-watchdog.sh            un passage
 #   homelabd-watchdog.sh --check    état seulement, ne relance rien

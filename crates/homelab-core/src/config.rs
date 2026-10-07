@@ -394,6 +394,12 @@ pub struct Alerts {
     /// déclenche une alerte admin (puis un message au retour). Les erreurs intermittentes ne déclenchent rien.
     pub fail_streak: u32,
     pub fail_minutes: i64,
+    /// Au plus `fail_alerts_max` alertes « tâche en échec répété » par fenêtre de `fail_alerts_window_mins` minutes,
+    /// toutes tâches confondues : quand Jellyfin ou la seedbox tombe, plusieurs tâches échouent ensemble, et chacune
+    /// enverrait son message en doublon des alertes du canari et de `seedbox_health`. Une série non signalée
+    /// repart au prochain échec, dans la limite de la fenêtre suivante.
+    pub fail_alerts_max: u32,
+    pub fail_alerts_window_mins: i64,
     /// Points sous le seuil de capacité (disque, quota) avant que la prochaine montée alerte de nouveau.
     pub capacity_rearm_pts: u8,
 }
@@ -403,6 +409,8 @@ impl Default for Alerts {
         Self {
             fail_streak: 6,
             fail_minutes: 30,
+            fail_alerts_max: 3,
+            fail_alerts_window_mins: 10,
             capacity_rearm_pts: 3,
         }
     }
@@ -1469,6 +1477,12 @@ impl Config {
         if self.alerts.fail_streak == 0 {
             bail!("[alerts] fail_streak doit être au moins 1");
         }
+        if self.alerts.fail_alerts_max == 0 || self.alerts.fail_alerts_window_mins < 1 {
+            bail!(
+                "[alerts] fail_alerts_max et fail_alerts_window_mins doivent être au moins 1 (0 ne laisserait \
+                 partir aucune alerte)"
+            );
+        }
         if self
             .tasks
             .cert_watch
@@ -1831,6 +1845,13 @@ jellyseerr = "http://js"
         assert_eq!(cfg.tasks.trending.size, 10);
         // alertes admin (revue du 2026-10-07)
         assert_eq!((cfg.alerts.fail_streak, cfg.alerts.fail_minutes), (6, 30));
+        assert_eq!(
+            (
+                cfg.alerts.fail_alerts_max,
+                cfg.alerts.fail_alerts_window_mins
+            ),
+            (3, 10)
+        );
         assert_eq!(cfg.alerts.capacity_rearm_pts, 3);
         assert_eq!(cfg.tasks.disk_pressure.alert_pct, 85);
         assert_eq!(cfg.tasks.seedbox_health.quota_alert_pct, 85);
@@ -1857,6 +1878,10 @@ jellyseerr = "http://js"
         let parse = |extra: &str| toml::from_str::<Config>(&format!("{base}{extra}")).unwrap();
         parse("").validate().unwrap();
         assert!(parse("[alerts]\nfail_streak = 0\n").validate().is_err());
+        assert!(parse("[alerts]\nfail_alerts_max = 0\n").validate().is_err());
+        assert!(parse("[alerts]\nfail_alerts_window_mins = 0\n")
+            .validate()
+            .is_err());
         assert!(parse("[tasks.disk_pressure]\nalert_pct = 101\n")
             .validate()
             .is_err());

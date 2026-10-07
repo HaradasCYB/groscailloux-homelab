@@ -114,6 +114,10 @@ pub struct State {
     /// Alertes admin passées par `alerts::admin` : compteurs et dernières alertes (preuve de livraison).
     #[serde(default)]
     pub alerts: AlertStats,
+    /// hls_loop_watch : titres (identifiant Jellyfin compact) dont la rafale de ffmpeg est déjà signalée → date de
+    /// l'alerte ; la clé disparaît quand leur compteur horaire retombe sous le seuil, la rafale suivante alertera.
+    #[serde(default)]
+    pub burst_alerts: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -356,6 +360,19 @@ impl RunInfo {
         None
     }
 
+    /// La série d'échecs en cours a-t-elle dépassé les seuils sans avoir encore été signalée ? (Sans rien changer.)
+    pub fn streak_due(&self, ts: i64, min_failures: u32, min_mins: i64) -> bool {
+        match self.fail_since {
+            Some(since) => {
+                !self.streak_alerted
+                    && self.last_ok == Some(false)
+                    && self.fail_streak >= min_failures
+                    && ts - since >= min_mins * 60
+            }
+            None => false,
+        }
+    }
+
     /// La série d'échecs en cours doit-elle déclencher l'alerte ? Oui, une seule fois, quand elle compte au moins
     /// `min_failures` échecs de suite **et** dure depuis au moins `min_mins` minutes (une tâche toutes les 20 s
     /// échoue six fois en deux minutes sans que ce soit une panne). Marque la série comme signalée.
@@ -365,14 +382,10 @@ impl RunInfo {
         min_failures: u32,
         min_mins: i64,
     ) -> Option<StreakAlert> {
-        let since = self.fail_since?;
-        if self.streak_alerted
-            || self.last_ok != Some(false)
-            || self.fail_streak < min_failures
-            || ts - since < min_mins * 60
-        {
+        if !self.streak_due(ts, min_failures, min_mins) {
             return None;
         }
+        let since = self.fail_since?;
         self.streak_alerted = true;
         Some(StreakAlert {
             failures: self.fail_streak,
@@ -479,6 +492,15 @@ pub struct AlertStats {
 }
 
 impl AlertStats {
+    /// Alertes dont l'objet commence par `prefix` et qui datent de moins de `window_secs` avant `ts` : le plafond
+    /// des alertes d'échecs répétés (voir `[alerts] fail_alerts_max`). Ne regarde que les [`ALERTS_KEPT`] dernières.
+    pub fn count_recent(&self, prefix: &str, ts: i64, window_secs: i64) -> usize {
+        self.recent
+            .iter()
+            .filter(|a| a.subject.starts_with(prefix) && ts - a.at < window_secs)
+            .count()
+    }
+
     pub fn record(&mut self, at: i64, subject: &str, mailed: bool, posted: bool) {
         if mailed || posted {
             self.delivered += 1;
@@ -694,6 +716,28 @@ mod tests {
     }
 
     #[test]
+    fn streak_due_changes_nothing_and_matches_the_alert() {
+        let mut r = RunInfo::default();
+        for i in 0..7 {
+            r.record_outcome(NOON + i * 300, false, "error: x");
+        }
+        let ts = NOON + 6 * 300;
+        // 7 échecs en 30 min : dû, et le constat ne marque rien
+        assert!(r.streak_due(ts, 6, 30));
+        assert!(r.streak_due(ts, 6, 30), "lecture seule : toujours dû");
+        assert!(!r.streak_alerted);
+        // trop court, ou trop peu d'échecs : pas dû
+        assert!(!r.streak_due(ts, 6, 31));
+        assert!(!r.streak_due(ts, 8, 30));
+        // la prise marque la série, après quoi plus rien n'est dû
+        assert!(r.take_streak_alert(ts, 6, 30).is_some());
+        assert!(!r.streak_due(ts, 6, 30));
+        // un succès : plus de série
+        r.record_outcome(ts + 60, true, "ok");
+        assert!(!r.streak_due(ts + 60, 1, 0));
+    }
+
+    #[test]
     fn intermittent_errors_never_alert() {
         let mut r = RunInfo::default();
         for i in 0..40 {
@@ -757,6 +801,24 @@ mod tests {
         assert_eq!(a.recent.last().unwrap().at, 129);
         assert_eq!(a.recent[0].subject.chars().count(), 120);
         assert_eq!(a.recent[0].channels(), "Discord");
+    }
+
+    #[test]
+    fn the_streak_alert_cap_counts_only_recent_matching_subjects() {
+        let mut a = AlertStats::default();
+        let p = "Tâche en échec répété";
+        a.record(1_000, &format!("{p} : Seedbox"), true, true);
+        a.record(1_100, "Disque VPS : 90 %", true, false);
+        a.record(1_200, &format!("{p} : Jellyfin"), false, false);
+        a.record(1_300, "Tâche rétablie : Seedbox", true, true);
+        // fenêtre de 10 min = 600 s : les deux alertes d'échecs comptent, ni le disque ni le retour
+        assert_eq!(a.count_recent(p, 1_400, 600), 2);
+        // plus tard, la première sort de la fenêtre, puis la seconde
+        assert_eq!(a.count_recent(p, 1_650, 600), 1);
+        assert_eq!(a.count_recent(p, 1_900, 600), 0);
+        // une alerte non livrée compte aussi : elle a bien été tentée
+        assert_eq!(a.count_recent("Tâche rétablie", 1_400, 600), 1);
+        assert_eq!(AlertStats::default().count_recent(p, 0, 600), 0);
     }
 
     #[tokio::test]

@@ -6,7 +6,8 @@
 //! mail de mise à jour, personne ne l'a vu en 20 jours.
 //!
 //! Le fichier n'a qu'une forme : une liste d'entrées `- name: image:tag` suivies de leurs clés à deux espaces
-//! d'indentation (`watch_repo`, `max_tags`, `include_tags`…). Pas de bibliothèque YAML dans le dépôt : ce contrôle
+//! d'indentation (`watch_repo`, `max_tags`, `include_tags`…, la valeur d'une liste tenant en ligne `['…']` ou sur
+//! des lignes `- '…'` à la même indentation que la clé ou plus loin). Pas de bibliothèque YAML dans le dépôt : ce contrôle
 //! lit exactement cette forme, refuse tout ce qui en sort et refait ce que fait diun (clé en double ⇒ rejet).
 //! Il vérifie aussi que chaque image du compose a son entrée (une image oubliée n'est jamais surveillée).
 
@@ -49,6 +50,8 @@ pub fn check_images_file(text: &str) -> Findings {
     // entrée en cours : (ligne, clés vues → ligne, nom)
     let mut current: Option<(usize, BTreeMap<String, usize>, String)> = None;
     let mut names: BTreeMap<String, usize> = BTreeMap::new();
+    // la dernière clé n'a pas de valeur en ligne : une liste en bloc peut suivre
+    let mut block_open = false;
 
     fn close(
         out: &mut Findings,
@@ -86,9 +89,11 @@ pub fn check_images_file(text: &str) -> Findings {
             close(&mut out, &mut names, current.take());
             let mut keys = BTreeMap::new();
             let mut name = String::new();
+            block_open = false;
             match key_of(rest.trim_start()) {
                 Some(k) => {
                     keys.insert(k.to_string(), n);
+                    block_open = value_of(rest.trim_start()).is_empty();
                     if k == "name" {
                         name = value_of(rest.trim_start());
                     }
@@ -116,8 +121,15 @@ pub fn check_images_file(text: &str) -> Findings {
         if indent > 2 {
             continue; // suite d'une valeur (liste ou texte sur plusieurs lignes)
         }
+        if block_open && (trimmed == "-" || trimmed.starts_with("- ")) {
+            // liste « compacte » : les éléments sont à la même indentation que leur clé (`  include_tags:` puis
+            // `  - '^1$'`). YAML l'accepte et diun aussi ; une entrée, elle, est toujours à la colonne 0 (traitée
+            // plus haut). Seulement sous une clé sans valeur : après `include_tags: ['x']`, un « - » est une erreur.
+            continue;
+        }
         match key_of(trimmed) {
             Some(k) => {
+                block_open = value_of(trimmed).is_empty();
                 if let Some(first) = keys.insert(k.to_string(), n) {
                     out.errors.push(format!(
                         "ligne {n} : clé « {k} » en double (déjà ligne {first}) — diun rejette tout le fichier \
@@ -268,6 +280,44 @@ mod tests {
         assert_eq!(f.entries[0].name, "a:1");
         let f = check_images_file("- name: a:1\n\tmax_tags: 3\n");
         assert!(f.errors[0].contains("tabulation"));
+    }
+
+    #[test]
+    fn compact_yaml_lists_are_accepted_but_stray_items_are_not() {
+        // style compact : éléments de liste à la même indentation que la clé (valide en YAML, accepté par diun)
+        let compact = "\
+- name: a:1
+  watch_repo: true
+  include_tags:
+  - '^1$'
+  - '^2$'
+  max_tags: 3
+- name: b:2
+  include_tags:
+    - '^3$'
+";
+        let f = check_images_file(compact);
+        assert!(f.errors.is_empty(), "{:?}", f.errors);
+        assert_eq!(f.entries.len(), 2);
+        // une clé en double reste vue après une liste compacte
+        let dup = "- name: a:1\n  include_tags:\n  - 'x'\n  include_tags: ['y']\n";
+        let f = check_images_file(dup);
+        assert_eq!(f.errors.len(), 1, "{:?}", f.errors);
+        assert!(f.errors[0].contains("ligne 4") && f.errors[0].contains("en double"));
+        // un « - » indenté avant toute entrée reste une erreur (fichier entièrement indenté)
+        let f = check_images_file("  - name: a:1\n    watch_repo: true\n");
+        assert!(
+            f.errors.iter().any(|e| e.contains("orpheline")),
+            "{:?}",
+            f.errors
+        );
+        // un élément isolé « - » (valeur vide) ne casse rien non plus
+        let f = check_images_file("- name: a:1\n  include_tags:\n  -\n");
+        assert!(f.errors.is_empty(), "{:?}", f.errors);
+        // mais un « - » sous une clé qui a déjà sa valeur en ligne n'est pas du YAML valide
+        let f = check_images_file("- name: a:1\n  include_tags: ['x']\n  - 'y'\n");
+        assert_eq!(f.errors.len(), 1, "{:?}", f.errors);
+        assert!(f.errors[0].contains("ligne 3") && f.errors[0].contains("illisible"));
     }
 
     #[test]

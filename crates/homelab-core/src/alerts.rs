@@ -13,6 +13,10 @@ use crate::discord::{self, Channel, Embed};
 use crate::mail;
 use crate::state::now;
 
+/// Début de l'objet des alertes « tâche en échec répété » (scheduler) : sert aussi à les compter dans
+/// `state.alerts.recent` pour le plafond `[alerts] fail_alerts_max`.
+pub const STREAK_SUBJECT: &str = "Tâche en échec répété";
+
 /// Niveau, pour la couleur Discord.
 #[derive(Debug, Clone, Copy)]
 pub enum Level {
@@ -21,11 +25,19 @@ pub enum Level {
     Error,
 }
 
+/// Au moins un canal d'alerte est configuré : mail admin complet (SMTP + `CHAT_ADMIN_EMAIL`) ou Discord admin
+/// activé avec son webhook. Sans canal, une alerte non livrée ne se réessaie pas : rien ne changera au passage suivant.
+pub fn configured(ctx: &TaskContext) -> bool {
+    let mail = ctx.secrets.smtp.is_some() && ctx.secrets.chat_admin_email.is_some();
+    let discord =
+        ctx.cfg.discord.admin_alerts && discord::webhook_for(ctx, Channel::Admin).is_some();
+    mail || discord
+}
+
 /// Envoie `subject`/`body` par mail à l'admin et l'embed correspondant sur Discord (si activé dans
 /// `[discord] admin_alerts`). Renvoie (mail envoyé, discord envoyé).
 pub async fn admin(ctx: &TaskContext, level: Level, subject: &str, body: &str) -> (bool, bool) {
     let mut mailed = false;
-    let mail_configured = ctx.secrets.smtp.is_some() && ctx.secrets.chat_admin_email.is_some();
     if let (Some(smtp), Some(to)) = (&ctx.secrets.smtp, &ctx.secrets.chat_admin_email) {
         if ctx.dry_run {
             tracing::info!(task = "alerts", subject, "dry-run: admin mail not sent");
@@ -37,8 +49,6 @@ pub async fn admin(ctx: &TaskContext, level: Level, subject: &str, body: &str) -
         }
     }
     let mut posted = false;
-    let discord_configured =
-        ctx.cfg.discord.admin_alerts && discord::webhook_for(ctx, Channel::Admin).is_some();
     if ctx.cfg.discord.admin_alerts {
         let embed = match level {
             Level::Info => Embed::info(subject, body),
@@ -47,14 +57,7 @@ pub async fn admin(ctx: &TaskContext, level: Level, subject: &str, body: &str) -
         };
         posted = discord::notify(ctx, Channel::Admin, embed).await;
     }
-    trace(
-        ctx,
-        subject,
-        mailed,
-        posted,
-        mail_configured || discord_configured,
-    )
-    .await;
+    trace(ctx, subject, mailed, posted, configured(ctx)).await;
     (mailed, posted)
 }
 
@@ -62,6 +65,13 @@ pub async fn admin(ctx: &TaskContext, level: Level, subject: &str, body: &str) -
 /// réessayer au passage suivant quand rien n'est parti.
 pub fn delivered(sent: (bool, bool)) -> bool {
     sent.0 || sent.1
+}
+
+/// Faut-il réessayer cette alerte plus tard ? Oui si rien n'est parti **alors qu'un canal est configuré** (panne
+/// d'envoi, probablement passagère). Sans canal configuré, réessayer à chaque passage ne ferait qu'écrire un
+/// avertissement et une ligne « non livrée » de plus à chaque fois.
+pub fn retry_later(sent: (bool, bool), configured: bool) -> bool {
+    !delivered(sent) && configured
 }
 
 /// Journal et état d'un envoi. Rien en dry-run (rien n'est parti) ; l'objet seul est écrit, jamais le corps
@@ -202,6 +212,17 @@ mod tests {
     #[test]
     fn rearm_margin_cannot_underflow() {
         assert_eq!(crossing(0, 2, 5, true), Crossing::Nothing);
+    }
+
+    #[test]
+    fn an_undelivered_alert_is_retried_only_when_a_channel_exists() {
+        // canal configuré mais en échec : on réessaiera
+        assert!(retry_later((false, false), true));
+        // aucun canal : inutile de réessayer à chaque passage
+        assert!(!retry_later((false, false), false));
+        // partie par au moins un canal : terminé
+        assert!(!retry_later((true, false), true));
+        assert!(!retry_later((false, true), true));
     }
 
     #[test]

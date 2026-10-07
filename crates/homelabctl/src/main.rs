@@ -674,6 +674,18 @@ fn nix_is_root() -> bool {
         .unwrap_or(false)
 }
 
+/// Fichiers de `systemd/` qui ne sont pas des unités : (nom dans le dépôt, destination). Copiés seulement s'ils
+/// diffèrent de ce qui est installé.
+const SYSTEM_FILES: &[(&str, &str)] = &[(
+    "journald-homelab.conf",
+    "/etc/systemd/journald.conf.d/homelab.conf",
+)];
+
+/// Le fichier installé diffère-t-il de celui du dépôt (ou n'existe-t-il pas) ?
+fn file_changed(installed: Option<&str>, wanted: &str) -> bool {
+    installed != Some(wanted)
+}
+
 async fn install(cfg: &Config) -> Result<()> {
     if !nix_is_root() {
         bail!("install doit tourner en root");
@@ -691,6 +703,24 @@ async fn install(cfg: &Config) -> Result<()> {
             names.push(name);
         }
     }
+    let mut journald_changed = false;
+    for (name, dest) in SYSTEM_FILES {
+        let from = src.join(name);
+        if !from.exists() {
+            continue;
+        }
+        let wanted = std::fs::read_to_string(&from)
+            .with_context(|| format!("lecture {}", from.display()))?;
+        if !file_changed(std::fs::read_to_string(dest).ok().as_deref(), &wanted) {
+            continue;
+        }
+        if let Some(dir) = std::path::Path::new(dest).parent() {
+            std::fs::create_dir_all(dir).with_context(|| format!("création {}", dir.display()))?;
+        }
+        std::fs::write(dest, wanted).with_context(|| format!("écriture {dest}"))?;
+        println!("installed {dest}");
+        journald_changed |= dest.contains("journald.conf.d");
+    }
     homelab_core::docker::run("systemctl", &["daemon-reload"], None).await?;
     for n in &names {
         let seedbox_mount = n == "homelab-seedbox-mount.service" && cfg.seedbox.enabled;
@@ -702,6 +732,9 @@ async fn install(cfg: &Config) -> Result<()> {
             homelab_core::docker::run("systemctl", &["enable", n], None).await?;
             println!("enabled {n}");
         }
+    }
+    if journald_changed {
+        println!("→ systemctl restart systemd-journald (applique la durée de garde du journal, ne coupe aucun service)");
     }
     println!("→ systemctl start homelabd.service (ou restart après mise à jour du binaire)");
     Ok(())
@@ -934,4 +967,30 @@ async fn subs_cmd(
         _ => bail!("action inconnue"),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_system_file_is_rewritten_only_when_it_differs() {
+        assert!(file_changed(None, "[Journal]\n"), "absent : à installer");
+        assert!(file_changed(
+            Some("[Journal]\nSystemMaxUse=500M\n"),
+            "[Journal]\nSystemMaxUse=2G\n"
+        ));
+        assert!(!file_changed(Some("[Journal]\n"), "[Journal]\n"));
+    }
+
+    #[test]
+    fn the_journald_file_of_the_repo_keeps_a_month_and_a_half_of_history() {
+        let conf = include_str!("../../../systemd/journald-homelab.conf");
+        for key in ["[Journal]", "SystemMaxUse=2G", "MaxRetentionSec=45day"] {
+            assert!(conf.lines().any(|l| l.trim() == key), "{key} manque");
+        }
+        assert!(SYSTEM_FILES
+            .iter()
+            .any(|(n, d)| *n == "journald-homelab.conf" && d.ends_with("/homelab.conf")));
+    }
 }

@@ -106,14 +106,26 @@ pub fn not_after(der: &[u8]) -> Result<i64> {
 // Décision (pure)
 // ---------------------------------------------------------------------------------------------
 
+/// Tentatives de la sonde et pause entre deux. Le premier passage a lieu à chaque démarrage de homelabd (0 à 30 s
+/// après) : un redémarrage de la machine, de NPM ou de Jellyfin rend NPM injoignable ou Jellyfin muet (502/503/504)
+/// pendant une à deux minutes, sans que ce soit une panne.
+pub const PROBE_ATTEMPTS: u32 = 3;
+pub const PROBE_PAUSE_SECS: u64 = 30;
+
+/// Faut-il refaire une tentative ? Oui tant qu'il en reste, quand la connexion a échoué **ou** que le serveur a
+/// répondu 5xx (NPM qui n'a plus d'amont répond 502/503/504, ce que le premier essai prenait pour un verdict).
+pub fn should_retry(attempt: u32, connect_failed: bool, status: Option<u16>) -> bool {
+    attempt + 1 < PROBE_ATTEMPTS && (connect_failed || status.is_some_and(|s| s >= 500))
+}
+
 /// Ce que la sonde a vu.
 #[derive(Debug, Default, Clone)]
 pub struct Observed {
-    /// NPM injoignable ou handshake impossible, même après une seconde tentative.
+    /// NPM injoignable ou handshake impossible à la dernière des [`PROBE_ATTEMPTS`] tentatives.
     pub connect_error: Option<String>,
     /// Date d'expiration du certificat présenté.
     pub not_after: Option<i64>,
-    /// Statut HTTP de `GET <hôte public><health_path>`.
+    /// Statut HTTP de `GET <hôte public><health_path>` à la dernière tentative.
     pub health_status: Option<u16>,
     /// La requête avec vérification complète a échoué alors que la première est passée.
     pub strict_error: Option<String>,
@@ -140,7 +152,7 @@ pub fn assess(o: &Observed, ts: i64, warn_days: i64, host: &str) -> Vec<Problem>
             error: true,
             title: "NPM injoignable en TLS".into(),
             detail: format!(
-                "La connexion TLS vers NPM avec le nom {host} échoue, même après une seconde tentative : {e}. \
+                "La connexion TLS vers NPM avec le nom {host} échoue, même après {PROBE_ATTEMPTS} tentatives espacées de {PROBE_PAUSE_SECS} s : {e}. \
                  Tous les hôtes publics sont probablement hors service (`docker compose ps npm`, \
                  `docker compose logs npm`)."
             ),
@@ -309,11 +321,12 @@ impl Task for CertWatch {
         let host = url.host_str().unwrap_or_default().to_string();
         let ts = now();
 
+        // seule la dernière tentative compte : un 502 suivi d'un 200 n'est pas un défaut
         let mut obs = Observed::default();
-        for attempt in 0..2 {
+        for attempt in 0..PROBE_ATTEMPTS {
+            obs = Observed::default();
             match fetch(&url, addr, false).await {
                 Ok(f) => {
-                    obs.connect_error = None;
                     obs.health_status = Some(f.status);
                     match f.peer_cert.as_deref().map(not_after) {
                         Some(Ok(t)) => obs.not_after = Some(t),
@@ -326,16 +339,21 @@ impl Task for CertWatch {
                         }
                         None => warn!(task = "cert_watch", "aucun certificat relevé (tls_info)"),
                     }
-                    break;
                 }
-                Err(e) => {
-                    obs.connect_error = Some(format!("{e:#}"));
-                    if attempt == 0 {
-                        // un redémarrage de NPM ou de Jellyfin en cours ne doit pas réveiller l'admin
-                        tokio::time::sleep(Duration::from_secs(20)).await;
-                    }
-                }
+                Err(e) => obs.connect_error = Some(format!("{e:#}")),
             }
+            if !should_retry(attempt, obs.connect_error.is_some(), obs.health_status) {
+                break;
+            }
+            // un redémarrage de NPM ou de Jellyfin en cours ne doit pas réveiller l'admin
+            info!(
+                task = "cert_watch",
+                attempt = attempt + 1,
+                status = obs.health_status,
+                error = obs.connect_error.as_deref(),
+                "sonde en défaut, nouvel essai"
+            );
+            tokio::time::sleep(Duration::from_secs(PROBE_PAUSE_SECS)).await;
         }
         if obs.connect_error.is_none() {
             if let Err(e) = fetch(&url, addr, true).await {
@@ -446,6 +464,25 @@ mod tests {
         // pas de Z final
         let no_z = fake_cert(true, (0x17, "261126215435Z"), (0x17, "270226215435"));
         assert!(not_after(&no_z).is_err());
+    }
+
+    #[test]
+    fn a_connection_error_or_a_5xx_is_retried_but_not_forever() {
+        // connexion refusée, 500/502/503/504 : on retente tant qu'il reste un essai
+        assert!(should_retry(0, true, None));
+        for s in [500, 502, 503, 504] {
+            assert!(should_retry(0, false, Some(s)), "HTTP {s}");
+            assert!(should_retry(1, false, Some(s)), "HTTP {s} au 2e essai");
+        }
+        // une réponse saine ou une erreur client est un verdict : pas de nouvel essai
+        for s in [200, 204, 301, 401, 404] {
+            assert!(!should_retry(0, false, Some(s)), "HTTP {s}");
+        }
+        assert!(!should_retry(0, false, None));
+        // le dernier essai conclut, quoi qu'il ait vu
+        assert!(!should_retry(PROBE_ATTEMPTS - 1, true, None));
+        assert!(!should_retry(PROBE_ATTEMPTS - 1, false, Some(503)));
+        assert_eq!(PROBE_ATTEMPTS, 3);
     }
 
     const DAY: i64 = 86_400;
