@@ -3,6 +3,8 @@
 //! pures sont dans [`crate::subscriptions`]. Toute suspension/activation passe par
 //! [`crate::accounts::set_premium`] (plafond, comptes protégés, Jellyseerr, lectures arrêtées).
 
+use std::collections::HashSet;
+
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use tracing::{info, warn};
@@ -13,18 +15,48 @@ use crate::clients::paypal::EventFacts;
 use crate::context::TaskContext;
 use crate::mail;
 use crate::state::now;
-use crate::subscriptions::{self as subs, Action, Status, Subscriber, DAY};
+use crate::subscriptions::{self as subs, Action, Reconcile, Status, Subscriber, DAY};
 
-/// Lien de paiement pré-rempli pour un membre (page `/premium`), ou le lien PayPal hébergé.
+/// Lien de paiement pré-rempli pour un membre (page `/premium`), ou le lien PayPal hébergé. Il porte
+/// la clé `k` ([`subs::premium_link_key`], secret = `HOMELABD_ONBOARD_TOKEN`) : seul un lien émis ici
+/// fait afficher « déjà abonné » à la page publique (un rappel recliqué après s'être abonné).
 pub fn pay_url(ctx: &TaskContext, username: &str) -> String {
+    pay_link(ctx, username, true)
+}
+
+/// Même lien, sans clé : « Mon compte » ne le montre qu'à un compte qui ne se renouvelle pas tout seul
+/// (la clé n'y servirait à rien), et l'écrit en clair sur une télé pour qu'il soit retapé ailleurs.
+pub fn pay_url_short(ctx: &TaskContext, username: &str) -> String {
+    pay_link(ctx, username, false)
+}
+
+fn pay_link(ctx: &TaskContext, username: &str, keyed: bool) -> String {
     match &ctx.secrets.premium_public_url {
-        Some(base) => format!("{base}/premium?compte={}", urlencode(username)),
+        Some(base) => premium_url(
+            base,
+            username,
+            ctx.secrets
+                .onboard_token
+                .as_ref()
+                .filter(|_| keyed)
+                .map(|t| t.expose()),
+        ),
         None => ctx
             .paypal
             .as_ref()
             .map(|p| p.subscribe_url())
             .unwrap_or_default(),
     }
+}
+
+/// `<base>/premium?compte=<nom>[&k=<clé>]` (sans secret, pas de clé : la page reste la page normale).
+fn premium_url(base: &str, username: &str, secret: Option<&str>) -> String {
+    let mut url = format!("{base}/premium?compte={}", urlencode(username));
+    if let Some(secret) = secret {
+        url.push_str("&k=");
+        url.push_str(&subs::premium_link_key(secret, username));
+    }
+    url
 }
 
 fn urlencode(s: &str) -> String {
@@ -59,11 +91,24 @@ fn is_exempt(ctx: &TaskContext, username: &str) -> bool {
         .any(|n| n.to_lowercase() == low)
 }
 
+/// Bilan de [`ensure_fiches`].
+#[derive(Debug, Default)]
+pub struct FichesSync {
+    /// Fiches créées pour des comptes qui n'en avaient pas.
+    pub created: usize,
+    /// Fiches gardées alors que leur compte Jellyfin a disparu (trop de disparitions d'un coup) : le
+    /// cycle n'y touche pas tant que l'admin n'a pas tranché.
+    pub held: HashSet<String>,
+}
+
 /// Une fiche pour chaque compte Jellyfin (hors admins) : les comptes actifs sans fiche arrivent
 /// « à qualifier » (jamais suspendus par le cycle), les suspendus en « suspendu », les protégés et
-/// exemptés en « exempt ». Les noms renommés sont suivis. Renvoie le nombre de fiches créées.
-pub async fn ensure_fiches(ctx: &TaskContext) -> Result<usize> {
+/// exemptés en « exempt ». Les noms renommés sont suivis. Renvoie les fiches créées et gardées.
+pub async fn ensure_fiches(ctx: &TaskContext) -> Result<FichesSync> {
     let users = ctx.jellyfin.users().await?;
+    if users.is_empty() {
+        bail!("Jellyfin n'a renvoyé aucun compte : fiches d'abonnés laissées telles quelles");
+    }
     let t = now();
     let mut created = 0;
     for u in &users {
@@ -96,18 +141,60 @@ pub async fn ensure_fiches(ctx: &TaskContext) -> Result<usize> {
             }
         }
     }
-    // fiches orphelines (compte supprimé hors de homelabd) : retirées, l'historique part avec
-    let ids: std::collections::HashSet<String> = users
+    // fiches orphelines (compte supprimé hors de homelabd) : retirées (leurs événements restent), sauf
+    // si trop de fiches qui ont quelque chose à perdre disparaissent d'un coup — réponse de Jellyfin
+    // incomplète ? On les garde, l'admin tranche.
+    let ids: HashSet<String> = users
         .iter()
         .filter_map(|u| u.get("Id").and_then(Value::as_str).map(str::to_string))
         .collect();
-    for s in ctx.subs.list()? {
-        if !ids.contains(&s.user_id) {
-            info!(task = "subs", user = %s.username, "fiche orpheline retirée (compte Jellyfin absent)");
-            ctx.subs.remove(&s.user_id)?;
+    let fiches = ctx.subs.list()?;
+    let max = ctx.cfg.subscriptions.max_orphan_removals_per_run;
+    let plan = subs::orphan_plan(&fiches, &ids, max);
+    for s in &plan.remove {
+        info!(task = "subs", user = %s.username, "fiche orpheline retirée (compte Jellyfin absent)");
+        ctx.subs.remove(&s.user_id)?;
+    }
+    if !plan.held.is_empty() {
+        warn!(
+            task = "subs",
+            held = plan.held.len(),
+            max,
+            "fiches sans compte Jellyfin gardées : trop de disparitions d'un coup"
+        );
+        // une alerte par fiche, pas à chaque passage : l'événement « orphan_held » la marque
+        let mut fresh = Vec::new();
+        for s in &plan.held {
+            let last = ctx.subs.history(&s.user_id, 1)?;
+            if last.first().map(|e| e.kind.as_str()) != Some("orphan_held") {
+                ctx.subs.log(
+                    &s.user_id,
+                    "orphan_held",
+                    "compte Jellyfin absent, fiche gardée (trop de disparitions d'un coup)",
+                    "system",
+                    t,
+                )?;
+                fresh.push(s.username.clone());
+            }
+        }
+        if !fresh.is_empty() {
+            alerts::admin(
+                ctx,
+                Level::Warn,
+                "Abonnés : fiches sans compte Jellyfin gardées",
+                &format!(
+                    "{} fiche(s) d'abonné avec une échéance, un lien PayPal ou une décision de l'admin n'ont plus de compte dans la réponse de Jellyfin (plus de {max} d'un coup) : aucune n'a été retirée, et le cycle n'y touche pas (ni mail ni suspension). Nouvelles : {}.\n\nSi ces comptes ont bien été supprimés, relever [subscriptions] max_orphan_removals_per_run le temps d'un passage.",
+                    plan.held.len(),
+                    fresh.join(", ")
+                ),
+            )
+            .await;
         }
     }
-    Ok(created)
+    Ok(FichesSync {
+        created,
+        held: plan.held_ids(),
+    })
 }
 
 /// Essai gratuit à l'inscription : fiche « essai » et compte activé (si `trial_days > 0`).
@@ -177,15 +264,92 @@ pub async fn start_trial(
     }
 }
 
+/// Issue d'un paiement reçu.
+#[derive(Debug)]
+pub enum Payment {
+    /// Appliqué à cette fiche (échéance prolongée, compte réactivé).
+    Applied(Subscriber),
+    /// Aucune fiche ne correspond : à rattacher depuis `/accounts` (admin prévenu).
+    Unlinked,
+    /// Le compte a déjà un AUTRE abonnement PayPal actif : rien n'est rattaché ni prolongé, l'admin
+    /// est prévenu (deux abonnements = deux prélèvements par mois).
+    Duplicate(Subscriber),
+}
+
+/// L'abonnement déjà rattaché à la fiche prélève-t-il encore ? PayPal fait foi (une panne est une
+/// erreur : le webhook sera rejoué, rien n'est rattaché entre-temps) ; la décision est
+/// [`subs::linked_still_charges`].
+async fn linked_sub_active(ctx: &TaskContext, s: &Subscriber, linked: &str) -> Result<bool> {
+    let found = match ctx.paypal.as_ref() {
+        Some(pp) => Some(
+            pp.find_subscription(linked)
+                .await
+                .with_context(|| format!("abonnement déjà rattaché {linked} illisible"))?,
+        ),
+        None => None,
+    };
+    let lookup = found.as_ref().map(|v| {
+        v.as_ref()
+            .and_then(|v| v.get("status"))
+            .and_then(Value::as_str)
+    });
+    Ok(subs::linked_still_charges(
+        lookup,
+        s.paypal_status.as_deref(),
+    ))
+}
+
+/// Jour (UTC, `AAAA-MM-JJ`) des clés « une alerte par jour » de `paypal_events`.
+fn day_key(t: i64) -> String {
+    chrono::DateTime::from_timestamp(t, 0)
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
+}
+
+/// Second abonnement pour un compte qui en a déjà un actif : noté sur la fiche, admin prévenu une
+/// fois par jour et par abonnement (la page, l'activation et la vente arrivent ensemble).
+async fn refuse_second_subscription(
+    ctx: &TaskContext,
+    s: &Subscriber,
+    linked: &str,
+    new_sub: &str,
+    t: i64,
+) -> Result<()> {
+    warn!(task = "subs", user = %s.username, linked, new_sub, "second abonnement PayPal refusé : le compte en a déjà un actif");
+    if ctx.subs.record_paypal_event(
+        &format!("second:{new_sub}:{}", day_key(t)),
+        "SECOND_SUBSCRIPTION",
+        Some(new_sub),
+        &format!("compte {} déjà abonné ({linked})", s.username),
+        t,
+    )? {
+        ctx.subs.log(
+            &s.user_id,
+            "paypal",
+            &format!("second abonnement {new_sub} refusé : {linked} est encore actif"),
+            "system",
+            t,
+        )?;
+        alerts::admin(
+            ctx,
+            Level::Warn,
+            "Second abonnement PayPal pour un même compte",
+            &format!(
+                "{} a déjà l'abonnement {linked}, actif chez PayPal, et vient d'en prendre un second ({new_sub}). Le second n'est ni rattaché ni compté : rien n'est prolongé deux fois. Il a pu être débité : à résilier (et rembourser) dans PayPal, ou rattacher à la main après résiliation de l'ancien (homelabctl subs link).",
+                s.username
+            ),
+        )
+        .await;
+    }
+    Ok(())
+}
+
 /// Paiement reçu (webhook, page `/premium` ou réconciliation) : rattache l'abonnement, prolonge
 /// l'échéance, réactive le compte s'il était suspendu, crédite un éventuel parrainage, prévient
 /// le membre. `facts.sub_id` obligatoire ; le compte est trouvé par abonnement lié, sinon par
-/// `custom_id` (nom de compte), sinon par e-mail PayPal connu.
-pub async fn on_payment(
-    ctx: &TaskContext,
-    facts: &EventFacts,
-    actor: &str,
-) -> Result<Option<Subscriber>> {
+/// `custom_id` (nom de compte), sinon par e-mail PayPal connu. Un compte qui a déjà un autre
+/// abonnement actif ne se voit rien rattacher ni prolonger ([`Payment::Duplicate`]).
+pub async fn on_payment(ctx: &TaskContext, facts: &EventFacts, actor: &str) -> Result<Payment> {
     let Some(sub_id) = facts.sub_id.as_deref() else {
         bail!("événement sans identifiant d'abonnement");
     };
@@ -229,8 +393,14 @@ pub async fn on_payment(
                     ),
                 )
                 .await;
-                return Ok(None);
+                return Ok(Payment::Unlinked);
             };
+            if let Some(linked) = subs::other_linked_sub(&s, sub_id) {
+                if linked_sub_active(ctx, &s, linked).await? {
+                    refuse_second_subscription(ctx, &s, linked, sub_id, t).await?;
+                    return Ok(Payment::Duplicate(s));
+                }
+            }
             ctx.subs
                 .link_paypal(&s.user_id, sub_id, facts.email.as_deref(), actor, t)?;
             ctx.subs.get(&s.user_id)?.context("fiche disparue")?
@@ -254,6 +424,14 @@ pub async fn on_payment(
                 .unwrap_or_else(|| "reçu".into()),
             date_text(new_exp)
         ),
+        t,
+    )?;
+    // un paiement vient d'arriver : l'abonnement prélève (sauf statut contraire lu chez PayPal) ; son
+    // heure sert au contrôle quotidien pour ne jamais compter deux fois le même
+    ctx.subs.set_paypal_state(
+        &sub.user_id,
+        Some(facts.sub_status.as_deref().unwrap_or(subs::PAYPAL_ACTIVE)),
+        Some(facts.paid_at.unwrap_or(t)),
         t,
     )?;
     if ctx.dry_run {
@@ -299,7 +477,9 @@ pub async fn on_payment(
             .await;
         }
     }
-    ctx.subs.get(&sub.user_id)
+    Ok(Payment::Applied(
+        ctx.subs.get(&sub.user_id)?.context("fiche disparue")?,
+    ))
 }
 
 /// Parrainage : au premier paiement d'un filleul, jours offerts aux deux (plafond annuel).
@@ -318,7 +498,18 @@ async fn credit_referral(ctx: &TaskContext, sub: &Subscriber, t: i64) -> Result<
         if days <= 0 {
             continue;
         }
-        if ctx.subs.get(uid)?.is_none() {
+        let Some(fiche) = ctx.subs.get(uid)? else {
+            continue;
+        };
+        if !subs::referral_extends(&fiche) {
+            // offert sans limite, exempté, à qualifier : des jours en plus lui donneraient une fin
+            ctx.subs.log(
+                uid,
+                "referral",
+                &format!("parrainage ({who}) : accès sans échéance, rien à prolonger"),
+                "system",
+                t,
+            )?;
             continue;
         }
         ctx.subs
@@ -348,6 +539,19 @@ pub async fn on_paypal_stop(ctx: &TaskContext, facts: &EventFacts) -> Result<()>
             "webhook",
             t,
         )?;
+        // arrêt chez PayPal : plus de prélèvement, donc plus de marge ni d'« information de
+        // renouvellement » ; l'échéance payée reste (les autres événements ne touchent pas au statut :
+        // un « créé » relivré en retard ne doit pas faire croire à un abonnement inactif)
+        if matches!(
+            facts.event_type.as_str(),
+            "BILLING.SUBSCRIPTION.CANCELLED"
+                | "BILLING.SUBSCRIPTION.SUSPENDED"
+                | "BILLING.SUBSCRIPTION.EXPIRED"
+        ) {
+            if let Some(st) = facts.sub_status.as_deref() {
+                ctx.subs.set_paypal_state(&s.user_id, Some(st), None, t)?;
+            }
+        }
         if facts.event_type == "PAYMENT.SALE.REFUNDED"
             || facts.event_type == "PAYMENT.SALE.REVERSED"
         {
@@ -495,10 +699,12 @@ async fn send_member_mail(
 /// Un passage du cycle : rappels, grâce, suspensions. Renvoie un résumé lisible.
 pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
     let cfg = &ctx.cfg.subscriptions;
-    let created = ensure_fiches(ctx).await.unwrap_or_else(|e| {
+    // Jellyfin injoignable : aucune fiche gardée connue, le cycle suit les fiches comme avant
+    let sync = ensure_fiches(ctx).await.unwrap_or_else(|e| {
         warn!(task = "subs", error = %e, "fiches non synchronisées avec Jellyfin");
-        0
+        FichesSync::default()
     });
+    let created = sync.created;
     let t = now();
     let dry = ctx.dry_run || cfg.cycle_dry_run;
     let mut actions = 0u32;
@@ -507,7 +713,16 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
         if is_exempt(ctx, &s.username) {
             continue;
         }
-        for a in subs::decide(&s, t, cfg) {
+        let todo = subs::decide(&s, t, cfg);
+        if sync.held.contains(&s.user_id) {
+            // compte Jellyfin absent, fiche gardée : ni rappel à un compte supprimé, ni suspension
+            // impossible (et alerte « cycle » à chaque passage) tant que l'admin n'a pas tranché
+            if !todo.is_empty() {
+                info!(task = "subs", user = %s.username, actions = ?todo, "compte Jellyfin absent : fiche gardée, rien n'est fait");
+            }
+            continue;
+        }
+        for a in todo {
             actions += 1;
             match a {
                 Action::Remind(d) => {
@@ -523,6 +738,25 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
                     }
                     lines.push(format!(
                         "rappel J-{d} : {}{}",
+                        s.username,
+                        if sent { "" } else { " (mail non envoyé)" }
+                    ));
+                }
+                Action::RenewalNotice(d) => {
+                    // prélèvement automatique : jamais de lien de paiement (second abonnement)
+                    let on = date_text(s.expires_at.unwrap_or(t));
+                    let sent = send_member_mail(
+                        ctx,
+                        &s.user_id,
+                        &s.username,
+                        subs::renewal_mail(&s.username, &on),
+                    )
+                    .await;
+                    if !dry {
+                        ctx.subs.set_reminded(&s.user_id, d, t)?;
+                    }
+                    lines.push(format!(
+                        "renouvellement PayPal le {on} (information J-{d}) : {}{}",
                         s.username,
                         if sent { "" } else { " (mail non envoyé)" }
                     ));
@@ -560,13 +794,15 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
                                     "grâce écoulée",
                                     t,
                                 )?;
-                                send_member_mail(
-                                    ctx,
-                                    &s.user_id,
-                                    &s.username,
-                                    subs::suspended_mail(&s.username, &pay_url(ctx, &s.username)),
-                                )
-                                .await;
+                                // prélèvement automatique en échec (abonnement encore actif chez
+                                // PayPal, qui retente) : pas de lien, un second abonnement serait
+                                // débité puis refusé
+                                let mail = if subs::auto_renews(&s) {
+                                    subs::payment_failed_mail(&s.username)
+                                } else {
+                                    subs::suspended_mail(&s.username, &pay_url(ctx, &s.username))
+                                };
+                                send_member_mail(ctx, &s.user_id, &s.username, mail).await;
                                 lines.push(format!("suspendu : {}", s.username));
                             }
                             Err(e) => {
@@ -611,77 +847,173 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
     ))
 }
 
-/// Relit chaque abonnement PayPal connu : statut et prochaine facturation font foi.
+/// Relit chaque abonnement PayPal connu (contrôle quotidien, filet des webhooks). Un paiement n'est
+/// appliqué que s'il est constaté chez PayPal (`last_payment` plus récent que le dernier appliqué) ;
+/// une facturation due sans paiement est signalée à l'admin, jamais prolongée ; un arrêt est noté et
+/// l'accès va jusqu'à l'échéance déjà payée ([`subs::reconcile_decision`]).
 pub async fn reconcile(ctx: &TaskContext) -> Result<(String, u32)> {
     let Some(pp) = ctx.paypal.as_ref() else {
         return Ok(("paypal non configuré".into(), 0));
     };
+    let cfg = &ctx.cfg.subscriptions;
     let t = now();
     let mut checked = 0u32;
     let mut fixed = 0u32;
+    let mut pending: Vec<String> = Vec::new();
+    let mut pending_total = 0usize;
+    let mut stopped: Vec<String> = Vec::new();
+    let day_or = |d: Option<i64>, none: &str| d.map(date_text).unwrap_or_else(|| none.into());
     for s in ctx.subs.list()? {
         let Some(sid) = s.paypal_sub_id.clone() else {
             continue;
         };
         checked += 1;
-        let v = match pp.subscription(&sid).await {
-            Ok(v) => v,
+        let view = match pp.find_subscription(&sid).await {
+            Ok(Some(v)) => subs::PaypalView::from_subscription(&v),
+            // identifiant inconnu de PayPal (autre environnement) : rien ne sera prélevé
+            Ok(None) => subs::PaypalView {
+                status: subs::PAYPAL_NOT_FOUND.into(),
+                ..Default::default()
+            },
             Err(e) => {
                 warn!(task = "subs", user = %s.username, error = %e, "abonnement PayPal illisible");
                 continue;
             }
         };
-        let status = v.get("status").and_then(Value::as_str).unwrap_or("");
-        let next = v
-            .pointer("/billing_info/next_billing_time")
-            .and_then(Value::as_str)
-            .and_then(crate::clients::paypal::parse_time);
-        let last_paid = v
-            .pointer("/billing_info/last_payment/time")
-            .and_then(Value::as_str)
-            .and_then(crate::clients::paypal::parse_time);
-        if status == "ACTIVE" {
-            let expected = subs::next_expiry(None, next, t, &ctx.cfg.subscriptions);
-            let cur = s.expires_at.unwrap_or(0);
-            if matches!(
-                s.status,
-                Status::Active
-                    | Status::Grace
-                    | Status::Trial
-                    | Status::Unknown
-                    | Status::Suspended
-            ) && (expected > cur + DAY / 2)
-            {
+        if view.status.is_empty() {
+            warn!(task = "subs", user = %s.username, "abonnement PayPal sans statut");
+            continue;
+        }
+        let changed = s.paypal_status.as_deref() != Some(view.status.as_str());
+        if changed {
+            ctx.subs
+                .set_paypal_state(&s.user_id, Some(&view.status), None, t)?;
+        }
+        match subs::reconcile_decision(&s, &view, t, cfg) {
+            Reconcile::Nothing => {}
+            Reconcile::Baseline(paid) => {
+                ctx.subs.set_paypal_state(&s.user_id, None, Some(paid), t)?
+            }
+            Reconcile::Apply(paid) => {
                 let facts = EventFacts {
-                    event_id: format!("reconcile:{sid}:{}", last_paid.unwrap_or(t)),
+                    event_id: format!("reconcile:{sid}:{paid}"),
                     event_type: "RECONCILE".into(),
                     sub_id: Some(sid.clone()),
-                    next_billing: next,
+                    next_billing: view.next_billing,
+                    sub_status: Some(view.status.clone()),
+                    paid_at: Some(paid),
                     ..Default::default()
                 };
-                if ctx.subs.record_paypal_event(
+                // trace seulement : la référence est le dernier paiement appliqué, noté sur la fiche
+                ctx.subs.record_paypal_event(
                     &facts.event_id,
                     "RECONCILE",
                     Some(&sid),
                     "réconciliation",
                     t,
-                )? {
-                    on_payment(ctx, &facts, "reconcile").await?;
-                    fixed += 1;
+                )?;
+                match on_payment(ctx, &facts, "reconcile").await {
+                    Ok(_) => {
+                        info!(task = "subs", user = %s.username, %sid, "paiement PayPal manqué appliqué");
+                        fixed += 1;
+                    }
+                    Err(e) => {
+                        warn!(task = "subs", user = %s.username, error = %e, "paiement PayPal manqué non appliqué")
+                    }
                 }
             }
-        } else if s.status == Status::Active && s.expires_at.is_none() {
-            ctx.subs.log(
-                &s.user_id,
-                "paypal",
-                &format!("abonnement {status}"),
-                "reconcile",
-                t,
-            )?;
+            Reconcile::PendingCharge => {
+                pending_total += 1;
+                // une alerte par abonnement et par jour : le contrôle repart de chaque redémarrage de
+                // homelabd, plusieurs redémarrages dans la journée la répéteraient
+                if ctx.subs.record_paypal_event(
+                    &format!("pending:{sid}:{}", day_key(t)),
+                    "PENDING_CHARGE",
+                    Some(&sid),
+                    &format!("compte {} : prélèvement en attente", s.username),
+                    t,
+                )? {
+                    pending.push(format!(
+                        "{} ({sid}) : prochaine facturation {}, dernier paiement {}, échéance de la fiche {}",
+                        s.username,
+                        day_or(view.next_billing, "absente"),
+                        day_or(view.last_payment, "aucun"),
+                        day_or(s.expires_at, "—"),
+                    ));
+                }
+            }
+            Reconcile::Stopped => {
+                if changed {
+                    let until = day_or(s.expires_at, "—");
+                    let label = subs::paypal_status_label(&view.status);
+                    ctx.subs.log(
+                        &s.user_id,
+                        "paypal",
+                        &format!("abonnement {label} chez PayPal — accès jusqu'au {until}"),
+                        "reconcile",
+                        t,
+                    )?;
+                    stopped.push(format!(
+                        "{} ({sid}) : {label} — accès jusqu'au {until}",
+                        s.username
+                    ));
+                }
+            }
         }
     }
+    if !pending.is_empty() {
+        alerts::admin(
+            ctx,
+            Level::Warn,
+            "Prélèvement PayPal en attente",
+            &format!(
+                "PayPal donne ces abonnements actifs, mais aucun nouveau paiement n'est arrivé alors que la facturation est due. Rien n'a été prolongé : si le paiement arrive, tout se remet en ordre seul ; sinon le cycle suit l'échéance de la fiche (grâce, puis suspension). Rappel au plus une fois par jour et par abonnement.\n\n{}",
+                pending.join("\n")
+            ),
+        )
+        .await;
+    }
+    if !stopped.is_empty() {
+        alerts::admin(
+            ctx,
+            Level::Info,
+            "Abonnement PayPal arrêté",
+            &format!(
+                "Arrêts relevés par le contrôle quotidien (webhook manqué, ou arrêt d'avant le suivi du statut PayPal). Rien n'est coupé avant l'échéance déjà payée ; plus aucune information de renouvellement n'est envoyée, les rappels habituels (avec lien de paiement) reprennent.\n\n{}",
+                stopped.join("\n")
+            ),
+        )
+        .await;
+    }
     Ok((
-        format!("abonnements PayPal vérifiés={checked} corrigés={fixed}"),
+        format!(
+            "abonnements PayPal vérifiés={checked} corrigés={fixed} en attente={pending_total} arrêtés={}",
+            stopped.len()
+        ),
         fixed,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn premium_link_carries_the_key_only_with_a_server_secret() {
+        let url = premium_url("https://premium.example", "jo-hn", Some("secret"));
+        let (head, k) = url.split_once("&k=").unwrap();
+        assert_eq!(head, "https://premium.example/premium?compte=jo-hn");
+        assert!(subs::premium_link_ok("secret", "jo-hn", k));
+        // sans secret : lien sans clé, la page publique reste la page normale
+        assert_eq!(
+            premium_url("https://premium.example", "jo-hn", None),
+            "https://premium.example/premium?compte=jo-hn"
+        );
+    }
+
+    #[test]
+    fn day_key_is_the_utc_date() {
+        // 2026-10-21T10:00:00Z
+        assert_eq!(day_key(1_792_576_800), "2026-10-21");
+    }
 }
