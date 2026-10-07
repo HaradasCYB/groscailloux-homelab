@@ -1,7 +1,7 @@
 //! UI d'onboarding (remplace le conteneur Flask `onboarder`) + endpoints de santé.
-//! Si `HOMELABD_ONBOARD_TOKEN` est défini, `POST /onboard` exige l'en-tête
-//! `X-Onboard-Token` ; la page le lit depuis `?token=` et le renvoie.
-//! `/accounts` (page « Comptes ») exige ce même jeton, et refuse tout s'il n'est pas défini.
+//! `POST /onboard` exige l'en-tête `X-Onboard-Token` (`HOMELABD_ONBOARD_TOKEN`), posé par la session
+//! d'administration (`admin_auth`) ou par la CLI. `/accounts` (page « Comptes ») exige ce même jeton : sans
+//! `HOMELABD_ONBOARD_TOKEN`, tout reste fermé. Adresse du client : `client_addr::Client`, posé par la couche.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -9,11 +9,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use axum::extract::{ConnectInfo, Path, Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use axum::{Form, Json, Router};
+use axum::{Extension, Form, Json, Router};
 use homelab_core::accounts::{self, Outcome};
 use homelab_core::config::Donation;
 use homelab_core::mail;
@@ -27,6 +27,8 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use crate::admin_auth::token_matches;
+use crate::client_addr::Client;
 use crate::{accounts_page, guide, status_page};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
@@ -302,14 +304,13 @@ struct SubsForm {
 /// POST /accounts/subs : décision admin sur une fiche (statut, prolongation), journalisée.
 async fn accounts_subs(
     State(st): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    Extension(client): Extension<Client>,
     Form(f): Form<SubsForm>,
 ) -> Response {
     if !accounts_allowed(&st, Some(&f.token)) {
         return denied();
     }
-    let ip = client_ip(&headers, addr);
+    let ip = client.ip;
     let who = st
         .ctx
         .subs
@@ -379,11 +380,10 @@ struct ActivateForm {
 /// l'onboarding). POST → GET avec `?ok=1` / `?err=1` pour tenir hors du panneau de succès.
 async fn premium_activate_post(
     State(st): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    Extension(client): Extension<Client>,
     Form(f): Form<ActivateForm>,
 ) -> Response {
-    let ip = client_ip(&headers, addr);
+    let ip = client.ip;
     let limit = Duration::from_secs(st.ctx.cfg.web.rate_limit_secs);
     {
         let mut map = st.last_request.lock().await;
@@ -468,10 +468,10 @@ async fn health() -> Json<Value> {
 }
 
 /// `/status` et `/status.html` exposent l'activité interne : si `HOMELABD_STATUS_TOKEN` est
-/// défini, ils exigent `?token=` (le sous-domaine d'onboarding est public).
+/// défini, ils exigent le jeton, réinjecté en interne par la session (`admin_auth`).
 fn status_allowed(st: &AppState, q: &HashMap<String, String>) -> bool {
     match &st.ctx.secrets.status_token {
-        Some(t) => q.get("token").map(|g| g == t.expose()).unwrap_or(false),
+        Some(t) => token_matches(Some(t), q.get("token").map(String::as_str)),
         None => true,
     }
 }
@@ -570,10 +570,7 @@ struct ToggleForm {
 
 /// Jeton d'onboarding obligatoire : sans `HOMELABD_ONBOARD_TOKEN`, la page reste fermée.
 fn accounts_allowed(st: &AppState, given: Option<&str>) -> bool {
-    match (&st.ctx.secrets.onboard_token, given) {
-        (Some(t), Some(g)) => !g.is_empty() && g == t.expose(),
-        _ => false,
-    }
+    token_matches(st.ctx.secrets.onboard_token.as_ref(), given)
 }
 
 fn denied() -> Response {
@@ -690,15 +687,14 @@ async fn canary_text(ctx: &TaskContext) -> Option<(bool, String)> {
 /// Bascule premium puis redirection (POST → GET) avec le résultat en paramètre.
 async fn accounts_toggle(
     State(st): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    Extension(client): Extension<Client>,
     Form(f): Form<ToggleForm>,
 ) -> Response {
     if !accounts_allowed(&st, Some(&f.token)) {
         return denied();
     }
     let on = f.on == "1";
-    let ip = client_ip(&headers, addr);
+    let ip = client.ip;
     let who = accounts::list(&st.ctx)
         .await
         .ok()
@@ -778,14 +774,13 @@ async fn accounts_delete_confirm(
 
 async fn accounts_delete(
     State(st): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    Extension(client): Extension<Client>,
     Form(f): Form<DeleteForm>,
 ) -> Response {
     if !accounts_allowed(&st, Some(&f.token)) {
         return denied();
     }
-    let ip = client_ip(&headers, addr);
+    let ip = client.ip;
     let who = accounts::list(&st.ctx)
         .await
         .ok()
@@ -1124,11 +1119,10 @@ struct RenewForm {
 /// POST /bienvenue/renouveler : réponse identique que l'adresse soit connue ou non.
 async fn welcome_renew(
     State(st): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    Extension(client): Extension<Client>,
     Form(f): Form<RenewForm>,
 ) -> Response {
-    let ip = client_ip(&headers, addr);
+    let ip = client.ip;
     let neutral = || {
         public_page(
             BIENVENUE_HTML,
@@ -1239,14 +1233,13 @@ fn signup_done() -> Response {
 /// POST /inscription : crée le compte (suspendu), envoie le lien, prévient l'admin.
 async fn signup_post(
     State(st): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    Extension(client): Extension<Client>,
     Form(f): Form<SignupForm>,
 ) -> Response {
     if !st.ctx.cfg.onboard.public_signup {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let ip = client_ip(&headers, addr);
+    let ip = client.ip;
     let username = f.username.trim().to_string();
     let email = f.email.trim().to_lowercase();
     if !f.website.trim().is_empty() {
@@ -1597,37 +1590,25 @@ async fn accounts_link(State(st): State<AppState>, Form(f): Form<LinkForm>) -> R
     back_to_list(&f.token, code, &acc.name)
 }
 
-fn client_ip(headers: &HeaderMap, addr: SocketAddr) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| addr.ip().to_string())
-}
-
 fn fail(code: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<Value>) {
     (code, Json(json!({ "success": false, "error": msg.into() })))
 }
 
 async fn onboard_handler(
     State(st): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Extension(client): Extension<Client>,
     headers: HeaderMap,
     Json(body): Json<OnboardBody>,
 ) -> impl IntoResponse {
-    if let Some(expected) = &st.ctx.secrets.onboard_token {
-        let given = headers
-            .get("x-onboard-token")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if given != expected.expose() {
-            return fail(
-                StatusCode::UNAUTHORIZED,
-                "token manquant ou invalide (ouvrir la page avec ?token=…)",
-            );
-        }
+    // jeton posé par la session d'administration (`admin_auth`) ou par la CLI ; sans jeton configuré, fermé
+    if !token_matches(
+        st.ctx.secrets.onboard_token.as_ref(),
+        header_token(&headers),
+    ) {
+        return fail(
+            StatusCode::UNAUTHORIZED,
+            "jeton manquant ou invalide : se reconnecter par /connexion",
+        );
     }
     let username = body.username.trim().to_string();
     let email = body.email.trim().to_lowercase();
@@ -1640,7 +1621,7 @@ async fn onboard_handler(
     if !onboard::valid_email(&email) {
         return fail(StatusCode::BAD_REQUEST, "Email invalide");
     }
-    let ip = client_ip(&headers, addr);
+    let ip = client.ip;
     let limit = Duration::from_secs(st.ctx.cfg.web.rate_limit_secs);
     {
         let mut map = st.last_request.lock().await;

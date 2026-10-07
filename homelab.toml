@@ -22,6 +22,14 @@ jellyseerr = "http://localhost:5055"
 # onboarder.<domaine> vers la passerelle du réseau docker (172.18.0.1) port 8766.
 listen = "0.0.0.0:8766"
 rate_limit_secs = 30
+# X-Forwarded-For (adresse du membre ou de l'admin) n'est cru que d'un pair TCP de ces réseaux, jamais d'une
+# adresse de l'hôte (127.0.0.1, 172.18.0.1) ; et seulement du conteneur NPM quand trusted_proxy_container est
+# rempli (son IP change à chaque recréation : relue par docker inspect en tâche de fond). L'IP de la maison
+# n'ouvre une session que vue par ce NPM confirmé par Docker. Docker muet (ou conteneur vide) : réseau entier,
+# pour les limites par adresse seulement, sans session de la maison. Pair non cru : l'adresse retenue est
+# celle du pair TCP.
+trusted_proxies = ["172.18.0.0/16"]
+trusted_proxy_container = "npm"
 
 [onboard]
 # Mail de bienvenue = un bouton vers /bienvenue/<lien> où le membre définit son mot de passe (aucun identifiant

@@ -4,16 +4,15 @@
 //! `/Users/Me`, cache mémoire 5 min, jamais journalisé) et actions admin de `/accounts/subs`.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
-use axum::extract::{ConnectInfo, Path, State};
+use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
-use axum::{Form, Json, Router};
+use axum::{Extension, Form, Json, Router};
 use homelab_core::chat;
 use homelab_core::clients::paypal::{event_facts, EventFacts, WebhookHeaders};
 use homelab_core::requests_progress::{self as rp, QueueSummary};
@@ -27,6 +26,8 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+
+use crate::client_addr::Client;
 
 const APP_JS: &str = include_str!("../assets/compte/app.js");
 const AUTH_TTL: Duration = Duration::from_secs(300);
@@ -1298,17 +1299,11 @@ pub struct LinkForm {
 /// active tout de suite sans attendre le webhook (qui sera alors ignoré comme doublon par date).
 async fn link_from_page(
     State(st): State<SubsState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    Extension(client): Extension<Client>,
     Form(f): Form<LinkForm>,
 ) -> Response {
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| addr.ip().to_string());
+    // adresse vue par NPM (dernier saut de `X-Forwarded-For`, posé par `admin_auth::layer`)
+    let ip = client.ip;
     {
         let mut m = st.last.lock().await;
         let t = Instant::now();

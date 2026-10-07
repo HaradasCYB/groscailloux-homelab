@@ -425,6 +425,16 @@ impl Default for Onboard {
 pub struct Web {
     pub listen: String,
     pub rate_limit_secs: u64,
+    /// Pairs TCP dont homelabd croit `X-Forwarded-For` (CIDR ou adresse seule) : le réseau Docker de NPM. Une
+    /// adresse de l'hôte (127.0.0.1, ::1, mais aussi 172.18.0.1, l'hôte sur le pont Docker) n'en fait **jamais**
+    /// partie, même listée : homelabd teste chaque pair en y liant une socket.
+    pub trusted_proxies: Vec<String>,
+    /// Conteneur du proxy (NPM). Rempli : seul le pair qui a l'adresse **actuelle** de ce conteneur est cru et
+    /// confirmé, pas les autres conteneurs du réseau (adresse relue en tâche de fond par `docker inspect` : elle
+    /// change à chaque recréation). L'IP de la maison (`HOMELABD_ADMIN_TRUSTED_IPS`) n'ouvre une session que vue
+    /// par ce conteneur confirmé. Docker muet, ou vide : `trusted_proxies` seul, pour les limites par adresse
+    /// seulement — aucune session automatique de la maison (la connexion par jeton marche toujours).
+    pub trusted_proxy_container: String,
 }
 
 impl Default for Web {
@@ -432,6 +442,8 @@ impl Default for Web {
         Self {
             listen: "0.0.0.0:8766".into(),
             rate_limit_secs: 30,
+            trusted_proxies: vec!["172.18.0.0/16".into()],
+            trusted_proxy_container: "npm".into(),
         }
     }
 }
@@ -1382,6 +1394,11 @@ impl Config {
                 "paths.downloads n'existe pas : {} (auto_import.enabled=true)",
                 self.paths.downloads.display()
             );
+        }
+        for p in &self.web.trusted_proxies {
+            if let Err(e) = crate::net::Cidr::parse(p) {
+                bail!("[web] trusted_proxies : {e}");
+            }
         }
         if self.tasks.disk_pressure.hard_pct >= self.tasks.disk_pressure.crit_pct {
             bail!("tasks.disk_pressure : hard_pct doit être < crit_pct");

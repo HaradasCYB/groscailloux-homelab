@@ -25,16 +25,18 @@ pub struct PageData<'a> {
     pub seedbox: Option<SeedboxQuota>,
     pub mount_ok: Option<bool>,
     /// Ce qui n'avance pas : torrents terminés que personne ne rattache (`no_match` de `torrent_import`).
+    /// Texte brut, échappé au rendu : un nom de release vient d'un tracker (Nyaa, World-torrent en secours).
     pub stuck_torrents: &'a [String],
     /// Saisons suivies dont l'indexer ne propose **rien** pour certains épisodes : la recherche
     /// repartira tous les jours sans jamais rien trouver, il faut la main d'un admin (`/recherche`).
+    /// Texte brut, échappé au rendu (titre TVDB/TMDB).
     pub blocked_seasons: &'a [String],
     /// Dernier résultat du canari de lecture (`state.canary`), texte prêt à afficher.
     pub canary: Option<(bool, String)>,
 }
 
 /// Saisons dont le dernier passage a laissé des épisodes sans aucune release, les plus récentes
-/// d'abord. Clé d'état : `<arr>:<série>:<saison>`.
+/// d'abord. Clé d'état : `<arr>:<série>:<saison>`. Texte brut : `render` l'échappe.
 pub fn blocked_seasons(
     records: &BTreeMap<String, homelab_core::state::SeasonSearchRecord>,
     now: i64,
@@ -89,6 +91,7 @@ fn episode_list(eps: &[i64]) -> String {
 /// n'était importable (`nothing_importable` — nommage que ni Sonarr ni nous ne savons lire). Les deux
 /// états sont **définitifs** : sans cet affichage, les octets restent sur la seedbox sans que personne
 /// le sache (Erased, le 2026-09-18 : 2,11 Gio téléchargés, 0 importé, demande bloquée « en cours »).
+/// Texte brut : `render` l'échappe (le nom vient du tracker).
 pub fn unmatched(
     records: &BTreeMap<String, homelab_core::state::TorrentImportRecord>,
     now: i64,
@@ -251,7 +254,7 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
                 rows = d
                     .stuck_torrents
                     .iter()
-                    .map(|t| format!("<tr><td class=\"s\">{t}</td></tr>"))
+                    .map(|t| format!("<tr><td class=\"s\">{}</td></tr>", esc(t)))
                     .collect::<String>()
             )
         },
@@ -264,7 +267,7 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
                 rows = d
                     .blocked_seasons
                     .iter()
-                    .map(|t| format!("<tr><td class=\"s\">{t}</td></tr>"))
+                    .map(|t| format!("<tr><td class=\"s\">{}</td></tr>", esc(t)))
                     .collect::<String>()
             )
         },
@@ -387,6 +390,55 @@ mod tests {
         assert!(out[0].contains("Bleach S17"), "{}", out[0]);
         assert!(out[0].contains("14 épisode(s)"), "{}", out[0]);
         assert!(out[0].contains("27-40"), "{}", out[0]);
+    }
+
+    /// Un nom de release ou un titre piégé (tracker public, fiche TVDB) reste du texte : aucune balise ne
+    /// passe dans la page, servie sur la même origine que `/accounts` et `/onboard`.
+    #[test]
+    fn trapped_names_are_escaped() {
+        use homelab_core::state::{SeasonSearchRecord, TorrentImportRecord};
+        let trap = r#"<img src=x onerror="alert(1)">"#;
+        let mut recs = BTreeMap::new();
+        recs.insert(
+            "seedbox<svg onload=alert(2)>:abc".to_string(),
+            TorrentImportRecord {
+                at: 900,
+                name: format!("Un.Anime.S01 {trap}"),
+                outcome: "no_match".into(),
+                detail: String::new(),
+                ..Default::default()
+            },
+        );
+        let mut seasons = BTreeMap::new();
+        seasons.insert(
+            "sonarr-seedbox:58:17".to_string(),
+            SeasonSearchRecord {
+                at: 900,
+                outcome: "grabbed_episode".into(),
+                detail: String::new(),
+                title: format!("Bleach {trap}"),
+                uncovered: vec![27, 28],
+            },
+        );
+        let stuck = unmatched(&recs, 1000, 15);
+        let blocked = blocked_seasons(&seasons, 1000, 15);
+        let runs = BTreeMap::new();
+        let html = render(&PageData {
+            now: 1000,
+            runs: &runs,
+            tasks: &[],
+            vps_disk_pct: None,
+            seedbox: None,
+            mount_ok: None,
+            stuck_torrents: &stuck,
+            blocked_seasons: &blocked,
+            canary: None,
+        });
+        assert!(!html.contains("<img"), "balise passée telle quelle");
+        assert!(!html.contains("<svg"), "côté passé tel quel");
+        assert_eq!(html.matches("&lt;img src=x onerror=&quot;").count(), 2);
+        assert!(html.contains("seedbox&lt;svg onload=alert(2)&gt;"));
+        assert!(html.contains("Bleach &lt;img"));
     }
 
     #[test]

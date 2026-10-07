@@ -359,13 +359,10 @@ async fn admin_announce(
     headers: HeaderMap,
     Json(b): Json<AnnounceBody>,
 ) -> ApiResult<Json<Value>> {
-    let given = headers
-        .get("x-onboard-token")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    match &st.ctx.secrets.onboard_token {
-        Some(t) if !given.is_empty() && given == t.expose() => {}
-        _ => return Err(err(StatusCode::UNAUTHORIZED, "jeton manquant ou invalide")),
+    // appel local seulement (`admin_auth::layer`), jeton comparé à temps constant
+    let given = headers.get("x-onboard-token").and_then(|v| v.to_str().ok());
+    if !crate::admin_auth::token_matches(st.ctx.secrets.onboard_token.as_ref(), given) {
+        return Err(err(StatusCode::UNAUTHORIZED, "jeton manquant ou invalide"));
     }
     let cfg = &st.ctx.cfg.chat;
     if !chat::is_listed(&b.author, &cfg.moderators) {
