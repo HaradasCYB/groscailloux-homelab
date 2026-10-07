@@ -297,7 +297,12 @@ async fn tmdb_class(
     let class = match details {
         Ok(d) => classify(&d),
         Err(e) => {
-            warn!(task = "anime_library", tmdb, error = %e, "tmdb details unavailable");
+            warn!(
+                task = "anime_library",
+                tmdb,
+                error = format!("{e:#}"),
+                "tmdb details unavailable"
+            );
             Class::Unknown
         }
     };
@@ -494,7 +499,12 @@ impl Task for AnimeLibrary {
             let (list, queued, tags) = match prepared {
                 Ok(p) => p,
                 Err(e) => {
-                    warn!(task = "anime_library", service = arr.name, error = %e, "skipped");
+                    warn!(
+                        task = "anime_library",
+                        service = arr.name,
+                        error = format!("{e:#}"),
+                        "skipped"
+                    );
                     notes.push(format!("{}: {e:#}", arr.name));
                     continue;
                 }
@@ -565,7 +575,7 @@ impl Task for AnimeLibrary {
                                         .put(editor.0, &json!({ editor.1: [it.id], "rootFolderPath": root, "moveFiles": true }))
                                         .await
                                     {
-                                        warn!(task = "anime_library", service = arr.name, title = %it.title, error = %e, "move back failed");
+                                        warn!(task = "anime_library", service = arr.name, title = %it.title, error = format!("{e:#}"), "move back failed");
                                     }
                                 }
                                 continue;
@@ -581,14 +591,19 @@ impl Task for AnimeLibrary {
                             match tag_id(arr, &tags, TAG_RUSSIAN).await {
                                 Ok(tag) => {
                                     if let Err(e) = arr.put(editor.0, &json!({ editor.1: [it.id], "tags": [tag], "applyTags": "add" })).await {
-                                        warn!(task = "anime_library", service = arr.name, title = %it.title, error = %e, "russe tag not set");
+                                        warn!(task = "anime_library", service = arr.name, title = %it.title, error = format!("{e:#}"), "russe tag not set");
                                         continue;
                                     }
                                     info!(task = "anime_library", service = arr.name, title = %it.title, "tag russe posé");
                                     *counts.entry("tag_russe").or_default() += 1;
                                 }
                                 Err(e) => {
-                                    warn!(task = "anime_library", service = arr.name, error = %e, "tag unavailable");
+                                    warn!(
+                                        task = "anime_library",
+                                        service = arr.name,
+                                        error = format!("{e:#}"),
+                                        "tag unavailable"
+                                    );
                                     continue;
                                 }
                             }
@@ -630,7 +645,7 @@ impl Task for AnimeLibrary {
                                     .await?;
                             }
                             Err(e) => {
-                                warn!(task = "anime_library", service = arr.name, title = %it.title, error = %e, "search request failed");
+                                warn!(task = "anime_library", service = arr.name, title = %it.title, error = format!("{e:#}"), "search request failed");
                             }
                         }
                     }
@@ -640,7 +655,7 @@ impl Task for AnimeLibrary {
                             if ctx.dry_run {
                                 info!(task = "anime_library", service = arr.name, title = %it.title, "dry-run: would set seriesType=anime");
                             } else if let Err(e) = fix_series_type(arr, it.id).await {
-                                warn!(task = "anime_library", service = arr.name, title = %it.title, error = %e, "seriesType not set");
+                                warn!(task = "anime_library", service = arr.name, title = %it.title, error = format!("{e:#}"), "seriesType not set");
                             } else {
                                 info!(task = "anime_library", service = arr.name, title = %it.title, "seriesType=anime posé");
                             }
@@ -678,7 +693,12 @@ impl Task for AnimeLibrary {
                         let tag = match tag_id(arr, &tags, tag_label).await {
                             Ok(t) => t,
                             Err(e) => {
-                                warn!(task = "anime_library", service = arr.name, error = %e, "tag unavailable");
+                                warn!(
+                                    task = "anime_library",
+                                    service = arr.name,
+                                    error = format!("{e:#}"),
+                                    "tag unavailable"
+                                );
                                 break;
                             }
                         };
@@ -701,7 +721,7 @@ impl Task for AnimeLibrary {
                                 moved.push(it);
                             }
                             Err(e) => {
-                                warn!(task = "anime_library", service = arr.name, title = %it.title, error = %e, "move failed");
+                                warn!(task = "anime_library", service = arr.name, title = %it.title, error = format!("{e:#}"), "move failed");
                                 *counts.entry("erreur").or_default() += 1;
                             }
                         }
@@ -733,7 +753,11 @@ impl Task for AnimeLibrary {
                 }
             }
             if let Err(e) = ctx.jellyfin.media_updated(&jf_paths).await {
-                warn!(task = "anime_library", error = %e, "jellyfin notification failed");
+                warn!(
+                    task = "anime_library",
+                    error = format!("{e:#}"),
+                    "jellyfin notification failed"
+                );
             }
         }
         if counts.get("deplace").copied().unwrap_or(0) > 0 && cfg.scan_after_move && !ctx.dry_run {
@@ -762,7 +786,11 @@ impl Task for AnimeLibrary {
                 }
                 Err(e) => {
                     // reste en attente : relancée au passage suivant, une fois l'analyse en cours terminée
-                    info!(task = "anime_library", reason = %e, "library scan postponed");
+                    info!(
+                        task = "anime_library",
+                        reason = format!("{e:#}"),
+                        "library scan postponed"
+                    );
                     notes.push(format!("analyse de la médiathèque reportée : {e}"));
                 }
             }

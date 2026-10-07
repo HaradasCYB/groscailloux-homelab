@@ -132,7 +132,12 @@ pub async fn classify_and_scan(ctx: &TaskContext, label: &str, scan_path: &str) 
         MediaKind::Series => {
             info!(task = "auto_import", label, "→ series");
             if let Err(e) = ensure_series(ctx, label).await {
-                warn!(task = "auto_import", label, error = %e, "ensure_series failed");
+                warn!(
+                    task = "auto_import",
+                    label,
+                    error = format!("{e:#}"),
+                    "ensure_series failed"
+                );
             }
             tokio::time::sleep(Duration::from_secs(3)).await;
             scan(ctx, &ctx.sonarr, scan_path).await
@@ -140,7 +145,12 @@ pub async fn classify_and_scan(ctx: &TaskContext, label: &str, scan_path: &str) 
         MediaKind::Movie => {
             info!(task = "auto_import", label, "→ movie");
             if let Err(e) = ensure_movie(ctx, label).await {
-                warn!(task = "auto_import", label, error = %e, "ensure_movie failed");
+                warn!(
+                    task = "auto_import",
+                    label,
+                    error = format!("{e:#}"),
+                    "ensure_movie failed"
+                );
             }
             tokio::time::sleep(Duration::from_secs(3)).await;
             scan(ctx, &ctx.radarr, scan_path).await
@@ -157,7 +167,11 @@ async fn is_torrent_content(ctx: &TaskContext, container_path: &str) -> bool {
                 || container_path.starts_with(&format!("{}/", t.content_path))
         }),
         Err(e) => {
-            warn!(task = "auto_import", error = %e, "qBittorrent unreachable, assuming direct download");
+            warn!(
+                task = "auto_import",
+                error = format!("{e:#}"),
+                "qBittorrent unreachable, assuming direct download"
+            );
             false
         }
     }

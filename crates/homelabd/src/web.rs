@@ -329,7 +329,7 @@ async fn accounts_subs(
                 "sub_extended"
             }
             Err(e) => {
-                warn!(task = "subs", %ip, user = %who, error = %e, "extend failed");
+                warn!(task = "subs", %ip, user = %who, error = format!("{e:#}"), "extend failed");
                 "error"
             }
         }
@@ -345,7 +345,7 @@ async fn accounts_subs(
                 "sub_set"
             }
             Err(e) => {
-                warn!(task = "subs", %ip, user = %who, error = %e, "status change failed");
+                warn!(task = "subs", %ip, user = %who, error = format!("{e:#}"), "status change failed");
                 "error"
             }
         }
@@ -420,7 +420,7 @@ async fn premium_activate_post(
                     info!(task = "premium", %ip, name = %name, %to, "activation demand emailed")
                 }
                 Err(e) => {
-                    warn!(task = "premium", %ip, name = %name, error = %e, "activation demand mail failed")
+                    warn!(task = "premium", %ip, name = %name, error = format!("{e:#}"), "activation demand mail failed")
                 }
             }
         } else {
@@ -610,7 +610,11 @@ async fn accounts_html(
     let list = match accounts::list(&st.ctx).await {
         Ok(l) => l,
         Err(e) => {
-            warn!(task = "accounts", error = %e, "accounts page: jellyfin unreachable");
+            warn!(
+                task = "accounts",
+                error = format!("{e:#}"),
+                "accounts page: jellyfin unreachable"
+            );
             return (
                 StatusCode::BAD_GATEWAY,
                 Html("<p>Jellyfin injoignable, réessayer dans un instant.</p>".to_string()),
@@ -637,7 +641,11 @@ async fn accounts_html(
     let mut subs: HashMap<String, accounts_page::SubInfo> = HashMap::new();
     if st.ctx.cfg.subscriptions.enabled {
         if let Err(e) = subscription_ops::ensure_fiches(&st.ctx).await {
-            warn!(task = "subs", error = %e, "fiches non synchronisées");
+            warn!(
+                task = "subs",
+                error = format!("{e:#}"),
+                "fiches non synchronisées"
+            );
         }
         for s in st.ctx.subs.list().unwrap_or_default() {
             subs.insert(
@@ -730,14 +738,14 @@ async fn accounts_toggle(
                             welcome::send(&ctx, &uid, &name, &email, welcome::KIND_ACTIVATED, true)
                                 .await
                         {
-                            warn!(task = "accounts", user = %name, error = %e, "activation mail failed");
+                            warn!(task = "accounts", user = %name, error = format!("{e:#}"), "activation mail failed");
                         }
                     }
                     Ok(None) => {
                         warn!(task = "accounts", user = %name, "no e-mail known, activation mail skipped")
                     }
                     Err(e) => {
-                        warn!(task = "accounts", user = %name, error = %e, "activation mail: jellyseerr lookup failed")
+                        warn!(task = "accounts", user = %name, error = format!("{e:#}"), "activation mail: jellyseerr lookup failed")
                     }
                 }
             });
@@ -747,7 +755,7 @@ async fn accounts_toggle(
         Ok(Outcome::Unchanged) => "unchanged",
         Ok(Outcome::CapReached { .. }) => "cap",
         Err(e) => {
-            warn!(task = "accounts", %ip, user = %who, error = %e, "premium toggle failed");
+            warn!(task = "accounts", %ip, user = %who, error = format!("{e:#}"), "premium toggle failed");
             "error"
         }
     };
@@ -784,7 +792,11 @@ async fn accounts_delete_confirm(
             None => back_to_list(token, "error", user_id),
         },
         Err(e) => {
-            warn!(task = "accounts", error = %e, "delete confirm: jellyfin unreachable");
+            warn!(
+                task = "accounts",
+                error = format!("{e:#}"),
+                "delete confirm: jellyfin unreachable"
+            );
             back_to_list(token, "error", user_id)
         }
     }
@@ -810,7 +822,7 @@ async fn accounts_delete(
             back_to_list(&f.token, "deleted", &d.name)
         }
         Err(e) => {
-            warn!(task = "accounts", %ip, user_id = %f.user_id, error = %e, "account deletion failed");
+            warn!(task = "accounts", %ip, user_id = %f.user_id, error = format!("{e:#}"), "account deletion failed");
             let code = if e.to_string().contains("protégé") {
                 "protected"
             } else {
@@ -1092,7 +1104,7 @@ async fn welcome_post(
         .set_password(&link.user_id, &Secret::new(f.pw))
         .await
     {
-        warn!(task = "onboard", user = %link.username, error = %e, "set password failed");
+        warn!(task = "onboard", user = %link.username, error = format!("{e:#}"), "set password failed");
         let body = format!(
             r#"<div class="notice err">Impossible d'enregistrer le mot de passe pour l'instant. Réessaie dans un moment, ou écris à l'administrateur.</div>{}"#,
             password_form(&link.username, &token, false)
@@ -1105,7 +1117,7 @@ async fn welcome_post(
         );
     }
     if let Err(e) = welcome::consume(&st.ctx, &token).await {
-        warn!(task = "onboard", user = %link.username, error = %e, "link consume failed");
+        warn!(task = "onboard", user = %link.username, error = format!("{e:#}"), "link consume failed");
     }
     info!(task = "onboard", user = %link.username, "password set via welcome link");
     let premium = accounts::list(&st.ctx)
@@ -1179,12 +1191,16 @@ async fn welcome_renew(
             {
                 Ok(_) => info!(task = "onboard", user = %name, "welcome link renewed"),
                 Err(e) => {
-                    warn!(task = "onboard", user = %name, error = %e, "welcome link renew failed")
+                    warn!(task = "onboard", user = %name, error = format!("{e:#}"), "welcome link renew failed")
                 }
             }
         }
         Ok(None) => info!(task = "onboard", %ip, "link renewal for unknown address"),
-        Err(e) => warn!(task = "onboard", error = %e, "link renewal lookup failed"),
+        Err(e) => warn!(
+            task = "onboard",
+            error = format!("{e:#}"),
+            "link renewal lookup failed"
+        ),
     }
     neutral()
 }
@@ -1313,7 +1329,11 @@ async fn signup_post(
         }
         Ok(None) => {}
         Err(e) => {
-            warn!(task = "onboard", error = %e, "signup: jellyseerr unreachable");
+            warn!(
+                task = "onboard",
+                error = format!("{e:#}"),
+                "signup: jellyseerr unreachable"
+            );
             return public_page(
                 INSCRIPTION_HTML,
                 "Créer ton compte",
@@ -1377,13 +1397,15 @@ async fn signup_post(
                 {
                     Ok(true) => info!(task = "subs", %username, "trial started at signup"),
                     Ok(false) => {}
-                    Err(e) => warn!(task = "subs", %username, error = %e, "trial not started"),
+                    Err(e) => {
+                        warn!(task = "subs", %username, error = format!("{e:#}"), "trial not started")
+                    }
                 }
             }
             signup_done()
         }
         Err(e) => {
-            warn!(task = "onboard", %ip, error = %e, "public signup failed");
+            warn!(task = "onboard", %ip, error = format!("{e:#}"), "public signup failed");
             public_page(INSCRIPTION_HTML, "Créer ton compte", &signup_form(&username, &email, Some("La création a échoué, réessaie dans un instant ou écris à l'administrateur.")), StatusCode::BAD_GATEWAY)
         }
     }
@@ -1598,7 +1620,7 @@ async fn accounts_link(State(st): State<AppState>, Form(f): Form<LinkForm>) -> R
             Ok(sent) if sent.mail_sent => "link_sent",
             Ok(_) => "link_failed",
             Err(e) => {
-                warn!(task = "accounts", user = %acc.name, error = %e, "link resend failed");
+                warn!(task = "accounts", user = %acc.name, error = format!("{e:#}"), "link resend failed");
                 "link_failed"
             }
         },
@@ -1702,7 +1724,7 @@ async fn onboard_handler(
             )
         }
         Err(e) => {
-            warn!(task = "onboard", %ip, error = %e, "web onboarding failed");
+            warn!(task = "onboard", %ip, error = format!("{e:#}"), "web onboarding failed");
             fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         }
     }

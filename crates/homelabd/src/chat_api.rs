@@ -52,7 +52,7 @@ where
         .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne"))?
         .map_err(|e| {
-            warn!(task = "chat", error = %e, "database error");
+            warn!(task = "chat", error = format!("{e:#}"), "database error");
             err(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne")
         })
 }
@@ -145,7 +145,11 @@ async fn auth(st: &ChatState, headers: &HeaderMap) -> ApiResult<ChatUser> {
                 .user_from_token(&token)
                 .await
                 .map_err(|e| {
-                    warn!(task = "chat", error = %e, "jellyfin Users/Me failed");
+                    warn!(
+                        task = "chat",
+                        error = format!("{e:#}"),
+                        "jellyfin Users/Me failed"
+                    );
                     err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
                 })?
                 .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "session Jellyfin invalide"))?;
@@ -369,7 +373,11 @@ async fn admin_announce(
         return Err(err(StatusCode::FORBIDDEN, "l'auteur n'est pas modérateur"));
     }
     let jf = st.ctx.jellyfin.find_user(&b.author).await.map_err(|e| {
-        warn!(task = "chat", error = %e, "announce: jellyfin unreachable");
+        warn!(
+            task = "chat",
+            error = format!("{e:#}"),
+            "announce: jellyfin unreachable"
+        );
         err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
     })?;
     let Some(jf) = jf else {
@@ -516,7 +524,11 @@ async fn members(State(st): State<ChatState>, headers: HeaderMap) -> ApiResult<J
     let u = auth(&st, &headers).await?;
     moderator_only(&u)?;
     let all = active_members(&st).await.map_err(|e| {
-        warn!(task = "chat", error = %e, "members unreadable");
+        warn!(
+            task = "chat",
+            error = format!("{e:#}"),
+            "members unreadable"
+        );
         err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
     })?;
     let emails = member_emails(&st).await.unwrap_or_default();
@@ -558,7 +570,11 @@ async fn direct(
         ));
     }
     let members = active_members(&st).await.map_err(|e| {
-        warn!(task = "chat", error = %e, "members unreadable");
+        warn!(
+            task = "chat",
+            error = format!("{e:#}"),
+            "members unreadable"
+        );
         err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
     })?;
     let targets: Vec<(String, String)> = members
@@ -608,7 +624,11 @@ async fn mail_direct(
     let emails = match member_emails(&st).await {
         Ok(e) => e,
         Err(e) => {
-            warn!(task = "chat", error = %e, "direct mail: Jellyseerr unreadable");
+            warn!(
+                task = "chat",
+                error = format!("{e:#}"),
+                "direct mail: Jellyseerr unreadable"
+            );
             return;
         }
     };
@@ -627,7 +647,7 @@ async fn mail_direct(
             Ok(()) => sent += 1,
             Err(e) => {
                 failed += 1;
-                warn!(task = "chat", user = %name, error = %e, "direct mail failed");
+                warn!(task = "chat", user = %name, error = format!("{e:#}"), "direct mail failed");
             }
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -648,7 +668,11 @@ fn spawn_moderator_mail(st: ChatState) {
         loop {
             tick.tick().await;
             if let Err(e) = moderator_mail_pass(&st).await {
-                warn!(task = "chat", error = %e, "moderator mail failed");
+                warn!(
+                    task = "chat",
+                    error = format!("{e:#}"),
+                    "moderator mail failed"
+                );
             }
         }
     });
@@ -709,7 +733,11 @@ async fn mail_members(st: ChatState, author: ChatUser, text: String) {
     let (users, emails) = match (st.ctx.jellyfin.users().await, member_emails(&st).await) {
         (Ok(u), Ok(e)) => (u, e),
         (Err(e), _) | (_, Err(e)) => {
-            warn!(task = "chat", error = %e, "announcement mail: users unreadable");
+            warn!(
+                task = "chat",
+                error = format!("{e:#}"),
+                "announcement mail: users unreadable"
+            );
             return;
         }
     };
@@ -742,7 +770,7 @@ async fn mail_members(st: ChatState, author: ChatUser, text: String) {
             Ok(()) => sent += 1,
             Err(e) => {
                 failed += 1;
-                warn!(task = "chat", user = %name, error = %e, "announcement mail failed");
+                warn!(task = "chat", user = %name, error = format!("{e:#}"), "announcement mail failed");
             }
         }
         tokio::time::sleep(Duration::from_secs(2)).await;

@@ -67,7 +67,7 @@ pub async fn run(ctx: Arc<TaskContext>) -> Result<()> {
             let c = ctx.clone();
             tokio::spawn(async move {
                 if let Err(e) = auto_import::handle_new_entry(&c, &name).await {
-                    warn!(task = "auto_import", file = %name, error = %e, "handling failed");
+                    warn!(task = "auto_import", file = %name, error = format!("{e:#}"), "handling failed");
                 }
             });
         }

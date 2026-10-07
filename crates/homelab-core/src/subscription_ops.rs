@@ -453,7 +453,7 @@ pub async fn on_payment(ctx: &TaskContext, facts: &EventFacts, actor: &str) -> R
             }
             Ok(o) => info!(task = "subs", user = %sub.username, ?o, "paiement appliqué"),
             Err(e) => {
-                warn!(task = "subs", user = %sub.username, error = %e, "réactivation impossible")
+                warn!(task = "subs", user = %sub.username, error = format!("{e:#}"), "réactivation impossible")
             }
         }
     }
@@ -633,7 +633,7 @@ pub async fn admin_set(
     if !ctx.dry_run {
         let want = status.wants_premium();
         if let Err(e) = accounts::set_premium(ctx, user_id, want).await {
-            warn!(task = "subs", user = %s.username, error = %e, "premium non modifié");
+            warn!(task = "subs", user = %s.username, error = format!("{e:#}"), "premium non modifié");
         }
     }
     ctx.subs.get(user_id)?.context("fiche introuvable")
@@ -660,7 +660,7 @@ pub async fn admin_extend(ctx: &TaskContext, user_id: &str, days: i64, actor: &s
         )?;
         if !ctx.dry_run {
             if let Err(e) = accounts::set_premium(ctx, user_id, true).await {
-                warn!(task = "subs", user = %s.username, error = %e, "réactivation impossible");
+                warn!(task = "subs", user = %s.username, error = format!("{e:#}"), "réactivation impossible");
             }
         }
     }
@@ -690,7 +690,7 @@ async fn send_member_mail(
     match mail::send_plain(smtp, username, &to, &subject, &body).await {
         Ok(()) => true,
         Err(e) => {
-            warn!(task = "subs", user = %username, error = %e, "mail membre en échec");
+            warn!(task = "subs", user = %username, error = format!("{e:#}"), "mail membre en échec");
             false
         }
     }
@@ -701,7 +701,11 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
     let cfg = &ctx.cfg.subscriptions;
     // Jellyfin injoignable : aucune fiche gardée connue, le cycle suit les fiches comme avant
     let sync = ensure_fiches(ctx).await.unwrap_or_else(|e| {
-        warn!(task = "subs", error = %e, "fiches non synchronisées avec Jellyfin");
+        warn!(
+            task = "subs",
+            error = format!("{e:#}"),
+            "fiches non synchronisées avec Jellyfin"
+        );
         FichesSync::default()
     });
     let created = sync.created;
@@ -876,7 +880,7 @@ pub async fn reconcile(ctx: &TaskContext) -> Result<(String, u32)> {
                 ..Default::default()
             },
             Err(e) => {
-                warn!(task = "subs", user = %s.username, error = %e, "abonnement PayPal illisible");
+                warn!(task = "subs", user = %s.username, error = format!("{e:#}"), "abonnement PayPal illisible");
                 continue;
             }
         };
@@ -918,7 +922,7 @@ pub async fn reconcile(ctx: &TaskContext) -> Result<(String, u32)> {
                         fixed += 1;
                     }
                     Err(e) => {
-                        warn!(task = "subs", user = %s.username, error = %e, "paiement PayPal manqué non appliqué")
+                        warn!(task = "subs", user = %s.username, error = format!("{e:#}"), "paiement PayPal manqué non appliqué")
                     }
                 }
             }

@@ -295,6 +295,8 @@ async fn jackett_search(ctx: &TaskContext, kind: &str, query: &str) -> Result<Ve
         .timeout(Duration::from_secs(150))
         .send()
         .await
+        // l'URL porte la clé Jackett (`apikey=`) : retirée de l'erreur, journalisée et notée dans l'état
+        .map_err(reqwest::Error::without_url)
         .context("Jackett injoignable")?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
@@ -489,7 +491,7 @@ impl Task for RussianSearch {
             let incomplete = match qbit.files(hash).await {
                 Ok(f) => super::torrent_import::incomplete_paths(&f, &tor.save_path),
                 Err(e) => {
-                    warn!(task = "russian_search", key = %key, error = %e, "file list unreadable: import postponed");
+                    warn!(task = "russian_search", key = %key, error = format!("{e:#}"), "file list unreadable: import postponed");
                     continue;
                 }
             };
@@ -523,7 +525,9 @@ impl Task for RussianSearch {
                     )
                     .await?;
                 }
-                Err(e) => warn!(task = "russian_search", key = %key, error = %e, "import failed"),
+                Err(e) => {
+                    warn!(task = "russian_search", key = %key, error = format!("{e:#}"), "import failed")
+                }
             }
         }
 
@@ -631,7 +635,7 @@ impl Task for RussianSearch {
                 {
                     Ok(r) => r,
                     Err(e) => {
-                        warn!(task = "russian_search", title = %title, error = %e, "search failed");
+                        warn!(task = "russian_search", title = %title, error = format!("{e:#}"), "search failed");
                         record(
                             ctx,
                             &key,
@@ -713,7 +717,7 @@ impl Task for RussianSearch {
                     if let Some(h) = present {
                         Some(h)
                     } else if let Err(e) = qbit.add_torrent_with(bytes, "", TAG, true).await {
-                        warn!(task = "russian_search", title = %title, error = %e, "add failed");
+                        warn!(task = "russian_search", title = %title, error = format!("{e:#}"), "add failed");
                         record(
                             ctx,
                             &key,
@@ -764,7 +768,7 @@ impl Task for RussianSearch {
                             }
                             Ok(_) => {}
                             Err(e) => {
-                                warn!(task = "russian_search", title = %title, error = %e, "file list unreadable")
+                                warn!(task = "russian_search", title = %title, error = format!("{e:#}"), "file list unreadable")
                             }
                         }
                         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -785,14 +789,14 @@ impl Task for RussianSearch {
                         // aucun fichier reconnu : on garde tout plutôt que rien
                         warn!(task = "russian_search", title = %title, files = files.len(), "no file matched a missing episode: whole torrent kept");
                     } else if let Err(e) = qbit.set_file_priority(&hash, &skip, 0).await {
-                        warn!(task = "russian_search", title = %title, error = %e, "file priorities not set: whole torrent kept");
+                        warn!(task = "russian_search", title = %title, error = format!("{e:#}"), "file priorities not set: whole torrent kept");
                     } else {
                         info!(task = "russian_search", title = %title, kept = files.len() - skip.len(), total = files.len(), "only missing episodes kept");
                     }
                 }
                 // ajouté arrêté : démarré seulement maintenant, fichiers inutiles déjà désélectionnés
                 if let Err(e) = qbit.start(&hash, false).await {
-                    warn!(task = "russian_search", title = %title, error = %e, "torrent not started");
+                    warn!(task = "russian_search", title = %title, error = format!("{e:#}"), "torrent not started");
                 }
                 info!(task = "russian_search", title = %title, release = %rel.title, covered, "grabbed");
                 notes.push(format!("{title} : « {} » ({covered} ép.)", rel.title));

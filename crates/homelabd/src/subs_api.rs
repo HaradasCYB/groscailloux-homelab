@@ -143,7 +143,11 @@ async fn auth(st: &SubsState, headers: &HeaderMap) -> ApiResult<Me> {
         .user_from_token(&token)
         .await
         .map_err(|e| {
-            warn!(task = "subs", error = %e, "jellyfin Users/Me failed");
+            warn!(
+                task = "subs",
+                error = format!("{e:#}"),
+                "jellyfin Users/Me failed"
+            );
             err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
         })?
         .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "session Jellyfin invalide"))?;
@@ -186,7 +190,7 @@ async fn me(State(st): State<SubsState>, headers: HeaderMap) -> ApiResult<Json<V
     .await
     .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne"))?
     .map_err(|e| {
-        warn!(task = "subs", error = %e, "fiche illisible");
+        warn!(task = "subs", error = format!("{e:#}"), "fiche illisible");
         err(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne")
     })?;
     let exempt = st
@@ -329,7 +333,7 @@ async fn set_language(
         Err(e) => Err(e),
     };
     r.map_err(|e| {
-        warn!(task = "subs", user = %u.name, error = %e, "language prefs failed");
+        warn!(task = "subs", user = %u.name, error = format!("{e:#}"), "language prefs failed");
         err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
     })?;
     info!(task = "subs", user = %u.name, mode = %b.mode, "language mode set from Mon compte");
@@ -352,7 +356,11 @@ async fn requests_progress(
         }
     }
     let v = build_requests_progress(&st).await.map_err(|e| {
-        warn!(task = "subs", error = %e, "requests progress failed");
+        warn!(
+            task = "subs",
+            error = format!("{e:#}"),
+            "requests progress failed"
+        );
         err(StatusCode::BAD_GATEWAY, "services injoignables")
     })?;
     *st.requests_cache.lock().await = Some((Instant::now(), v.clone()));
@@ -488,7 +496,11 @@ async fn route_list(State(st): State<SubsState>, headers: HeaderMap) -> ApiResul
         return Ok(Json(json!({ "allowed": false, "items": [] })));
     }
     let reqs = own_seedbox_requests(&st, &u.id).await.map_err(|e| {
-        warn!(task = "subs", error = %e, "own requests unreadable");
+        warn!(
+            task = "subs",
+            error = format!("{e:#}"),
+            "own requests unreadable"
+        );
         err(StatusCode::BAD_GATEWAY, "Jellyseerr injoignable")
     })?;
     let tv = routes_of(&st, "tv").await;
@@ -609,7 +621,7 @@ async fn route_set(
         _ => return Err(err(StatusCode::BAD_REQUEST, "voie inconnue")),
     };
     arr.put(editor, &body).await.map_err(|e| {
-        warn!(task = "subs", user = %u.name, error = %e, "route change failed");
+        warn!(task = "subs", user = %u.name, error = format!("{e:#}"), "route change failed");
         err(StatusCode::BAD_GATEWAY, "Arr injoignable")
     })?;
     info!(task = "subs", user = %u.name, kind = %kind, tmdb = b.tmdb_id, route = %b.route, "request route changed from Mon compte");
@@ -705,7 +717,13 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
         let recs = match arr.queue_records().await {
             Ok(r) => r,
             Err(e) => {
-                warn!(task = "subs", side, kind, error = %e, "queue unreadable");
+                warn!(
+                    task = "subs",
+                    side,
+                    kind,
+                    error = format!("{e:#}"),
+                    "queue unreadable"
+                );
                 continue;
             }
         };
@@ -755,7 +773,12 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
         let torrents = match qbit.torrents().await {
             Ok(t) => t,
             Err(e) => {
-                warn!(task = "subs", side, error = %e, "qbittorrent unreadable");
+                warn!(
+                    task = "subs",
+                    side,
+                    error = format!("{e:#}"),
+                    "qbittorrent unreadable"
+                );
                 continue;
             }
         };
@@ -1082,7 +1105,11 @@ async fn logout_device(
 ) -> ApiResult<Json<Value>> {
     let u = auth(&st, &headers).await?;
     let devices = st.ctx.jellyfin.devices().await.map_err(|e| {
-        warn!(task = "subs", error = %e, "devices unreadable");
+        warn!(
+            task = "subs",
+            error = format!("{e:#}"),
+            "devices unreadable"
+        );
         err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
     })?;
     let mine = devices.iter().any(|d| {
@@ -1097,7 +1124,11 @@ async fn logout_device(
         return Err(err(StatusCode::FORBIDDEN, "cet appareil n'est pas à toi"));
     }
     st.ctx.jellyfin.delete_device(&id).await.map_err(|e| {
-        warn!(task = "subs", error = %e, "delete device failed");
+        warn!(
+            task = "subs",
+            error = format!("{e:#}"),
+            "delete device failed"
+        );
         err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
     })?;
     info!(task = "subs", user = %u.name, "device logged out from Mon compte");
@@ -1137,7 +1168,11 @@ async fn password_link(State(st): State<SubsState>, headers: HeaderMap) -> ApiRe
     let token = welcome::issue(&st.ctx, &u.id, &u.name, &email, welcome::KIND_ACTIVATED)
         .await
         .map_err(|e| {
-            warn!(task = "subs", error = %e, "password link failed");
+            warn!(
+                task = "subs",
+                error = format!("{e:#}"),
+                "password link failed"
+            );
             err(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne")
         })?;
     let base = st
@@ -1197,7 +1232,11 @@ async fn webhook(State(st): State<SubsState>, headers: HeaderMap, body: Bytes) -
             return StatusCode::UNAUTHORIZED.into_response();
         }
         Err(e) => {
-            warn!(task = "subs", error = %e, "webhook PayPal : vérification impossible");
+            warn!(
+                task = "subs",
+                error = format!("{e:#}"),
+                "webhook PayPal : vérification impossible"
+            );
             return StatusCode::BAD_GATEWAY.into_response();
         }
     }
@@ -1225,7 +1264,11 @@ async fn webhook(State(st): State<SubsState>, headers: HeaderMap, body: Bytes) -
             return StatusCode::OK.into_response();
         }
         Err(e) => {
-            warn!(task = "subs", error = %e, "webhook : base illisible");
+            warn!(
+                task = "subs",
+                error = format!("{e:#}"),
+                "webhook : base illisible"
+            );
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
@@ -1246,9 +1289,17 @@ async fn webhook(State(st): State<SubsState>, headers: HeaderMap, body: Bytes) -
     match r {
         Ok(_) => StatusCode::OK.into_response(),
         Err(e) => {
-            warn!(task = "subs", error = %e, "webhook : traitement en échec, relance de PayPal attendue");
+            warn!(
+                task = "subs",
+                error = format!("{e:#}"),
+                "webhook : traitement en échec, relance de PayPal attendue"
+            );
             if let Err(e) = st.ctx.subs.forget_paypal_event(&event_id) {
-                warn!(task = "subs", error = %e, "webhook : événement non oublié, la relance sera ignorée");
+                warn!(
+                    task = "subs",
+                    error = format!("{e:#}"),
+                    "webhook : événement non oublié, la relance sera ignorée"
+                );
             }
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
@@ -1324,7 +1375,7 @@ async fn link_from_page(
     let v = match pp.subscription(&sid).await {
         Ok(v) => v,
         Err(e) => {
-            warn!(task = "subs", %ip, error = %e, "abonnement PayPal illisible");
+            warn!(task = "subs", %ip, error = format!("{e:#}"), "abonnement PayPal illisible");
             return Redirect::to("/premium/activate?err=paypal").into_response();
         }
     };
@@ -1389,7 +1440,7 @@ async fn link_from_page(
         ))
         .into_response(),
         Err(e) => {
-            warn!(task = "subs", %ip, error = %e, "rattachement en échec");
+            warn!(task = "subs", %ip, error = format!("{e:#}"), "rattachement en échec");
             Redirect::to("/premium/activate?err=interne").into_response()
         }
     }

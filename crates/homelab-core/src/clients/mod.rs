@@ -49,7 +49,7 @@ fn worth_retrying(request: bool, connect: bool, timeout: bool) -> bool {
 
 /// Chaîne de causes d'une erreur reqwest (`reqwest::Error` n'a pas de `{:#}`), sans l'URL : elle peut porter
 /// des paramètres (clé, jeton) et le chemin est journalisé à part.
-fn cause_chain(e: reqwest::Error) -> String {
+pub(crate) fn cause_chain(e: reqwest::Error) -> String {
     let e = e.without_url();
     let mut out = e.to_string();
     let mut source = std::error::Error::source(&e);

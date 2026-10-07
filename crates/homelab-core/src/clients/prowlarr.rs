@@ -162,7 +162,10 @@ impl ProwlarrClient {
             .header("X-Api-Key", self.key.expose())
             .timeout(std::time::Duration::from_secs(120))
             .send()
-            .await?;
+            .await
+            // le lien porte la clé de Prowlarr et celui de l'indexer (`apikey=`, `link=`) : jamais dans l'erreur
+            .map_err(reqwest::Error::without_url)
+            .context("prowlarr download")?;
         let resp = super::check(resp, "prowlarr download").await?;
         Ok(resp.bytes().await?.to_vec())
     }
@@ -181,7 +184,9 @@ impl ProwlarrClient {
             .get(url)
             .header("X-Api-Key", self.key.expose())
             .send()
-            .await?;
+            .await
+            .map_err(reqwest::Error::without_url) // même lien à clé que `download`
+            .context("prowlarr magnet")?;
         let location = resp
             .headers()
             .get(reqwest::header::LOCATION)

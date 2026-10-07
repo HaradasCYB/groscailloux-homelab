@@ -538,7 +538,7 @@ impl Task for SubtitleSync {
                         if !is_no_track(&e) {
                             all_no_track = false;
                         }
-                        warn!(task = "subtitle_sync", item = %path, kind = %j.kind, error = %e, "extraction failed");
+                        warn!(task = "subtitle_sync", item = %path, kind = %j.kind, error = format!("{e:#}"), "extraction failed");
                     }
                 }
             }
@@ -571,7 +571,9 @@ impl Task for SubtitleSync {
                 Ok(resp) if !resp.status().is_success() => {
                     warn!(task = "subtitle_sync", status = %resp.status(), "rclone vfs/refresh failed")
                 }
-                Err(e) => warn!(task = "subtitle_sync", error = %e, "rclone rc injoignable"),
+                Err(e) => {
+                    warn!(task = "subtitle_sync", error = %crate::clients::cause_chain(e), "rclone rc injoignable")
+                }
                 _ => {}
             }
         }
@@ -580,7 +582,7 @@ impl Task for SubtitleSync {
                 Ok(()) => refreshed += 1,
                 Err(e) => {
                     failed += 1;
-                    warn!(task = "subtitle_sync", item = %id, error = %e, "refresh failed");
+                    warn!(task = "subtitle_sync", item = %id, error = format!("{e:#}"), "refresh failed");
                 }
             }
         }

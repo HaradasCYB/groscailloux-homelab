@@ -155,7 +155,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         )
         .await
     {
-        warn!(task = "onboard", username = %req.username, error = %e, "policy not applied, fix in Jellyfin dashboard");
+        warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "policy not applied, fix in Jellyfin dashboard");
     }
     let latest_excludes = ctx
         .jellyfin
@@ -167,7 +167,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         .set_view_order(&jf_id, &libraries, &latest_excludes)
         .await
     {
-        warn!(task = "onboard", username = %req.username, error = %e, "library order not applied");
+        warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "library order not applied");
     }
     let skip = &ctx.cfg.accounts;
     if let Err(e) = ctx
@@ -175,7 +175,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         .set_skip_lengths(&jf_id, skip.skip_forward_ms, skip.skip_back_ms)
         .await
     {
-        warn!(task = "onboard", username = %req.username, error = %e, "skip lengths not applied");
+        warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "skip lengths not applied");
     }
     if let Err(e) = ctx
         .jellyfin
@@ -188,7 +188,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         )
         .await
     {
-        warn!(task = "onboard", username = %req.username, error = %e, "language preferences not applied");
+        warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "language preferences not applied");
     }
     result.jellyfin_id = jf_id.clone();
 
@@ -206,7 +206,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
         .set_main_settings(js_id, &email, &req.username)
         .await
     {
-        warn!(task = "onboard", username = %req.username, error = %e, "set email failed, fix manually");
+        warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "set email failed, fix manually");
     }
 
     // droits de l'import (defaultPermissions) + validation automatique : posés avant la suspension,
@@ -231,7 +231,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
                     info!(task = "onboard", username = %req.username, permissions = wanted, "jellyseerr auto-approve set")
                 }
                 Err(e) => {
-                    warn!(task = "onboard", username = %req.username, error = %e, "auto-approve not set, fix in Jellyseerr")
+                    warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "auto-approve not set, fix in Jellyseerr")
                 }
             }
         }
@@ -249,7 +249,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
             }
             Err(e) => {
                 result.premium = true;
-                warn!(task = "onboard", username = %req.username, error = %e, "suspend failed, account is active")
+                warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "suspend failed, account is active")
             }
         }
     }
@@ -276,7 +276,7 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
             }
         }
         Err(e) => {
-            warn!(task = "onboard", username = %req.username, error = %e, "welcome link failed")
+            warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "welcome link failed")
         }
     }
     if req.source == Source::SelfSignup {

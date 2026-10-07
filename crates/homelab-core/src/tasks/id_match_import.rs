@@ -147,7 +147,7 @@ async fn process(ctx: &TaskContext, arr: &ArrClient, budget: &mut usize) -> Resu
                 info!(task = "id_match_import", service = arr.name, %title, files = files.len(), cmd_id, "manual import triggered");
             }
             Err(e) => {
-                warn!(task = "id_match_import", service = arr.name, %title, error = %e, "manual import failed")
+                warn!(task = "id_match_import", service = arr.name, %title, error = format!("{e:#}"), "manual import failed")
             }
         }
     }
@@ -175,7 +175,12 @@ impl Task for IdMatchImport {
             match process(ctx, arr, &mut budget).await {
                 Ok(n) => total += n,
                 Err(e) => {
-                    warn!(task = "id_match_import", service = arr.name, error = %e, "queue check failed")
+                    warn!(
+                        task = "id_match_import",
+                        service = arr.name,
+                        error = format!("{e:#}"),
+                        "queue check failed"
+                    )
                 }
             }
         }

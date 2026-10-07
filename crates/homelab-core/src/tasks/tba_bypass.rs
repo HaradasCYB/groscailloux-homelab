@@ -106,7 +106,12 @@ impl Task for TbaBypass {
             let preview = match sonarr.manual_import(&folder).await {
                 Ok(p) => p,
                 Err(e) => {
-                    warn!(task = "tba_bypass", service = sonarr.name, error = %e, "manualimport_failed");
+                    warn!(
+                        task = "tba_bypass",
+                        service = sonarr.name,
+                        error = format!("{e:#}"),
+                        "manualimport_failed"
+                    );
                     errors += 1;
                     continue;
                 }
@@ -130,7 +135,7 @@ impl Task for TbaBypass {
                     }
                     Err(e) => {
                         errors += 1;
-                        warn!(task = "tba_bypass", service = sonarr.name, %what, path, error = %e, "post_failed");
+                        warn!(task = "tba_bypass", service = sonarr.name, %what, path, error = format!("{e:#}"), "post_failed");
                     }
                 }
             }

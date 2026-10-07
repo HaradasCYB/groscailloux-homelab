@@ -431,7 +431,7 @@ pub async fn send(
     {
         Ok(()) => true,
         Err(e) => {
-            tracing::warn!(task = "onboard", username = %username, error = %e, "link mail failed");
+            tracing::warn!(task = "onboard", username = %username, error = format!("{e:#}"), "link mail failed");
             crate::alerts::admin(
                 ctx,
                 crate::alerts::Level::Error,

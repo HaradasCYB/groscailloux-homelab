@@ -123,6 +123,8 @@ pub async fn post(http: &reqwest::Client, webhook: &str, body: &Value) -> Result
             .json(body)
             .send()
             .await
+            // l'URL du webhook EST le secret : retirée de l'erreur, qui finit dans le journal avec ses causes
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("discord {}", mask(webhook)))?;
         let status = resp.status();
         if status.is_success() {
@@ -178,7 +180,12 @@ pub async fn notify(ctx: &TaskContext, channel: Channel, embed: Embed) -> bool {
     match post(&ctx.http, url, &payload(&embed, mention)).await {
         Ok(()) => true,
         Err(e) => {
-            tracing::warn!(task = "discord", ?channel, error = %e, "post failed");
+            tracing::warn!(
+                task = "discord",
+                ?channel,
+                error = format!("{e:#}"),
+                "post failed"
+            );
             false
         }
     }

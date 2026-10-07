@@ -114,7 +114,12 @@ impl Task for UserPoller {
                 continue;
             }
             if let Err(e) = ctx.jellyseerr.delete_user(c.id).await {
-                warn!(task = "user_poller", id = c.id, error = %e, "delete_local_failed");
+                warn!(
+                    task = "user_poller",
+                    id = c.id,
+                    error = format!("{e:#}"),
+                    "delete_local_failed"
+                );
                 continue;
             }
             info!(task = "user_poller", id = c.id, "deleted_local");
@@ -131,7 +136,7 @@ impl Task for UserPoller {
                     "onboarded"
                 }
                 Err(e) => {
-                    warn!(task = "user_poller", username = %c.username, email = %c.email, error = %e, "onboard_failed");
+                    warn!(task = "user_poller", username = %c.username, email = %c.email, error = format!("{e:#}"), "onboard_failed");
                     "onboard_failed"
                 }
             };

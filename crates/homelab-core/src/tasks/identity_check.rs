@@ -217,7 +217,7 @@ impl Task for IdentityCheck {
                     fixed += 1;
                 }
                 Err(e) => {
-                    warn!(task = "identity_check", title = %exp.name, error = %e, "correction impossible")
+                    warn!(task = "identity_check", title = %exp.name, error = format!("{e:#}"), "correction impossible")
                 }
             }
             if fixed as usize >= cfg.max_fixes_per_run {

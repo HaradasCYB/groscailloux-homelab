@@ -1026,7 +1026,7 @@ async fn process_side(
             }
             Err(e) => {
                 let (outcome, attempts) = after_error(prev, max_attempts);
-                warn!(task = "torrent_import", side = side.name, torrent = %t.name, error = %e, attempts, "examine failed");
+                warn!(task = "torrent_import", side = side.name, torrent = %t.name, error = format!("{e:#}"), attempts, "examine failed");
                 (outcome, truncate(&format!("{e:#}"), 200), attempts, true)
             }
         };
@@ -1090,7 +1090,12 @@ impl Task for TorrentImport {
                 Ok(n) => files += n,
                 Err(e) => {
                     *counts.entry("side_error").or_default() += 1;
-                    warn!(task = "torrent_import", side = side.name, error = %e, "side skipped")
+                    warn!(
+                        task = "torrent_import",
+                        side = side.name,
+                        error = format!("{e:#}"),
+                        "side skipped"
+                    )
                 }
             }
         }

@@ -387,7 +387,11 @@ impl Task for HlsLoopWatch {
         let text = match tail(&cfg.npm_access_log, cfg.tail_bytes) {
             Ok(t) => t,
             Err(e) => {
-                warn!(task = "hls_loop_watch", error = %e, "journal NPM illisible");
+                warn!(
+                    task = "hls_loop_watch",
+                    error = format!("{e:#}"),
+                    "journal NPM illisible"
+                );
                 return Ok(Report::new("journal NPM illisible", 0));
             }
         };

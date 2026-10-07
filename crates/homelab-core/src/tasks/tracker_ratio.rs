@@ -96,7 +96,7 @@ impl Task for TrackerRatio {
                     info!(task = "tracker_ratio", tier = p.tier, ratio = p.ratio, time = p.time_min, hash = %t.hash, %name, "applied");
                 }
                 Err(e) => {
-                    warn!(task = "tracker_ratio", hash = %t.hash, %name, error = %e, "set_limits_failed")
+                    warn!(task = "tracker_ratio", hash = %t.hash, %name, error = format!("{e:#}"), "set_limits_failed")
                 }
             }
         }

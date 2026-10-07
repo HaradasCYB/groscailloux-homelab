@@ -444,7 +444,7 @@ impl Task for IndexerUnblock {
             let rows = match read_status(ctx, app).await {
                 Ok(r) => r,
                 Err(e) => {
-                    warn!(task = "indexer_unblock", app = %app.key, error = %e, "lecture de l'état impossible");
+                    warn!(task = "indexer_unblock", app = %app.key, error = format!("{e:#}"), "lecture de l'état impossible");
                     *counts.entry("error").or_default() += 1;
                     continue;
                 }
@@ -568,7 +568,7 @@ impl Task for IndexerUnblock {
                 }
                 Err(e) => {
                     *counts.entry("error").or_default() += 1;
-                    warn!(task = "indexer_unblock", app = %app.key, error = %e, "déblocage en échec");
+                    warn!(task = "indexer_unblock", app = %app.key, error = format!("{e:#}"), "déblocage en échec");
                     // l'application a quand même été arrêtée : pas de nouvel essai avant le délai de grâce
                     let key = app.key.clone();
                     ctx.state
@@ -631,7 +631,11 @@ impl Task for IndexerUnblock {
                 Ok(_) => t,
                 Err(e) => {
                     // seedbox injoignable : nouvel essai dans une heure, pas à chaque passage
-                    warn!(task = "indexer_unblock", error = %e, "purge des copies de base impossible");
+                    warn!(
+                        task = "indexer_unblock",
+                        error = format!("{e:#}"),
+                        "purge des copies de base impossible"
+                    );
                     t - 23 * 3600
                 }
             };

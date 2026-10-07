@@ -62,7 +62,12 @@ async fn process(ctx: &TaskContext, arr: &ArrClient, re: &Regex, actions: &mut u
     let queue = match arr.queue().await {
         Ok(q) => q,
         Err(e) => {
-            warn!(task = "stuck_handler", service = arr.name, error = %e, "queue_unreachable");
+            warn!(
+                task = "stuck_handler",
+                service = arr.name,
+                error = format!("{e:#}"),
+                "queue_unreachable"
+            );
             return Ok(());
         }
     };
@@ -124,7 +129,14 @@ async fn process(ctx: &TaskContext, arr: &ArrClient, re: &Regex, actions: &mut u
                         info!(task = "stuck_handler", service = arr.name, queue_id = item.id, hash = did, age, title = %item.title, "replaced");
                     }
                     Err(e) => {
-                        warn!(task = "stuck_handler", service = arr.name, queue_id = item.id, hash = did, error = %e, "delete_failed")
+                        warn!(
+                            task = "stuck_handler",
+                            service = arr.name,
+                            queue_id = item.id,
+                            hash = did,
+                            error = format!("{e:#}"),
+                            "delete_failed"
+                        )
                     }
                 }
             }

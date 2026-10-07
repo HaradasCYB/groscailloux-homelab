@@ -502,7 +502,7 @@ async fn drop_title(
         }
     }
     if let Err(e) = ctx.jellyseerr.delete_media(media_id).await {
-        warn!(task = "deletion_cleanup", title = %t.name, error = %e, "jellyseerr media not released");
+        warn!(task = "deletion_cleanup", title = %t.name, error = format!("{e:#}"), "jellyseerr media not released");
     }
     Ok(format!(
         "{} « {} » (demande retirée{})",
@@ -782,7 +782,7 @@ async fn source_hashes(
     match arr.title_history(t.id).await {
         Ok(records) => out.extend(hashes_from_history(&records, key, t.id, episodes)),
         Err(e) => {
-            warn!(task = "deletion_cleanup", title = %t.name, error = %e, "history unreadable")
+            warn!(task = "deletion_cleanup", title = %t.name, error = format!("{e:#}"), "history unreadable")
         }
     }
     for tor in torrents {
@@ -905,7 +905,7 @@ async fn handle_torrent(ctx: &TaskContext, side: &Side<'_>, tor: &Torrent) -> &'
                     "torrent_deleted"
                 }
                 Err(e) => {
-                    warn!(task = "deletion_cleanup", side = side.name, torrent = %tor.name, error = %e, "torrent delete failed");
+                    warn!(task = "deletion_cleanup", side = side.name, torrent = %tor.name, error = format!("{e:#}"), "torrent delete failed");
                     "torrent_error"
                 }
             }
@@ -971,14 +971,14 @@ async fn release_jellyseerr(ctx: &TaskContext, side: &Side<'_>, t: &Title) {
             if ctx.dry_run {
                 info!(task = "deletion_cleanup", title = %t.name, "dry-run: would release jellyseerr media");
             } else if let Err(e) = ctx.jellyseerr.delete_media(mid).await {
-                warn!(task = "deletion_cleanup", title = %t.name, error = %e, "jellyseerr media not released");
+                warn!(task = "deletion_cleanup", title = %t.name, error = format!("{e:#}"), "jellyseerr media not released");
             } else {
                 info!(task = "deletion_cleanup", title = %t.name, "jellyseerr media released");
             }
         }
         Ok(None) => {}
         Err(e) => {
-            warn!(task = "deletion_cleanup", title = %t.name, error = %e, "jellyseerr lookup failed")
+            warn!(task = "deletion_cleanup", title = %t.name, error = format!("{e:#}"), "jellyseerr lookup failed")
         }
     }
 }
@@ -1179,7 +1179,12 @@ impl Task for DeletionCleanup {
                     continue;
                 }
                 Err(e) => {
-                    warn!(task = "deletion_cleanup", side = side.name, error = %e, "arr unreachable: side skipped this run");
+                    warn!(
+                        task = "deletion_cleanup",
+                        side = side.name,
+                        error = format!("{e:#}"),
+                        "arr unreachable: side skipped this run"
+                    );
                     summary.push(format!("{}=arr_injoignable", side.name));
                     continue;
                 }
@@ -1268,7 +1273,7 @@ impl Task for DeletionCleanup {
                         }
                     }
                     Err(e) => {
-                        warn!(task = "deletion_cleanup", side = side.name, title = %t.name, error = %e, "cleanup failed");
+                        warn!(task = "deletion_cleanup", side = side.name, title = %t.name, error = format!("{e:#}"), "cleanup failed");
                         done.push(format!("{} « {} » (erreur)", side.name, t.name));
                     }
                 }
@@ -1282,7 +1287,11 @@ impl Task for DeletionCleanup {
         // demandes retirées dans Jellyseerr : la fiche Arr et ses fichiers partent avec elles
         match dropped_now(ctx).await {
             Err(e) => {
-                warn!(task = "deletion_cleanup", error = %e, "jellyseerr unreachable: dropped requests skipped");
+                warn!(
+                    task = "deletion_cleanup",
+                    error = format!("{e:#}"),
+                    "jellyseerr unreachable: dropped requests skipped"
+                );
                 summary.push("demandes=jellyseerr_injoignable".into());
             }
             Ok(dropped) if dropped.is_empty() => {}
@@ -1301,7 +1310,12 @@ impl Task for DeletionCleanup {
                         let titles = match dropped_titles(ctx, &side, &dropped).await {
                             Ok(t) => t,
                             Err(e) => {
-                                warn!(task = "deletion_cleanup", side = side.name, error = %e, "arr unreachable: dropped requests skipped");
+                                warn!(
+                                    task = "deletion_cleanup",
+                                    side = side.name,
+                                    error = format!("{e:#}"),
+                                    "arr unreachable: dropped requests skipped"
+                                );
                                 continue;
                             }
                         };
@@ -1319,7 +1333,7 @@ impl Task for DeletionCleanup {
                                     done.push(s);
                                 }
                                 Err(e) => {
-                                    warn!(task = "deletion_cleanup", side = side.name, title = %t.name, error = %e, "drop failed");
+                                    warn!(task = "deletion_cleanup", side = side.name, title = %t.name, error = format!("{e:#}"), "drop failed");
                                     done.push(format!("{} « {} » (erreur)", side.name, t.name));
                                 }
                             }

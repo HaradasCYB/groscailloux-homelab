@@ -187,7 +187,7 @@ impl Task for PlaybackLimit {
                 .send_message(&p.session_id, "Groscailloux", &stop_message(max), 12_000)
                 .await
             {
-                warn!(task = "playback_limit", user = %p.user_name, error = %e, "message not shown");
+                warn!(task = "playback_limit", user = %p.user_name, error = format!("{e:#}"), "message not shown");
             }
             match ctx.jellyfin.stop_playback(&p.session_id).await {
                 Ok(()) => {
@@ -195,7 +195,7 @@ impl Task for PlaybackLimit {
                     info!(task = "playback_limit", user = %p.user_name, device = %p.device, item = %p.item, max, "playback stopped: over the limit");
                 }
                 Err(e) => {
-                    warn!(task = "playback_limit", user = %p.user_name, error = %e, "stop failed")
+                    warn!(task = "playback_limit", user = %p.user_name, error = format!("{e:#}"), "stop failed")
                 }
             }
         }

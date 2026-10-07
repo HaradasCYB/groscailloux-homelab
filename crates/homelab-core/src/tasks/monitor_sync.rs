@@ -249,7 +249,7 @@ async fn sync_one(
                 info!(task = "monitor_sync", service = sonarr.name, series_id = id, %title, ?req, ?before, ?after, "synced");
             }
             Err(e) => {
-                warn!(task = "monitor_sync", service = sonarr.name, series_id = id, %title, error = %e, "put_failed")
+                warn!(task = "monitor_sync", service = sonarr.name, series_id = id, %title, error = format!("{e:#}"), "put_failed")
             }
         }
     }

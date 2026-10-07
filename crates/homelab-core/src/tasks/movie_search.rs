@@ -385,7 +385,12 @@ impl Task for MovieSearch {
                     }
                 }
                 Err(e) => {
-                    warn!(task = "movie_search", service = arr.name, error = %e, "planning failed")
+                    warn!(
+                        task = "movie_search",
+                        service = arr.name,
+                        error = format!("{e:#}"),
+                        "planning failed"
+                    )
                 }
             }
         }
@@ -407,7 +412,13 @@ impl Task for MovieSearch {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    warn!(task = "movie_search", service = arr.name, movie_id = id, error = %e, "movie failed");
+                    warn!(
+                        task = "movie_search",
+                        service = arr.name,
+                        movie_id = id,
+                        error = format!("{e:#}"),
+                        "movie failed"
+                    );
                     ("error".into(), format!("{e:#}").chars().take(200).collect())
                 }
             };

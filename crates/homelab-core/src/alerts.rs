@@ -44,7 +44,11 @@ pub async fn admin(ctx: &TaskContext, level: Level, subject: &str, body: &str) -
         } else {
             match mail::send_plain(smtp, "Admin Groscailloux", to, subject, body).await {
                 Ok(()) => mailed = true,
-                Err(e) => tracing::warn!(task = "alerts", error = %e, "mail admin en échec"),
+                Err(e) => tracing::warn!(
+                    task = "alerts",
+                    error = format!("{e:#}"),
+                    "mail admin en échec"
+                ),
             }
         }
     }
@@ -102,7 +106,11 @@ async fn trace(ctx: &TaskContext, subject: &str, mailed: bool, posted: bool, con
         .update(|s| s.alerts.record(at, &subject, mailed, posted))
         .await
     {
-        tracing::warn!(task = "alerts", error = %e, "trace de l'alerte non enregistrée");
+        tracing::warn!(
+            task = "alerts",
+            error = format!("{e:#}"),
+            "trace de l'alerte non enregistrée"
+        );
     }
 }
 

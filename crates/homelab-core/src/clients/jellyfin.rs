@@ -610,7 +610,13 @@ impl JellyfinClient {
     pub async fn get_bytes(&self, path: &str) -> Result<(std::time::Duration, Vec<u8>)> {
         let t0 = std::time::Instant::now();
         // pas de nouvelle tentative : demander une playlist démarre une conversion
-        let resp = self.req(Method::GET, path).send().await?;
+        let resp = self
+            .req(Method::GET, path)
+            .send()
+            .await
+            // l'adresse de conversion porte la clé (`ApiKey=`) : seul le chemin va dans l'erreur
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| format!("jellyfin GET {}", path.split('?').next().unwrap_or(path)))?;
         let status = resp.status();
         let body = resp.bytes().await?;
         if !status.is_success() {

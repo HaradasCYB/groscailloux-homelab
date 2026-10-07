@@ -174,7 +174,11 @@ async fn probe(
     }
     .await;
     if let Err(e) = ctx.jellyfin.stop_encodings(DEVICE_ID, &session).await {
-        warn!(task = "playback_canary", error = %e, "transcodage non arrêté");
+        warn!(
+            task = "playback_canary",
+            error = format!("{e:#}"),
+            "transcodage non arrêté"
+        );
     }
     result
 }

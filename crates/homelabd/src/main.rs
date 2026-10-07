@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
         let c = ctx.clone();
         handles.push(tokio::spawn(async move {
             if let Err(e) = watcher::run(c).await {
-                error!(error = %e, "watcher stopped");
+                error!(error = format!("{e:#}"), "watcher stopped");
             }
         }));
     } else {
@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
         let c = ctx.clone();
         handles.push(tokio::spawn(async move {
             if let Err(e) = web::serve(c).await {
-                error!(error = %e, "web server stopped");
+                error!(error = format!("{e:#}"), "web server stopped");
             }
         }));
     }

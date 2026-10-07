@@ -1270,7 +1270,12 @@ async fn names_for(ctx: &TaskContext, series: &Value) -> Vec<String> {
                 }
             }
             Err(e) => {
-                warn!(task = "series_search", tmdb, error = %e, "jellyseerr title lookup failed")
+                warn!(
+                    task = "series_search",
+                    tmdb,
+                    error = format!("{e:#}"),
+                    "jellyseerr title lookup failed"
+                )
             }
         }
     }
@@ -1648,14 +1653,14 @@ async fn try_cour_pack(
         let raw = match prow.download(url).await {
             Ok(b) => b,
             Err(e) => {
-                warn!(task = "series_search", release = %p.title, error = %e, "pack : .torrent illisible");
+                warn!(task = "series_search", release = %p.title, error = format!("{e:#}"), "pack : .torrent illisible");
                 continue;
             }
         };
         let entries = match crate::torrent_file::files(&raw) {
             Ok(v) => v,
             Err(e) => {
-                warn!(task = "series_search", release = %p.title, error = %e, "pack : bencode illisible");
+                warn!(task = "series_search", release = %p.title, error = format!("{e:#}"), "pack : bencode illisible");
                 continue;
             }
         };
@@ -1749,7 +1754,13 @@ async fn try_integrale(
             Ok(Some(l)) => l,
             Ok(None) => return Ok(None),
             Err(e) => {
-                warn!(task = "series_search", service = arr.name, series = title, error = %e, "intégrales : recherche sans saison impossible");
+                warn!(
+                    task = "series_search",
+                    service = arr.name,
+                    series = title,
+                    error = format!("{e:#}"),
+                    "intégrales : recherche sans saison impossible"
+                );
                 return Ok(None);
             }
         };
@@ -1842,14 +1853,14 @@ async fn try_integrale(
         let raw = match prow.download(url).await {
             Ok(b) => b,
             Err(e) => {
-                warn!(task = "series_search", release = %rtitle, error = %e, "intégrale : .torrent illisible");
+                warn!(task = "series_search", release = %rtitle, error = format!("{e:#}"), "intégrale : .torrent illisible");
                 continue;
             }
         };
         let entries = match crate::torrent_file::files(&raw) {
             Ok(v) => v,
             Err(e) => {
-                warn!(task = "series_search", release = %rtitle, error = %e, "intégrale : bencode illisible");
+                warn!(task = "series_search", release = %rtitle, error = format!("{e:#}"), "intégrale : bencode illisible");
                 continue;
             }
         };
@@ -2153,7 +2164,7 @@ async fn process_season(
                     last = detail;
                 }
                 Err(e) => {
-                    warn!(task = "series_search", service = arr.name, release = %c.title, error = %e, "envoi impossible");
+                    warn!(task = "series_search", service = arr.name, release = %c.title, error = format!("{e:#}"), "envoi impossible");
                     last = format!("{e:#}");
                 }
             }
@@ -2282,7 +2293,13 @@ async fn plan_seasons(
             let eps = match arr.episodes(*sid).await {
                 Ok(e) => e,
                 Err(e) => {
-                    warn!(task = "series_search", service = arr.name, series_id = sid, error = %e, "episodes unreadable (undated check)");
+                    warn!(
+                        task = "series_search",
+                        service = arr.name,
+                        series_id = sid,
+                        error = format!("{e:#}"),
+                        "episodes unreadable (undated check)"
+                    );
                     continue;
                 }
             };
@@ -2437,7 +2454,12 @@ impl Task for SeriesSearch {
                     arrs.push(Ctx { arr, series });
                 }
                 Err(e) => {
-                    warn!(task = "series_search", service = arr.name, error = %e, "planning failed")
+                    warn!(
+                        task = "series_search",
+                        service = arr.name,
+                        error = format!("{e:#}"),
+                        "planning failed"
+                    )
                 }
             }
         }
@@ -2495,7 +2517,14 @@ impl Task for SeriesSearch {
             let res = match process_season(ctx, prow, c.arr, ser, s, &mut throttle).await {
                 Ok(r) => r,
                 Err(e) => {
-                    warn!(task = "series_search", service = c.arr.name, series_id = s.series_id, season = s.season, error = %e, "season failed");
+                    warn!(
+                        task = "series_search",
+                        service = c.arr.name,
+                        series_id = s.series_id,
+                        season = s.season,
+                        error = format!("{e:#}"),
+                        "season failed"
+                    );
                     SeasonOutcome::new(
                         "error",
                         format!("{e:#}").chars().take(200).collect(),

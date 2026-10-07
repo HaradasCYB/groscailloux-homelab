@@ -375,7 +375,12 @@ async fn start(State(st): State<SearchState>, Form(f): Form<StartForm>) -> Respo
                     j.notes = notes;
                 }
                 Err(e) => {
-                    warn!(task = "manual_search", service = arr_name, error = %e, "search failed");
+                    warn!(
+                        task = "manual_search",
+                        service = arr_name,
+                        error = format!("{e:#}"),
+                        "search failed"
+                    );
                     j.notes.push(format!("Erreur : {e:#}"));
                 }
             }
@@ -445,7 +450,7 @@ async fn download(State(st): State<SearchState>, Form(f): Form<DownloadForm>) ->
                     (true, detail)
                 }
                 Err(e) => {
-                    warn!(task = "manual_search", service = arr_name, release = %row.title, error = %e, "manual grab failed");
+                    warn!(task = "manual_search", service = arr_name, release = %row.title, error = format!("{e:#}"), "manual grab failed");
                     (false, format!("Échec : {e:#}"))
                 }
             },

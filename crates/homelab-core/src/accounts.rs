@@ -208,16 +208,18 @@ pub async fn set_premium_locked(ctx: &TaskContext, user_id: &str, on: bool) -> R
                 {
                     if let Some(sid) = s.get("Id").and_then(Value::as_str) {
                         if let Err(e) = ctx.jellyfin.stop_playback(sid).await {
-                            warn!(task = "accounts", user = %name, error = %e, "stop playback failed");
+                            warn!(task = "accounts", user = %name, error = format!("{e:#}"), "stop playback failed");
                         }
                     }
                 }
             }
-            Err(e) => warn!(task = "accounts", user = %name, error = %e, "sessions unreadable"),
+            Err(e) => {
+                warn!(task = "accounts", user = %name, error = format!("{e:#}"), "sessions unreadable")
+            }
         }
     }
     if let Err(e) = sync_jellyseerr(ctx, user_id, on).await {
-        warn!(task = "accounts", user = %name, error = %e, "jellyseerr permissions not synced");
+        warn!(task = "accounts", user = %name, error = format!("{e:#}"), "jellyseerr permissions not synced");
     }
     Ok(outcome)
 }
@@ -310,7 +312,11 @@ pub async fn delete(ctx: &TaskContext, user_id: &str) -> Result<Deleted> {
     ctx.jellyfin.delete_user(user_id).await?;
     info!(task = "accounts", user = %name, "jellyfin account deleted");
     if let Err(e) = ctx.subs.remove(user_id) {
-        warn!(task = "accounts", error = %e, "fiche abonné non supprimée");
+        warn!(
+            task = "accounts",
+            error = format!("{e:#}"),
+            "fiche abonné non supprimée"
+        );
     }
     let mut jellyseerr = false;
     if let Some(id) = js_id {
@@ -320,7 +326,7 @@ pub async fn delete(ctx: &TaskContext, user_id: &str) -> Result<Deleted> {
                 info!(task = "accounts", user = %name, jellyseerr_id = id, "jellyseerr account deleted");
             }
             Err(e) => {
-                warn!(task = "accounts", user = %name, error = %e, "jellyseerr account not deleted")
+                warn!(task = "accounts", user = %name, error = format!("{e:#}"), "jellyseerr account not deleted")
             }
         }
     }

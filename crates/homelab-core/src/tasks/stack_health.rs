@@ -362,7 +362,7 @@ impl Task for StackHealth {
                                 info!(task = "stack_health", service = %p.service, into = %p.post_exec_in, out = %out.trim(), "post_exec ok")
                             }
                             Err(e) => {
-                                warn!(task = "stack_health", service = %p.service, error = %e, "post_exec en échec");
+                                warn!(task = "stack_health", service = %p.service, error = format!("{e:#}"), "post_exec en échec");
                                 // relancé mais pas remis en état (qBittorrent : port transféré non reposé)
                                 reasons.insert(
                                     p.service.clone(),
