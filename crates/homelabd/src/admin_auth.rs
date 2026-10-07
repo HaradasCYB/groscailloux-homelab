@@ -8,6 +8,10 @@
 //!   puis redirection vers l'adresse **sans** jeton.
 //! - Avec la session, la couche réinjecte le jeton dans la requête **en interne** (requête, ou en-tête
 //!   `X-Onboard-Token` pour `POST /onboard`) : les pages et leurs formulaires n'ont pas changé.
+//! - Le jeton ne sort jamais dans une page (2026-10-07) : la couche le remplace dans le HTML par un **jeton de
+//!   formulaire** dérivé (`form_token`, HMAC), et fait l'inverse dans un POST **avec session**. Les champs cachés
+//!   de `/accounts` et `/recherche` le montraient en clair : un script injecté, ou n'importe quel appareil de la
+//!   maison, repartait avec un jeton valable partout. Le jeton de formulaire, lui, ne vaut rien sans session.
 //! - Échecs limités par adresse (`MAX_FAILS` par `FAIL_WINDOW`) et au total.
 //! - IP de la maison (`HOMELABD_ADMIN_TRUSTED_IPS`) : session admin d'office, sans formulaire, et cookie posé au
 //!   passage (si l'IP de la box change, le navigateur reste connecté). Demandé le 2026-09-23 : la connexion gênait
@@ -202,6 +206,16 @@ impl AdminAuth {
         }
     }
 
+    /// Jetons configurés, à masquer dans les pages. Un jeton de moins de 16 caractères n'est pas masqué : il
+    /// abîmerait le texte des pages (et ne protège rien).
+    fn tokens(&self) -> Vec<&Secret> {
+        [self.onboard_token.as_ref(), self.status_token.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter(|t| t.expose().len() >= 16)
+            .collect()
+    }
+
     /// Le jeton donné, reconnu (comparaison à temps constant).
     fn scope_of(&self, given: &str) -> Option<Scope> {
         [Scope::Admin, Scope::Status].into_iter().find(|&s| {
@@ -291,6 +305,108 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
         .chain_update(inner)
         .finalize()
         .into()
+}
+
+/// Jeton de formulaire : dérivé du jeton, seul à apparaître dans les pages. Sans session, il ne vaut rien
+/// (`unmask_form` ne le remplace que pour une requête authentifiée) ; il change avec le jeton.
+fn form_token(token: &str) -> String {
+    hex(&hmac_sha256(token.as_bytes(), b"gc-admin-form-v1"))
+}
+
+/// Toutes les formes du jeton dans une page (brute, échappée HTML, encodée URL) deviennent le jeton de
+/// formulaire. `None` : rien à changer.
+fn mask_token(page: &str, token: &str, form: &str) -> Option<String> {
+    let mut out = page.to_string();
+    let mut changed = false;
+    for v in [token.to_string(), esc(token), encode(token)] {
+        if !v.is_empty() && out.contains(&v) {
+            out = out.replace(&v, form);
+            changed = true;
+        }
+    }
+    changed.then_some(out)
+}
+
+/// Corps d'un formulaire (`application/x-www-form-urlencoded`) : `token=<jeton de formulaire>` redevient le
+/// jeton attendu par la page. `None` : rien à changer.
+fn unmask_form(body: &str, token: &str, form: &str) -> Option<String> {
+    let mut changed = false;
+    let pairs: Vec<String> = body
+        .split('&')
+        .map(|kv| match kv.strip_prefix("token=") {
+            Some(v) if ct_eq(decode(v).as_bytes(), form.as_bytes()) => {
+                changed = true;
+                format!("token={}", encode(token))
+            }
+            _ => kv.to_string(),
+        })
+        .collect();
+    changed.then(|| pairs.join("&"))
+}
+
+/// Formulaire d'une page admin : jamais plus gros que ça.
+const FORM_LIMIT: usize = 1 << 20;
+/// Page admin (la recherche peut lister quelques centaines de releases).
+const PAGE_LIMIT: usize = 16 << 20;
+
+/// POST avec session : remplace le jeton de formulaire par le vrai jeton dans le corps.
+async fn unmask_request(req: Request, token: &str) -> Result<Request, StatusCode> {
+    let is_form = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/x-www-form-urlencoded"));
+    if req.method() != Method::POST || !is_form {
+        return Ok(req);
+    }
+    let (mut parts, body) = req.into_parts();
+    let bytes = axum::body::to_bytes(body, FORM_LIMIT)
+        .await
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
+    let new = std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|b| unmask_form(b, token, &form_token(token)));
+    let bytes = match new {
+        Some(b) => {
+            parts
+                .headers
+                .insert(header::CONTENT_LENGTH, HeaderValue::from(b.len()));
+            axum::body::Bytes::from(b)
+        }
+        None => bytes,
+    };
+    Ok(Request::from_parts(parts, Body::from(bytes)))
+}
+
+/// Page HTML d'administration : le jeton n'en sort jamais (voir `form_token`).
+async fn mask_response(resp: Response, tokens: &[&Secret]) -> Response {
+    let is_html = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/html"));
+    if !is_html || tokens.is_empty() {
+        return resp;
+    }
+    let (mut parts, body) = resp.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, PAGE_LIMIT).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let Ok(mut page) = String::from_utf8(bytes.to_vec()) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    let mut changed = false;
+    for t in tokens {
+        if let Some(p) = mask_token(&page, t.expose(), &form_token(t.expose())) {
+            page = p;
+            changed = true;
+        }
+    }
+    if !changed {
+        return Response::from_parts(parts, Body::from(bytes));
+    }
+    parts.headers.remove(header::CONTENT_LENGTH);
+    Response::from_parts(parts, Body::from(page))
 }
 
 fn sign(token: &str, scope: Scope, exp: u64) -> String {
@@ -634,8 +750,13 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
                         *req.uri_mut() = uri;
                     }
                 }
+                // formulaire de la page : jeton de formulaire → jeton
+                req = match unmask_request(req, &t).await {
+                    Ok(r) => r,
+                    Err(code) => return code.into_response(),
+                };
             }
-            let mut resp = next.run(req).await;
+            let mut resp = mask_response(next.run(req).await, &auth.tokens()).await;
             strip_location(&mut resp);
             resp.headers_mut()
                 .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -651,10 +772,11 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
             if auth.blocked(&client).await {
                 return too_many(&path);
             }
-            let mut resp = next.run(req).await;
+            let resp = next.run(req).await;
             if resp.status() == StatusCode::UNAUTHORIZED {
                 auth.fail(ip, &path).await;
             }
+            let mut resp = mask_response(resp, &auth.tokens()).await;
             strip_location(&mut resp);
             resp
         }
@@ -882,6 +1004,47 @@ mod tests {
         assert!(!ct_eq(b"abc", b"abcd"));
     }
 
+    #[test]
+    fn pages_only_show_the_form_token() {
+        let form = form_token("a+b&c");
+        assert_eq!(form.len(), 64);
+        assert_ne!(form, form_token("autre"), "change avec le jeton");
+        let page = r#"<input name="token" value="a+b&amp;c"><a href="/x?t=a%2Bb%26c">a+b&c</a>"#;
+        let masked = mask_token(page, "a+b&c", &form).unwrap();
+        assert!(!masked.contains("a+b"), "{masked}");
+        assert!(!masked.contains("a%2Bb"), "{masked}");
+        assert_eq!(masked.matches(&form).count(), 3);
+        assert_eq!(mask_token("<p>rien</p>", "a+b&c", &form), None);
+    }
+
+    #[test]
+    fn form_token_maps_back_to_the_token() {
+        let form = form_token("s3cret");
+        let body = format!("token={form}&user_id=42&on=1");
+        assert_eq!(
+            unmask_form(&body, "s3cret", &form).as_deref(),
+            Some("token=s3cret&user_id=42&on=1")
+        );
+        // le vrai jeton (ancienne page encore ouverte) ou un faux : inchangés, la page décide
+        assert_eq!(
+            unmask_form("token=s3cret&user_id=42", "s3cret", &form),
+            None
+        );
+        assert_eq!(unmask_form("token=faux&user_id=42", "s3cret", &form), None);
+        // seul le champ `token` est touché
+        assert_eq!(unmask_form(&format!("q={form}"), "s3cret", &form), None);
+        // le jeton est encodé dans le corps
+        assert_eq!(
+            unmask_form(
+                &format!("token={}", form_token("a+b")),
+                "a+b",
+                &form_token("a+b")
+            )
+            .as_deref(),
+            Some("token=a%2Bb")
+        );
+    }
+
     /// La couche entière, devant de fausses pages : pair TCP, `Host` et `X-Forwarded-For` choisis par le test.
     mod gates {
         use super::super::*;
@@ -924,6 +1087,25 @@ mod tests {
                     (StatusCode::UNAUTHORIZED, "refusé")
                 }
             };
+            // page à formulaire, comme `/accounts` : le jeton reçu est écrit dans un champ caché
+            let page = |axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>| async move {
+                let t = q.get("token").cloned().unwrap_or_default();
+                Html(format!(
+                    r#"<form method="post" action="/accounts/premium"><input type="hidden" name="token" value="{}"></form>"#,
+                    esc(&t)
+                ))
+            };
+            #[derive(serde::Deserialize)]
+            struct Toggle {
+                token: String,
+            }
+            let toggle = |axum::Form(f): axum::Form<Toggle>| async move {
+                if token_matches(Some(&Secret::new(TOKEN)), Some(&f.token)) {
+                    (StatusCode::OK, "basculé")
+                } else {
+                    (StatusCode::UNAUTHORIZED, "refusé")
+                }
+            };
             let onboard = |headers: axum::http::HeaderMap| async move {
                 let given = headers.get("x-onboard-token").and_then(|v| v.to_str().ok());
                 if token_matches(Some(&Secret::new(TOKEN)), given) {
@@ -934,6 +1116,8 @@ mod tests {
             };
             Router::new()
                 .route("/accounts", get(accounts))
+                .route("/accounts/page", get(page))
+                .route("/accounts/premium", post(toggle))
                 .route("/onboard", post(onboard))
                 .route("/admin/run", post(|| async { "passage lancé" }))
                 .route("/premium", get(|| async { "page publique" }))
@@ -1180,6 +1364,44 @@ mod tests {
             let (st, _, b) = send(&app, r).await;
             assert_eq!(st, StatusCode::OK);
             assert_eq!(b, "comptes");
+        }
+
+        #[tokio::test]
+        async fn the_token_never_reaches_a_page_and_forms_still_work() {
+            let app = app();
+            // IP de la maison : session d'office
+            let (st, _, page) = send(
+                &app,
+                req(Method::GET, "/accounts/page", ONBOARD, NPM, Some(HOME)),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK);
+            assert!(
+                !page.contains(TOKEN),
+                "jeton en clair dans la page : {page}"
+            );
+            let form = form_token(TOKEN);
+            assert!(page.contains(&form));
+            // le formulaire renvoie le jeton de formulaire : la page reçoit le vrai jeton
+            let post = |xff: &str, body: String| {
+                let mut r = req(Method::POST, "/accounts/premium", ONBOARD, NPM, Some(xff));
+                r.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/x-www-form-urlencoded"),
+                );
+                *r.body_mut() = Body::from(body);
+                r
+            };
+            let (st, _, b) = send(&app, post(HOME, format!("token={form}&user_id=1"))).await;
+            assert_eq!(st, StatusCode::OK, "{b}");
+            assert_eq!(b, "basculé");
+            // sans session, le jeton de formulaire ne vaut rien
+            let (st, _, _) = send(
+                &app,
+                post("198.51.100.7", format!("token={form}&user_id=1")),
+            )
+            .await;
+            assert_eq!(st, StatusCode::UNAUTHORIZED);
         }
 
         #[tokio::test]
