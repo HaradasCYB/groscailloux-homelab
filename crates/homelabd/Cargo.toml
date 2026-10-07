@@ -22,3 +22,5 @@ notify = "8"
 [dev-dependencies]
 # `oneshot` : tests de la couche d'administration (déjà dans l'arbre, via axum)
 tower = { version = "0.5", features = ["util"] }
+# horloge en pause (`start_paused`) : relecture de l'adresse de NPM sans attendre ses délais
+tokio = { workspace = true, features = ["test-util"] }

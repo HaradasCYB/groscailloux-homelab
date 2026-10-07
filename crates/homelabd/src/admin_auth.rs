@@ -16,14 +16,17 @@
 //! - IP de la maison (`HOMELABD_ADMIN_TRUSTED_IPS`) : session admin d'office, sans formulaire, et cookie posé au
 //!   passage (si l'IP de la box change, le navigateur reste connecté). Demandé le 2026-09-23 : la connexion gênait
 //!   la gestion depuis Homarr (iframe État comprise). Cette IP n'est lue que dans un `X-Forwarded-For` posé par NPM
-//!   (`client_addr`) : jamais celui d'une connexion locale ou d'un autre conteneur (2026-10-07).
+//!   **confirmé par Docker** (`client_addr`) : jamais celui d'une connexion de l'hôte (127.0.0.1, 172.18.0.1) ou
+//!   d'un autre conteneur, ni quand Docker ne répond pas (2026-10-07).
 //! - Portes (2026-10-07) : les chemins d'administration (`is_admin_path`) répondent 404 sur un autre hôte que
 //!   celui de `ONBOARD_PUBLIC_URL` ou une adresse locale — l'hôte premium (NPM 20) envoie tout à homelabd sans
 //!   l'auth HTTP « admin-outils » de l'hôte d'onboarding. Les routes de la CLI (`/admin/*`) ne répondent qu'à un
-//!   appel local (`homelabctl` → `127.0.0.1:8766`). Un POST sans session compte ses échecs comme `/connexion`.
+//!   appel local (`homelabctl` → `127.0.0.1:8766`), et un refus n'écrit qu'une ligne par adresse et par
+//!   `FAIL_WINDOW` (`first_refusal`). Un POST sans session compte ses échecs comme `/connexion`.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -37,7 +40,7 @@ use homelab_core::html::esc;
 use homelab_core::{Secret, TaskContext};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::client_addr::{Client, ProxyTrust};
 
@@ -152,6 +155,19 @@ fn over_limit(mine: usize, total: usize, local: bool) -> bool {
     mine >= MAX_FAILS || (!local && total >= MAX_FAILS_TOTAL)
 }
 
+/// Journaliser ce refus de `/admin/*` (appel non local) ? Une ligne par adresse et par `FAIL_WINDOW`, pour
+/// `MAX_FAILS_TOTAL` adresses au plus : `/admin/*` est joignable depuis Internet par l'hôte d'onboarding, et une
+/// rafale ferait jeter par journald les autres messages de homelabd (erreurs des tâches comprises). Tenu à part
+/// de `fails` : remplir son plafond global fermerait `/connexion` à l'admin hors de la maison.
+fn first_refusal(seen: &mut HashMap<String, Instant>, ip: &str, now: Instant) -> bool {
+    seen.retain(|_, t| now.duration_since(*t) < FAIL_WINDOW);
+    if seen.contains_key(ip) || seen.len() >= MAX_FAILS_TOTAL {
+        return false;
+    }
+    seen.insert(ip.to_string(), now);
+    true
+}
+
 #[derive(Clone)]
 pub struct AdminAuth {
     onboard_token: Option<Secret>,
@@ -159,6 +175,10 @@ pub struct AdminAuth {
     /// IP de la maison (`HOMELABD_ADMIN_TRUSTED_IPS`).
     home_ips: Arc<Vec<String>>,
     fails: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
+    /// Refus de `/admin/*` déjà journalisés, par adresse (`first_refusal`).
+    refused: Arc<Mutex<HashMap<String, Instant>>>,
+    /// Refus de `/admin/*` écrits en `warn` (lu par les tests).
+    refusals_logged: Arc<AtomicUsize>,
     proxy: Arc<ProxyTrust>,
     /// Hôte de `ONBOARD_PUBLIC_URL`, seul hôte public des pages d'administration.
     onboard_host: Option<String>,
@@ -173,12 +193,15 @@ impl AdminAuth {
                 "ONBOARD_PUBLIC_URL absente : pages d'administration servies sur tous les hôtes"
             );
         }
+        // adresse de NPM lue dès le démarrage, avant la première requête
+        let proxy = ProxyTrust::new(&ctx.cfg.web);
+        proxy.start();
         Self::from_parts(
             ctx.secrets.onboard_token.clone(),
             ctx.secrets.status_token.clone(),
             ctx.secrets.admin_trusted_ips.clone(),
             onboard_host,
-            ProxyTrust::new(&ctx.cfg.web),
+            proxy,
         )
     }
 
@@ -194,6 +217,8 @@ impl AdminAuth {
             status_token,
             home_ips: Arc::new(home_ips),
             fails: Arc::new(Mutex::new(HashMap::new())),
+            refused: Arc::new(Mutex::new(HashMap::new())),
+            refusals_logged: Arc::new(AtomicUsize::new(0)),
             proxy: Arc::new(proxy),
             onboard_host,
         }
@@ -440,10 +465,12 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Le client est-il l'admin à la maison ? Seulement par l'adresse que NPM a vue (`X-Forwarded-For` d'un proxy de
-/// confiance) : jamais une connexion locale ni un autre conteneur, même si leur adresse est listée.
+/// Le client est-il l'admin à la maison ? Seulement par l'adresse que NPM a vue, NPM étant **confirmé par
+/// Docker** (`Client::proxy_confirmed`) : jamais une connexion de l'hôte ni un autre conteneur, même si leur
+/// adresse est listée. Docker muet : l'en-tête garde son rôle de clé des limites par adresse, mais n'ouvre plus
+/// de session (`/connexion` marche toujours).
 fn at_home(c: &Client, list: &[String]) -> bool {
-    c.via_proxy && list.iter().any(|t| t == &c.ip)
+    c.via_proxy && c.proxy_confirmed && list.iter().any(|t| t == &c.ip)
 }
 
 fn cookie_of(req: &Request) -> Option<String> {
@@ -659,7 +686,14 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
     if path.starts_with("/admin/") {
         if !client.local {
             if req.method() == Method::POST {
-                warn!(task = "admin", ip = %client.ip, path, "API admin refusée : appel non local");
+                let first =
+                    first_refusal(&mut *auth.refused.lock().await, &client.ip, Instant::now());
+                if first {
+                    auth.refusals_logged.fetch_add(1, Ordering::Relaxed);
+                    warn!(task = "admin", ip = %client.ip, path, "API admin refusée : appel non local");
+                } else {
+                    debug!(task = "admin", ip = %client.ip, path, "API admin refusée : appel non local");
+                }
             }
             return not_found();
         }
@@ -875,10 +909,11 @@ mod tests {
         assert_eq!(check_cookie("garbage", 1_000, tok), None);
     }
 
-    fn client(ip: &str, via_proxy: bool, local: bool) -> Client {
+    fn client(ip: &str, via_proxy: bool, proxy_confirmed: bool, local: bool) -> Client {
         Client {
             ip: ip.into(),
             via_proxy,
+            proxy_confirmed,
             local,
         }
     }
@@ -886,12 +921,38 @@ mod tests {
     #[test]
     fn home_ip_only_through_the_proxy() {
         let list = vec!["203.0.113.9".to_string(), "127.0.0.1".to_string()];
-        assert!(at_home(&client("203.0.113.9", true, false), &list));
-        assert!(!at_home(&client("203.0.113.10", true, false), &list));
-        assert!(!at_home(&client("203.0.113.9", true, false), &[]));
+        assert!(at_home(&client("203.0.113.9", true, true, false), &list));
+        assert!(!at_home(&client("203.0.113.10", true, true, false), &list));
+        assert!(!at_home(&client("203.0.113.9", true, true, false), &[]));
         // même listée, une adresse qui ne vient pas de NPM n'ouvre rien (processus local, autre conteneur)
-        assert!(!at_home(&client("127.0.0.1", false, true), &list));
-        assert!(!at_home(&client("203.0.113.9", false, false), &list));
+        assert!(!at_home(&client("127.0.0.1", false, false, true), &list));
+        assert!(!at_home(&client("203.0.113.9", false, false, false), &list));
+        // Docker muet (ou aucun conteneur nommé) : le réseau seul ne suffit pas
+        assert!(!at_home(&client("203.0.113.9", true, false, false), &list));
+    }
+
+    #[test]
+    fn cli_refusals_are_logged_once_per_address_and_window() {
+        let mut seen = HashMap::new();
+        let t0 = Instant::now();
+        assert!(first_refusal(&mut seen, "198.51.100.7", t0));
+        for i in 1..50 {
+            assert!(!first_refusal(
+                &mut seen,
+                "198.51.100.7",
+                t0 + Duration::from_secs(i)
+            ));
+        }
+        assert!(first_refusal(&mut seen, "198.51.100.8", t0));
+        // fenêtre écoulée : une nouvelle ligne
+        assert!(first_refusal(&mut seen, "198.51.100.7", t0 + FAIL_WINDOW));
+        // au plus `MAX_FAILS_TOTAL` adresses par fenêtre (adresses IPv6 à volonté)
+        let mut seen = HashMap::new();
+        let logged = (0..MAX_FAILS_TOTAL * 3)
+            .filter(|i| first_refusal(&mut seen, &format!("2001:db8::{i:x}"), t0))
+            .count();
+        assert_eq!(logged, MAX_FAILS_TOTAL);
+        assert!(seen.len() <= MAX_FAILS_TOTAL);
     }
 
     #[test]
@@ -1045,9 +1106,11 @@ mod tests {
         );
     }
 
-    /// La couche entière, devant de fausses pages : pair TCP, `Host` et `X-Forwarded-For` choisis par le test.
+    /// La couche entière, devant de fausses pages : pair TCP, `Host` et `X-Forwarded-For` choisis par le test, Docker
+    /// et les adresses de l'hôte simulés (`client_addr::testing`).
     mod gates {
         use super::super::*;
+        use crate::client_addr::testing::{proxy, FakeDocker, RETRY};
         use axum::routing::{get, post};
         use axum::Router;
         use tower::ServiceExt;
@@ -1056,23 +1119,32 @@ mod tests {
         const PREMIUM: &str = "premium.example.org";
         const HOME: &str = "203.0.113.9";
         const NPM: &str = "172.18.0.19";
+        /// L'hôte lui-même sur le pont Docker (passerelle du réseau).
+        const BRIDGE: &str = "172.18.0.1";
+        /// Un autre conteneur du réseau (Guacamole, Homarr…).
+        const OTHER: &str = "172.18.0.5";
+        const NET: &str = "172.18.0.0/16";
         const TOKEN: &str = "jeton-admin-de-test";
 
+        /// Configuration de production : NPM nommé et connu de Docker.
+        fn npm_known(docker: &FakeDocker) -> ProxyTrust {
+            proxy(&[NET], "npm", docker, &[BRIDGE])
+        }
+
         fn app() -> Router {
-            // réseau Docker seul : aucun `docker inspect` pendant les tests
-            let web = homelab_core::config::Web {
-                trusted_proxy_container: String::new(),
-                ..Default::default()
-            };
+            app_with(npm_known(&FakeDocker::answering(&[NPM]))).0
+        }
+
+        fn app_with(proxy: ProxyTrust) -> (Router, AdminAuth) {
             let auth = AdminAuth::from_parts(
                 Some(Secret::new(TOKEN)),
                 None,
                 vec![HOME.to_string()],
                 Some(ONBOARD.to_string()),
-                ProxyTrust::new(&web),
+                proxy,
             );
             let whoami = |Extension(c): Extension<Client>| async move {
-                format!("{}|{}|{}", c.ip, c.via_proxy, c.local)
+                format!("{}|{}|{}|{}", c.ip, c.via_proxy, c.proxy_confirmed, c.local)
             };
             // la page vérifie le jeton réinjecté par la session, comme les vraies
             let accounts = |axum::extract::Query(q): axum::extract::Query<
@@ -1114,7 +1186,7 @@ mod tests {
                     StatusCode::UNAUTHORIZED
                 }
             };
-            Router::new()
+            let router = Router::new()
                 .route("/accounts", get(accounts))
                 .route("/accounts/page", get(page))
                 .route("/accounts/premium", post(toggle))
@@ -1124,7 +1196,8 @@ mod tests {
                 .route("/whoami", get(whoami))
                 .route("/connexion", get(login_get).post(login_post))
                 .with_state(auth.clone())
-                .layer(axum::middleware::from_fn_with_state(auth, layer))
+                .layer(axum::middleware::from_fn_with_state(auth.clone(), layer));
+            (router, auth)
         }
 
         fn req(method: Method, path: &str, host: &str, peer: &str, xff: Option<&str>) -> Request {
@@ -1217,7 +1290,16 @@ mod tests {
                 ),
             )
             .await;
-            assert_eq!(b, "198.51.100.7|true|false");
+            assert_eq!(b, "198.51.100.7|true|true|false");
+            // un autre conteneur, l'hôte sur le pont : leur adresse, jamais l'en-tête
+            for peer in [OTHER, BRIDGE] {
+                let (_, _, b) = send(
+                    &app,
+                    req(Method::GET, "/whoami", PREMIUM, peer, Some("198.51.100.7")),
+                )
+                .await;
+                assert_eq!(b, format!("{peer}|false|false|false"));
+            }
             let (_, _, b) = send(
                 &app,
                 req(
@@ -1229,20 +1311,158 @@ mod tests {
                 ),
             )
             .await;
-            assert_eq!(b, "127.0.0.1|false|false");
+            assert_eq!(b, "127.0.0.1|false|false|false");
             let (_, _, b) = send(
                 &app,
                 req(Method::GET, "/whoami", "127.0.0.1:8766", "127.0.0.1", None),
             )
             .await;
-            assert_eq!(b, "127.0.0.1|false|true");
+            assert_eq!(b, "127.0.0.1|false|false|true");
             // hors du réseau Docker : l'en-tête est ignoré
             let (_, _, b) = send(
                 &app,
                 req(Method::GET, "/whoami", PREMIUM, "10.9.8.7", Some(HOME)),
             )
             .await;
-            assert_eq!(b, "10.9.8.7|false|false");
+            assert_eq!(b, "10.9.8.7|false|false|false");
+        }
+
+        /// `curl -H 'X-Forwarded-For: <IP de la maison>' http://172.18.0.1:8766/accounts` depuis l'hôte, quelle que
+        /// soit la réponse de Docker.
+        #[tokio::test]
+        async fn the_host_on_the_docker_bridge_never_opens_the_home_session() {
+            let modes = [
+                ("NPM connu", npm_known(&FakeDocker::answering(&[NPM]))),
+                (
+                    "conteneur vide",
+                    proxy(&[NET], "", &FakeDocker::answering(&[NPM]), &[BRIDGE]),
+                ),
+                ("Docker muet", npm_known(&FakeDocker::silent())),
+            ];
+            for (mode, p) in modes {
+                let (app, _) = app_with(p);
+                let (st, cookie, _) = send(
+                    &app,
+                    req(
+                        Method::GET,
+                        "/accounts",
+                        "172.18.0.1:8766",
+                        BRIDGE,
+                        Some(HOME),
+                    ),
+                )
+                .await;
+                assert_eq!(st, StatusCode::UNAUTHORIZED, "{mode}");
+                assert!(!cookie, "{mode} : aucune session");
+            }
+        }
+
+        /// Docker muet, ou aucun conteneur nommé : l'adresse vue par NPM reste la clé des limites, mais l'IP de la
+        /// maison n'ouvre plus rien (tout conteneur du réseau pourrait l'écrire) ; le jeton marche toujours.
+        #[tokio::test]
+        async fn without_docker_confirmation_the_home_ip_opens_nothing() {
+            let docker = FakeDocker::silent();
+            let (app, auth) = app_with(npm_known(&docker));
+            for peer in [NPM, OTHER] {
+                let (st, cookie, _) = send(
+                    &app,
+                    req(Method::GET, "/accounts", ONBOARD, peer, Some(HOME)),
+                )
+                .await;
+                assert_eq!(st, StatusCode::UNAUTHORIZED, "{peer}");
+                assert!(!cookie, "{peer}");
+                let (_, _, b) = send(
+                    &app,
+                    req(Method::GET, "/whoami", PREMIUM, peer, Some("198.51.100.7")),
+                )
+                .await;
+                assert_eq!(b, "198.51.100.7|true|false|false", "{peer}");
+            }
+            assert_eq!(auth.proxy.warnings(), 1, "une seule ligne pour la panne");
+            assert!(docker.reads() >= 1);
+            // la connexion par jeton, elle, passe
+            let mut r = req(Method::POST, "/connexion", ONBOARD, NPM, Some(HOME));
+            r.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/x-www-form-urlencoded"),
+            );
+            *r.body_mut() = Body::from(format!("token={TOKEN}&next=%2Faccounts"));
+            let (st, cookie, _) = send(&app, r).await;
+            assert_eq!(st, StatusCode::SEE_OTHER);
+            assert!(cookie);
+            // aucun conteneur nommé : même règle, et Docker n'est jamais appelé
+            let docker = FakeDocker::answering(&[NPM]);
+            let (app, _) = app_with(proxy(&[NET], "", &docker, &[BRIDGE]));
+            let (st, cookie, _) = send(
+                &app,
+                req(Method::GET, "/accounts", ONBOARD, NPM, Some(HOME)),
+            )
+            .await;
+            assert_eq!(st, StatusCode::UNAUTHORIZED);
+            assert!(!cookie);
+            assert_eq!(docker.reads(), 0);
+        }
+
+        /// NPM recréé : sa nouvelle adresse est relue au plus `RETRY` après sa première requête, sans que les
+        /// requêtes attendent Docker.
+        #[tokio::test(start_paused = true)]
+        async fn npm_recreated_is_recognized_after_retry() {
+            let docker = FakeDocker::answering(&[NPM]);
+            let (app, _) = app_with(npm_known(&docker));
+            let home = |peer: &str| req(Method::GET, "/accounts", ONBOARD, peer, Some(HOME));
+            let (st, cookie, _) = send(&app, home(NPM)).await;
+            assert_eq!(st, StatusCode::OK);
+            assert!(cookie);
+            docker.set(Ok(vec!["172.18.0.23".parse().unwrap()]));
+            let (st, cookie, _) = send(&app, home("172.18.0.23")).await;
+            assert_eq!(st, StatusCode::UNAUTHORIZED, "pas encore relue");
+            assert!(!cookie);
+            tokio::time::sleep(RETRY + Duration::from_secs(1)).await;
+            let (st, cookie, _) = send(&app, home("172.18.0.23")).await;
+            assert_eq!(st, StatusCode::OK);
+            assert!(cookie);
+            // l'ancienne adresse ne vaut plus rien
+            assert_eq!(send(&app, home(NPM)).await.0, StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn cli_refusals_write_one_line_per_address() {
+            let (app, auth) = app_with(npm_known(&FakeDocker::answering(&[NPM])));
+            for _ in 0..50 {
+                let (st, _, _) = send(
+                    &app,
+                    req(
+                        Method::POST,
+                        "/admin/run",
+                        ONBOARD,
+                        NPM,
+                        Some("198.51.100.7"),
+                    ),
+                )
+                .await;
+                assert_eq!(st, StatusCode::NOT_FOUND);
+            }
+            assert_eq!(auth.refusals_logged.load(Ordering::Relaxed), 1);
+            send(
+                &app,
+                req(
+                    Method::POST,
+                    "/admin/run",
+                    ONBOARD,
+                    NPM,
+                    Some("198.51.100.8"),
+                ),
+            )
+            .await;
+            assert_eq!(auth.refusals_logged.load(Ordering::Relaxed), 2);
+            // aucun échec compté : `/connexion` reste ouverte à cette adresse
+            let c = Client {
+                ip: "198.51.100.7".into(),
+                via_proxy: true,
+                proxy_confirmed: true,
+                local: false,
+            };
+            assert!(!auth.blocked(&c).await);
         }
 
         #[tokio::test]

@@ -415,11 +415,14 @@ pub struct Web {
     pub listen: String,
     pub rate_limit_secs: u64,
     /// Pairs TCP dont homelabd croit `X-Forwarded-For` (CIDR ou adresse seule) : le réseau Docker de NPM. Une
-    /// connexion locale (127.0.0.1, ::1 : la CLI, un processus de l'hôte) n'en fait **jamais** partie, même listée.
+    /// adresse de l'hôte (127.0.0.1, ::1, mais aussi 172.18.0.1, l'hôte sur le pont Docker) n'en fait **jamais**
+    /// partie, même listée : homelabd teste chaque pair en y liant une socket.
     pub trusted_proxies: Vec<String>,
-    /// Conteneur du proxy (NPM). Rempli : seul le pair qui a l'adresse **actuelle** de ce conteneur est cru, pas
-    /// les autres conteneurs du réseau (adresse relue par `docker inspect` : elle change à chaque recréation).
-    /// Docker muet : repli sur `trusted_proxies`. Vide : `trusted_proxies` seul.
+    /// Conteneur du proxy (NPM). Rempli : seul le pair qui a l'adresse **actuelle** de ce conteneur est cru et
+    /// confirmé, pas les autres conteneurs du réseau (adresse relue en tâche de fond par `docker inspect` : elle
+    /// change à chaque recréation). L'IP de la maison (`HOMELABD_ADMIN_TRUSTED_IPS`) n'ouvre une session que vue
+    /// par ce conteneur confirmé. Docker muet, ou vide : `trusted_proxies` seul, pour les limites par adresse
+    /// seulement — aucune session automatique de la maison (la connexion par jeton marche toujours).
     pub trusted_proxy_container: String,
 }
 
