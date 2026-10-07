@@ -1,6 +1,8 @@
 //! Réconciliation PayPal (quotidienne) : pour chaque fiche rattachée à un abonnement, relit son
-//! statut et sa prochaine facturation chez PayPal et rejoue un paiement manqué (webhook perdu,
-//! daemon arrêté). Idempotent : un paiement n'est compté qu'une fois par date de dernier règlement.
+//! statut et sa facturation chez PayPal et rejoue un paiement manqué (webhook perdu, daemon
+//! arrêté). Un paiement n'est appliqué que s'il est constaté (dernier paiement PayPal plus récent que
+//! celui déjà appliqué, noté sur la fiche) ; facturation due sans paiement = alerte admin, rien n'est
+//! prolongé ; annulation, suspension ou expiration = notée, l'accès va jusqu'à l'échéance payée.
 
 use std::time::Duration;
 

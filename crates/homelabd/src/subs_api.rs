@@ -231,7 +231,9 @@ async fn me(State(st): State<SubsState>, headers: HeaderMap) -> ApiResult<Json<V
         "expires_text": fiche.expires_at.map(day_text),
         "days_left": days_left,
         "source": fiche.source,
-        "paypal": fiche.paypal_sub_id.is_some(),
+        // abonnement qui se renouvelle tout seul : pas de bouton de paiement (un arrêté chez PayPal en
+        // retrouve un)
+        "paypal": subs::auto_renews(&fiche),
         "price_text": cfg.price_text,
         "pay_url": ops::pay_url(&st.ctx, &u.name),
         "can_pay": st.ctx.paypal.is_some() || st.ctx.secrets.donation.is_some(),
@@ -1268,6 +1270,12 @@ async fn complete_facts(st: &SubsState, mut facts: EventFacts) -> anyhow::Result
                 if facts.email.is_none() {
                     facts.email = f2.email;
                 }
+                if facts.sub_status.is_none() {
+                    facts.sub_status = f2.sub_status;
+                }
+                if facts.paid_at.is_none() {
+                    facts.paid_at = f2.paid_at;
+                }
             }
         }
     }
@@ -1364,7 +1372,7 @@ async fn link_from_page(
         }
     }
     match ops::on_payment(&st.ctx, &facts, "premium-page").await {
-        Ok(Some(s)) => {
+        Ok(ops::Payment::Applied(s)) => {
             info!(task = "subs", %ip, user = %s.username, %sid, "abonnement rattaché depuis /premium");
             Redirect::to(&format!(
                 "/premium/merci?compte={}&jusqu={}",
@@ -1373,7 +1381,12 @@ async fn link_from_page(
             ))
             .into_response()
         }
-        Ok(None) => Redirect::to(&format!(
+        // le compte a déjà un abonnement actif : rien rattaché ni prolongé, l'admin est prévenu
+        Ok(ops::Payment::Duplicate(s)) => {
+            info!(task = "subs", %ip, user = %s.username, %sid, "second abonnement refusé depuis /premium");
+            Redirect::to("/premium/activate?err=deja").into_response()
+        }
+        Ok(ops::Payment::Unlinked) => Redirect::to(&format!(
             "/premium/activate?err=inconnu&sub={}",
             urlenc(&sid)
         ))

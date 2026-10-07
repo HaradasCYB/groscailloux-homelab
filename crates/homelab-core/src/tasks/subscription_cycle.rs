@@ -1,5 +1,7 @@
 //! Cycle des abonnés (`[subscriptions]`) : rappels J-N, passage en grâce à l'échéance, suspension
-//! à la fin de la grâce, fiches créées pour les comptes qui n'en ont pas. Décisions pures dans
+//! à la fin de la grâce, fiches créées pour les comptes qui n'en ont pas. Un abonnement PayPal qui
+//! se renouvelle tout seul ne reçoit qu'une information sans lien de paiement, et sa grâce ne
+//! commence qu'après `paypal_margin_hours`. Décisions pures dans
 //! `subscriptions::decide`, application dans `subscription_ops::run_cycle`. `cycle_dry_run = true`
 //! : tout est annoncé (journal + Discord admin), rien n'est appliqué ni envoyé aux membres.
 

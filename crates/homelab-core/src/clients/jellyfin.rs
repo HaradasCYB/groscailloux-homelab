@@ -51,13 +51,14 @@ impl JellyfinClient {
         json(resp, "jellyfin Users/Me").await.map(Some)
     }
 
+    /// Tous les comptes. Une réponse qui n'est pas une liste est une erreur, jamais « aucun compte » :
+    /// les fiches d'abonnés seraient prises pour orphelines.
     pub async fn users(&self) -> Result<Vec<Value>> {
         let resp = self.req(Method::GET, "Users").send().await?;
-        Ok(json(resp, "jellyfin Users")
-            .await?
-            .as_array()
-            .cloned()
-            .unwrap_or_default())
+        match json(resp, "jellyfin Users").await? {
+            Value::Array(users) => Ok(users),
+            _ => bail!("jellyfin Users : réponse inattendue (pas une liste de comptes)"),
+        }
     }
 
     /// Recherche insensible à la casse, comme l'ancien `ascii_downcase` de jq.

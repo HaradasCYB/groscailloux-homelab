@@ -97,6 +97,19 @@ impl PayPalClient {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value> {
+        self.request(method, path, body, false)
+            .await
+            .map(|v| v.unwrap_or(Value::Null))
+    }
+
+    /// `none_on_404` : `None` quand PayPal ne connaît pas la ressource, au lieu d'une erreur.
+    async fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+        none_on_404: bool,
+    ) -> Result<Option<Value>> {
         let t = self.token().await?;
         let mut req = self
             .http
@@ -112,6 +125,9 @@ impl PayPalClient {
             .with_context(|| format!("paypal {method} {path}"))?;
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
+        if none_on_404 && status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !status.is_success() {
             let msg = serde_json::from_str::<Value>(&text)
                 .ok()
@@ -120,9 +136,11 @@ impl PayPalClient {
             return Err(anyhow!("paypal {method} {path}: HTTP {status} {msg}"));
         }
         if text.trim().is_empty() {
-            return Ok(Value::Null);
+            return Ok(Some(Value::Null));
         }
-        serde_json::from_str(&text).with_context(|| format!("paypal {path}: JSON invalide"))
+        serde_json::from_str(&text)
+            .map(Some)
+            .with_context(|| format!("paypal {path}: JSON invalide"))
     }
 
     /// Détail d'un abonnement (`status`, `custom_id`, `subscriber.email_address`,
@@ -132,6 +150,18 @@ impl PayPalClient {
             reqwest::Method::GET,
             &format!("/v1/billing/subscriptions/{id}"),
             None,
+        )
+        .await
+    }
+
+    /// Comme [`Self::subscription`], mais `None` si PayPal ne connaît pas cet identifiant (abonnement
+    /// de l'autre environnement, sandbox ou live) ; une panne reste une erreur.
+    pub async fn find_subscription(&self, id: &str) -> Result<Option<Value>> {
+        self.request(
+            reqwest::Method::GET,
+            &format!("/v1/billing/subscriptions/{id}"),
+            None,
+            true,
         )
         .await
     }
@@ -296,6 +326,11 @@ pub struct EventFacts {
     pub status: Option<String>,
     pub next_billing: Option<i64>,
     pub amount: Option<String>,
+    /// Statut de l'ABONNEMENT (`ACTIVE`, `CANCELLED`…) : celui de la ressource pour un événement
+    /// `BILLING.SUBSCRIPTION.*`, absent pour une vente (dont `status` est celui de la vente).
+    pub sub_status: Option<String>,
+    /// Heure du paiement : création de la vente, ou dernier paiement de l'abonnement.
+    pub paid_at: Option<i64>,
 }
 
 /// Extrait les champs utiles d'un webhook (`resource.id` ou `billing_agreement_id`, `custom_id`,
@@ -307,12 +342,24 @@ pub fn event_facts(event: &Value) -> EventFacts {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let sub_id = if et.starts_with("BILLING.SUBSCRIPTION") {
+    let is_sub = et.starts_with("BILLING.SUBSCRIPTION");
+    let sub_id = if is_sub {
         res.get("id").and_then(Value::as_str)
     } else {
         res.get("billing_agreement_id").and_then(Value::as_str)
     }
     .map(str::to_string);
+    let status = res
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let paid_at = if is_sub {
+        res.pointer("/billing_info/last_payment/time")
+    } else {
+        res.get("create_time")
+    }
+    .and_then(Value::as_str)
+    .and_then(parse_time);
     EventFacts {
         event_id: event
             .get("id")
@@ -330,10 +377,8 @@ pub fn event_facts(event: &Value) -> EventFacts {
             .pointer("/subscriber/email_address")
             .and_then(Value::as_str)
             .map(|s| s.to_lowercase()),
-        status: res
-            .get("status")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        sub_status: status.clone().filter(|_| is_sub),
+        status,
         next_billing: res
             .pointer("/billing_info/next_billing_time")
             .and_then(Value::as_str)
@@ -342,6 +387,7 @@ pub fn event_facts(event: &Value) -> EventFacts {
             .pointer("/amount/total")
             .and_then(Value::as_str)
             .map(str::to_string),
+        paid_at,
     }
 }
 
@@ -374,5 +420,19 @@ mod tests {
         assert_eq!(f.sub_id.as_deref(), Some("I-ABC123456789"));
         assert_eq!(f.amount.as_deref(), Some("3.50"));
         assert!(parse_time("2026-10-01").is_some());
+    }
+
+    #[test]
+    fn subscription_status_and_payment_time_never_taken_from_a_sale() {
+        let sub = json!({"id":"WH-3","event_type":"BILLING.SUBSCRIPTION.CANCELLED","resource":{"id":"I-ABC123456789","status":"CANCELLED","billing_info":{"last_payment":{"time":"2026-09-21T10:00:05Z"}}}});
+        let f = event_facts(&sub);
+        assert_eq!(f.sub_status.as_deref(), Some("CANCELLED"));
+        assert_eq!(f.paid_at, parse_time("2026-09-21T10:00:05Z"));
+        // une vente a son propre statut (« completed ») : ce n'est pas celui de l'abonnement
+        let sale = json!({"id":"WH-4","event_type":"PAYMENT.SALE.COMPLETED","resource":{"id":"7X","billing_agreement_id":"I-ABC123456789","status":"completed","create_time":"2026-10-21T10:00:03Z"}});
+        let f = event_facts(&sale);
+        assert_eq!(f.status.as_deref(), Some("completed"));
+        assert_eq!(f.sub_status, None);
+        assert_eq!(f.paid_at, parse_time("2026-10-21T10:00:03Z"));
     }
 }

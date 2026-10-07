@@ -186,6 +186,12 @@ pub struct Subscriptions {
     pub cycle_dry_run: bool,
     /// Prix affiché aux membres (texte libre, ex. « 3,50 € / mois »).
     pub price_text: String,
+    /// Abonnement PayPal qui se renouvelle tout seul : heures laissées après l'échéance avant le passage
+    /// en grâce. PayPal encaisse parfois plusieurs heures après la date de facturation annoncée.
+    pub paypal_margin_hours: u32,
+    /// Fiches retirées au plus d'un coup quand leur compte Jellyfin a disparu ; au-delà, rien n'est
+    /// retiré et l'admin est prévenu (réponse de Jellyfin incomplète ?).
+    pub max_orphan_removals_per_run: usize,
 }
 
 impl Default for Subscriptions {
@@ -202,6 +208,8 @@ impl Default for Subscriptions {
             exempt: Vec::new(),
             cycle_dry_run: false, // réel depuis le 2026-09-27 (voir homelab.toml)
             price_text: "3,50 € / mois".into(),
+            paypal_margin_hours: 36,
+            max_orphan_removals_per_run: 3,
         }
     }
 }

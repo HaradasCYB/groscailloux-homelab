@@ -50,10 +50,13 @@ p{margin:0}
 a{color:var(--accent);text-underline-offset:3px}
 a:focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:4px}
 footer{border-top:1px solid var(--line);padding-top:14px}
+.deja{margin:0;padding:14px 16px;border-radius:12px;background:var(--wash);border:1px solid var(--accent);font-weight:600}
+main:not([data-deja="1"]) .deja-only,
+main[data-deja="1"] #who, main[data-deja="1"] #paypal-button-container, main[data-deja="1"] .fallback{display:none}
 </style>
 </head>
 <body>
-<main>
+<main data-deja="{{DEJA}}">
   <img class="avatar" src="/avatar.jpg" alt="Homeflix GrosCailloux" width="96" height="96">
 
   <h1>Homeflix GrosCailloux Premium</h1>
@@ -69,6 +72,12 @@ footer{border-top:1px solid var(--line);padding-top:14px}
     <li>Jusqu'à 2 lectures simultanées et catalogue complet.</li>
     <li>Résiliable à tout moment depuis ton compte PayPal.</li>
   </ul>
+
+  <p class="deja deja-only" role="status">Le compte <strong>{{COMPTE}}</strong> a déjà un abonnement PayPal actif,
+  qui se renouvelle tout seul chaque mois : inutile de t'abonner une deuxième fois (ce serait deux prélèvements).
+  Pour le consulter ou l'arrêter : ton compte PayPal → Paiements automatiques. Si un paiement a échoué, mets à jour
+  ton moyen de paiement dans PayPal : le prélèvement sera retenté.</p>
+  <p class="muted deja-only"><a href="/premium">S'abonner pour un autre compte</a></p>
 
   <form id="who" class="who" onsubmit="return false" autocomplete="off">
     <label for="compte">Ton nom de compte Groscailloux</label>
@@ -96,6 +105,8 @@ footer{border-top:1px solid var(--line);padding-top:14px}
     var input = document.getElementById('compte');
     function compte() { return (input.value || '').trim(); }
     function valid() { return /^[a-zA-Z0-9_-]{2,32}$/.test(compte()); }
+    // compte déjà abonné (abonnement PayPal actif) : aucun bouton, pas de second prélèvement
+    if (document.querySelector('main').getAttribute('data-deja') === '1') return;
     if (!window.paypal) return;
     paypal.Buttons({
       style: { shape: 'rect', color: 'gold', layout: 'vertical', label: 'subscribe' },
