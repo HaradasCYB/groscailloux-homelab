@@ -377,21 +377,32 @@ fn side_of(service_id: i64, vps_id: i64) -> &'static str {
 
 /// Ce compte peut-il choisir la voie russe (`HOMELABD_RUSSIAN_USERS`) ?
 fn russian_allowed(st: &SubsState, name: &str) -> bool {
-    st.ctx
-        .secrets
-        .russian_route_users
-        .iter()
-        .any(|n| n.eq_ignore_ascii_case(name))
+    russian_allowed_in(&st.ctx.secrets.russian_route_users, name)
+}
+
+/// Décision pure de `russian_allowed` (2026-10-08) : nom de compte présent dans la liste, sans tenir compte de la casse.
+fn russian_allowed_in(users: &[String], name: &str) -> bool {
+    users.iter().any(|n| n.eq_ignore_ascii_case(name))
 }
 
 /// Demandes **de ce compte** passées par la seedbox : (type, tmdb, id Arr).
 async fn own_seedbox_requests(st: &SubsState, user_id: &str) -> anyhow::Result<Vec<OwnRequest>> {
+    Ok(own_requests_of(
+        &st.ctx.jellyseerr.all_requests().await?,
+        user_id,
+    ))
+}
+
+/// Décision pure de `own_seedbox_requests` (extraite le 2026-10-08 pour être testée) : parmi les demandes
+/// Jellyseerr, celles de `user_id` servies par les Arrs de la seedbox, chacune une fois, avec `shared` si un autre
+/// membre a demandé le même titre.
+fn own_requests_of(requests: &[Value], user_id: &str) -> Vec<OwnRequest> {
     let norm = |s: &str| s.replace('-', "").to_ascii_lowercase();
     let me = norm(user_id);
     let mut out: Vec<OwnRequest> = Vec::new();
     // qui a demandé quoi : un titre demandé AUSSI par un autre membre ne passe jamais en voie russe
     let mut by_media: HashMap<(String, i64), HashSet<String>> = HashMap::new();
-    for r in st.ctx.jellyseerr.all_requests().await? {
+    for r in requests {
         let by = r
             .pointer("/requestedBy/jellyfinUserId")
             .and_then(Value::as_str)
@@ -425,10 +436,58 @@ async fn own_seedbox_requests(st: &SubsState, user_id: &str) -> anyhow::Result<V
             .get(&(o.kind.clone(), o.tmdb))
             .is_some_and(|who| who.iter().any(|w| *w != me));
     }
-    Ok(out)
+    out
+}
+
+/// Voie qu'un membre peut choisir pour une de ses demandes depuis « Mon compte ».
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route {
+    Russe,
+    Classique,
+}
+
+/// Premier contrôle de POST /compte/api/route, AVANT tout appel réseau (2026-10-08) : compte autorisé (403), puis
+/// voie connue (400). Avant, une voie inconnue n'était refusée qu'après la lecture, voire la création, du tag `russe`.
+fn route_access(allowed: bool, route: &str) -> Result<Route, (StatusCode, &'static str)> {
+    if !allowed {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "option non disponible pour ce compte",
+        ));
+    }
+    match route {
+        "russe" => Ok(Route::Russe),
+        "classique" => Ok(Route::Classique),
+        _ => Err((StatusCode::BAD_REQUEST, "voie inconnue")),
+    }
+}
+
+/// La demande visée doit être une des siennes (même type ET même identifiant TMDB : un film et une série peuvent
+/// partager un numéro).
+fn find_own<'a>(reqs: &'a [OwnRequest], kind: &str, tmdb: i64) -> Option<&'a OwnRequest> {
+    reqs.iter().find(|o| o.kind == kind && o.tmdb == tmdb)
+}
+
+/// Passage EN russe : refusé (409) si un autre membre a aussi demandé le titre, ou s'il a déjà des fichiers
+/// (`None` = inconnu, compté comme « a des fichiers ») — sinon il disparaîtrait de Séries/Films pour les autres.
+fn russian_move_refusal(shared: bool, has_files: Option<bool>) -> Option<&'static str> {
+    if shared {
+        Some("un autre membre a aussi demandé ce titre : il reste en version classique")
+    } else if has_files.unwrap_or(true) {
+        Some("ce titre a déjà des fichiers, visibles de tous : il reste en version classique")
+    } else {
+        None
+    }
+}
+
+/// GET /compte/api/route n'affiche le bouton que s'il peut servir : revenir au classique toujours ; passer en russe
+/// seulement un titre à lui seul et encore sans fichier.
+fn route_listable(route: &str, shared: bool, has_files: bool) -> bool {
+    route == "russe" || (!shared && !has_files)
 }
 
 /// Une demande du membre, et si un autre membre a demandé le même titre.
+#[derive(Debug)]
 struct OwnRequest {
     kind: String,
     tmdb: i64,
@@ -515,7 +574,7 @@ async fn route_list(State(st): State<SubsState>, headers: HeaderMap) -> ApiResul
             }?;
             // passer en russe : seulement un titre à lui seul et encore sans fichier (sinon il disparaîtrait de
             // Séries/Films pour les autres) ; revenir au classique : toujours possible
-            (*route == "russe" || (!o.shared && !has_files))
+            route_listable(route, o.shared, *has_files)
                 .then(|| json!({ "media_type": o.kind, "tmdb_id": o.tmdb, "route": route }))
         })
         .collect();
@@ -538,45 +597,23 @@ async fn route_set(
     Json(b): Json<RouteBody>,
 ) -> ApiResult<Json<Value>> {
     let u = auth(&st, &headers).await?;
-    if !russian_allowed(&st, &u.name) {
-        return Err(err(
-            StatusCode::FORBIDDEN,
-            "option non disponible pour ce compte",
-        ));
-    }
+    let route =
+        route_access(russian_allowed(&st, &u.name), &b.route).map_err(|(c, m)| err(c, m))?;
     let reqs = own_seedbox_requests(&st, &u.id)
         .await
         .map_err(|_| err(StatusCode::BAD_GATEWAY, "Jellyseerr injoignable"))?;
-    let Some(OwnRequest {
-        kind,
-        arr_id,
-        shared,
-        ..
-    }) = reqs
-        .into_iter()
-        .find(|o| o.kind == b.media_type && o.tmdb == b.tmdb_id)
-    else {
+    let Some(own) = find_own(&reqs, &b.media_type, b.tmdb_id) else {
         return Err(err(
             StatusCode::NOT_FOUND,
             "demande introuvable parmi les vôtres",
         ));
     };
+    let (kind, arr_id, shared) = (own.kind.clone(), own.arr_id, own.shared);
     let arr = seedbox_arr(&st, &kind).ok_or_else(|| err(StatusCode::BAD_GATEWAY, "Arr absent"))?;
-    if b.route == "russe" {
-        let has_files = routes_of(&st, &kind)
-            .await
-            .get(&arr_id)
-            .map(|(_, f)| *f)
-            .unwrap_or(true);
-        if shared || has_files {
-            return Err(err(
-                StatusCode::CONFLICT,
-                if shared {
-                    "un autre membre a aussi demandé ce titre : il reste en version classique"
-                } else {
-                    "ce titre a déjà des fichiers, visibles de tous : il reste en version classique"
-                },
-            ));
+    if route == Route::Russe {
+        let has_files = routes_of(&st, &kind).await.get(&arr_id).map(|(_, f)| *f);
+        if let Some(why) = russian_move_refusal(shared, has_files) {
+            return Err(err(StatusCode::CONFLICT, why));
         }
     }
     let cfg = &st.ctx.cfg.tasks.anime_library;
@@ -608,9 +645,9 @@ async fn route_set(
             .and_then(|v| v.get("id").and_then(Value::as_i64))
             .ok_or_else(|| err(StatusCode::BAD_GATEWAY, "tag russe impossible"))?,
     };
-    let body = match b.route.as_str() {
-        "russe" => json!({ ids: [arr_id], "tags": [tag], "applyTags": "add" }),
-        "classique" => {
+    let body = match route {
+        Route::Russe => json!({ ids: [arr_id], "tags": [tag], "applyTags": "add" }),
+        Route::Classique => {
             let root = if kind == "tv" {
                 &cfg.seedbox_default_series_root
             } else {
@@ -618,7 +655,6 @@ async fn route_set(
             };
             json!({ ids: [arr_id], "tags": [tag], "applyTags": "remove", "rootFolderPath": root, "moveFiles": true })
         }
-        _ => return Err(err(StatusCode::BAD_REQUEST, "voie inconnue")),
     };
     arr.put(editor, &body).await.map_err(|e| {
         warn!(task = "subs", user = %u.name, error = format!("{e:#}"), "route change failed");
@@ -627,7 +663,7 @@ async fn route_set(
     info!(task = "subs", user = %u.name, kind = %kind, tmdb = b.tmdb_id, route = %b.route, "request route changed from Mon compte");
     // rangement + recherche (voie russe) ou recherche C411 (voie classique) tout de suite, sans attendre le passage
     let ctx = st.ctx.clone();
-    let task = if b.route == "russe" {
+    let task = if route == Route::Russe {
         "anime_library"
     } else if kind == "tv" {
         "series_search"
@@ -1456,4 +1492,128 @@ fn urlenc(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    //! Voie russe de « Mon compte » (2026-10-08, revue : dette-tests-zones-sensibles) : qui peut choisir, quelle
+    //! demande est « la sienne », quand le passage en russe est refusé. Le client (app.js) a son banc :
+    //! tools/tests/compte-russe/.
+    use super::*;
+
+    /// Une demande Jellyseerr réduite aux champs lus (`requestedBy.jellyfinUserId`, `media.*`).
+    fn req(by: &str, kind: &str, tmdb: i64, service: i64, arr: Option<i64>) -> Value {
+        let mut media = json!({ "mediaType": kind, "tmdbId": tmdb, "serviceId": service });
+        if let Some(a) = arr {
+            media["externalServiceId"] = json!(a);
+        }
+        json!({ "requestedBy": { "jellyfinUserId": by }, "media": media })
+    }
+    const ME: &str = "0123456789abcdef0123456789abcdef";
+    const OTHER: &str = "fedcba9876543210fedcba9876543210";
+
+    #[test]
+    fn only_listed_accounts_may_choose_the_russian_route_whatever_the_case() {
+        let users = vec!["Membre".to_string()];
+        assert!(russian_allowed_in(&users, "membre"));
+        assert!(russian_allowed_in(&users, "MEMBRE"));
+        assert!(!russian_allowed_in(&users, "membre2"));
+        assert!(!russian_allowed_in(&[], "membre"));
+    }
+
+    #[test]
+    fn own_requests_are_mine_on_the_seedbox_only() {
+        let reqs = vec![
+            req(ME, "movie", 1, 1, Some(11)),
+            req(ME, "movie", 2, 0, Some(12)), // VPS (serviceId 0) : pas de voie russe
+            req(OTHER, "tv", 3, 1, Some(13)), // demande d'un autre
+            req(ME, "tv", 4, 1, None),        // pas encore de fiche Arr
+        ];
+        let own = own_requests_of(&reqs, ME);
+        assert_eq!(own.len(), 1);
+        assert_eq!(
+            (
+                own[0].kind.as_str(),
+                own[0].tmdb,
+                own[0].arr_id,
+                own[0].shared
+            ),
+            ("movie", 1, 11, false)
+        );
+    }
+
+    #[test]
+    fn a_title_also_requested_by_another_member_is_shared_and_listed_once() {
+        let reqs = vec![
+            req(ME, "tv", 5, 1, Some(21)),
+            req(ME, "tv", 5, 1, Some(21)), // deux saisons demandées : une seule entrée
+            req(OTHER, "tv", 5, 1, Some(21)),
+            req(ME, "movie", 5, 1, Some(22)), // même numéro TMDB, autre type : autre titre
+        ];
+        let own = own_requests_of(&reqs, ME);
+        assert_eq!(own.len(), 2);
+        assert!(find_own(&own, "tv", 5).unwrap().shared);
+        assert!(!find_own(&own, "movie", 5).unwrap().shared);
+    }
+
+    #[test]
+    fn the_jellyfin_id_matches_with_or_without_dashes_and_in_any_case() {
+        let dashed = "01234567-89AB-CDEF-0123-456789ABCDEF";
+        let own = own_requests_of(&[req(dashed, "movie", 7, 1, Some(31))], ME);
+        assert_eq!(own.len(), 1);
+        assert!(own_requests_of(&[req(dashed, "movie", 7, 1, Some(31))], OTHER).is_empty());
+    }
+
+    #[test]
+    fn the_targeted_request_must_match_type_and_tmdb() {
+        let own = own_requests_of(&[req(ME, "movie", 8, 1, Some(41))], ME);
+        assert!(find_own(&own, "movie", 8).is_some());
+        assert!(find_own(&own, "tv", 8).is_none());
+        assert!(find_own(&own, "movie", 9).is_none());
+    }
+
+    #[test]
+    fn route_access_refuses_unlisted_accounts_before_anything_else() {
+        assert_eq!(
+            route_access(false, "russe").unwrap_err().0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            route_access(false, "n-importe").unwrap_err().0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(route_access(true, "russe"), Ok(Route::Russe));
+        assert_eq!(route_access(true, "classique"), Ok(Route::Classique));
+        assert_eq!(
+            route_access(true, "Russe").unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            route_access(true, "").unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[test]
+    fn moving_to_russian_is_refused_when_shared_or_with_files_or_unknown() {
+        assert!(russian_move_refusal(true, Some(false))
+            .unwrap()
+            .contains("autre membre"));
+        assert!(russian_move_refusal(false, Some(true))
+            .unwrap()
+            .contains("fichiers"));
+        // fiche introuvable dans l'Arr : refus par défaut
+        assert!(russian_move_refusal(false, None)
+            .unwrap()
+            .contains("fichiers"));
+        assert_eq!(russian_move_refusal(false, Some(false)), None);
+    }
+
+    #[test]
+    fn the_button_shows_back_to_classic_always_and_to_russian_only_when_alone_and_empty() {
+        assert!(route_listable("russe", true, true));
+        assert!(route_listable("classique", false, false));
+        assert!(!route_listable("classique", true, false));
+        assert!(!route_listable("classique", false, true));
+    }
 }
