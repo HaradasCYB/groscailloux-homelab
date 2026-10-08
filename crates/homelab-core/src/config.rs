@@ -512,6 +512,8 @@ pub struct Tasks {
     #[serde(default)]
     pub playback_canary: PlaybackCanary,
     #[serde(default)]
+    pub catalogue_report: CatalogueReport,
+    #[serde(default)]
     pub subscription_cycle: Interval3600,
     #[serde(default)]
     pub subscription_reconcile: Interval86400,
@@ -623,6 +625,34 @@ impl Default for PlaybackCanary {
             interval_secs: 900,
             max_first_segment_secs: 20,
             skip_if_transcodes_at_least: 2,
+        }
+    }
+}
+
+/// Rapport « catalogue jamais regardé » (voir `tasks::catalogue_report`) : lecture seule, aucune suppression.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct CatalogueReport {
+    pub interval_secs: u64,
+    /// Un titre est « à examiner » s'il n'a été commencé par aucun compte `min_age_days` jours après son arrivée (date
+    /// `added` de l'Arr, jamais celle de Jellyfin).
+    pub min_age_days: i64,
+    /// Titres jamais commencés gardés dans l'état et affichés (les plus gros d'abord) ; les totaux comptent tout.
+    pub max_listed: usize,
+    /// Séries commencées mais pas finies gardées dans l'état et affichées (volume non vu estimé, le plus gros d'abord).
+    pub max_backlog_listed: usize,
+    /// Pause entre deux comptes Jellyfin (millisecondes) : ~50 requêtes en tout, aucune raison de les serrer.
+    pub user_pause_ms: u64,
+}
+
+impl Default for CatalogueReport {
+    fn default() -> Self {
+        Self {
+            interval_secs: 86_400,
+            min_age_days: 60,
+            max_listed: 40,
+            max_backlog_listed: 15,
+            user_pause_ms: 150,
         }
     }
 }
@@ -1511,6 +1541,9 @@ impl Config {
                 "seuils d'alerte de capacité : un pourcentage (0 à 100, 0 = désactivé) est attendu"
             );
         }
+        if self.tasks.catalogue_report.min_age_days < 0 {
+            bail!("[tasks.catalogue_report] min_age_days ne peut pas être négatif");
+        }
         if self.alerts.fail_streak == 0 {
             bail!("[alerts] fail_streak doit être au moins 1");
         }
@@ -1928,6 +1961,13 @@ jellyseerr = "http://js"
         assert!(parse("[tasks.cert_watch]\nconnect = \"localhost\"\n")
             .validate()
             .is_err());
+        // rapport « catalogue jamais regardé » : un âge négatif n'a pas de sens, 0 (tout est évalué) est permis
+        assert!(parse("[tasks.catalogue_report]\nmin_age_days = -1\n")
+            .validate()
+            .is_err());
+        parse("[tasks.catalogue_report]\nmin_age_days = 0\n")
+            .validate()
+            .unwrap();
         // 0 = contrôle de capacité désactivé
         parse("[tasks.disk_pressure]\nalert_pct = 0\n")
             .validate()

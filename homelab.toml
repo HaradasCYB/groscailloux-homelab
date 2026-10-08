@@ -208,6 +208,20 @@ interval_secs = 900
 max_first_segment_secs = 20
 skip_if_transcodes_at_least = 2
 
+[tasks.catalogue_report]
+# Rapport « catalogue jamais regardé » (2026-10-08, revue Kaizen mbr-catalogue-jamais-vu) : une fois par jour, LECTURE SEULE
+# (une cinquantaine de requêtes API, aucun fichier lu, rien de supprimé, rien d'écrit chez Jellyfin ni les Arrs). Titres
+# qu'aucun compte n'a commencés `min_age_days` jours après leur arrivée (date `added` de l'Arr, repoussée à l'import du
+# fichier pour un film et à la première diffusion pour une série demandée avant sa sortie ; celle de Jellyfin bouge à
+# chaque déménagement), par sorte, côté et sorte de demandeur (jamais de pseudo) ; séries en cours à part ; ligne voie
+# russe. Affiché sur /status.html ; l'admin tranche, comme pour le ménage du 25/09. Les fiches de la seedbox datent du
+# 12/09 (création des Arrs) : elles n'atteignent le seuil qu'à partir du 11/11.
+interval_secs = 86400
+min_age_days = 60
+max_listed = 40             # titres gardés et affichés (les plus gros d'abord) ; les totaux comptent tout
+max_backlog_listed = 15     # séries commencées mais pas finies (volume non vu estimé)
+user_pause_ms = 150         # pause entre deux comptes Jellyfin
+
 [tasks.cert_watch]
 # Certificat TLS unique des hôtes NPM (Let's Encrypt, défi DNS-01 DuckDNS ; expire le 26/11/2026) : NPM le renouvelle
 # seul dès J-30 mais ne remonte rien en cas d'échec, et le canari passe par localhost:8096 (ni NPM ni TLS). Une fois
