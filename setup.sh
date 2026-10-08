@@ -11,7 +11,8 @@ set -euo pipefail
 
 BASE=/opt/homelab
 REPO_ROOT=$(cd "$(dirname "$0")" && pwd)
-RELEASE_URL=https://github.com/HaradasCYB/groscailloux-homelab/releases/latest/download/homelab-x86_64-unknown-linux-musl.tar.gz
+RELEASE_BASE=https://github.com/HaradasCYB/groscailloux-homelab/releases/latest/download
+RELEASE_URL=$RELEASE_BASE/homelab-x86_64-unknown-linux-musl.tar.gz
 FROM_SOURCE=0
 START=1
 for a in "$@"; do
@@ -80,8 +81,11 @@ if [ "$FROM_SOURCE" = 1 ]; then
   install -m 755 "$BASE"/target/x86_64-unknown-linux-musl/release/{homelabd,homelabctl} /usr/local/bin/
 else
   tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-  if curl -fsSL "$RELEASE_URL" -o "$tmp/homelab.tar.gz"; then
-    tar -xzf "$tmp/homelab.tar.gz" -C "$tmp"
+  if curl -fsSL "$RELEASE_URL" -o "$tmp/homelab-x86_64-unknown-linux-musl.tar.gz" \
+     && curl -fsSL "$RELEASE_BASE/SHA256SUMS" -o "$tmp/SHA256SUMS"; then
+    # Empreinte vérifiée avant toute installation : une archive modifiée ou tronquée n'est jamais installée.
+    (cd "$tmp" && sha256sum -c --strict SHA256SUMS) || { err "empreinte SHA-256 de la release invalide : rien installé"; exit 1; }
+    tar -xzf "$tmp/homelab-x86_64-unknown-linux-musl.tar.gz" -C "$tmp"
     install -m 755 "$tmp/homelabd" "$tmp/homelabctl" /usr/local/bin/
   else
     err "téléchargement de la release impossible ($RELEASE_URL) — relancer avec --from-source"; exit 1

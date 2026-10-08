@@ -1,7 +1,10 @@
 name: release
+# Release publique à chaque tag de version (v1.x.y depuis le 08/10/2026, accord du propriétaire) : binaires musl
+# homelabd + homelabctl et SHA256SUMS, téléchargés par setup.sh (vérifiés avant installation).
 on:
   push:
-    tags: ["v2.*"]
+    tags: ["v1.*", "v2.*"]
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -9,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # git describe --tags (build.rs) : version exacte dans homelabd --version
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl

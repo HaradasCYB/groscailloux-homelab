@@ -146,7 +146,7 @@ sudo homelabctl backup                    # état → backups/ (aussi chaque dim
 
 **homelabd** : `cargo build --release --target x86_64-unknown-linux-musl`,
 `sudo install target/x86_64-unknown-linux-musl/release/homelab{d,ctl} /usr/local/bin/`,
-`sudo systemctl restart homelabd`. Ou un tag `v2.x.y` → release GitHub → `sudo ./setup.sh`.
+`sudo systemctl restart homelabd`. Ou un tag `v1.x.y` → release GitHub publique (binaires + `SHA256SUMS`, vérifiés par `setup.sh`) → `sudo ./setup.sh`.
 Une clé ajoutée à `homelab.toml` est refusée par l'ancien binaire (`deny_unknown_fields`) : installer le nouveau
 avant tout redémarrage. Un test vérifie que les valeurs par défaut du code sont celles de `homelab.toml`.
 
