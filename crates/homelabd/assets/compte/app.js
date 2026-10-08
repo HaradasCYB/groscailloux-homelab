@@ -384,11 +384,16 @@
     var user = box.querySelector('.headerUserButton');
     if (user && user.parentElement === box) box.insertBefore(b, user); else box.appendChild(b);
   }
-  /* Mode « VO » (2026-09-25). Jellyfin n'accepte qu'une langue audio préférée par compte : le serveur pose le
-     japonais (animés, sur tous les appareils) ; ici, pour un film ou une série qui n'est PAS un animé, si la
-     lecture part sur la piste française alors qu'une piste d'origine existe (anglais d'abord, jamais
-     l'audiodescription, jamais pour un titre d'origine française), on bascule dessus par la commande SetAudioStreamIndex envoyée à sa propre session.
-     Une seule tentative par titre : un changement manuel du membre est respecté. (JoJo, parti en VF.) */
+  /* Mode « VO » (2026-09-25 ; revu le 2026-10-08 pour la préférence native « Langue d'origine »). Jellyfin n'accepte
+     qu'une langue audio préférée par compte. Le serveur pose le japonais (`[accounts] vo_audio_language` : les animés,
+     sur tous les appareils), ou « Langue d'origine » quand homelabd a basculé le compte (`vo_native`) : le serveur
+     choisit alors lui-même la piste d'origine de chaque titre, d'après la métadonnée OriginalLanguage de la fiche
+     (héritée de la série). Ici, le filet des clients web : si la lecture part quand même sur la piste française alors
+     qu'une piste d'origine existe (jamais l'audiodescription, jamais pour un titre d'origine française), on bascule
+     dessus par la commande SetAudioStreamIndex envoyée à sa propre session. Rien n'est demandé ni envoyé quand la piste
+     reçue n'est pas la française (la VO est déjà là : cas normal en « Langue d'origine »). Langue d'origine : celle de
+     la fiche Jellyfin (celle qu'utilise le serveur), sinon TMDB par /api/original (fiche pas encore remplie ; anglais
+     si inconnue). Une seule tentative par titre : un changement manuel du membre est respecté. (JoJo, parti en VF.) */
   var LANG_KEY = 'gc-lang-mode';
   function rememberMode(m) { try { if (m) localStorage.setItem(LANG_KEY, m); } catch (e) { /* stockage bloqué */ } }
   function langMode() { try { return localStorage.getItem(LANG_KEY); } catch (e) { return null; } }
@@ -413,7 +418,18 @@
     var pick = ok.filter(function (x) { return want.indexOf((x.Language || '').toLowerCase()) >= 0; })[0];
     return pick ? pick.Index : null;
   }
-  window.__gcVo = { pickOriginal: pickOriginal };
+  // OriginalLanguage d'une fiche Jellyfin (ISO 639-1, écrite par la tâche original_language), null si vide
+  function olOf(x) {
+    var v = x && x.OriginalLanguage;
+    v = v == null ? '' : String(v).trim().toLowerCase();
+    return v || null;
+  }
+  // la lecture est-elle partie sur une piste française ? Sinon il n'y a rien à faire (VO déjà là, ou choix du membre)
+  function startedInFrench(streams, current) {
+    var cur = (streams || []).filter(function (x) { return x.Type === 'Audio' && x.Index === current; })[0];
+    return !!cur && FR.test(cur.Language || '');
+  }
+  window.__gcVo = { pickOriginal: pickOriginal, olOf: olOf, startedInFrench: startedInFrench };
   var VO = { done: {}, busy: false, asked: false };
   function voTick() {
     if (VO.busy || !document.querySelector('video')) return;
@@ -436,17 +452,23 @@
         VO.done[id] = true;
         var getJson = function (path) { return fetch(AC.getUrl(path), { headers: hdr }).then(function (r) { return r.json(); }); };
         return getJson('Users/' + uid + '/Items/' + id).then(function (it) {
-          // langue d'origine : fiche du film, ou de la série pour un épisode
+          var src = (it.MediaSources || []).filter(function (m) { return m.Id === me.PlayState.MediaSourceId; })[0] || (it.MediaSources || [])[0] || {};
+          // piste reçue déjà la bonne : aucune autre requête, aucune commande
+          if (!startedInFrench(src.MediaStreams, me.PlayState.AudioStreamIndex)) { window.__gcVoSource = 'deja-vo'; return; }
+          // langue d'origine : celle de la fiche Jellyfin (film, ou série pour un épisode), sinon celle de TMDB
           var tmdbOf = function (x) { return x && x.ProviderIds && (x.ProviderIds.Tmdb || x.ProviderIds.tmdb); };
-          var withSeries = it.SeriesId ? getJson('Users/' + uid + '/Items/' + it.SeriesId) : Promise.resolve(it);
+          var own = olOf(it);
+          var withSeries = !own && it.SeriesId ? getJson('Users/' + uid + '/Items/' + it.SeriesId) : Promise.resolve(it);
           return withSeries.then(function (owner) {
+            var ol = own || olOf(owner);
+            if (ol) { window.__gcVoSource = 'jellyfin'; return ol; }
+            window.__gcVoSource = 'tmdb';
             var tmdb = tmdbOf(owner);
             if (!tmdb) return null;
             return api('GET', '/api/original?kind=' + (it.SeriesId ? 'tv' : 'movie') + '&tmdb=' + encodeURIComponent(tmdb))
               .then(function (r) { return r.lang || null; }).catch(function () { return null; });
           }).then(function (orig) {
             window.__gcVoOrig = orig;
-            var src = (it.MediaSources || []).filter(function (m) { return m.Id === me.PlayState.MediaSourceId; })[0] || (it.MediaSources || [])[0] || {};
             var target = pickOriginal(src.MediaStreams, me.PlayState.AudioStreamIndex, orig);
             if (target == null) return;
             window.__gcVoSwitched = target;
