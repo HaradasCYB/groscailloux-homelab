@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.23.0](#1230--08102026--abonnés-à-la-main--aide-et-annonces--catalogue-et-langue-dorigine)** | 08/10/2026 | **Abonnés à la main, « Aide et annonces », catalogue, langue d'origine et outils** |
+| **[1.24.0](#1240--09102026--seedbox-hors-du-dépôt-mode-vo-natif-préparé-et-releases-publiques)** | 09/10/2026 | **Seedbox hors du dépôt, mode VO natif préparé et releases publiques** |
+| [1.23.0](#1230--08102026--abonnés-à-la-main--aide-et-annonces--catalogue-et-langue-dorigine) | 08/10/2026 | Abonnés à la main, « Aide et annonces », catalogue, langue d'origine et outils |
 | [1.22.0](#1220--07--08102026--revue-kaizen--alertes-sobriété-et-portes-dadministration) | 07 → 08/10/2026 | Revue Kaizen : alertes, sobriété et portes d'administration |
 | [1.21.0](#1210--02--05102026--résilience-jellyfin-121-et-nouvelle-interface) | 02 → 05/10/2026 | Résilience, Jellyfin 12.1 et nouvelle interface |
 | [1.20.0](#1200--2509--01102026--codec-x265-voie-russe-chromecast-et-site-de-secours) | 25/09 → 01/10/2026 | Codec x265, voie russe, Chromecast et site de secours |
@@ -33,6 +34,57 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.24.0 — 09/10/2026 — Seedbox hors du dépôt, mode VO natif préparé et releases publiques
+
+Lot 4 de la revue Kaizen, troisième vague (décisions du propriétaire du 08/10 au soir), installée dans la nuit du 08
+au 09/10. Rien ne change pour les membres tant que le mode VO « Langue d'origine » reste coupé.
+
+### Pour les membres
+
+- **« Mon compte », mode « Toujours en VO »** : le filet qui relance un titre dans sa langue d'origine ne se déclenche
+  plus quand la lecture part déjà dans la bonne langue (un seul démarrage), et lit d'abord la langue d'origine sur la
+  fiche Jellyfin (remplie par `original_language`) avant de la demander à TMDB.
+
+### Pour l'administrateur
+
+- **Seedbox et domaines hors du dépôt public** : l'adresse des applis de la seedbox, son compte et son dossier personnel
+  ne sont plus écrits dans `homelab.toml` ni dans le code. `homelab.toml` cite `${SEEDBOX_PUBLIC_URL}`,
+  `${SEEDBOX_HOME}` et `${SEEDBOX_USER}`, lus dans `.env` par homelabd, homelabctl et les outils Python ; une variable
+  manquante fait refuser le démarrage en la nommant, jamais en montrant sa valeur.
+  - Le montage seedbox écrit l'hôte SFTP et le compte (`SEEDBOX_SFTP_HOST`, `SEEDBOX_USER`) dans une configuration
+    effective générée à chaque démarrage (`/run/homelab-seedbox-mount/rclone.conf`, 600), jamais en option : le cache
+    VFS de 120 Go garde son dossier. Le modèle `rclone/rclone.conf` ne contient qu'un hôte réservé qui ne se résout
+    pas.
+  - Le lien du mail d'activation Premium est construit depuis `ONBOARD_PUBLIC_URL`.
+  - Les valeurs restent dans l'historique git d'avant le 09/10 : non réécrit (il faudrait réécrire et repousser en
+    force `main` et les 35 tags).
+- **Mode VO « Langue d'origine » préparé, coupé par défaut** (`[accounts] vo_native = false`). Une fois activé, le mode
+  VO pose la préférence native de Jellyfin 12 « Langue d'origine » au lieu du japonais, ce qui sert aussi les applis
+  télé.
+  - Un compte vu sur l'appli Android TV / Fire TV ou un autre client hors de `vo_native_clients` (lectures, sessions
+    même sans capacités déclarées, appareils enregistrés) reste en japonais : ces applis perdent la piste d'origine
+    quand elle n'est pas la piste par défaut (bogue de Jellyfin 12.1).
+  - Nouvelle tâche `vo_native_guard` (30 s, inactive tant que `vo_native = false`) ; commandes
+    `homelabctl accounts vo-native|vo-classic [--dry-run]`, avec sauvegarde des réglages avant chaque bascule.
+  - Nouvelles clés : `[accounts] vo_native`, `vo_native_clients`, `vo_native_ignored_clients`, `vo_native_days`,
+    `[tasks.vo_native_guard]`. Documentation : [AUTOMATION.md](docs/AUTOMATION.md) et
+    [lecture-et-transcodage.md](docs/runbooks/lecture-et-transcodage.md).
+- **Langue d'origine des séries** : `[tasks.original_language] series = true` est programmé le samedi 10/10 à 07:05
+  (accord du propriétaire du 08/10) par un minuteur transitoire ; si homelabd ne relit pas sa configuration, il revient
+  seul à `false`.
+- **Releases publiques** : chaque tag `v1.x.y` publie sur GitHub les binaires musl de homelabd et homelabctl avec
+  `SHA256SUMS` ; `setup.sh` vérifie l'empreinte avant d'installer et n'installe rien si elle ne correspond pas. La
+  première est la 1.24.0 : les binaires d'avant portaient en dur l'adresse et le compte de la seedbox.
+
+### Outillage
+
+- `scripts/test_seedbox-rclone-conf.sh` (18 contrôles de la configuration rclone générée) ; `tools/lib/hlconf.py`
+  développe `${NOM}` comme homelabd ; banc `tools/tests/compte-vo/compte-vo.js` (mode VO de Mon compte, par
+  `tools/bench/bench.sh`).
+- Commits : [`20fea60`][20fea60] (releases), [`9c9075f`][9c9075f] [`74dd39e`][74dd39e] [`8a22c77`][8a22c77] (seedbox hors du dépôt),
+  [`f974848`][f974848] [`d9a0710`][d9a0710] [`2c971b9`][2c971b9] [`b04946b`][b04946b] [`76d0de6`][76d0de6] (mode VO natif) ; fusions [`4b3426f`][4b3426f]
+  [`3ee13d6`][3ee13d6].
 
 ## 1.23.0 — 08/10/2026 — Abonnés à la main, « Aide et annonces », catalogue et langue d'origine
 
@@ -1124,3 +1176,14 @@ un tag annoté `vX.Y.Z` marque le dernier commit de chaque version.
 [7894bd4]: https://github.com/HaradasCYB/groscailloux-homelab/commit/7894bd4
 [483e2be]: https://github.com/HaradasCYB/groscailloux-homelab/commit/483e2be
 [23c70b0]: https://github.com/HaradasCYB/groscailloux-homelab/commit/23c70b0
+[20fea60]: https://github.com/HaradasCYB/groscailloux-homelab/commit/20fea60
+[9c9075f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/9c9075f
+[74dd39e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/74dd39e
+[8a22c77]: https://github.com/HaradasCYB/groscailloux-homelab/commit/8a22c77
+[f974848]: https://github.com/HaradasCYB/groscailloux-homelab/commit/f974848
+[d9a0710]: https://github.com/HaradasCYB/groscailloux-homelab/commit/d9a0710
+[2c971b9]: https://github.com/HaradasCYB/groscailloux-homelab/commit/2c971b9
+[b04946b]: https://github.com/HaradasCYB/groscailloux-homelab/commit/b04946b
+[76d0de6]: https://github.com/HaradasCYB/groscailloux-homelab/commit/76d0de6
+[4b3426f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/4b3426f
+[3ee13d6]: https://github.com/HaradasCYB/groscailloux-homelab/commit/3ee13d6

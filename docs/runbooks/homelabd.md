@@ -12,12 +12,17 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   l'ancien `homelabctl` échoue et l'ancien homelabd **ne redémarrerait plus** (y compris un redémarrage par le chien de
   garde ou un reboot). **Installer homelabd ET homelabctl dans la foulée** ; ne pas fusionner dans `main` une clé
   nouvelle avant la fenêtre d'installation (`homelab.toml` de `/opt/homelab` est le fichier de production).
+- **`${NOM}` dans `homelab.toml`** (depuis le 09/10) : développé depuis `.env` par homelabd, homelabctl (même pour
+  `list`) et `tools/lib/hlconf.py` ; `$${` donne `${` littéral. Utilisé pour `SEEDBOX_PUBLIC_URL`, `SEEDBOX_HOME`,
+  `SEEDBOX_USER`. Une variable absente fait refuser le démarrage, avec son nom et les clés qui la citent (jamais sa
+  valeur). Un binaire d'avant 9c9075f lit ces chaînes telles quelles : installer homelabd ET homelabctl. Le lien du mail
+  d'activation vient de `ONBOARD_PUBLIC_URL`. Un script qui lit `homelab.toml` par `tomllib` sans `hlconf` voit `${…}`.
 - Les valeurs par défaut du code restent égales à celles du TOML : test `config::toml_matches_defaults` (seuls `paths`,
   `urls`, `seedbox.*` et `tasks.disabled` sont exemptés).
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans `registry()`, section
   `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run respecté, tests unitaires de la décision, paragraphe dans
-  [AUTOMATION.md](../AUTOMATION.md). Au 08/10 : 31 tâches dans `registry()` (dont `tba_bypass`, dans `tasks.disabled`)
-  + l'observateur `auto_import`.
+  [AUTOMATION.md](../AUTOMATION.md). Au 09/10 : 32 tâches dans `registry()` (dont `tba_bypass`, dans `tasks.disabled`,
+  et `vo_native_guard`) + l'observateur `auto_import`.
 - **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans `ReadWritePaths`
   de `systemd/homelabd.service` (sinon « Read-only file system »).
 - **Journaliser une erreur = `error = format!("{e:#}")`**, jamais `%e` (premier niveau seulement ; depuis le 08/10,
@@ -70,6 +75,8 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   son prochain passage, lire `task_runs.<tâche>.last_start` / `last_end` dans `state/homelabd.json` et `interval_secs` dans
   `homelab.toml` (prochain passage = `last_end` + intervalle). Le canari résume « lecture OK » (détail dans
   `state.canary.last_detail`).
+- `state.vo_native` : dernier changement de langue audio par compte (source, issue, avant, après, clients hors liste) ;
+  route `POST /admin/vo-native` (jeton d'onboarding), appelée par `homelabctl accounts vo-native|vo-classic`.
 
 ## 4. Alertes admin et Discord
 

@@ -156,9 +156,10 @@ qui saccade ou « charge à l'infini ». Tâches liées : [AUTOMATION.md](../AUT
 
 - Tâche `original_language` (10 min, fenêtre `07:30–11:30`, `max_movies_per_run` 4 ou `max_series_per_run` 1) : écrit la
   langue d'origine TMDB (lue par Jellyseerr) sur les **films**, puis sur les séries si `[tasks.original_language]
-  series = true`. **Décision en attente du propriétaire : `series = false`** tant qu'il n'a pas accepté que le POST
-  d'une série réécrive la classification de toutes ses saisons et épisodes (~1 458 épisodes et 130 saisons recevraient
-  celle de leur série, valeur qu'ils héritaient déjà). Une fois accepté : `series = true` + redémarrage de homelabd.
+  series = true`. Le POST d'une série réécrit la classification de toutes ses saisons et épisodes (~1 458 épisodes et
+  130 saisons reçoivent celle de leur série, valeur qu'ils héritaient déjà) : **accepté par le propriétaire le 08/10**,
+  `series = true` posé le 10/10 à 07:05 par `backups/lot4-20261008/ol-series-on.sh` (minuteur `lot4-ol-series`, retour
+  seul à `false` si homelabctl ne relit pas le fichier ou si homelabd ne repart pas ; journal `ol-series-on.log`).
 - Règles : `POST /Items/{id}` avec le seul corps `update_body`, jamais de Refresh, jamais une fiche en lecture, rien
   pendant une analyse de la médiathèque ; les épisodes héritent de leur série et ne sont jamais écrits ; une fiche écrite
   (ou une écriture partie sans réponse nette, `posted`) n'est **jamais** réécrite d'office ; chaque écriture (avant,
@@ -182,6 +183,28 @@ qui saccade ou « charge à l'infini ». Tâches liées : [AUTOMATION.md](../AUT
   (`MediaSourceManager.SetDefaultAudioStreamIndex`) → basculer le mode VO (`vo_audio_language = "OriginalLanguage"`,
   `language_mode` reconnaissant `jpn` et `OriginalLanguage`, libellé « VO (langue d'origine) ») → garder le script VO de
   Mon compte comme filet quelques semaines.
+- **Mode VO « Langue d'origine » (`[accounts] vo_native`, préparé le 08/10, coupé)** — détail dans
+  [AUTOMATION.md](../AUTOMATION.md) :
+  - À `true`, le mode VO pose `AudioLanguagePreference = "OriginalLanguage"` au lieu de `vo_audio_language` (jpn),
+    seulement pour un compte chez qui aucun client hors de `vo_native_clients` (jellyfin-web et les applis qui
+    l'embarquent) n'apparaît : ni dans ses lectures sur `vo_native_days` jours (Playback Reporting), ni dans ses
+    sessions ouvertes, ni dans ses appareils enregistrés (`GET /Devices` lu en entier, filtré sur `LastUserId`).
+    Sinon : gardé sur jpn.
+  - **Piège** : une session ne déclare pas toujours ses capacités. L'appli Android TV 0.19.10 n'envoie
+    `PlayableMediaTypes` qu'au démarrage à froid, et Jellyfin les oublie à chaque redémarrage (2 sessions Android TV
+    sur 2 sans capacités le 09/10) : ne jamais trier les sessions « qui lisent » sur ce champ. Seuls les services de
+    `vo_native_ignored_clients` (Seerr, Jellyseerr) sont écartés.
+  - `vo_native_guard` (30 s) ramène sur jpn un compte natif vu sur un client hors liste, en général avant sa première
+    lecture. Trou restant : première lecture d'un appareil neuf dans les 30 s de sa connexion.
+  - **Activation** (décision du propriétaire, hors 19:00–00:00 et hors créneaux du lot 3) : `homelabctl accounts
+    vo-native --dry-run` (~15 Mo lus) ; condition dure « avec piste japonaise mais SANS langue d'origine : 0 » ; repère
+    ≥ 90 % des films et épisodes avec langue d'origine. Puis `vo_native = true` (commit), `sudo systemctl restart
+    homelabd`, `homelabctl accounts vo-native --dry-run` puis sans option (sauvegarde
+    `backups/vo-native-<date>-native-avant.json`, 600). Contrôle sur un appareil de l'admin : animé MULTi en japonais
+    dès le départ, film anglais en anglais, film français en VF (jamais l'AD).
+  - **Retour arrière** : `homelabctl accounts vo-classic --dry-run` puis sans option ; `vo_native = false`, redémarrage
+    de homelabd ; relancer `vo-classic` une seconde fois. Compromis possible (décision du propriétaire) : ajouter
+    "Jellyfin Android TV" à `vo_native_clients`.
 
 ## 8. Sous-titres
 

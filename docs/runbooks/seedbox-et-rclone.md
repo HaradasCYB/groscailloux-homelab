@@ -51,6 +51,18 @@ place et arrêt de la seedbox : [DEPLOY.md](../DEPLOY.md#seedbox-optionnelle). S
   `--vfs-read-chunk-streams 4`, `--sftp-connections 32`, API RC sur `127.0.0.1:5572` sans authentification (jamais hors
   boucle locale). **Pas de `--vfs-read-ahead`** tant que ce n'est pas mesuré (palier B : le refus historique visait le
   doublement de bloc du mode `streams = 0`).
+- **Hôte et compte (depuis le 09/10)** : hors du dépôt public, `SEEDBOX_SFTP_HOST` et `SEEDBOX_USER` dans `.env`. À chaque
+  démarrage, `scripts/seedbox-rclone-conf.sh` (ExecStartPre) écrit `/run/homelab-seedbox-mount/rclone.conf` (dossier
+  700, fichier 600) depuis le modèle `rclone/rclone.conf`, qui contient `host = seedbox.invalid` et n'est jamais lu tel
+  quel. Commande à la main (montage en marche, en root) : `rclone --config /run/homelab-seedbox-mount/rclone.conf lsd
+  seedbox:` ; en `deploy`, générer une copie 600 : `scripts/seedbox-rclone-conf.sh rclone/rclone.conf <fichier>`.
+- **Nom du cache VFS** : rclone ajoute au nom du remote un suffixe, hachage des options de backend passées en ligne de
+  commande ou par variable (`seedbox{9oylk}` = `--sftp-connections 32` seul, en 1.72.1 comme en 1.75.1). Ce nom est le
+  dossier `cache/rclone/vfs/…` et `vfsMeta/…`. Ajouter, retirer ou changer une option `--sftp-*`, ou une variable
+  `RCLONE_SFTP_*` / `RCLONE_CONFIG_SEEDBOX_*`, crée un nouveau dossier : les 120 Go sont abandonnés et jamais purgés. Un
+  nouveau réglage SFTP va dans le modèle, sans effet sur le nom. Contrôle : `curl -s -X POST 127.0.0.1:5572/vfs/stats |
+  jq -r .diskCache.path` doit finir par `seedbox{9oylk}/media`. Ancien cache sans suffixe (`cache/rclone/{vfs,vfsMeta}/seedbox`,
+  ~20 Go, abandonné le 19/09 à l'ajout de `--sftp-connections`) : à supprimer par son nom exact, jamais `seedbox*`.
 - **Clé rclone** : fichier `~/.ssh/seedbox_sftp_ro` (nom historique), autorisée côté seedbox avec le commentaire
   `homelab-sftp-rd` et `sftp-server -P write,mkdir,rename,…` = **lecture + suppression, aucune écriture** (le bouton
   « Supprimer » de Jellyfin doit pouvoir effacer ; un `open` en création peut laisser un fichier vide). Sauvegarde

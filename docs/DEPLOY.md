@@ -89,7 +89,10 @@ Mise en place (déjà faite sur la prod, à refaire sur une nouvelle seedbox) :
    `restrict,command="/usr/lib/openssh/sftp-server -P write,mkdir,rename,…"` (lecture + suppression, aucune écriture :
    le bouton « Supprimer » de Jellyfin doit pouvoir effacer) ; rclone ≥ 1.68 dans `/usr/local/bin` ;
    `user_allow_other` dans `/etc/fuse.conf` ; `mkdir -p /mnt/seedbox/media`.
-4. `[seedbox] enabled = true` dans `homelab.toml`, `sudo homelabctl install` (active
+4. Dans `.env` : `SEEDBOX_PUBLIC_URL` (schéma + hôte des applis, sans `/` final), `SEEDBOX_HOME` (`/home/<compte>`),
+   `SEEDBOX_USER` et `SEEDBOX_SFTP_HOST` (hôte SFTP du montage) : sans eux, homelabd ne démarre pas et le montage refuse
+   de partir en nommant la variable.
+   `[seedbox] enabled = true` dans `homelab.toml`, `sudo homelabctl install` (active
    `homelab-seedbox-mount.service`) ; Jellyfin : ajouter `/seedbox/media/Movies` comme second dossier
    de « Films » et `/seedbox/media/TV Shows` à « Séries » (Tableau de bord → Bibliothèques → Gérer
    les dossiers) ; `JELLYFIN_LIB_EXTRA` = ids d'Anime, de Films d'animation et de Collections (jamais les bibliothèques russes) ; `[seedbox] qbit_url`/`qbit_user` +

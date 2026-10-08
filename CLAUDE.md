@@ -51,7 +51,8 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 - Secrets **uniquement dans `.env`** : jamais en dur dans compose, TOML, code, scripts ou docs ; les scripts de `scripts/` sourcent `.env`.
 - **N'afficher aucun secret** : ni `.env`, ni configuration de service, ni URL avec jeton, ni réponse `settings/main` de Jellyseerr (elle contient la clé), ni colonne `password` de NPM ou Homarr ; masquer les chaînes hexadécimales longues.
 - Ne jamais coller `.env`, `backups/` ou une configuration de service dans un outil externe ; un secret collé dans une conversation est compromis : le régénérer.
-- **Dépôt public** : aucun pseudo de membre, IP, domaine ni e-mail (écrire « un membre », « l'admin », « l'adresse publique de la seedbox (voir `[seedbox]` de homelab.toml) »).
+- **Dépôt public** : aucun pseudo de membre, IP, domaine ni e-mail (écrire « un membre », « l'admin », « l'adresse publique de la seedbox (`SEEDBOX_PUBLIC_URL` de `.env`) »).
+- Adresse, compte et dossier de la seedbox : `.env` (`SEEDBOX_PUBLIC_URL`, `SEEDBOX_HOME`, `SEEDBOX_USER`, `SEEDBOX_SFTP_HOST`), cités `${…}` dans `homelab.toml` ; domaine d'onboarding : `ONBOARD_PUBLIC_URL`. Aucune valeur de `.env` compilée dans un binaire (les releases sont publiques).
 - **Jamais de `token=`** dans un lien, une redirection ou un mail ; **jamais d'identifiant ni de mot de passe dans un mail** ; jetons et mots de passe jamais journalisés.
 - Erreur journalisée = `format!("{e:#}")`, et `.map_err(reqwest::Error::without_url)` d'abord si l'URL porte un secret (webhook, `apikey=`, `ApiKey=`).
 - `backups/` : rien de lisible par « autres » ; après un lot, `sudo find /opt/homelab/backups -perm -o+r ! -type l -exec chmod o-rwx {} +` ; dossier à secrets en 700/600.
@@ -117,6 +118,7 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 - `EnableAllFolders` seulement pour les deux comptes protégés.
 - Toute nouvelle extension qui ouvre une websocket reproduit le piège corrigé par `gc-socket.js` (une seule websocket par page en 12.x).
 - Ne jamais convertir un sous-titre ASS en SRT pour l'usage principal.
+- Une session sans `PlayableMediaTypes` peut être un lecteur (Android TV après un redémarrage de Jellyfin) : ne jamais l'écarter pour cette seule raison.
 
 ### Interface et scripts injectés
 - Un élément se contrôle **par sa taille à l'écran** (`getBoundingClientRect`), jamais par sa seule présence.
@@ -129,6 +131,7 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 - rclone : Jellyfin lie le **parent** `/mnt/seedbox` ; pas de `--vfs-read-ahead` sans mesure ; la clé SFTP n'a ni écriture ni création (lecture + suppression).
 - Déménagement VPS → seedbox : hors pic, un flux, `--bwlimit 15000`, jamais pendant une lecture du titre.
 - `ssh seedbox cmd args` recolle les arguments : passer les chemins par l'entrée standard.
+- Montage : hôte et compte dans la configuration générée au démarrage (`scripts/seedbox-rclone-conf.sh` → `/run/homelab-seedbox-mount/rclone.conf`) ; **aucune option `--sftp-*` ajoutée, retirée ou changée dans l'unité** (le dossier du cache VFS change : 120 Go abandonnés) ; `rclone/rclone.conf` n'est qu'un modèle (`seedbox.invalid`).
 
 ### Bancs et essais
 - Jamais en production : comptes `zz_` toujours supprimés, **jamais un vrai groupe SyncPlay**, pas de banc de 19:00 à 00:00 ni pendant une lecture.
@@ -138,12 +141,13 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 ### Git et versions
 - Tout changement visible pour les membres ou l'admin = une ligne dans `CHANGELOG.md` (section de la version en cours, avec ses commits ; 1.0.x corrections, 1.x.0 nouveautés).
 - Pousser après chaque lot, après avoir cherché secrets et pseudos dans le diff ; **jamais de `--force` sur `main`**.
+- Un tag `v1.x.y` publie une release GitHub **publique** (binaires musl + `SHA256SUMS`, `release.yml`) : avant de le pousser, vérifier que le binaire ne contient aucune valeur de `.env` (`strings`).
 
 ## 4. Valeurs en vigueur
 
 Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la source qui a raison (et la doc qu'on corrige).
 
-| Valeur | En vigueur (08/10) | Source de vérité |
+| Valeur | En vigueur (09/10) | Source de vérité |
 | --- | --- | --- |
 | Budget C411 | 40 requêtes/h **par clé**, 2 clés ; 10 gardées pour `/recherche` ; clé en 429 mise de côté 15 min | `homelab.toml` `[indexers]` `c411_max_per_hour`, `manual_reserve`, `cooldown_after_429_mins` |
 | Filet Prowlarr | 45 requêtes/h par indexeur C411 | Prowlarr, `queryLimit` de « C411 » et « C411 (2) » |
@@ -159,15 +163,16 @@ Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la
 | Abonnements | cycle réel ; grâce 3 j ; essai 7 j ; marge PayPal 36 h ; fiches hors PayPal à la main | `[subscriptions]` `cycle_dry_run`, `grace_days`, `trial_days`, `paypal_margin_hours` |
 | Jellyfin | 12.1 | `docker-compose.yml`, image du service `jellyfin` |
 | Tmpfs de transcodage | 4 Go, `mem_limit` 6g ; purge chaque minute, urgence à 85 % | `docker-compose.yml` (`jellyfin`) ; `systemd/jellyfin-transcodes-purge.timer` |
-| Montage seedbox | cache 120G, 80G libres gardés, blocs 4M, 32 connexions | `systemd/homelab-seedbox-mount.service` |
+| Montage seedbox | cache 120G (dossier `seedbox{9oylk}`), 80G libres gardés, blocs 4M, 32 connexions | `systemd/homelab-seedbox-mount.service` ; modèle `rclone/rclone.conf` + `.env` `SEEDBOX_SFTP_HOST`, `SEEDBOX_USER` |
 | Disque du VPS | alerte 85 %, suppression 95 %, journal seul 98 % | `[tasks.disk_pressure]` `alert_pct`, `hard_pct`, `crit_pct` |
 | Quota seedbox | alerte 85 % | `[tasks.seedbox_health] quota_alert_pct` |
 | Tâche en échec | alerte après 6 échecs de suite et 30 min | `[alerts]` `fail_streak`, `fail_minutes` |
 | Boucles HLS | 20 demandes d'un segment en 5 min ; 30 ffmpeg par titre et par heure | `[tasks.hls_loop_watch]` `threshold`, `max_jobs_per_item_hour` |
 | Sauvegarde d'état | dimanche 04:30 (+ jusqu'à 15 min), 4 gardées | `systemd/homelab-backup.timer` ; `[backup] keep_last` |
-| Langue d'origine | films seulement (`series = false`, décision en attente), 07:30–11:30 | `[tasks.original_language]` |
+| Langue d'origine | films ; séries à partir du 10/10 07:05 (minuteur `lot4-ol-series`) ; 07:30–11:30 | `[tasks.original_language]` |
+| Mode VO | `jpn` ; « Langue d'origine » native préparée, **coupée** | `[accounts]` `vo_audio_language`, `vo_native`, `vo_native_clients`, `vo_native_ignored_clients`, `vo_native_days` |
 | Tchat | annonces de plus de 14 j lues d'office pour un compte neuf | `[chat] new_member_read_days` |
-| Tâches de homelabd | 31 (dont `tba_bypass`, désactivée) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
+| Tâches de homelabd | 32 (dont `tba_bypass`, désactivée, et `vo_native_guard`, inactive tant que `vo_native = false`) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
 | Ports ouverts à Internet | 80/443 (NPM), 6881 (BitTorrent), 81 (admin NPM) ; le reste sur 127.0.0.1 | `docker-compose.yml` |
 
 Mesures de référence (pas des réglages) : un seul transcodage 1080p tient en temps réel ; lecture directe 65 % (04/10) ;
@@ -194,15 +199,21 @@ lien seedbox ~8–10 Mo/s par connexion — voir [lecture-et-transcodage.md](doc
 | Bancs d'interface, travaux hors pic, `tools/`, lot 3 | [outils-bancs-et-hors-pic.md](docs/runbooks/outils-bancs-et-hors-pic.md) |
 | « Pourquoi cette règle ? » | [incidents.md](docs/runbooks/incidents.md) |
 
-## 6. En cours au 08/10
+## 6. En cours au 09/10
 
 - **Lot 3** (mises à jour de NPM, Seerr, Arrs du VPS, outils, Homarr, gluetun, rclone, MySQL, puis redémarrage du VPS) :
   exécutant `backups/lot3-20261008/run.sh`, minuteurs `lot3-J1` à `lot3-J3` (09–11/10, 08:05–12:30) et `lot3-REBOOT`
   (12/10, 04:10–07:00). Après chaque jour : valider compose et diun dans git, reporter `NOTES-DOC.txt` dans les runbooks.
 - Instantané Jellyfin 10.11.8 supprimé le 10/10 à 12:00 par un minuteur transitoire (perdu si le VPS redémarre avant).
-- Décisions du propriétaire en attente : séries de `original_language` ; bascule du mode VO vers la préférence native
-  « Langue d'origine » ; flux autobrr ; textes de Mon compte pour les fiches gérées à la main ; import CSV des abonnés
-  historiques.
+- Décidé le 08/10 : séries de `original_language` (sam. 10/10 07:05, journal `backups/lot4-20261008/ol-series-on.log`) ;
+  flux C411 d'autobrr laissé coupé ; date d'échéance gardée dans Mon compte ; releases `v1.*` publiques (dès 1.24.0).
+- Mode VO « Langue d'origine » : préparé et coupé ; activation sur décision du propriétaire une fois OriginalLanguage
+  remplie (procédure : [lecture-et-transcodage.md](docs/runbooks/lecture-et-transcodage.md) § 7). À mesurer avant :
+  lecteur ExoPlayer de « Jellyfin for Android ».
+- Montage seedbox : passe sur la configuration générée à son prochain redémarrage (J3 du lot 3, 11/10) ; contrôler que
+  le cache reste `seedbox{9oylk}`. Ancien cache sans suffixe (`cache/rclone/{vfs,vfsMeta}/seedbox`, ~20 Go, inutilisé
+  depuis le 19/09) à supprimer ensuite.
+- En attente du propriétaire : import CSV des abonnés historiques ; reste du lot 4.
 - À valider en séance réelle : Chromecast `high10` → `high`, compression des listes HLS, SyncPlay en 12.1 dans Jellyfin
   Desktop (avant de retirer `gc-syncplay.js`).
 - Provisoire : Collection Sections recompilée (à remplacer par Home Screen Sections), garde NPM de Home Screen Sections (à
