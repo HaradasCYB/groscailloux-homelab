@@ -860,19 +860,19 @@ mod tests {
         // seule la voie russe de la seedbox est écartée de C411
         let cfg = crate::config::AnimeLibrary::default();
         assert!(russian_route(
-            &json!({"path": "/home/kakaouette/media/Russian Movies/Brat (1997)"}),
+            &json!({"path": "/home/seedbox/media/Russian Movies/Brat (1997)"}),
             &cfg
         ));
         assert!(russian_route(
-            &json!({"path": "/home/kakaouette/media/Russian/Kukhnya"}),
+            &json!({"path": "/home/seedbox/media/Russian/Kukhnya"}),
             &cfg
         ));
         assert!(!russian_route(
-            &json!({"path": "/home/kakaouette/media/Movies/Brat (1997)"}),
+            &json!({"path": "/home/seedbox/media/Movies/Brat (1997)"}),
             &cfg
         ));
         assert!(!russian_route(
-            &json!({"path": "/home/kakaouette/media/Russian Moviesque/x"}),
+            &json!({"path": "/home/seedbox/media/Russian Moviesque/x"}),
             &cfg
         ));
         // recherche : jamais faite, ou assez ancienne
@@ -911,12 +911,12 @@ mod tests {
         assert!(!in_root("/anime-films/Marnie", "/anime"));
         assert!(!in_root("/tv/Bleach", "/anime"));
         assert!(in_root(
-            "/home/kakaouette/media/Anime Movies/Marnie (2014)",
-            "/home/kakaouette/media/Anime Movies"
+            "/home/seedbox/media/Anime Movies/Marnie (2014)",
+            "/home/seedbox/media/Anime Movies"
         ));
         assert!(!in_root(
-            "/home/kakaouette/media/Anime Movies/Marnie (2014)",
-            "/home/kakaouette/media/Anime"
+            "/home/seedbox/media/Anime Movies/Marnie (2014)",
+            "/home/seedbox/media/Anime"
         ));
     }
 

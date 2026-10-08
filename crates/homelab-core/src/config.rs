@@ -922,16 +922,16 @@ impl Default for AnimeLibrary {
             recheck_days: 30,
             vps_series_root: "/anime".into(),
             vps_movies_root: "/anime-films".into(),
-            seedbox_series_root: "/home/kakaouette/media/Anime".into(),
-            seedbox_movies_root: "/home/kakaouette/media/Anime Movies".into(),
+            seedbox_series_root: "/home/seedbox/media/Anime".into(),
+            seedbox_movies_root: "/home/seedbox/media/Anime Movies".into(),
             only_tmdb: Vec::new(),
             scan_after_move: true,
             scan_min_gap_mins: 20,
             russian: true,
-            seedbox_ru_series_root: "/home/kakaouette/media/Russian".into(),
-            seedbox_ru_movies_root: "/home/kakaouette/media/Russian Movies".into(),
-            seedbox_default_series_root: "/home/kakaouette/media/TV Shows".into(),
-            seedbox_default_movies_root: "/home/kakaouette/media/Movies".into(),
+            seedbox_ru_series_root: "/home/seedbox/media/Russian".into(),
+            seedbox_ru_movies_root: "/home/seedbox/media/Russian Movies".into(),
+            seedbox_default_series_root: "/home/seedbox/media/TV Shows".into(),
+            seedbox_default_movies_root: "/home/seedbox/media/Movies".into(),
             ru_search_retry_hours: 24,
         }
     }
@@ -958,7 +958,7 @@ impl Default for RussianSearch {
     fn default() -> Self {
         Self {
             interval_secs: 600,
-            jackett_url: "https://kakaouette.tofino.usbx.me/jackett".into(),
+            jackett_url: "https://seedbox.example/jackett".into(),
             indexer: "rutracker".into(),
             retry_hours: 24,
             max_per_run: 2,
@@ -1054,7 +1054,7 @@ impl Default for IndexerUnblock {
             app_cooldown_mins: 60,
             max_unblocks_per_day: 10,
             ssh_host: "seedbox".into(),
-            seedbox_apps_dir: "/home/kakaouette/.apps".into(),
+            seedbox_apps_dir: "/home/seedbox/.apps".into(),
         }
     }
 }
@@ -2365,6 +2365,23 @@ jellyseerr = "http://js"
         let typo = format!("{BASE}[seedbox]\nradar_url = \"x\"\n");
         let msg = format!("{:#}", Config::from_toml(&typo, &all).unwrap_err());
         assert!(msg.contains("radar_url"), "{msg}");
+    }
+
+    #[test]
+    fn the_real_homelab_toml_needs_its_variables() {
+        let raw =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../homelab.toml"))
+                .expect("homelab.toml");
+        let cfg = Config::from_toml(&raw, &example_env).unwrap();
+        assert!(cfg
+            .seedbox
+            .radarr_url
+            .starts_with("https://seedbox.example/"));
+        assert!(cfg.seedbox.media_root.starts_with("/home/seedbox/"));
+        let msg = format!("{:#}", Config::from_toml(&raw, &|_| None).unwrap_err());
+        for v in ["SEEDBOX_PUBLIC_URL", "SEEDBOX_HOME", "SEEDBOX_USER"] {
+            assert!(msg.contains(v), "{v} absent de : {msg}");
+        }
     }
 
     #[test]

@@ -1,6 +1,9 @@
 # Configuration de homelabd / homelabctl (non secrète, versionnée).
 # Les secrets (clés API, SMTP, token) viennent de /opt/homelab/.env.
 # Toute clé inconnue est refusée au démarrage.
+# `${NOM}` dans une valeur = variable NOM de .env (ou de l'environnement), remplacée au chargement : ce qui désigne la
+# seedbox (adresse publique, compte, dossier personnel) reste hors du dépôt public. Variable absente ou vide = refus
+# de démarrer, en la nommant. `$${` = « ${ » littéral. Voir docs/SECRETS.md.
 
 [paths]
 base = "/opt/homelab"
@@ -328,7 +331,7 @@ min_days_after_cinema = 110
 # release qui couvre le plus d'épisodes manquants (numérotation absolue des séries russes), ne télécharge que ces
 # fichiers, puis les importe (lien physique).
 interval_secs = 600
-jackett_url = "https://kakaouette.tofino.usbx.me/jackett"
+jackett_url = "${SEEDBOX_PUBLIC_URL}/jackett"
 indexer = "rutracker"
 retry_hours = 24
 max_per_run = 2
@@ -346,8 +349,8 @@ max_lookups_per_run = 150
 recheck_days = 30
 vps_series_root = "/anime"
 vps_movies_root = "/anime-films"
-seedbox_series_root = "/home/kakaouette/media/Anime"
-seedbox_movies_root = "/home/kakaouette/media/Anime Movies"
+seedbox_series_root = "${SEEDBOX_HOME}/media/Anime"
+seedbox_movies_root = "${SEEDBOX_HOME}/media/Anime Movies"
 only_tmdb = []
 # Un titre déplacé d'une bibliothèque seedbox à une autre n'apparaît qu'après une analyse complète (Your Name,
 # 45 min d'attente le 26/09) : lancée après un déplacement, au plus une fois toutes les scan_min_gap_mins.
@@ -357,10 +360,10 @@ scan_min_gap_mins = 20
 # seedbox (Jellyfin « Séries russes » / « Films russes », compte d'un membre seulement) ; une fiche sans fichier est
 # recherchée par l'Arr, qui n'interroge que RuTracker (indexer du Jackett seedbox, tag `russe`).
 russian = true
-seedbox_ru_series_root = "/home/kakaouette/media/Russian"
-seedbox_ru_movies_root = "/home/kakaouette/media/Russian Movies"
-seedbox_default_series_root = "/home/kakaouette/media/TV Shows"   # retour à la voie classique
-seedbox_default_movies_root = "/home/kakaouette/media/Movies"
+seedbox_ru_series_root = "${SEEDBOX_HOME}/media/Russian"
+seedbox_ru_movies_root = "${SEEDBOX_HOME}/media/Russian Movies"
+seedbox_default_series_root = "${SEEDBOX_HOME}/media/TV Shows"   # retour à la voie classique
+seedbox_default_movies_root = "${SEEDBOX_HOME}/media/Movies"
 ru_search_retry_hours = 24
 
 [tasks.identity_check]
@@ -403,7 +406,7 @@ quiet_mins = 15             # fenêtre de limite de C411 : plus tôt, il se rebl
 app_cooldown_mins = 60      # au plus un arrêt par application par heure
 max_unblocks_per_day = 10
 ssh_host = "seedbox"
-seedbox_apps_dir = "/home/kakaouette/.apps"
+seedbox_apps_dir = "${SEEDBOX_HOME}/.apps"
 
 [tasks.seedbox_refresh]
 # Nouveaux imports des Arrs seedbox → rafraîchit le cache rclone et signale les fichiers à Jellyfin.
@@ -598,11 +601,14 @@ new_member_read_days = 14   # première visite d'un compte : annonces et entraid
 # Seedbox : Radarr/Sonarr y rangent dans ~/media, monté (lecture + suppression, aucune écriture) sur
 # /mnt/seedbox/media (homelab-seedbox-mount.service) et vu par Jellyfin sous /seedbox/media.
 # Couper la seedbox : enabled = false (+ procédure docs/DEPLOY.md).
+# Adresse publique des applis, dossier personnel et compte : SEEDBOX_PUBLIC_URL, SEEDBOX_HOME, SEEDBOX_USER (.env).
+# Les dossiers d'anime, russes et « classiques » de [tasks.anime_library] et radarr_root/sonarr_root doivent être
+# sous media_root (contrôlé au démarrage).
 enabled = true
-radarr_url = "https://kakaouette.tofino.usbx.me/radarr"
-sonarr_url = "https://kakaouette.tofino.usbx.me/sonarr"
-sonarr_downloads = "/home/kakaouette/downloads/qbittorrent/sonarr"
-media_root = "/home/kakaouette/media"
+radarr_url = "${SEEDBOX_PUBLIC_URL}/radarr"
+sonarr_url = "${SEEDBOX_PUBLIC_URL}/sonarr"
+sonarr_downloads = "${SEEDBOX_HOME}/downloads/qbittorrent/sonarr"
+media_root = "${SEEDBOX_HOME}/media"
 mount_point = "/mnt/seedbox/media"
 jellyfin_root = "/seedbox/media"
 rclone_rc = "http://127.0.0.1:5572"
@@ -610,9 +616,9 @@ jellyseerr_vps_sonarr_id = 0
 jellyseerr_sonarr_id = 1
 # qBittorrent de la seedbox (proxy HTTPS, mot de passe SEEDBOX_QBIT_PASSWORD) et où
 # torrent_import range les fiches qu'il ajoute dans les Arrs seedbox.
-qbit_url = "https://kakaouette.tofino.usbx.me/qbittorrent"
-qbit_user = "kakaouette"
-radarr_root = "/home/kakaouette/media/Movies"
-sonarr_root = "/home/kakaouette/media/TV Shows"
+qbit_url = "${SEEDBOX_PUBLIC_URL}/qbittorrent"
+qbit_user = "${SEEDBOX_USER}"
+radarr_root = "${SEEDBOX_HOME}/media/Movies"
+sonarr_root = "${SEEDBOX_HOME}/media/TV Shows"
 quality_profile_id = 7      # « FR-friendly H.264 »
-bazarr_url = "https://kakaouette.tofino.usbx.me/bazarr"   # clé : SEEDBOX_BAZARR_API_KEY
+bazarr_url = "${SEEDBOX_PUBLIC_URL}/bazarr"   # clé : SEEDBOX_BAZARR_API_KEY

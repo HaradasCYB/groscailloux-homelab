@@ -1168,12 +1168,12 @@ mod tests {
         );
         assert_eq!(kind_of(false, "anime", "/tv/X", &r), ANIME, "type Sonarr");
         assert_eq!(
-            kind_of(true, "", "/home/kakaouette/media/Anime Movies/X", &r),
+            kind_of(true, "", "/home/seedbox/media/Anime Movies/X", &r),
             ANIME
         );
         assert_eq!(kind_of(true, "", "/movies/X", &r), FILM);
         assert_eq!(kind_of(false, "standard", "/tv/X", &r), SERIES);
-        let v = json!({"title": "Serie russe", "path": "/home/kakaouette/media/Russian/Serie russe",
+        let v = json!({"title": "Serie russe", "path": "/home/seedbox/media/Russian/Serie russe",
             "seriesType": "standard", "added": "2026-09-26T10:00:00Z", "tvdbId": 5, "tmdbId": 6,
             "statistics": {"sizeOnDisk": 3_000_000_000_i64, "episodeFileCount": 60}});
         let t = series_title("seedbox", &v, &r, None).unwrap();
@@ -1181,9 +1181,10 @@ mod tests {
         assert_eq!((t.kind, t.episodes, t.bytes), (SERIES, 60, 3_000_000_000));
         assert_eq!(t.arrived, parse_date("2026-09-26T10:00:00Z"));
         // dossier « Russian Movies » ≠ « Russian » : chacun est un dossier russe
-        let m = json!({"title": "Film russe", "year": 2020, "path": "/home/kakaouette/media/Russian Movies/Film russe", "sizeOnDisk": 5});
+        let m = json!({"title": "Film russe", "year": 2020, "path": "/home/seedbox/media/Russian Movies/Film russe", "sizeOnDisk": 5});
         assert!(movie_title("seedbox", &m, &r, None).unwrap().russian);
-        let not = json!({"title": "Film", "path": "/home/kakaouette/media/Russians/Film", "sizeOnDisk": 5});
+        let not =
+            json!({"title": "Film", "path": "/home/seedbox/media/Russians/Film", "sizeOnDisk": 5});
         assert!(!movie_title("seedbox", &not, &r, None).unwrap().russian);
     }
 
