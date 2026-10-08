@@ -10,14 +10,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use homelab_core::alerts;
-use homelab_core::state::{now, RunInfo};
+use homelab_core::state::{now, RunInfo, RUN_TIMEOUT};
 use homelab_core::tasks::{registry, Task};
 use homelab_core::TaskContext;
 use rand::Rng;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
-
-const RUN_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Dernier tour de boucle de l'une des tâches (secondes Unix) ; 0 : aucun ordonnanceur n'a démarré.
 static BEAT: AtomicI64 = AtomicI64::new(0);
@@ -454,5 +452,15 @@ mod tests {
             Some("rien à extraire (2 en attente de relance, dont 1 sans piste)")
         ));
         assert!(!is_quiet(0, idle, None));
+    }
+
+    /// 2026-10-08 : le canari alterne VPS / seedbox et mesure une latence ; son résumé réussi dépendait de ces deux
+    /// variables, donc aucun passage n'était calme.
+    #[test]
+    fn two_successful_canary_passes_are_quiet() {
+        use homelab_core::tasks::playback_canary::OK_SUMMARY;
+        assert!(is_quiet(0, OK_SUMMARY, Some(OK_SUMMARY)));
+        // après un échec, `previous` est vide (seul un passage réussi compte) : le retour à la normale reste en `info`
+        assert!(!is_quiet(0, OK_SUMMARY, None));
     }
 }

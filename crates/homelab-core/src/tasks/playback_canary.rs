@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::{Report, Task};
 use crate::alerts::{self, Level};
@@ -21,6 +21,13 @@ use crate::state::now;
 pub struct PlaybackCanary;
 
 const DEVICE_ID: &str = "gc-canary";
+
+/// Résumé d'un passage réussi : **identique d'un passage à l'autre**. Le scheduler ne tient un passage pour « calme »
+/// (journal en `debug`, fin non écrite à part) que si son résumé répète celui du passage réussi précédent. Avant le
+/// 2026-10-08 il disait « vps : lecture OK, premier segment en 1.2 s » : le côté alterne à chaque passage (VPS, seedbox)
+/// et la latence change, donc aucun passage n'était calme (une ligne `run_done` en `info` toutes les 15 min). Côté et
+/// latence restent dans `state.canary.last_detail` (affiché sur /status.html) et dans le journal en `debug`.
+pub const OK_SUMMARY: &str = "lecture OK";
 
 fn profile() -> Value {
     json!({
@@ -245,11 +252,14 @@ impl Task for PlaybackCanary {
                     )
                     .await;
                 }
-                info!(task = "playback_canary", side, detail, "ok");
-                Ok(Report::new(
-                    format!("{side} : lecture OK, premier segment en {detail}"),
-                    0,
-                ))
+                // 2026-10-08 : un passage réussi sans rien à dire reste au niveau debug ; côté et latence y sont,
+                // comme dans `state.canary.last_detail` (page /status.html). Le retour après un échec reste en info.
+                if prev.failures > 0 {
+                    info!(task = "playback_canary", side, detail, "ok");
+                } else {
+                    debug!(task = "playback_canary", side, detail, "ok");
+                }
+                Ok(Report::new(OK_SUMMARY, 0))
             }
             Err(e) => {
                 let msg = format!("{side} : {e:#}");
@@ -288,6 +298,17 @@ mod tests {
             playlist_entries(m),
             vec!["main.m3u8?x=1", "hls1/main/0.mp4?y=2"]
         );
+    }
+
+    /// Le scheduler tient un passage pour « calme » si son résumé répète celui du passage réussi précédent : le résumé
+    /// d'un passage réussi ne doit donc dépendre ni du côté testé (alternance VPS / seedbox) ni de la latence.
+    #[test]
+    fn the_ok_summary_does_not_depend_on_the_side_or_the_latency() {
+        assert!(!OK_SUMMARY.chars().any(|c| c.is_ascii_digit()));
+        for word in ["vps", "seedbox", " s"] {
+            assert!(!OK_SUMMARY.contains(word), "{word}");
+        }
+        assert!(OK_SUMMARY.contains("OK"));
     }
 
     #[test]

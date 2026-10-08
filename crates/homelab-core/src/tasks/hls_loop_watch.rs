@@ -28,7 +28,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::{Report, Task};
 use crate::config::Config;
@@ -367,6 +367,13 @@ fn reported() -> &'static Mutex<HashSet<(String, String)>> {
     SET.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// La ligne « passage » mérite-t-elle le niveau `info` ? Seulement s'il y a quelque chose à voir : une boucle de
+/// segments, une rafale de lancements de ffmpeg ou des erreurs 5xx. Sinon `debug` : le nombre de segments lus ne
+/// signale rien (il suit la fréquentation) et le scheduler journalise déjà le résumé du passage.
+pub fn is_noteworthy(loops: usize, bursts: usize, errors_5xx: usize) -> bool {
+    loops > 0 || bursts > 0 || errors_5xx > 0
+}
+
 #[async_trait]
 impl Task for HlsLoopWatch {
     fn name(&self) -> &'static str {
@@ -547,15 +554,29 @@ impl Task for HlsLoopWatch {
             );
             crate::alerts::admin(ctx, crate::alerts::Level::Warn, &subject, &body).await;
         }
-        info!(
-            task = "hls_loop_watch",
-            segments = hits.len(),
-            loops = loops.len(),
-            bursts = bursts.len(),
-            max_jobs,
-            errors_5xx,
-            "passage"
-        );
+        // 2026-10-08 : 111 lignes en 9 h pour « rien à signaler » (le `run_done` du scheduler porte déjà ces
+        // chiffres) ; `info` seulement s'il y a une boucle, une rafale de ffmpeg ou des erreurs 5xx
+        if is_noteworthy(loops.len(), bursts.len(), errors_5xx) {
+            info!(
+                task = "hls_loop_watch",
+                segments = hits.len(),
+                loops = loops.len(),
+                bursts = bursts.len(),
+                max_jobs,
+                errors_5xx,
+                "passage"
+            );
+        } else {
+            debug!(
+                task = "hls_loop_watch",
+                segments = hits.len(),
+                loops = loops.len(),
+                bursts = bursts.len(),
+                max_jobs,
+                errors_5xx,
+                "passage"
+            );
+        }
         Ok(Report::new(
             format!(
                 "segments={} boucles={} rafales_ffmpeg={} max_ffmpeg_titre_heure={max_jobs} 5xx={errors_5xx}",
@@ -632,6 +653,16 @@ mod tests {
         assert_eq!(loops[0].segment, "58.ts");
         assert_eq!(loops[0].count, 25);
         assert_eq!((loops[0].first, loops[0].last), (1000, 1096));
+    }
+
+    #[test]
+    fn the_pass_line_is_info_only_when_there_is_something_to_see() {
+        // fréquentation seule (nombre de segments, lancements de ffmpeg sous le seuil) : debug
+        assert!(!is_noteworthy(0, 0, 0));
+        // une boucle, une rafale, des 5xx : info
+        assert!(is_noteworthy(1, 0, 0));
+        assert!(is_noteworthy(0, 2, 0));
+        assert!(is_noteworthy(0, 0, 3));
     }
 
     #[test]
