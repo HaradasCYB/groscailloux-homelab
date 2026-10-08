@@ -675,6 +675,20 @@ const SYSTEM_FILES: &[(&str, &str)] = &[(
     "/etc/systemd/journald.conf.d/homelab.conf",
 )];
 
+/// Unités activées par `install` : les minuteurs, homelabd, la pile et le montage seedbox (s'il est configuré).
+/// Jamais un gabarit (`nom@.service`, `nom@.timer`) : sans instance, `systemctl enable` échoue et arrêterait
+/// l'installation ; une instance se programme à part (2026-10-08 : `tools/offpeak/offpeak.sh --schedule`, dont les
+/// gabarits vivent dans tools/offpeak/systemd/ pour qu'aucun minuteur versionné n'agisse seul à l'installation).
+fn enabled_at_install(name: &str, seedbox_enabled: bool) -> bool {
+    if name.contains('@') {
+        return false;
+    }
+    name.ends_with(".timer")
+        || name == "homelabd.service"
+        || name == "homelab-stack.service"
+        || (name == "homelab-seedbox-mount.service" && seedbox_enabled)
+}
+
 /// Le fichier installé diffère-t-il de celui du dépôt (ou n'existe-t-il pas) ?
 fn file_changed(installed: Option<&str>, wanted: &str) -> bool {
     installed != Some(wanted)
@@ -717,12 +731,7 @@ async fn install(cfg: &Config) -> Result<()> {
     }
     homelab_core::docker::run("systemctl", &["daemon-reload"], None).await?;
     for n in &names {
-        let seedbox_mount = n == "homelab-seedbox-mount.service" && cfg.seedbox.enabled;
-        if n.ends_with(".timer")
-            || n == "homelabd.service"
-            || n == "homelab-stack.service"
-            || seedbox_mount
-        {
+        if enabled_at_install(n, cfg.seedbox.enabled) {
             homelab_core::docker::run("systemctl", &["enable", n], None).await?;
             println!("enabled {n}");
         }
@@ -975,6 +984,20 @@ mod tests {
             "[Journal]\nSystemMaxUse=2G\n"
         ));
         assert!(!file_changed(Some("[Journal]\n"), "[Journal]\n"));
+    }
+
+    #[test]
+    fn install_enables_timers_and_core_services_never_templates() {
+        assert!(enabled_at_install("homelab-backup.timer", false));
+        assert!(enabled_at_install("homelabd.service", false));
+        assert!(enabled_at_install("homelab-stack.service", false));
+        assert!(!enabled_at_install("homelab-backup.service", false));
+        assert!(enabled_at_install("homelab-seedbox-mount.service", true));
+        assert!(!enabled_at_install("homelab-seedbox-mount.service", false));
+        // gabarits : `systemctl enable nom@.timer` échouerait (pas d'instance) et rien ne doit agir seul
+        assert!(!enabled_at_install("homelab-offpeak@.timer", true));
+        assert!(!enabled_at_install("homelab-alert@.service", true));
+        assert!(!enabled_at_install("vncserver@.service", true));
     }
 
     #[test]
