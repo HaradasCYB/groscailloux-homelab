@@ -7,6 +7,32 @@ use serde_json::{json, Value};
 use super::{check, json, SendRetry};
 use crate::secret::Secret;
 
+/// Échec de `JellyfinClient::update_item`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemWriteError {
+    /// Jellyfin a pu appliquer tout ou partie de l'écriture : délai dépassé, coupure une fois la requête partie,
+    /// erreur serveur. Faux seulement quand rien n'a pu être appliqué (connexion impossible, refus avant toute
+    /// écriture : 401, 403, 404).
+    pub maybe_applied: bool,
+    pub detail: String,
+}
+
+impl std::fmt::Display for ItemWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for ItemWriteError {}
+
+/// Réponse en échec de `POST /Items/{id}` : l'écriture a-t-elle pu être appliquée ? Jellyfin 12.1 réécrit les
+/// saisons et épisodes d'une série AVANT la série, et son intergiciel d'exceptions répond 400 à une
+/// `ArgumentException` levée en route : seuls 401/403 (authentification) et 404 (fiche introuvable, vérifié avant
+/// toute écriture) sont des refus nets (2026-10-08).
+pub fn write_maybe_applied(status: u16) -> bool {
+    !matches!(status, 401 | 403 | 404)
+}
+
 #[derive(Clone)]
 pub struct JellyfinClient {
     base: Url,
@@ -105,16 +131,39 @@ impl JellyfinClient {
 
     /// Écrit les métadonnées d'un élément (`POST /Items/{id}`, l'éditeur de métadonnées de Jellyfin), **sans**
     /// rafraîchissement ni lecture du fichier. Le corps doit venir de `tasks::original_language::update_body` : Jellyfin
-    /// remet à vide tout champ « toujours écrit » absent du corps. Sur une série, Jellyfin réécrit aussi chaque saison
-    /// et chaque épisode (classification, nom de série) : quelques secondes pour 170 épisodes, d'où le délai.
-    pub async fn update_item(&self, item_id: &str, body: &Value) -> Result<()> {
-        let resp = self
+    /// remet à vide tout champ « toujours écrit » absent du corps. Sur une série, Jellyfin réécrit d'abord chaque saison
+    /// et chaque épisode rangé dans une saison (classification, classification personnalisée, nom de série), puis la
+    /// série : quelques secondes pour 170 épisodes, d'où le délai. Jamais rejoué (un `POST` a pu agir).
+    pub async fn update_item(&self, item_id: &str, body: &Value) -> Result<(), ItemWriteError> {
+        let sent = self
             .req(Method::POST, &format!("Items/{item_id}"))
             .json(body)
             .timeout(Duration::from_secs(180))
-            .send_retry()
-            .await?;
-        check(resp, "jellyfin POST Items/{id}").await.map(|_| ())
+            .send()
+            .await;
+        let resp = match sent {
+            Ok(r) => r,
+            Err(e) => {
+                // connexion impossible (refusée, nom inconnu) : rien n'est parti ; tout le reste a pu arriver
+                let maybe_applied = !(e.is_connect() || e.is_builder());
+                return Err(ItemWriteError {
+                    maybe_applied,
+                    detail: super::cause_chain(e),
+                });
+            }
+        };
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body = resp.text().await.unwrap_or_default();
+        Err(ItemWriteError {
+            maybe_applied: write_maybe_applied(status.as_u16()),
+            detail: format!(
+                "HTTP {status} {}",
+                body.chars().take(200).collect::<String>()
+            ),
+        })
     }
 
     /// Fiches proposées par les fournisseurs de métadonnées pour un élément (`Series` ou `Movie`).

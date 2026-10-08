@@ -367,15 +367,18 @@ fix_release_names = true
 # de Jellyfin 12 (toutes les applis, TV comprises). Chaque écriture est notée dans l'état (avant/après).
 interval_secs = 600
 enabled = true
-# Séries : Jellyfin réécrit chaque saison et chaque épisode (classification vide → celle de la série, ~1 600 lignes
-# pour 86 séries) ; laissé à false tant que ce n'est pas accepté.
+# Séries : Jellyfin réécrit chaque saison et chaque épisode rangé dans une saison (toute classification non verrouillée
+# → celle de la série, classification personnalisée aussi, sans exception). Une série dont un enfant a sa propre valeur
+# n'est pas écrite ; sinon seuls les enfants sans classification changent (~1 600 lignes pour 86 séries), notés dans
+# l'état. Laissé à false tant que ce n'est pas accepté.
 series = false
 # Matin : après l'analyse de 05:00, les segments (05:15/05:30) et les images de chapitre (06:30), avant midi.
 window_start = "07:30"
 window_end = "11:30"
 max_movies_per_run = 4     # 24 passages par matin : ~96 films, les 176 en deux matinées
 max_series_per_run = 1     # une série par passage (170 épisodes réécrits en ~6 s sur l'instance d'essai)
-retry_hours = 24           # TMDB sans langue ou lecture en échec : nouvel essai le lendemain
+retry_hours = 24           # TMDB sans langue, échec net : nouvel essai le lendemain ; une fiche écrite (ou écriture
+                           # partie sans confirmation) n'est jamais reprise : un retour arrière tient
 
 [tasks.indexer_unblock]
 # Indexeurs mis en pause par Sonarr/Radarr (429, délais) : pause levée dans leur base (application

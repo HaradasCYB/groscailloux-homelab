@@ -147,15 +147,24 @@ pub struct OriginalLanguageRecord {
     pub name: String,
     pub tmdb: i64,
     /// `written` (écrite et relue), `unknown` (TMDB sans langue utilisable), `locked` (fiche verrouillée),
-    /// `error` (lecture ou écriture en échec). Tout autre que `written` est réessayé après `retry_hours`.
+    /// `children_differ` (série dont une saison ou un épisode a sa propre classification, que Jellyfin effacerait),
+    /// `error` (lecture ou écriture en échec). `written` n'est **jamais** réessayé d'office (une fiche remise à vide
+    /// par un retour arrière le reste), ni `error` quand l'écriture est partie (`posted`) ; les autres le sont après
+    /// `retry_hours` (2026-10-08).
     pub outcome: String,
     /// OriginalLanguage avant écriture (vide = aucune) et valeur écrite : revenir en arrière = réécrire `old`.
     #[serde(default)]
     pub old: String,
     #[serde(default)]
     pub new: String,
-    /// Série : saisons et épisodes dont la classification était vide avant l'écriture (ids compacts) ; Jellyfin leur
-    /// a donné celle de la série (`children_rating`). Revenir en arrière = remettre leur classification à vide.
+    /// La requête d'écriture est partie et Jellyfin a pu l'appliquer (réponse reçue sans refus net, délai dépassé,
+    /// coupure en route) : vrai pour toute fiche `written`, et pour un `error` dont on ne sait pas s'il a été appliqué.
+    /// Un tel `error` passe en `written` dès qu'un passage relit la langue écrite, et n'est jamais réessayé d'office.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub posted: bool,
+    /// Série : saisons et épisodes non verrouillés dont la classification était vide avant l'écriture (ids
+    /// compacts) ; Jellyfin leur a donné celle de la série (`children_rating`). Revenir en arrière = remettre leur
+    /// classification à vide.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children_unrated: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
