@@ -564,6 +564,7 @@ async fn status_html(
         .unwrap_or((None, None, Some(false)));
     let tasks = homelab_core::tasks::names();
     let alerts = st.ctx.state.read(|s| s.alerts.clone()).await;
+    let catalogue = st.ctx.state.read(|s| s.catalogue.clone()).await;
     let html = status_page::render(&status_page::PageData {
         now: homelab_core::state::now(),
         runs: &runs,
@@ -574,6 +575,7 @@ async fn status_html(
         stuck_torrents: &status_page::unmatched(&imports, homelab_core::state::now(), 15),
         blocked_seasons: &status_page::blocked_seasons(&seasons, homelab_core::state::now(), 15),
         canary: canary_text(&st.ctx).await,
+        catalogue: catalogue.as_ref(),
         alerts: &alerts,
     });
     (StatusCode::OK, Html(html))

@@ -92,6 +92,9 @@ pub struct State {
     /// Dernier résultat du canari de lecture (`tasks::playback_canary`).
     #[serde(default)]
     pub canary: CanaryState,
+    /// Dernier rapport « catalogue jamais regardé » (`tasks::catalogue_report`), affiché sur `/status.html`.
+    #[serde(default)]
+    pub catalogue: Option<CatalogueReport>,
     /// identity_check : dernière tentative de renommage d'une fiche au nom de release (id Jellyfin → date),
     /// pour ne pas réessayer sans fin un titre que TMDB nomme ainsi.
     #[serde(default)]
@@ -269,6 +272,130 @@ pub struct CanaryState {
     /// Items Jellyfin choisis une fois pour toutes (petits fichiers), par côté.
     #[serde(default)]
     pub items: BTreeMap<String, String>,
+}
+
+/// Nombre de titres et volume (octets) d'un groupe, pour le rapport « catalogue jamais regardé ».
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogueBucket {
+    #[serde(default)]
+    pub titles: u32,
+    #[serde(default)]
+    pub bytes: u64,
+}
+
+/// Un titre du rapport (jamais de pseudo : le demandeur n'est qu'une sorte).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogueEntry {
+    /// Texte brut tiré de l'Arr (échappé à l'affichage), 60 caractères au plus.
+    pub title: String,
+    /// `film`, `série` ou `animé`.
+    pub kind: String,
+    /// `vps` ou `seedbox`.
+    pub side: String,
+    pub bytes: u64,
+    /// Arrivée d'après l'Arr (secondes).
+    pub added: i64,
+    /// `membre`, `admin`, `aucune` (aucune demande) ou `inconnu` (Jellyseerr injoignable).
+    pub requester: String,
+    /// Épisodes vus sur épisodes présents (0 et 0 pour un film).
+    #[serde(default)]
+    pub seen: u32,
+    #[serde(default)]
+    pub total: u32,
+}
+
+/// Séries commencées mais pas finies : l'arriéré normal des séries en cours, à ne pas confondre avec du poids mort.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogueBacklog {
+    #[serde(default)]
+    pub series: u32,
+    #[serde(default)]
+    pub unseen_episodes: u32,
+    /// Volume **estimé** des épisodes non vus (taille de la série au prorata).
+    #[serde(default)]
+    pub bytes: u64,
+}
+
+/// Voie russe : ce qui est disponible et ce qui a été lu (un titre russe n'est évalué par l'âge qu'après `min_age_days`,
+/// cette ligne le montre dès l'arrivée).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogueRussian {
+    #[serde(default)]
+    pub series: u32,
+    #[serde(default)]
+    pub movies: u32,
+    #[serde(default)]
+    pub episodes: u32,
+    #[serde(default)]
+    pub episodes_seen: u32,
+    #[serde(default)]
+    pub movies_seen: u32,
+    #[serde(default)]
+    pub bytes: u64,
+}
+
+/// Répartition d'un ensemble de titres jamais commencés : par sorte (`film`, `série`, `animé`), côté (`vps`, `seedbox`)
+/// et sorte de demandeur (`membre`, `admin`, `aucune`, `inconnu`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogueSplit {
+    #[serde(default)]
+    pub by_kind: BTreeMap<String, CatalogueBucket>,
+    #[serde(default)]
+    pub by_side: BTreeMap<String, CatalogueBucket>,
+    #[serde(default)]
+    pub by_requester: BTreeMap<String, CatalogueBucket>,
+}
+
+impl CatalogueSplit {
+    pub fn add(&mut self, kind: &str, side: &str, requester: &str, bytes: u64) {
+        for (map, key) in [
+            (&mut self.by_kind, kind),
+            (&mut self.by_side, side),
+            (&mut self.by_requester, requester),
+        ] {
+            let b = map.entry(key.to_string()).or_default();
+            b.titles += 1;
+            b.bytes += bytes;
+        }
+    }
+}
+
+/// Dernier rapport de `tasks::catalogue_report` (2026-10-08, lecture seule : l'admin tranche, rien n'est supprimé).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogueReport {
+    /// Date du calcul (secondes).
+    pub at: i64,
+    pub min_age_days: i64,
+    /// Tout ce qui a des fichiers et a pu être rapproché de Jellyfin.
+    pub catalogue: CatalogueBucket,
+    /// Fiches Arr avec fichiers que Jellyfin ne montre pas sous le même chemin ni le même identifiant : non évaluées.
+    pub unmatched: CatalogueBucket,
+    /// Jamais commencés, quel que soit leur âge.
+    pub never_all: CatalogueBucket,
+    /// Jamais commencés et arrivés depuis au moins `min_age_days` : la liste de décision.
+    pub never_aged: CatalogueBucket,
+    /// Répartition de `never_aged` (la liste de décision) et de `never_all` (tous âges : c'est elle qui renseigne tant que
+    /// peu de titres ont atteint le seuil).
+    #[serde(default)]
+    pub aged: CatalogueSplit,
+    #[serde(default)]
+    pub all: CatalogueSplit,
+    #[serde(default)]
+    pub backlog: CatalogueBacklog,
+    /// Quand le prochain titre jamais vu atteindra `min_age_days` (rien si tous l'ont atteint).
+    #[serde(default)]
+    pub next_aged_at: Option<i64>,
+    /// Playback Reporting a répondu (sinon seuls les marqueurs « vu » et « en cours » des comptes comptent).
+    #[serde(default)]
+    pub playback_reporting: bool,
+    #[serde(default)]
+    pub russian: CatalogueRussian,
+    /// Les plus gros titres de `never_aged`, bornés par `max_listed`.
+    #[serde(default)]
+    pub listed: Vec<CatalogueEntry>,
+    /// Les séries commencées qui ont le plus d'épisodes non vus (volume estimé), bornées par `max_backlog_listed`.
+    #[serde(default)]
+    pub backlog_listed: Vec<CatalogueEntry>,
 }
 
 /// Dernier passage d'une tâche. Les champs ajoutés le 2026-10-07 sont tous en `#[serde(default)]` : un état écrit par

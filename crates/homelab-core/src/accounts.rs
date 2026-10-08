@@ -27,7 +27,7 @@ pub struct Account {
 
 /// Bits Jellyseerr : 2 = admin (a déjà tout), 128 = demandes validées d'office (films et séries, hors 4K),
 /// 16384 = voir toutes les demandes (lecture seule : ni validation ni refus).
-const JS_ADMIN: i64 = 2;
+pub const JS_ADMIN: i64 = 2;
 pub const JS_AUTO_APPROVE: i64 = 128;
 pub const JS_REQUEST_VIEW: i64 = 16384;
 

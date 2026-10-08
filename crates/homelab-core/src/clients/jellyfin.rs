@@ -261,6 +261,33 @@ impl JellyfinClient {
         Ok(out)
     }
 
+    /// Comme `items_by_ids`, mais vus par un compte : `GET /Items` sans `UserId` renvoie une liste incomplète
+    /// (2026-09-21 : aucun des 13 épisodes importés le matin). Un identifiant introuvable est absent du résultat.
+    pub async fn items_by_ids_as(&self, user_id: &str, ids: &[String]) -> Result<Vec<Value>> {
+        let mut out = Vec::new();
+        for chunk in ids.chunks(80) {
+            let resp = self
+                .req(Method::GET, "Items")
+                .query(&[
+                    ("UserId", user_id),
+                    ("Ids", chunk.join(",").as_str()),
+                    ("Fields", "SeriesId"),
+                    ("EnableImages", "false"),
+                    ("EnableUserData", "false"),
+                ])
+                .send_retry()
+                .await?;
+            let v = json(resp, "jellyfin Items?Ids (compte)").await?;
+            out.extend(
+                v.get("Items")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+        Ok(out)
+    }
+
     /// Collection (BoxSet) par nom exact, vue par `user_id`.
     pub async fn find_collection(&self, user_id: &str, name: &str) -> Result<Option<String>> {
         let resp = self

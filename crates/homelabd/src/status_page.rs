@@ -5,7 +5,10 @@
 use std::collections::BTreeMap;
 
 use homelab_core::html::esc;
-use homelab_core::state::{AlertStats, RunInfo};
+use homelab_core::state::{
+    AlertStats, CatalogueBucket, CatalogueEntry, CatalogueReport, CatalogueSplit, RunInfo,
+};
+use homelab_core::tasks::catalogue_report::{human_size, pct_text, percent};
 
 /// Quota écrit par la seedbox (cron `quota -w`) dans `~/media/.homelab/quota.json` (aussi lu par `seedbox_health`).
 pub use homelab_core::quota::SeedboxQuota;
@@ -27,6 +30,8 @@ pub struct PageData<'a> {
     pub blocked_seasons: &'a [String],
     /// Dernier résultat du canari de lecture (`state.canary`), texte prêt à afficher.
     pub canary: Option<(bool, String)>,
+    /// Dernier rapport « catalogue jamais regardé » (`state.catalogue`) ; `None` avant le premier calcul.
+    pub catalogue: Option<&'a CatalogueReport>,
     /// Alertes admin parties (ou non) par `alerts::admin` : la preuve qu'un message a bien été livré.
     pub alerts: &'a AlertStats,
 }
@@ -169,6 +174,195 @@ fn alerts_section(a: &AlertStats, now: i64) -> String {
     )
 }
 
+/// « Catalogue jamais regardé » : totaux, détail, voie russe et liste des plus gros titres jamais commencés (2026-10-08).
+/// **Lecture seule** : un tableau, aucun formulaire ni bouton, rien qui supprime ; l'admin tranche à la main. Tout texte
+/// venu des Arrs (titres) passe par `esc`. Avant le premier calcul (`None`), une ligne le dit.
+fn catalogue_section(r: Option<&CatalogueReport>, now: i64) -> String {
+    let Some(r) = r else {
+        return r#"<h1 style="margin:14px 0 6px">Catalogue jamais regardé</h1><p class="gd">pas encore calculé (une fois par jour)</p>"#.into();
+    };
+    let share = |b: &CatalogueBucket| percent(b.bytes, r.catalogue.bytes);
+    let card = |title: &str, value: String, detail: String, pct: f64| {
+        format!(
+            r#"<div class="g"><div class="gt"><span>{title}</span><b>{value}</b></div><div class="bar"><i class="none" style="width:{w}%"></i></div><div class="gd">{detail}</div></div>"#,
+            title = esc(title),
+            value = esc(&value),
+            detail = esc(&detail),
+            w = pct.clamp(0.0, 100.0).round() as u8
+        )
+    };
+    let cards = format!(
+        "{}{}{}",
+        card(
+            &format!("Jamais vus depuis {} j ou plus", r.min_age_days),
+            format!("{} titre(s)", r.never_aged.titles),
+            format!(
+                "{} · {} % du catalogue ({})",
+                human_size(r.never_aged.bytes),
+                pct_text(share(&r.never_aged)),
+                human_size(r.catalogue.bytes)
+            ),
+            share(&r.never_aged)
+        ),
+        card(
+            "Jamais vus, tous âges",
+            format!("{} titre(s)", r.never_all.titles),
+            format!(
+                "{} · {} % du catalogue",
+                human_size(r.never_all.bytes),
+                pct_text(share(&r.never_all))
+            ),
+            share(&r.never_all)
+        ),
+        card(
+            "Séries en cours (arriéré normal)",
+            format!("{} série(s)", r.backlog.series),
+            format!(
+                "{} épisode(s) non vus · ~{}",
+                r.backlog.unseen_episodes,
+                human_size(r.backlog.bytes)
+            ),
+            percent(r.backlog.bytes, r.catalogue.bytes)
+        ),
+    );
+    let parts = |m: &BTreeMap<String, CatalogueBucket>| {
+        m.iter()
+            .map(|(k, b)| format!("{k} {} · {}", b.titles, human_size(b.bytes)))
+            .collect::<Vec<_>>()
+            .join(" ; ")
+    };
+    let split = |s: &CatalogueSplit| {
+        format!(
+            "par sorte {} — par côté {} — par demandeur {}",
+            parts(&s.by_kind),
+            parts(&s.by_side),
+            parts(&s.by_requester)
+        )
+    };
+    let mut notes = Vec::new();
+    if r.never_aged.titles > 0 {
+        notes.push(format!(
+            "Jamais vus depuis {} j ou plus ({}) : {}.",
+            r.min_age_days,
+            r.never_aged.titles,
+            split(&r.aged)
+        ));
+    }
+    if r.never_all.titles > r.never_aged.titles {
+        notes.push(format!(
+            "Jamais vus, tous âges ({}) : {}.",
+            r.never_all.titles,
+            split(&r.all)
+        ));
+    }
+    let recent = r.never_all.titles - r.never_aged.titles;
+    if recent > 0 {
+        let next = r
+            .next_aged_at
+            .map(|t| {
+                if t <= now {
+                    ", le prochain atteint le seuil au prochain calcul".to_string()
+                } else {
+                    format!(
+                        ", le prochain atteint le seuil dans {} j",
+                        (t - now + 86_399) / 86_400
+                    )
+                }
+            })
+            .unwrap_or_default();
+        notes.push(format!(
+            "{recent} titre(s) jamais vus ({}) sont arrivés il y a moins de {} j : trop tôt pour conclure{next}. Les fiches de la seedbox datent de la création des Arrs.",
+            human_size(r.never_all.bytes - r.never_aged.bytes),
+            r.min_age_days
+        ));
+    }
+    if r.unmatched.titles > 0 {
+        notes.push(format!(
+            "{} fiche(s) ({}) sans élément Jellyfin correspondant : non évaluées.",
+            r.unmatched.titles,
+            human_size(r.unmatched.bytes)
+        ));
+    }
+    if !r.playback_reporting {
+        notes.push(
+            "Playback Reporting n'a pas répondu : seuls les marqueurs « vu » et « en cours » des comptes comptent."
+                .into(),
+        );
+    }
+    let ru = &r.russian;
+    if ru.series + ru.movies > 0 {
+        notes.push(format!(
+            "Voie russe : {} série(s) ({} épisode(s) disponible(s), {} lu(s)) · {} film(s) ({} vu(s)) · {}.",
+            ru.series,
+            ru.episodes,
+            ru.episodes_seen,
+            ru.movies,
+            ru.movies_seen,
+            human_size(ru.bytes)
+        ));
+    }
+    let notes: String = notes
+        .iter()
+        .map(|n| format!(r#"<p class="gd" style="margin:4px 0">{}</p>"#, esc(n)))
+        .collect();
+    let rows = |list: &[CatalogueEntry], progress: bool| -> String {
+        list.iter()
+            .map(|e| {
+                let seen = if progress {
+                    format!(r#"<td class="w">{}/{}</td>"#, e.seen, e.total)
+                } else if e.total > 1 {
+                    format!(r#"<td class="w">{} ép.</td>"#, e.total)
+                } else {
+                    r#"<td class="w"></td>"#.to_string()
+                };
+                format!(
+                    r#"<tr><td class="s">{title}</td><td class="w">{kind} · {side}</td><td class="w">{size}</td><td class="w">{added}</td><td class="w">{who}</td>{seen}</tr>"#,
+                    title = esc(&e.title),
+                    kind = esc(&e.kind),
+                    side = esc(&e.side),
+                    size = esc(&human_size(e.bytes)),
+                    added = esc(&ago(now, e.added)),
+                    who = esc(&e.requester),
+                )
+            })
+            .collect()
+    };
+    let table = |heading: String, list: &[CatalogueEntry], progress: bool| {
+        if list.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"<h1 style="margin:14px 0 6px">{}</h1><table class="cat">{}</table>"#,
+                esc(&heading),
+                rows(list, progress)
+            )
+        }
+    };
+    let listed = table(
+        format!(
+            "Les plus gros titres jamais commencés depuis {} j ou plus ({} sur {})",
+            r.min_age_days,
+            r.listed.len(),
+            r.never_aged.titles
+        ),
+        &r.listed,
+        false,
+    );
+    let backlog = table(
+        format!(
+            "Séries commencées, le plus d'épisodes non vus ({} sur {}, volume non vu estimé)",
+            r.backlog_listed.len(),
+            r.backlog.series
+        ),
+        &r.backlog_listed,
+        true,
+    );
+    format!(
+        r#"<h1 style="margin:14px 0 6px">Catalogue jamais regardé · calculé {at}</h1><div class="gs" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">{cards}</div>{notes}{listed}{backlog}"#,
+        at = esc(&ago(now, r.at)),
+    )
+}
+
 fn gauge(title: &str, pct: Option<u8>, detail: &str) -> String {
     let (p, cls) = match pct {
         Some(p) if p >= 90 => (p, "err"),
@@ -260,12 +454,14 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
 .dot{{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:1px}}
 .dot.ok{{background:#22c55e}}.dot.err{{background:#ef4444}}.dot.none{{background:#4b5563}}
 .e{{margin-top:2px;color:#d6a45a}}
+@media(max-width:600px){{table.cat tr{{display:block;border-top:1px solid #24272b;padding:4px 0}}table.cat td{{display:inline-block;width:auto;border:0;padding:1px 10px 1px 4px}}table.cat td.s{{display:block;padding-bottom:2px}}}}
 </style></head><body>
 <header><h1>Automatisation homelabd</h1><div>{headline} {mount}</div></header>
 <div class="gs">{vps}{sb}</div>
-<table>{rows}</table>{canary}{stuck}{blocked}{alerts}
+<table>{rows}</table>{canary}{stuck}{blocked}{catalogue}{alerts}
 </body></html>"#,
         alerts = alerts_section(d.alerts, d.now),
+        catalogue = catalogue_section(d.catalogue, d.now),
         vps = gauge(
             "Disque VPS",
             d.vps_disk_pct,
@@ -407,6 +603,7 @@ mod tests {
             stuck_torrents: &[],
             blocked_seasons: &[],
             canary: None,
+            catalogue: None,
             alerts: &AlertStats::default(),
             seedbox: Some(SeedboxQuota {
                 used_kb: 1_429_000_000,
@@ -524,6 +721,7 @@ mod tests {
             stuck_torrents: &stuck,
             blocked_seasons: &blocked,
             canary: None,
+            catalogue: None,
             alerts: &AlertStats::default(),
         });
         assert!(!html.contains("<img"), "balise passée telle quelle");
@@ -546,8 +744,199 @@ mod tests {
             stuck_torrents: &[],
             blocked_seasons: &[],
             canary: None,
+            catalogue: None,
             alerts: &AlertStats::default(),
         });
         assert!(html.contains("quota non disponible"));
+    }
+
+    fn catalogue_sample() -> CatalogueReport {
+        let entry = |title: &str, kind: &str, bytes: u64, who: &str, seen: u32, total: u32| {
+            CatalogueEntry {
+                title: title.into(),
+                kind: kind.into(),
+                side: "vps".into(),
+                bytes,
+                added: 1_000_000 - 90 * 86_400,
+                requester: who.into(),
+                seen,
+                total,
+            }
+        };
+        let mut r = CatalogueReport {
+            at: 1_000_000 - 3 * 3600,
+            min_age_days: 60,
+            catalogue: CatalogueBucket {
+                titles: 40,
+                bytes: 1_000_000_000_000,
+            },
+            unmatched: CatalogueBucket {
+                titles: 1,
+                bytes: 200_000_000,
+            },
+            never_all: CatalogueBucket {
+                titles: 12,
+                bytes: 400_000_000_000,
+            },
+            never_aged: CatalogueBucket {
+                titles: 2,
+                bytes: 25_000_000_000,
+            },
+            next_aged_at: Some(1_000_000 + 2 * 86_400 + 5),
+            playback_reporting: true,
+            listed: vec![
+                entry("Gros film", "film", 15_000_000_000, "membre", 0, 0),
+                entry("Une série", "série", 10_000_000_000, "aucune", 0, 24),
+            ],
+            backlog_listed: vec![entry("En cours", "animé", 80_000_000_000, "admin", 5, 100)],
+            ..Default::default()
+        };
+        r.backlog.series = 3;
+        r.backlog.unseen_episodes = 150;
+        r.backlog.bytes = 120_000_000_000;
+        r.aged.add("film", "vps", "membre", 15_000_000_000);
+        r.aged.add("série", "vps", "aucune", 10_000_000_000);
+        r.all.add("film", "vps", "membre", 15_000_000_000);
+        r.all.add("série", "seedbox", "aucune", 10_000_000_000);
+        r.russian.series = 2;
+        r.russian.episodes = 120;
+        r.russian.episodes_seen = 3;
+        r
+    }
+
+    #[test]
+    fn catalogue_report_shows_totals_lists_and_dates() {
+        let html = catalogue_section(Some(&catalogue_sample()), 1_000_000);
+        assert!(html.contains("calculé il y a 3 h"), "{html}");
+        assert!(html.contains("Jamais vus depuis 60 j ou plus"), "{html}");
+        assert!(html.contains("2 titre(s)"), "{html}");
+        assert!(
+            html.contains("25,0 Go · 2,5 % du catalogue (1,00 To)"),
+            "{html}"
+        );
+        assert!(
+            html.contains("12 titre(s)") && html.contains("40,0 % du catalogue"),
+            "{html}"
+        );
+        assert!(
+            html.contains("3 série(s)") && html.contains("150 épisode(s) non vus"),
+            "{html}"
+        );
+        // 10 titres plus récents que le seuil, le prochain dans 3 jours (arrondi au jour supérieur)
+        assert!(html.contains("10 titre(s) jamais vus (375 Go)"), "{html}");
+        assert!(
+            html.contains("le prochain atteint le seuil dans 3 j"),
+            "{html}"
+        );
+        assert!(
+            html.contains("1 fiche(s) (0,2 Go) sans élément Jellyfin"),
+            "{html}"
+        );
+        assert!(
+            html.contains("Voie russe : 2 série(s) (120 épisode(s) disponible(s), 3 lu(s)) · 0 film(s) (0 vu(s))"),
+            "{html}"
+        );
+        // liste triée par taille telle que le calcul l'a rendue, avec la sorte de demandeur
+        assert!(html.find("Gros film").unwrap() < html.find("Une série").unwrap());
+        assert!(
+            html.contains(r#"<td class="w">film · vps</td>"#) && html.contains("15,0 Go"),
+            "{html}"
+        );
+        assert!(
+            html.contains(">membre</td>") && html.contains(">aucune</td>"),
+            "{html}"
+        );
+        assert!(html.contains("il y a 90 j"), "{html}");
+        assert!(
+            html.contains(">5/100</td>"),
+            "série commencée : vus sur total"
+        );
+        assert!(html.contains(">24 ép.</td>"), "{html}");
+        // les deux tableaux sont nommés
+        assert!(
+            html.contains("(2 sur 2)") && html.contains("(1 sur 3, volume non vu estimé)"),
+            "{html}"
+        );
+    }
+
+    /// Consultation seule : ni formulaire, ni bouton, ni lien, ni script — rien qui puisse supprimer quoi que ce soit.
+    #[test]
+    fn catalogue_report_has_nothing_to_click() {
+        let html = catalogue_section(Some(&catalogue_sample()), 1_000_000);
+        for forbidden in [
+            "<form", "<button", "<a ", "<input", "<script", "onclick", "method=", "href=",
+        ] {
+            assert!(
+                !html.contains(forbidden),
+                "{forbidden} dans la section : {html}"
+            );
+        }
+    }
+
+    #[test]
+    fn catalogue_report_escapes_every_title() {
+        let trap = r#"<img src=x onerror="alert(1)">"#;
+        let mut r = catalogue_sample();
+        r.listed[0].title = format!("Film {trap}");
+        r.backlog_listed[0].title = format!("Série <svg onload=alert(2)> {trap}");
+        r.listed[1].kind = "<b>sorte</b>".into();
+        r.listed[1].requester = "<i>qui</i>".into();
+        r.aged.add("<u>x</u>", "<s>y</s>", "<em>z</em>", 1);
+        r.all.add("<u>x</u>", "<s>y</s>", "<em>z</em>", 1);
+        let html = catalogue_section(Some(&r), 1_000_000);
+        for tag in [
+            "<img", "<svg", "<b>sorte", "<i>qui", "<u>x", "<s>y", "<em>z",
+        ] {
+            assert!(!html.contains(tag), "{tag} passé tel quel : {html}");
+        }
+        assert!(
+            html.contains("Film &lt;img src=x onerror=&quot;alert(1)&quot;&gt;"),
+            "{html}"
+        );
+        assert!(html.contains("&lt;svg onload=alert(2)&gt;"), "{html}");
+        // et la page entière, par `render`
+        let runs = BTreeMap::new();
+        let page = render(&PageData {
+            now: 1_000_000,
+            runs: &runs,
+            tasks: &[],
+            vps_disk_pct: None,
+            seedbox: None,
+            mount_ok: None,
+            stuck_torrents: &[],
+            blocked_seasons: &[],
+            canary: None,
+            catalogue: Some(&r),
+            alerts: &AlertStats::default(),
+        });
+        assert!(page.contains("Catalogue jamais regardé") && !page.contains("<img"));
+    }
+
+    #[test]
+    fn catalogue_report_before_the_first_run_and_without_candidates() {
+        let waiting = catalogue_section(None, 1_000_000);
+        assert!(waiting.contains("pas encore calculé"), "{waiting}");
+        // catalogue vide ou rien à examiner : ni division par zéro, ni tableau vide
+        let empty = catalogue_section(
+            Some(&CatalogueReport {
+                at: 1_000_000,
+                min_age_days: 60,
+                ..Default::default()
+            }),
+            1_000_000,
+        );
+        assert!(
+            empty.contains("0 titre(s)") && empty.contains("0,0 % du catalogue"),
+            "{empty}"
+        );
+        assert!(!empty.contains("<table"), "{empty}");
+        assert!(
+            empty.contains("Playback Reporting n&#39;a pas répondu"),
+            "{empty}"
+        );
+        // le prochain titre a déjà passé le seuil : pas de « dans -3 j »
+        let mut r = catalogue_sample();
+        r.next_aged_at = Some(1_000_000 - 10);
+        assert!(catalogue_section(Some(&r), 1_000_000).contains("au prochain calcul"));
     }
 }

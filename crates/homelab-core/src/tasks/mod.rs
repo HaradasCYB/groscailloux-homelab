@@ -5,6 +5,7 @@ pub mod anime_library;
 pub mod auto_import;
 pub mod backup;
 pub mod backup_watch;
+pub mod catalogue_report;
 pub mod cert_watch;
 pub mod cleanup;
 pub mod deletion_cleanup;
@@ -97,6 +98,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(cert_watch::CertWatch),
         Box::new(backup_watch::BackupWatch),
         Box::new(diun_watch::DiunWatch),
+        Box::new(catalogue_report::CatalogueReportTask),
         Box::new(seedbox_refresh::SeedboxRefresh),
         Box::new(tracker_ratio::TrackerRatio),
         Box::new(stuck_handler::StuckHandler),
