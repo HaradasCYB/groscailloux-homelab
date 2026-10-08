@@ -262,8 +262,11 @@ grace_secs = 30
 max_actions_per_run = 5
 
 [tasks.vo_native_guard]
-# Avec [accounts] vo_native = true : un compte en « Langue d'origine » qui ouvre une session vidéo depuis un client hors
-# de vo_native_clients (appli Android TV, Fire TV, Chromecast…) revient sur vo_audio_language avant sa première lecture.
+# Avec [accounts] vo_native = true : un compte en « Langue d'origine » qui a une session ouverte (même sans capacités
+# déclarées : appli Android TV reprise après un redémarrage de Jellyfin) ou un appareil enregistré sur un client hors de
+# vo_native_clients (appli Android TV, Fire TV, Chromecast…) revient sur vo_audio_language. En général avant sa première
+# lecture sur ce client ; sinon dès cette lecture (sondage toutes les interval_secs) : la première lecture d'un appareil
+# connecté moins de 30 s plus tôt peut encore partir en VF sur un titre touché par le bogue 12.1.
 # Ne fait rien tant que vo_native = false (aucun appel à Jellyfin).
 interval_secs = 30
 
@@ -527,11 +530,14 @@ vo_audio_language = "jpn"
 # remplie (procédure : homelabctl accounts vo-native --dry-run). false = rien ne change.
 # Bogue de Jellyfin 12.1 : une piste d'origine marquée « Original » mais pas par défaut est perdue par les clients qui
 # ne demandent pas la piste calculée par le serveur (Jellyfin Android TV, Fire TV : VF au lieu du japonais d'aujourd'hui).
-# Un compte ne passe donc en « Langue d'origine » que s'il ne lit QUE par les clients ci-dessous (jellyfin-web et les
-# applis qui l'embarquent) depuis vo_native_days jours ; sinon il garde vo_audio_language, comme aujourd'hui.
+# Un compte ne passe donc en « Langue d'origine » que si aucun autre client que ceux de vo_native_clients (jellyfin-web
+# et les applis qui l'embarquent) n'apparaît pour lui : ni dans ses lectures depuis vo_native_days jours (Playback
+# Reporting), ni dans ses sessions ouvertes, ni dans ses appareils enregistrés ; sinon il garde vo_audio_language, comme
+# aujourd'hui. vo_native_ignored_clients : services qui se connectent au nom d'un membre sans rien lire (Seerr).
 # Compromis possible (non imposé) : y ajouter "Jellyfin Android TV", au prix de la VF sur ces titres-là.
 vo_native = false
 vo_native_clients = ["Jellyfin Web", "Jellyfin Desktop", "Jellyfin iOS", "Jellyfin for Android", "Jellyfin for WebOS", "Jellyfin for Tizen"]
+vo_native_ignored_clients = ["Seerr", "Jellyseerr"]
 vo_native_days = 60
 
 [indexers]

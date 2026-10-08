@@ -282,6 +282,10 @@ pub struct Accounts {
     /// l'embarquent) : seul un compte qui ne lit QUE par eux passe en « Langue d'origine » ; les autres gardent
     /// `vo_audio_language` (nom `Client` des sessions Jellyfin, `ClientName` de Playback Reporting, casse ignorée).
     pub vo_native_clients: Vec<String>,
+    /// Services connus qui ouvrent une session ou un appareil au nom d'un membre sans jamais rien lire (Seerr) : ni sûrs
+    /// ni hors liste. Tout autre client compte, même sans capacités déclarées (appli Android TV reprise après un
+    /// redémarrage de Jellyfin : `PlayableMediaTypes` vide).
+    pub vo_native_ignored_clients: Vec<String>,
     /// Historique de lecture (Playback Reporting) lu pour cette décision, en jours.
     pub vo_native_days: u32,
 }
@@ -313,6 +317,7 @@ impl Default for Accounts {
             ]
             .map(String::from)
             .to_vec(),
+            vo_native_ignored_clients: vec!["Seerr".into(), "Jellyseerr".into()],
             vo_native_days: 60,
         }
     }
@@ -687,8 +692,9 @@ impl Default for CatalogueReport {
     }
 }
 
-/// Garde du mode VO « Langue d'origine » : un compte passé en « Langue d'origine » qui ouvre une session vidéo depuis
-/// un client hors de `[accounts] vo_native_clients` revient sur `vo_audio_language` (voir `tasks::vo_native_guard`).
+/// Garde du mode VO « Langue d'origine » : un compte passé en « Langue d'origine » qui a une session ouverte ou un
+/// appareil enregistré sur un client hors de `[accounts] vo_native_clients` revient sur `vo_audio_language` (voir
+/// `tasks::vo_native_guard`).
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct VoNativeGuard {

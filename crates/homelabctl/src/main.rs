@@ -70,8 +70,9 @@ enum Cmd {
     /// Comptes Jellyfin : list ; on|off <compte> (premium ou suspendu) ; delete <compte> --yes ;
     /// limits (applique `max_devices_per_user`, appareils connectés par compte ; 0 = illimité) ;
     /// link <compte> (renvoie un lien de bienvenue : définir ou changer son mot de passe) ;
-    /// vo-native (comptes en mode VO → « Langue d'origine », sauf ceux qui lisent par un client hors de
-    /// `vo_native_clients`) ; vo-classic (retour à `vo_audio_language`) ; les deux avec --dry-run d'abord
+    /// vo-native (comptes en mode VO → « Langue d'origine », sauf ceux qui ont lu, ont une session ouverte ou un
+    /// appareil enregistré sur un client hors de `vo_native_clients`) ; vo-classic (retour à `vo_audio_language`) ;
+    /// les deux avec --dry-run d'abord
     Accounts {
         #[arg(value_parser = ["list", "on", "off", "delete", "limits", "link", "vo-native", "vo-classic"])]
         action: String,

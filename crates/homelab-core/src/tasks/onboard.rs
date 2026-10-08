@@ -180,7 +180,8 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
     }
     // langue d'un compte neuf : `fr` avec les réglages d'origine (`fre` + `Smart`) ; si l'onboarding est réglé sur la
     // VO, mêmes règles que Mon compte (« Langue d'origine » quand `vo_native = true` : un compte neuf n'a rien lu, la
-    // garde `vo_native_guard` le ramène sur `vo_audio_language` à sa première session sur un client hors liste)
+    // garde `vo_native_guard` le ramène sur `vo_audio_language` dès sa première session ou son premier appareil sur un
+    // client hors liste)
     let mode = vo_native::onboarding_mode(skip);
     let mut prefs = vo_native::prefs_for(mode, skip, false);
     let mut native = false;

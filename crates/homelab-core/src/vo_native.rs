@@ -18,14 +18,25 @@
 //! préférence vaut pour **tout** le compte : aucun réglage ne donne « Langue d'origine » à jellyfin-web et `jpn` à
 //! l'appli Android TV d'un même membre.
 //!
-//! **Règle sans régression** : un compte en VO ne passe en « Langue d'origine » que s'il n'a lu, depuis
-//! `vo_native_days` jours, QUE par des clients de `vo_native_clients` (jellyfin-web et les applis qui l'embarquent :
-//! même piste qu'aujourd'hui pour un animé dont la fiche porte sa langue d'origine, la VO des autres titres en plus, et
-//! le filet de Mon compte dans tous les cas). Sinon il est **gardé** sur `vo_audio_language`, exactement comme
-//! aujourd'hui. La tâche `vo_native_guard` ramène sur `vo_audio_language` un compte en « Langue d'origine » qui ouvre
-//! ensuite une session vidéo depuis un autre client, avant sa première lecture. Compromis possible, au choix du
-//! propriétaire et jamais par défaut : ajouter `Jellyfin Android TV` à la liste (VF sur les titres touchés par le bogue,
-//! que `exposure` compte : 0 au 09/10, le drapeau n'étant en base que pour les fichiers sondés depuis la 12.1).
+//! **Règle sans régression** : un compte en VO ne passe en « Langue d'origine » que si aucun client hors de
+//! `vo_native_clients` (jellyfin-web et les applis qui l'embarquent : même piste qu'aujourd'hui pour un animé dont la
+//! fiche porte sa langue d'origine, la VO des autres titres en plus, et le filet de Mon compte dans tous les cas)
+//! n'apparaît pour lui, à trois endroits : ses lectures depuis `vo_native_days` jours (Playback Reporting), ses sessions
+//! ouvertes et ses appareils enregistrés (`GET /Devices`, `LastUserId`). Sinon il est **gardé** sur
+//! `vo_audio_language`, exactement comme aujourd'hui.
+//!
+//! Toute session compte, qu'elle déclare des capacités ou non : l'appli Android TV 0.19.10 ne les envoie
+//! (`PlayableMediaTypes`) qu'à son démarrage à froid, et Jellyfin ne les garde qu'en mémoire. Après un redémarrage de
+//! Jellyfin, une appli reprise de l'arrière-plan a donc une session sans capacités (2 sessions Android TV sur 2 en prod
+//! le 09/10). Seuls les services connus qui ne lisent jamais (`vo_native_ignored_clients` : Seerr) sont écartés, par
+//! leur nom.
+//!
+//! La tâche `vo_native_guard` ramène sur `vo_audio_language` un compte en « Langue d'origine » qui a ensuite une session
+//! ou un appareil sur un autre client : en général avant sa première lecture sur ce client, sinon dès cette lecture
+//! (sondage toutes les `interval_secs`). Reste un trou étroit : la première lecture d'un appareil neuf lancée moins d'un
+//! intervalle après sa connexion, sur un titre touché par le bogue ou sans langue d'origine. Compromis possible, au
+//! choix du propriétaire et jamais par défaut : ajouter `Jellyfin Android TV` à la liste (VF sur les titres touchés par
+//! le bogue, que `exposure` compte : 0 au 09/10, le drapeau n'étant en base que pour les fichiers sondés depuis la 12.1).
 //!
 //! Limite côté jellyfin-web (bundle 12.1 relu le 09/10) : `PlaybackInfo` ne porte `AudioStreamIndex` que si la lecture en
 //! fournit un (bouton Lire de la fiche, qui le lit dans la fiche du compte) ; lancée d'une carte (accueil, reprise), elle
@@ -160,13 +171,25 @@ pub fn is_safe(client: &str, safe: &[String]) -> bool {
     !c.is_empty() && safe.iter().any(|s| s.trim().eq_ignore_ascii_case(c))
 }
 
-/// Clients utilisés qui ne sont pas dans la liste sûre, triés et sans doublon (nom vide → `UNKNOWN_CLIENT`).
+/// Service connu qui se connecte au nom d'un membre sans jamais lire (`vo_native_ignored_clients` : Seerr), même
+/// comparaison que `is_safe` ; un nom vide ne l'est jamais.
+pub fn is_ignored(client: &str, ignored: &[String]) -> bool {
+    is_safe(client, ignored)
+}
+
+/// Client qui garde un compte sur `vo_audio_language` : ni dans la liste sûre, ni un service ignoré. Un nom vide
+/// (client inconnu) en est un.
+pub fn is_unsafe(client: &str, cfg: &Accounts) -> bool {
+    !is_safe(client, &cfg.vo_native_clients) && !is_ignored(client, &cfg.vo_native_ignored_clients)
+}
+
+/// Clients utilisés qui gardent le compte (`is_unsafe`), triés et sans doublon (nom vide → `UNKNOWN_CLIENT`).
 pub fn unsafe_clients<'a>(
     used: impl IntoIterator<Item = &'a String>,
-    safe: &[String],
+    cfg: &Accounts,
 ) -> Vec<String> {
     used.into_iter()
-        .filter(|c| !is_safe(c, safe))
+        .filter(|c| is_unsafe(c, cfg))
         .map(|c| {
             let c = c.trim();
             if c.is_empty() {
@@ -265,29 +288,35 @@ pub fn clients_from_rows(
     Ok(out)
 }
 
-/// Sessions vidéo ouvertes : (id compact du compte, client). Une session compte si elle lit quelque chose ou si son
-/// client sait lire de la vidéo (`PlayableMediaTypes`) ; un service connecté avec un compte (Seerr) n'y est pas.
-pub fn video_session_clients(sessions: &[Value]) -> Vec<(String, String)> {
-    sessions
+/// (id compact du compte, client) de chaque élément qui a un compte : `user_key` et `client_key` nomment les champs.
+fn pairs(items: &[Value], user_key: &str, client_key: &str) -> Vec<(String, String)> {
+    items
         .iter()
-        .filter(|s| {
-            s.get("NowPlayingItem").is_some_and(|i| !i.is_null())
-                || s.get("PlayableMediaTypes")
-                    .and_then(Value::as_array)
-                    .is_some_and(|a| {
-                        a.iter()
-                            .any(|t| t.as_str().is_some_and(|t| t.eq_ignore_ascii_case("Video")))
-                    })
-        })
         .filter_map(|s| {
-            let user = compact(s.get("UserId").and_then(Value::as_str)?);
+            let user = compact(s.get(user_key).and_then(Value::as_str)?);
             if user.is_empty() {
                 return None;
             }
-            let client = s.get("Client").and_then(Value::as_str).unwrap_or("");
+            let client = s.get(client_key).and_then(Value::as_str).unwrap_or("");
             Some((user, client.trim().to_string()))
         })
         .collect()
+}
+
+/// Sessions ouvertes des membres : (id compact du compte, client). **Toutes** comptent, capacités déclarées ou non :
+/// l'appli Android TV reprise après un redémarrage de Jellyfin a `PlayableMediaTypes = []` jusqu'à sa première lecture
+/// (2 sur 2 en prod le 09/10) ; les services qui ne lisent pas sont écartés ensuite par leur nom (`is_unsafe`). Une
+/// session sans compte (clé d'API : homelabd, Homarr) n'y est pas.
+pub fn session_clients(sessions: &[Value]) -> Vec<(String, String)> {
+    pairs(sessions, "UserId", "Client")
+}
+
+/// Appareils enregistrés (`GET /Devices`, liste complète : son filtre `?userId=` est ignoré) : (id compact du dernier
+/// compte, appli). Un appareil connecté reste là jusqu'à sa déconnexion : l'appli Android TV d'un compte est vue sans
+/// attendre qu'elle soit ouverte ou qu'elle lise. Limite : un appareil partagé n'indique que son dernier compte (les
+/// autres sont vus par leurs lectures et leurs sessions).
+pub fn device_clients(devices: &[Value]) -> Vec<(String, String)> {
+    pairs(devices, "LastUserId", "AppName")
 }
 
 /// Sens d'une migration des comptes en mode VO.
@@ -336,7 +365,8 @@ impl Step {
 }
 
 /// Plan d'une migration : chaque compte en mode VO (les comptes `fr` ne sont jamais touchés), trié par nom.
-/// - `Native` : « Langue d'origine » si aucun client hors liste dans `clients` (id compact → clients), sinon
+/// - `Native` : « Langue d'origine » si aucun client hors liste dans `clients` (id compact → clients de ses lectures,
+///   sessions et appareils : `clients_by_user`), sinon
 ///   `vo_audio_language` — y compris pour un compte déjà en « Langue d'origine » qui lit maintenant par un client hors
 ///   liste ;
 /// - `Classic` : un compte en « Langue d'origine » revient à `vo_audio_language` ; les autres ne bougent pas.
@@ -355,10 +385,8 @@ pub fn plan(
             let from = config_str(u, "AudioLanguagePreference").to_string();
             let (to, outcome, found) = match dir {
                 Direction::Native => {
-                    let found = unsafe_clients(
-                        clients.get(&compact(&id)).into_iter().flatten(),
-                        &cfg.vo_native_clients,
-                    );
+                    let found =
+                        unsafe_clients(clients.get(&compact(&id)).into_iter().flatten(), cfg);
                     let (to, outcome) = native_target(cfg, &found);
                     (to, outcome, found)
                 }
@@ -393,21 +421,33 @@ pub struct Hold {
     pub clients: Vec<String>,
 }
 
-/// Comptes en mode VO réglés sur « Langue d'origine » qui ont une session vidéo ouverte depuis un client hors liste. Un
-/// compte en mode `fr` qui a choisi « Langue d'origine » lui-même dans jellyfin-web n'est pas concerné (son choix).
-pub fn guard_holds(sessions: &[Value], users: &[Value], cfg: &Accounts) -> Vec<Hold> {
+/// Compte en mode VO réglé sur « Langue d'origine » (ceux que surveille la garde). Un compte en mode `fr` qui a choisi
+/// « Langue d'origine » lui-même dans jellyfin-web n'en est pas (son choix).
+pub fn is_native_vo(user: &Value, cfg: &Accounts) -> bool {
+    mode_of_user(user, &cfg.vo_audio_language) == Mode::Vo
+        && is_native(config_str(user, "AudioLanguagePreference"))
+}
+
+/// Comptes en mode VO réglés sur « Langue d'origine » qui ont une session ouverte (capacités déclarées ou non) ou un
+/// appareil enregistré sur un client hors liste (`is_unsafe`).
+pub fn guard_holds(
+    sessions: &[Value],
+    devices: &[Value],
+    users: &[Value],
+    cfg: &Accounts,
+) -> Vec<Hold> {
     let mut seen: HashMap<String, BTreeSet<String>> = HashMap::new();
-    for (user, client) in video_session_clients(sessions) {
-        if !is_safe(&client, &cfg.vo_native_clients) {
+    for (user, client) in session_clients(sessions)
+        .into_iter()
+        .chain(device_clients(devices))
+    {
+        if is_unsafe(&client, cfg) {
             seen.entry(user).or_default().insert(client);
         }
     }
     let mut out: Vec<Hold> = users
         .iter()
-        .filter(|u| {
-            mode_of_user(u, &cfg.vo_audio_language) == Mode::Vo
-                && is_native(config_str(u, "AudioLanguagePreference"))
-        })
+        .filter(|u| is_native_vo(u, cfg))
         .filter_map(|u| {
             let id = u.get("Id").and_then(Value::as_str)?;
             let found = seen.get(&compact(id))?;
@@ -418,7 +458,7 @@ pub fn guard_holds(sessions: &[Value], users: &[Value], cfg: &Accounts) -> Vec<H
                     .and_then(Value::as_str)
                     .unwrap_or("?")
                     .to_string(),
-                clients: unsafe_clients(found.iter(), &cfg.vo_native_clients),
+                clients: unsafe_clients(found.iter(), cfg),
             })
         })
         .collect();
@@ -641,7 +681,8 @@ pub async fn exposure_scan(jf: &JellyfinClient, admin: &str) -> Result<Exposure>
     Ok(exposure(&videos, &series_ol))
 }
 
-/// Clients de lecture par compte : Playback Reporting sur `days` jours + sessions vidéo ouvertes.
+/// Clients par compte : lectures de Playback Reporting sur `days` jours, sessions ouvertes (toutes) et appareils
+/// enregistrés. Une des trois sources illisible = erreur (le compte est gardé, jamais décidé sur une vue partielle).
 pub async fn clients_by_user(
     jf: &JellyfinClient,
     days: u32,
@@ -652,7 +693,11 @@ pub async fn clients_by_user(
         .context("Playback Reporting illisible")?;
     let mut out = clients_from_rows(&cols, &rows)?;
     let sessions = jf.sessions().await.context("sessions Jellyfin")?;
-    for (user, client) in video_session_clients(&sessions) {
+    let devices = jf.devices().await.context("appareils Jellyfin")?;
+    for (user, client) in session_clients(&sessions)
+        .into_iter()
+        .chain(device_clients(&devices))
+    {
         out.entry(user).or_default().insert(client);
     }
     Ok(out)
@@ -667,8 +712,9 @@ pub struct Decision {
     pub clients: Vec<String>,
 }
 
-/// Préférences à poser quand un compte choisit `mode`. Bascule active : historique du compte lu (Playback Reporting et
-/// sessions) ; s'il est illisible, le compte est gardé (`UNREADABLE`), jamais passé en « Langue d'origine » à l'aveugle.
+/// Préférences à poser quand un compte choisit `mode`. Bascule active : clients du compte lus (Playback Reporting,
+/// sessions, appareils) ; s'ils sont illisibles, le compte est gardé (`UNREADABLE`), jamais passé en « Langue
+/// d'origine » à l'aveugle.
 pub async fn decide(jf: &JellyfinClient, cfg: &Accounts, user_id: &str, mode: Mode) -> Decision {
     if mode == Mode::Fr || !cfg.vo_native {
         return Decision {
@@ -678,10 +724,7 @@ pub async fn decide(jf: &JellyfinClient, cfg: &Accounts, user_id: &str, mode: Mo
         };
     }
     let found = match clients_by_user(jf, cfg.vo_native_days).await {
-        Ok(m) => unsafe_clients(
-            m.get(&compact(user_id)).into_iter().flatten(),
-            &cfg.vo_native_clients,
-        ),
+        Ok(m) => unsafe_clients(m.get(&compact(user_id)).into_iter().flatten(), cfg),
         Err(e) => {
             warn!(
                 task = "vo_native",
@@ -941,16 +984,31 @@ mod tests {
         ] {
             assert!(!is_safe(c, &safe), "{c:?}");
         }
-        let used = set(&["Jellyfin Web", "Chromecast", "", "Jellyfin Android TV"]);
+        let used = set(&[
+            "Jellyfin Web",
+            "Chromecast",
+            "",
+            "Jellyfin Android TV",
+            "Seerr",
+            " jellyseerr ",
+        ]);
         assert_eq!(
-            unsafe_clients(used.iter(), &safe),
+            unsafe_clients(used.iter(), &cfg()),
             vec![
                 UNKNOWN_CLIENT.to_string(),
                 "Chromecast".into(),
                 "Jellyfin Android TV".into()
             ]
         );
-        assert!(unsafe_clients(set(&["Jellyfin Web", "Jellyfin iOS"]).iter(), &safe).is_empty());
+        assert!(unsafe_clients(
+            set(&["Jellyfin Web", "Jellyfin iOS", "Seerr"]).iter(),
+            &cfg()
+        )
+        .is_empty());
+        // les services ignorés ne gardent pas un compte, mais ne le rendent pas « sûr » non plus : vide reste inconnu
+        assert!(!is_unsafe("Seerr", &cfg()));
+        assert!(is_unsafe("", &cfg()));
+        assert!(!is_ignored("", &cfg().vo_native_ignored_clients));
     }
 
     #[test]
@@ -971,20 +1029,53 @@ mod tests {
         assert!(playback_sql(60).contains("'-60 day'"));
     }
 
+    /// Sessions au format de la prod (09/10, après un redémarrage de Jellyfin) : l'appli Android TV reprise de
+    /// l'arrière-plan n'a déclaré aucune capacité (`PlayableMediaTypes: []`) et ne lit rien. Elle compte quand même.
     #[test]
-    fn only_video_sessions_count() {
+    fn every_member_session_counts_whatever_its_capabilities() {
         let sessions = vec![
-            json!({ "UserId": "A-1", "Client": "Jellyfin Android TV", "PlayableMediaTypes": ["Audio", "Video"] }),
+            json!({ "UserId": "A-1", "Client": "Jellyfin Android TV", "ApplicationVersion": "0.19.10", "PlayableMediaTypes": [] }),
             json!({ "UserId": "b2", "Client": "Seerr", "PlayableMediaTypes": [] }),
             json!({ "UserId": "c3", "Client": "Chromecast", "NowPlayingItem": { "Id": "x" } }),
-            json!({ "UserId": "d4", "Client": "Jellyfin Web" }),
+            json!({ "UserId": "d4", "Client": "Jellyfin Web", "PlayableMediaTypes": ["Audio", "Video"] }),
+            json!({ "UserId": "e5" }),
+            // clé d'API (homelabd, Homarr) : aucune session de membre
             json!({ "Client": "Jellyfin Web", "PlayableMediaTypes": ["Video"] }),
+            json!({ "UserId": "", "Client": "Jellyfin Android TV" }),
         ];
+        let got = session_clients(&sessions);
         assert_eq!(
-            video_session_clients(&sessions),
+            got,
             vec![
                 ("a1".to_string(), "Jellyfin Android TV".to_string()),
+                ("b2".to_string(), "Seerr".to_string()),
                 ("c3".to_string(), "Chromecast".to_string()),
+                ("d4".to_string(), "Jellyfin Web".to_string()),
+                ("e5".to_string(), String::new()),
+            ]
+        );
+        // ce qui garde un compte : Android TV, Chromecast et le client sans nom ; ni Seerr ni jellyfin-web
+        let c = cfg();
+        let keep: Vec<&str> = got
+            .iter()
+            .filter(|(_, cl)| is_unsafe(cl, &c))
+            .map(|(u, _)| u.as_str())
+            .collect();
+        assert_eq!(keep, vec!["a1", "c3", "e5"]);
+    }
+
+    #[test]
+    fn registered_devices_are_read_by_last_user() {
+        let devices = vec![
+            json!({ "Id": "dev1", "AppName": "Jellyfin Android TV", "AppVersion": "0.19.10", "LastUserId": "AB-CD", "Capabilities": { "PlayableMediaTypes": [] } }),
+            json!({ "Id": "dev2", "AppName": "Seerr", "LastUserId": "abcd" }),
+            json!({ "Id": "dev3", "AppName": "Jellyfin Web" }),
+        ];
+        assert_eq!(
+            device_clients(&devices),
+            vec![
+                ("abcd".to_string(), "Jellyfin Android TV".to_string()),
+                ("abcd".to_string(), "Seerr".to_string()),
             ]
         );
     }
@@ -1099,24 +1190,50 @@ mod tests {
             user("j-3", "Déjà jpn", Some("jpn"), "Always"),
             user("s-4", "Choix perso", Some("OriginalLanguage"), "Smart"),
             user("n-5", "Natif Seerr", Some("OriginalLanguage"), "Always"),
+            user("n-6", "Natif appareil", Some("OriginalLanguage"), "Always"),
         ];
+        // sessions au format de la prod : l'appli Android TV ouverte sans rien lire, sans capacités déclarées
         let sessions = vec![
-            json!({ "UserId": "N1", "Client": "Jellyfin Android TV", "PlayableMediaTypes": ["Video"] }),
-            json!({ "UserId": "n1", "Client": "Jellyfin Web", "PlayableMediaTypes": ["Video"] }),
+            json!({ "UserId": "N1", "Client": "Jellyfin Android TV", "PlayableMediaTypes": [] }),
+            json!({ "UserId": "n1", "Client": "Jellyfin Web", "PlayableMediaTypes": ["Audio", "Video"] }),
             json!({ "UserId": "n2", "Client": "Jellyfin Web", "NowPlayingItem": { "Id": "i" } }),
-            json!({ "UserId": "j3", "Client": "Jellyfin Android TV", "PlayableMediaTypes": ["Video"] }),
-            json!({ "UserId": "s4", "Client": "Jellyfin Android TV", "PlayableMediaTypes": ["Video"] }),
+            json!({ "UserId": "j3", "Client": "Jellyfin Android TV", "PlayableMediaTypes": [] }),
+            json!({ "UserId": "s4", "Client": "Jellyfin Android TV", "PlayableMediaTypes": [] }),
             json!({ "UserId": "n5", "Client": "Seerr", "PlayableMediaTypes": [] }),
         ];
-        let h = guard_holds(&sessions, &users, &c);
+        // n-6 : aucune session ouverte, mais l'appli Android TV est connectée sur son compte
+        let devices = vec![
+            json!({ "AppName": "Jellyfin Android TV", "LastUserId": "n6" }),
+            json!({ "AppName": "Seerr", "LastUserId": "n5" }),
+            json!({ "AppName": "Jellyfin Web", "LastUserId": "n2" }),
+        ];
+        let h = guard_holds(&sessions, &devices, &users, &c);
         assert_eq!(
             h,
-            vec![Hold {
-                user_id: "n-1".into(),
-                name: "Natif TV".into(),
-                clients: vec!["Jellyfin Android TV".into()]
-            }]
+            vec![
+                Hold {
+                    user_id: "n-6".into(),
+                    name: "Natif appareil".into(),
+                    clients: vec!["Jellyfin Android TV".into()]
+                },
+                Hold {
+                    user_id: "n-1".into(),
+                    name: "Natif TV".into(),
+                    clients: vec!["Jellyfin Android TV".into()]
+                },
+            ]
         );
+        // la même appli vue seulement par sa session (appareils illisibles ce passage) garde quand même le compte
+        let h = guard_holds(&sessions, &[], &users, &c);
+        assert_eq!(
+            h.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(),
+            vec!["Natif TV"]
+        );
+        // compromis choisi par le propriétaire : l'appli Android TV dans la liste sûre, plus rien à garder
+        let mut atv = c.clone();
+        atv.vo_native_clients.push("Jellyfin Android TV".into());
+        assert!(guard_holds(&sessions, &devices, &users, &atv).is_empty());
+        assert!(is_native_vo(&users[0], &c) && !is_native_vo(&users[3], &c));
     }
 
     #[test]
@@ -1272,11 +1389,23 @@ mod tests {
                 })))
                 .mount(server)
                 .await;
+            // format de la prod : l'appli Android TV ouverte sans rien lire n'a déclaré aucune capacité
             Mock::given(method("GET"))
                 .and(path("/Sessions"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                    { "UserId": "u3", "Client": "Jellyfin Android TV", "PlayableMediaTypes": ["Video"] }
+                    { "UserId": "u3", "Client": "Jellyfin Android TV", "PlayableMediaTypes": [] },
+                    { "UserId": "u1", "Client": "Seerr", "PlayableMediaTypes": [] }
                 ])))
+                .mount(server)
+                .await;
+            // u5 : appli Android TV connectée, jamais lue dans l'historique ni ouverte ; Seerr au nom de u1 (ignoré)
+            Mock::given(method("GET"))
+                .and(path("/Devices"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "Items": [
+                    { "Id": "d1", "AppName": "Jellyfin Android TV", "LastUserId": "U5" },
+                    { "Id": "d2", "AppName": "Seerr", "LastUserId": "u1" },
+                    { "Id": "d3", "AppName": "Jellyfin Web", "LastUserId": "u1" }
+                ] })))
                 .mount(server)
                 .await;
             Mock::given(method("POST"))
@@ -1318,6 +1447,7 @@ mod tests {
                 user("u2", "Chromecast", Some("jpn"), "Always"),
                 user("u3", "Session TV", Some("jpn"), "Always"),
                 user("u4", "Français", Some("fre"), "Smart"),
+                user("u5", "Appareil TV", Some("jpn"), "Always"),
             ]
         }
 
@@ -1356,14 +1486,22 @@ mod tests {
                 .unwrap();
             assert_eq!(m.applied, vec!["Web seul".to_string()]);
             assert!(m.errors.is_empty());
-            // u2 (Chromecast dans l'historique) et u3 (session Android TV ouverte) gardés sur jpn
+            // gardés sur jpn : u2 (Chromecast dans l'historique), u3 (appli Android TV ouverte sans capacités
+            // déclarées) et u5 (appli Android TV seulement enregistrée) ; pas u1 pour Seerr
             let held: Vec<_> = m
                 .steps
                 .iter()
                 .filter(|s| s.outcome == Outcome::Held)
-                .map(|s| s.name.as_str())
+                .map(|s| (s.name.as_str(), s.clients.clone()))
                 .collect();
-            assert_eq!(held, vec!["Chromecast", "Session TV"]);
+            assert_eq!(
+                held,
+                vec![
+                    ("Appareil TV", vec!["Jellyfin Android TV".to_string()]),
+                    ("Chromecast", vec!["Chromecast".to_string()]),
+                    ("Session TV", vec!["Jellyfin Android TV".to_string()]),
+                ]
+            );
             let post = posted(&server.received_requests().await.unwrap());
             assert_eq!(post.len(), 1);
             assert_eq!(post[0].0, "/Users/u1/Configuration");
@@ -1457,6 +1595,53 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn unreadable_devices_hold_the_account_and_abort_the_migration() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/Users"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(Value::Array(accounts())))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/user_usage_stats/submit_custom_query"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "colums": ["UserId", "ClientName"],
+                    "results": [["u1", "Jellyfin Web"]],
+                })))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/Sessions"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/Devices"))
+                .respond_with(ResponseTemplate::new(403))
+                .mount(&server)
+                .await;
+            let jf = client(&server);
+            let dir = tempfile::tempdir().unwrap();
+            let state = StateStore::load(&dir.path().join("state.json")).unwrap();
+            let on = Accounts {
+                vo_native: true,
+                ..Accounts::default()
+            };
+            assert!(
+                migrate(&jf, &on, dir.path(), &state, Direction::Native, false)
+                    .await
+                    .is_err()
+            );
+            assert!(posted(&server.received_requests().await.unwrap()).is_empty());
+            let d = decide(&jf, &on, "u1", Mode::Vo).await;
+            assert_eq!(
+                (d.prefs.audio.as_str(), d.outcome),
+                ("jpn", Some(Outcome::Held))
+            );
+            assert_eq!(d.clients, vec![UNREADABLE.to_string()]);
+        }
+
+        #[tokio::test]
         async fn classic_migration_reverts_native_accounts() {
             let server = MockServer::start().await;
             let mut users = accounts();
@@ -1522,6 +1707,16 @@ mod tests {
                 ("jpn", Some(Outcome::Held))
             );
             assert_eq!(d.clients, vec!["Chromecast".to_string()]);
+            // ni lecture ni session : son appli Android TV enregistrée suffit à le garder
+            let d = decide(&jf, &on, "u5", Mode::Vo).await;
+            assert_eq!(
+                (d.prefs.audio.as_str(), d.outcome, d.clients),
+                (
+                    "jpn",
+                    Some(Outcome::Held),
+                    vec!["Jellyfin Android TV".to_string()]
+                )
+            );
             // mode fr, ou bascule coupée : aucune lecture de l'historique, préférences d'aujourd'hui
             let before = server.received_requests().await.unwrap().len();
             let d = decide(&jf, &on, "u1", Mode::Fr).await;

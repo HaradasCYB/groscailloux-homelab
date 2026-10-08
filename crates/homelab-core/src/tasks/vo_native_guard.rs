@@ -1,13 +1,20 @@
 //! Garde du mode VO « Langue d'origine » (2026-10-08, lot 4 ; voir `crate::vo_native`).
 //!
-//! Avec `[accounts] vo_native = true`, un compte en mode VO ne passe en « Langue d'origine » que s'il ne lit que par des
-//! clients sûrs (`vo_native_clients`). Toutes les `interval_secs`, cette tâche lit les sessions Jellyfin : un compte en
-//! « Langue d'origine » qui a une session vidéo ouverte depuis un autre client (appli Android TV ou Fire TV, Chromecast,
-//! client tiers) revient sur `vo_audio_language`, avant sa première lecture sur ce client — sinon le bogue de Jellyfin
-//! 12.1 lui donnerait la VF là où il a le japonais aujourd'hui. La garde ne fait jamais l'inverse : repasser un compte
-//! gardé en « Langue d'origine » se fait par `homelabctl accounts vo-native` (historique relu).
+//! Avec `[accounts] vo_native = true`, un compte en mode VO ne passe en « Langue d'origine » que si aucun client hors de
+//! `vo_native_clients` n'apparaît pour lui (lectures, sessions, appareils). Toutes les `interval_secs`, cette tâche relit
+//! les comptes, puis, s'il y en a en « Langue d'origine », les sessions et les appareils Jellyfin : un compte en « Langue
+//! d'origine » qui a une session ouverte ou un appareil enregistré sur un autre client (appli Android TV ou Fire TV,
+//! Chromecast, client tiers) revient sur `vo_audio_language` — sinon le bogue de Jellyfin 12.1 lui donnerait la VF là où
+//! il a le japonais aujourd'hui. Toute session compte, même sans capacités déclarées : l'appli Android TV reprise après
+//! un redémarrage de Jellyfin a `PlayableMediaTypes = []` tant qu'elle ne lit rien. Le retour se fait en général avant
+//! la première lecture sur ce client ; sinon dès cette lecture (sondage toutes les `interval_secs`) : la première
+//! lecture d'un appareil connecté moins d'un intervalle plus tôt peut encore partir en VF sur un titre touché.
+//! La garde ne fait jamais l'inverse : repasser un compte gardé en « Langue d'origine » se fait par
+//! `homelabctl accounts vo-native` (clients relus).
 //!
-//! Interrupteur coupé : aucun appel à Jellyfin. Sessions toutes sûres : une seule lecture (`/Sessions`). Dry-run respecté.
+//! Interrupteur coupé : aucun appel à Jellyfin. Aucun compte en « Langue d'origine » : une seule lecture (`/Users`).
+//! Appareils illisibles : les sessions suffisent pour ce passage, qui finit en échec (alerte s'il dure). Dry-run
+//! respecté.
 
 use std::time::Duration;
 
@@ -46,20 +53,30 @@ impl Task for VoNativeGuard {
         if !a.vo_native {
             return Ok(Report::new(OFF, 0));
         }
-        let sessions = ctx.jellyfin.sessions().await?;
-        let any_unsafe = vo_native::video_session_clients(&sessions)
-            .iter()
-            .any(|(_, c)| !vo_native::is_safe(c, &a.vo_native_clients));
-        if !any_unsafe {
+        // comptes surveillés d'abord : sans compte en « Langue d'origine », rien d'autre à lire
+        let users = ctx.jellyfin.users().await?;
+        if !users.iter().any(|u| vo_native::is_native_vo(u, a)) {
             return Ok(Report::new(IDLE, 0));
         }
-        let users = ctx.jellyfin.users().await?;
-        let holds = vo_native::guard_holds(&sessions, &users, a);
-        if holds.is_empty() {
+        let sessions = ctx.jellyfin.sessions().await?;
+        let mut failed = Vec::new();
+        let devices = match ctx.jellyfin.devices().await {
+            Ok(d) => d,
+            Err(e) => {
+                warn!(
+                    task = "vo_native_guard",
+                    error = format!("{e:#}"),
+                    "appareils illisibles : sessions seules pour ce passage"
+                );
+                failed.push(format!("appareils illisibles : {e:#}"));
+                Vec::new()
+            }
+        };
+        let holds = vo_native::guard_holds(&sessions, &devices, &users, a);
+        if holds.is_empty() && failed.is_empty() {
             return Ok(Report::new(IDLE, 0));
         }
         let mut done = Vec::new();
-        let mut failed = Vec::new();
         for h in holds {
             let shown = format!("{} ({})", h.name, h.clients.join(", "));
             if ctx.dry_run {

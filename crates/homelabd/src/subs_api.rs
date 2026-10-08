@@ -275,8 +275,8 @@ struct LanguageBody {
 }
 
 /// POST /compte/api/language {mode: "fr"|"vo"} : préférences audio/sous-titres du compte. Mode VO :
-/// `[accounts] vo_audio_language` (`jpn`), ou « Langue d'origine » quand `vo_native = true` et que le compte ne lit que
-/// par des clients sûrs (`vo_native::decide`). `PlayDefaultAudioTrack` reste à `false` dans les deux modes : sinon
+/// `[accounts] vo_audio_language` (`jpn`), ou « Langue d'origine » quand `vo_native = true` et qu'aucun client hors
+/// liste n'apparaît pour le compte : lectures, sessions ouvertes, appareils enregistrés (`vo_native::decide`). `PlayDefaultAudioTrack` reste à `false` dans les deux modes : sinon
 /// Jellyfin lit la piste « par défaut » du fichier (la VF d'un MULTi) avant la langue préférée — SNK restait en VF en
 /// mode VO (2026-09-26).
 async fn set_language(
