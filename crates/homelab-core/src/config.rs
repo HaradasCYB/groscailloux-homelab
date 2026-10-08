@@ -274,6 +274,16 @@ pub struct Accounts {
     pub subtitle_mode: String,
     /// Langue audio du mode « VO » de Mon compte (japonais : les animés ; films et séries basculés côté client).
     pub vo_audio_language: String,
+    /// Bascule du mode « VO » vers la préférence audio native de Jellyfin 12 « Langue d'origine »
+    /// (`AudioLanguagePreference = "OriginalLanguage"`, voir `homelab_core::vo_native`). `false` : rien ne change, le
+    /// mode VO pose `vo_audio_language` et la tâche `vo_native_guard` ne fait rien.
+    pub vo_native: bool,
+    /// Clients qui demandent au serveur la piste qu'il a calculée pour le compte (jellyfin-web et les applis qui
+    /// l'embarquent) : seul un compte qui ne lit QUE par eux passe en « Langue d'origine » ; les autres gardent
+    /// `vo_audio_language` (nom `Client` des sessions Jellyfin, `ClientName` de Playback Reporting, casse ignorée).
+    pub vo_native_clients: Vec<String>,
+    /// Historique de lecture (Playback Reporting) lu pour cette décision, en jours.
+    pub vo_native_days: u32,
 }
 
 impl Default for Accounts {
@@ -292,6 +302,18 @@ impl Default for Accounts {
             subtitle_language: "fre".into(),
             subtitle_mode: "Smart".into(),
             vo_audio_language: "jpn".into(),
+            vo_native: false,
+            vo_native_clients: [
+                "Jellyfin Web",
+                "Jellyfin Desktop",
+                "Jellyfin iOS",
+                "Jellyfin for Android",
+                "Jellyfin for WebOS",
+                "Jellyfin for Tizen",
+            ]
+            .map(String::from)
+            .to_vec(),
+            vo_native_days: 60,
         }
     }
 }
@@ -516,6 +538,8 @@ pub struct Tasks {
     pub trending: Trending,
     pub playback_limit: PlaybackLimit,
     #[serde(default)]
+    pub vo_native_guard: VoNativeGuard,
+    #[serde(default)]
     pub playback_canary: PlaybackCanary,
     #[serde(default)]
     pub catalogue_report: CatalogueReport,
@@ -660,6 +684,20 @@ impl Default for CatalogueReport {
             max_backlog_listed: 15,
             user_pause_ms: 150,
         }
+    }
+}
+
+/// Garde du mode VO « Langue d'origine » : un compte passé en « Langue d'origine » qui ouvre une session vidéo depuis
+/// un client hors de `[accounts] vo_native_clients` revient sur `vo_audio_language` (voir `tasks::vo_native_guard`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct VoNativeGuard {
+    pub interval_secs: u64,
+}
+
+impl Default for VoNativeGuard {
+    fn default() -> Self {
+        Self { interval_secs: 30 }
     }
 }
 

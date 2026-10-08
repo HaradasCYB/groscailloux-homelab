@@ -103,6 +103,10 @@ pub struct State {
     /// valeur écrite pour pouvoir revenir en arrière (2026-10-08).
     #[serde(default)]
     pub original_language: BTreeMap<String, OriginalLanguageRecord>,
+    /// Mode VO « Langue d'origine » (`vo_native`) : dernier changement de langue audio fait par homelabd sur un compte
+    /// (id Jellyfin compact → avant, après, origine, clients hors liste vus), 2026-10-08.
+    #[serde(default)]
+    pub vo_native: BTreeMap<String, VoNativeRecord>,
     /// subtitle_sync : dernier essai par item Jellyfin (id → essai). Sans ça, un item que Jellyfin ne liste pas
     /// encore était repris toutes les 5 min (22/09 : 7 700 appels ssh et 6 000 rafraîchissements pour rien).
     #[serde(default)]
@@ -139,6 +143,26 @@ pub struct State {
 pub struct WatchAlert {
     pub at: i64,
     pub key: String,
+}
+
+/// Langue audio d'un compte en mode VO posée par homelabd (`vo_native`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VoNativeRecord {
+    pub at: i64,
+    pub name: String,
+    /// `migration` (`homelabctl accounts vo-native`), `retour` (`vo-classic`), `compte` (Mon compte), `onboarding`,
+    /// `garde` (tâche `vo_native_guard`).
+    pub source: String,
+    /// `native` (« Langue d'origine »), `held` (gardé sur `vo_audio_language` : client hors liste), `classic` (retour).
+    pub outcome: String,
+    /// `AudioLanguagePreference` avant et après.
+    #[serde(default)]
+    pub old: String,
+    #[serde(default)]
+    pub new: String,
+    /// Clients hors de `vo_native_clients` qui ont décidé `held`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clients: Vec<String>,
 }
 
 /// Passage de `original_language` sur une fiche.

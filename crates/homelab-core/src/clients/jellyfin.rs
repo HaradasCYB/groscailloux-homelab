@@ -638,6 +638,26 @@ impl JellyfinClient {
         self.post_user_config(user_id, &cfg).await
     }
 
+    /// Langue audio d'un compte en mode VO (`vo_native` : migration, retour, garde) : seule
+    /// `AudioLanguagePreference` change, avec la définition du mode VO de Mon compte (`PlayDefaultAudioTrack` et
+    /// mémorisation des pistes coupés) ; sous-titres et tout le reste gardés. Un seul aller-retour lecture/écriture.
+    pub async fn set_vo_audio(&self, user_id: &str, audio: &str) -> Result<()> {
+        let resp = self
+            .req(Method::GET, &format!("Users/{user_id}"))
+            .send_retry()
+            .await?;
+        let user = json(resp, "jellyfin Users/{id}").await?;
+        let mut cfg = user
+            .get("Configuration")
+            .cloned()
+            .context("compte Jellyfin sans Configuration")?;
+        cfg["AudioLanguagePreference"] = json!(audio);
+        cfg["PlayDefaultAudioTrack"] = json!(false);
+        cfg["RememberAudioSelections"] = json!(false);
+        cfg["RememberSubtitleSelections"] = json!(false);
+        self.post_user_config(user_id, &cfg).await
+    }
+
     async fn post_user_config(&self, user_id: &str, cfg: &Value) -> Result<()> {
         let resp = self
             .req(Method::POST, &format!("Users/{user_id}/Configuration"))

@@ -30,6 +30,7 @@ pub mod subscription_ops;
 pub mod subscriptions;
 pub mod tasks;
 pub mod torrent_file;
+pub mod vo_native;
 pub mod welcome;
 
 pub use config::{Config, Secrets};
