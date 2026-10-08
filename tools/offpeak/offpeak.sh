@@ -14,9 +14,14 @@
 #   sudo offpeak.sh --unschedule <nom>                       retirer une programmation
 #   offpeak.sh --list | --status <nom>                       travaux programmés, dernier résultat, journal
 #
+# offpeak.sh tourne TOUJOURS en deploy (dossier d'état, verrous et journaux communs à tous les travaux) : lancé en root
+# (sudo offpeak.sh …, ou une unité), il repasse en deploy et seule la commande tourne en root, par sudo -n.
+#
 # Options :
 #   --name NOM            nom du travail (a-z, 0-9, -) : verrou, marqueurs, journal (défaut : adhoc)
 #   --label TEXTE         libellé lisible dans le journal et le bilan
+#   --as root|deploy      utilisateur de la COMMANDE : deploy par défaut, root par sudo -n (redémarrage de l'hôte…) ;
+#                         sans --as, « sudo offpeak.sh » garde la commande en root
 #   --window HH:MM-HH:MM  créneau autorisé (peut passer minuit) ; hors créneau : rien n'est fait (code 3)
 #   --retry MIN           nouvel essai toutes les MIN minutes si une garde refuse, jusqu'à la fin du créneau (10 ; 0 = un essai)
 #   --max-wait MIN        sans --window : durée maximale d'attente des gardes (0 = un seul essai)
@@ -32,7 +37,8 @@
 #   --timeout SECONDES    durée maximale de la commande (3600) ; dépassée = échec
 #   --cd DOSSIER          dossier de travail de la commande (/opt/homelab)
 #   --no-gluetun-guard    ne pas réparer qBittorrent si la commande a recréé gluetun (réparé par défaut, voir plus bas)
-#   --state-dir DOSSIER   marqueurs et journaux (/opt/homelab/state/offpeak)
+#   --state-dir DOSSIER   marqueurs, journaux et verrou global (/opt/homelab/state/offpeak) : essais seulement, un
+#                         autre dossier = un autre verrou global
 #   --dry-run             gardes réelles, commande NON lancée, rien d'écrit, bilan affiché au lieu d'être envoyé ;
 #                         avec --schedule : montre la programmation (sans sudo) et n'installe rien
 #
@@ -40,13 +46,15 @@
 # 3 rien fait (hors créneau, gardes jamais vertes dans le créneau, autre passage en cours).
 #
 # La commande tourne avec un environnement vide (PATH, HOME, LANG, TMPDIR privé), entrée fermée, sortie complète dans
-# <state-dir>/<nom>/runs/<date>.log. Un seul travail hors pic à la fois (verrou global), et jamais pendant un service
-# lot3-* ou un autre homelab-offpeak@* actif.
+# <state-dir>/<nom>/runs/<date>.log. Un seul travail hors pic à la fois (verrou global : les autres attendent et
+# réessaient), et jamais pendant un service lot3-* actif.
 # Garde gluetun (piège de CLAUDE.md, 19/09 : qBittorrent coupé 11 h) : si la commande a recréé gluetun et que
 # qBittorrent est resté sur l'ancien espace réseau, il est recréé (--no-deps) et le port transféré reposé.
 set -uo pipefail
 export LANG=C.UTF-8 LC_ALL=C.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 umask 077
+ARGV=("$@")
+RUN_USER=deploy   # offpeak.sh lui-même (les Arrs et gluetun refusent root ; dossier d'état commun)
 SELF=$(readlink -f "$0")
 # shellcheck source=../lib/common.sh
 . "$(dirname "$SELF")/../lib/common.sh"
@@ -99,6 +107,7 @@ while [ $# -gt 0 ]; do
 done
 
 [[ $NAME =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || fail "nom invalide : « $NAME » (a-z, 0-9, -)"
+case "$AS" in ""|root|deploy) ;; *) fail "--as root|deploy" ;; esac
 for n in "$RETRY" "$MAXWAIT" "$TIMEOUT"; do [[ $n =~ ^[0-9]+$ ]] || fail "nombre attendu : « $n »"; done
 WIN_A="" WIN_B=""
 if [ -n "$WINDOW" ]; then read -r WIN_A WIN_B < <(parse_window "$WINDOW") || fail "créneau invalide : « $WINDOW » (HH:MM-HH:MM)"; fi
@@ -115,13 +124,19 @@ if [ "$MODE" = job ]; then
   # le fichier pilote une commande (peut-être en root) : il doit appartenir à root et n'être modifiable que par lui
   [ "$(stat -c '%u' "$f")" = 0 ] && [ $(( 0$(stat -c '%a' "$f") & 022 )) = 0 ] || fail "$f doit appartenir à root, sans droit d'écriture pour les autres"
   mapfile -d '' -t ARGS < "$f"
+  # l'utilisateur de la commande est celui du fichier (--as), jamais celui qui lance --job : un « sudo offpeak.sh --job »
+  # ne fait pas passer en root la commande d'un travail programmé en deploy
+  has_as=0
+  for x in "${ARGS[@]}"; do [ "$x" = -- ] && break; [ "$x" = --as ] && has_as=1; done
+  [ "$has_as" = 1 ] || ARGS=(--as deploy "${ARGS[@]}")
   exec "$SELF" "${ARGS[@]}"
 fi
 
 if [ "$MODE" = schedule ]; then
   [ "$NAME" != adhoc ] || fail "--schedule exige --name"
   [ ${#CMD[@]} -gt 0 ] || fail "commande absente (après --)"
-  case "${AS:-deploy}" in root|deploy) ;; *) fail "--as root|deploy" ;; esac
+  # l'unité tourne toujours en deploy (offpeak.sh) ; --as root va dans le .args : seule la commande passe en root
+  [ "$AS" = root ] && ORIG=(--as root "${ORIG[@]}")
   for at in "${SCHED[@]}"; do systemd-analyze calendar "$at" > /dev/null 2>&1 || fail "calendrier invalide : « $at »"; done
   if [ "$DRY" = 1 ]; then
     # à blanc : ce qui serait installé ; le travail lui-même tournera SANS --dry-run (retiré des arguments)
@@ -132,7 +147,7 @@ if [ "$MODE" = schedule ]; then
       kept+=("$x")
     done
     ORIG=("${kept[@]}")
-    echo "à blanc : installerait $UNIT.timer en tant que ${AS:-deploy}, passages : $(printf '%s ; ' "${SCHED[@]}" | sed 's/ ; $//')"
+    echo "à blanc : installerait $UNIT.timer (offpeak.sh en $RUN_USER, commande en ${AS:-deploy}), passages : $(printf '%s ; ' "${SCHED[@]}" | sed 's/ ; $//')"
     for at in "${SCHED[@]}"; do systemd-analyze calendar "$at" | sed -n 's/^ *Next elapse: /  prochain passage : /p'; done
     echo "  $JOBS_ETC/$NAME.args : $(printf '%q ' "${ORIG[@]}")"
     exit 0
@@ -141,16 +156,18 @@ if [ "$MODE" = schedule ]; then
   for u in homelab-offpeak@.service homelab-offpeak@.timer; do
     if ! cmp -s "$UNIT_SRC/$u" "/etc/systemd/system/$u"; then install -m 0644 -o root -g root "$UNIT_SRC/$u" "/etc/systemd/system/$u"; echo "installé /etc/systemd/system/$u"; fi
   done
-  install -d -m 0755 -o root -g root "$JOBS_ETC" "/etc/systemd/system/$UNIT.timer.d" "/etc/systemd/system/$UNIT.service.d"
+  install -d -m 0755 -o root -g root "$JOBS_ETC" "/etc/systemd/system/$UNIT.timer.d"
   tmp=$(mktemp "$JOBS_ETC/.$NAME.XXXXXX")
   printf '%s\0' "${ORIG[@]}" > "$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$JOBS_ETC/$NAME.args"
   { echo "# écrit par tools/offpeak/offpeak.sh --schedule le $(date '+%F %T')"; echo "[Timer]"; echo "OnCalendar="
     for at in "${SCHED[@]}"; do echo "OnCalendar=$at"; done; } > "/etc/systemd/system/$UNIT.timer.d/when.conf"
-  { echo "# écrit par tools/offpeak/offpeak.sh --schedule le $(date '+%F %T')"; echo "[Service]"
-    echo "User=${AS:-deploy}"; echo "Group=${AS:-deploy}"; } > "/etc/systemd/system/$UNIT.service.d/user.conf"
+  # avant le 2026-10-08, --as root posait User=root dans un drop-in : offpeak.sh tournait en root et rendait le dossier
+  # d'état inutilisable pour les travaux en deploy. Un tel drop-in restant est retiré.
+  rm -f "/etc/systemd/system/$UNIT.service.d/user.conf"
+  rmdir "/etc/systemd/system/$UNIT.service.d" 2>/dev/null || true
   systemctl daemon-reload
   systemctl enable --now "$UNIT.timer" 2>&1 | grep -v '^Created symlink' || true
-  echo "programmé : $UNIT.timer ($(printf '%s ; ' "${SCHED[@]}" | sed 's/ ; $//')) en tant que ${AS:-deploy}"
+  echo "programmé : $UNIT.timer ($(printf '%s ; ' "${SCHED[@]}" | sed 's/ ; $//')), commande en ${AS:-deploy}"
   systemctl list-timers --all --no-pager "$UNIT.timer" | head -n 2
   echo "suivi : journalctl -u $UNIT ; $SELF --status $NAME ; retrait : sudo $SELF --unschedule $NAME"
   exit 0
@@ -188,13 +205,23 @@ fi
 
 # ------------------------------------------------------------------------------------------------ exécution
 [ ${#CMD[@]} -gt 0 ] || fail "commande absente (après --)"
+# 2026-10-08 (revue) : offpeak.sh repasse TOUJOURS en deploy, comme l'exécutant du lot 3. Lancé en root, il créait
+# state/offpeak (ou .global.lock) en root 0700/0600 : tout travail deploy suivant échouait (mkdir) ou se croyait
+# bloqué par « un autre travail » chaque jour. La commande seule passe en root (--as root, par sudo -n).
+if [ "$(id -u)" = 0 ]; then
+  id -u "$RUN_USER" > /dev/null 2>&1 || fail "utilisateur $RUN_USER absent"
+  if [ -z "$AS" ]; then exec runuser -u "$RUN_USER" -- "$SELF" --as root "${ARGV[@]}"; fi
+  exec runuser -u "$RUN_USER" -- "$SELF" "${ARGV[@]}"
+fi
+[ "$(id -un)" = "$RUN_USER" ] || fail "à lancer en tant que $RUN_USER (ou root, qui repasse en $RUN_USER)"
+AS=${AS:-deploy}
 [ -d "$CD" ] || fail "dossier de travail absent : $CD"
 
 log() {
   local l
   l=$(printf '[%s] [%s] %s' "$(date '+%F %T')" "$NAME" "$*")
   printf '%s\n' "$l"
-  [ "$DRY" = 1 ] || printf '%s\n' "$l" >> "$JOBDIR/journal.log"
+  [ "$DRY" = 1 ] || printf '%s\n' "$l" 2>/dev/null >> "$JOBDIR/journal.log" || true
 }
 ecrire() { local f=$1; shift; printf '%s\n' "$*" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"; }
 TXT=""
@@ -206,18 +233,32 @@ $1"
   [ -n "${RUNLOG:-}" ] && TXT+="
 Sortie : ${RUNLOG#"$HL"/}"
   if [ "$DRY" = 1 ]; then log "à blanc : message Discord NON envoyé :"; printf '%s\n' "$TXT" | sed 's/^/    | /'; return 0; fi
-  f=$JOBDIR/discord-$(date +%H%M%S).txt
-  printf '%s\n' "$TXT" > "$f"
-  "$HLPY" discord "$f" >> "$JOBDIR/journal.log" 2>&1 || log "  bilan Discord NON envoyé (voir le journal)"
-  rm -f "$f"
+  # texte par l'entrée standard (aucun fichier : le bilan part même si le dossier d'état est inutilisable)
+  local r
+  r=$(printf '%s\n' "$TXT" | "$HLPY" discord - 2>&1) || { log "  bilan Discord NON envoyé ($(nettoie "$r" 120))"; return 0; }
+  log "  $r"
+}
+# erreur avant toute garde (dossier d'état, verrous, sudo) : bilan si demandé, puis code 2 (unité en échec, visible)
+abort() {
+  log "ERREUR : $*"
+  bilan "❌ NON lancé : $(nettoie "$*" 240)"
+  exit 2
 }
 
 if [ "$DRY" = 0 ]; then
-  mkdir -p "$JOBDIR/runs" "$JOBDIR/tmp" || fail "impossible de créer $JOBDIR"
+  mkdir -p "$JOBDIR/runs" "$JOBDIR/tmp" 2>/dev/null || abort "impossible de créer $JOBDIR (droits ?)"
   chmod 700 "$STATE_DIR" "$JOBDIR" "$JOBDIR/runs" "$JOBDIR/tmp" 2>/dev/null
-  exec 8>"$JOBDIR/lock"
+  for d in "$STATE_DIR" "$JOBDIR" "$JOBDIR/runs" "$JOBDIR/tmp"; do [ -w "$d" ] || abort "$d non inscriptible par $(id -un) (créé par root ? chown $RUN_USER)"; done
+  # code de retour vérifié : un verrou illisible n'est pas « un autre travail tourne »
+  { exec 8>>"$JOBDIR/lock"; } 2>/dev/null || abort "verrou $JOBDIR/lock inutilisable (droits ?)"
+  { exec 9>>"$STATE_DIR/.global.lock"; } 2>/dev/null || abort "verrou global $STATE_DIR/.global.lock inutilisable (droits ?)"
   flock -n 8 || { echo "un passage de « $NAME » tourne déjà : rien à faire"; exit 3; }
   if [ "$ONCE" = 1 ] && [ -f "$JOBDIR/done" ]; then echo "« $NAME » déjà fait ($(tr '\n' ' ' < "$JOBDIR/done")) : rien à faire"; exit 0; fi
+fi
+# commande en root : sudo -n doit marcher (sinon refus franc, pas une erreur au milieu du créneau)
+if [ "$AS" = root ]; then
+  if sudo -n true 2>/dev/null; then SUDO_OK=1; else SUDO_OK=0; fi
+  [ "$SUDO_OK" = 1 ] || [ "$DRY" = 1 ] || abort "--as root : sudo -n refusé pour $(id -un)"
 fi
 STOP=0
 trap 'STOP=1' TERM INT HUP
@@ -232,8 +273,9 @@ else
   DEADLINE=$(( T0 + MAXWAIT * 60 ))
 fi
 
+# --busy : services lot3-* seulement ; les autres travaux hors pic se suivent par le verrou global (2026-10-08 : deux
+# homelab-offpeak@ en attente se refusaient l'un l'autre jusqu'à la fin de leur créneau)
 GARGS=(--busy)
-[ -n "${OFFPEAK_UNIT:-}" ] && GARGS+=(--self-unit "$OFFPEAK_UNIT")
 [ "$IDLE" = 1 ] && GARGS+=(--idle)
 [ "$JFTASKS" = 1 ] && GARGS+=(--jf-tasks)
 [ "$IDLEDOWN" = 1 ] && GARGS+=(--idle-if-down)
@@ -247,7 +289,6 @@ while :; do
   attempt=$(( attempt + 1 ))
   # un seul travail hors pic à la fois (verrou global tenu jusqu'à la fin de la commande)
   if [ "$DRY" = 0 ]; then
-    exec 9>"$STATE_DIR/.global.lock"
     if ! flock -n 9; then out="refus un autre travail hors pic tourne"; rc=1; else out=""; fi
   else out=""; fi
   if [ -z "$out" ]; then
@@ -293,18 +334,23 @@ gluetun_id() { docker inspect -f '{{.Id}}' gluetun 2>/dev/null || true; }
 G_BEFORE=""
 [ "$GLUETUN" = 1 ] && G_BEFORE=$(gluetun_id)
 if [ "$DRY" = 1 ]; then
-  log "  à blanc : lancerait $(printf '%q ' "${CMD[@]}" | cut -c1-200)dans $CD (délai $(duree "$TIMEOUT"))"
+  log "  à blanc : lancerait $(printf '%q ' "${CMD[@]}" | cut -c1-200)dans $CD en $AS$([ "$AS" = root ] && echo " par sudo -n ($([ "$SUDO_OK" = 1 ] && echo possible || echo 'REFUSÉ : le vrai passage échouerait'))") (délai $(duree "$TIMEOUT"))"
   [ ${#HEALTHY[@]} -gt 0 ] && log "  à blanc : vérifierait ensuite : ${HEALTHY[*]} sain(s)"
   bilan "✅ (à blanc) serait lancé à $(date +%H:%M) : gardes vertes"
   exit 0
 fi
-RUNLOG=$JOBDIR/runs/$(date +%Y%m%d-%H%M%S).log
-HOME_U=$(getent passwd "$(id -un)" | cut -d: -f6)
-log "  lancement (sortie : ${RUNLOG#"$HL"/})"
+RUNID=$(date +%Y%m%d-%H%M%S)
+RUNLOG=$JOBDIR/runs/$RUNID.log
+RUNTMP=$JOBDIR/tmp/$RUNID   # dossier temporaire propre au passage, retiré ensuite
+mkdir -p "$RUNTMP"
+if [ "$AS" = root ]; then RUNNER=(sudo -n --); U=root; else RUNNER=(); U=$(id -un); fi
+HOME_U=$(getent passwd "$U" | cut -d: -f6)
+log "  lancement en $U (sortie : ${RUNLOG#"$HL"/})"
 t0=$(date +%s); H0=$(date +%H:%M)
-( cd "$CD" && exec env -i PATH="$PATH_PROPRE" HOME="${HOME_U:-/tmp}" USER="$(id -un)" LOGNAME="$(id -un)" SHELL=/bin/bash \
-    LANG=C.UTF-8 TMPDIR="$JOBDIR/tmp" OFFPEAK_NAME="$NAME" timeout -k 120 "$TIMEOUT" "${CMD[@]}" ) > "$RUNLOG" 2>&1 8>&- 9>&- < /dev/null
+( cd "$CD" && exec "${RUNNER[@]}" env -i PATH="$PATH_PROPRE" HOME="${HOME_U:-/tmp}" USER="$U" LOGNAME="$U" SHELL=/bin/bash \
+    LANG=C.UTF-8 TMPDIR="$RUNTMP" OFFPEAK_NAME="$NAME" timeout -k 120 "$TIMEOUT" "${CMD[@]}" ) > "$RUNLOG" 2>&1 8>&- 9>&- < /dev/null
 rc=$?
+if [ "$AS" = root ]; then sudo -n rm -rf --one-file-system -- "$RUNTMP" 2>/dev/null; else rm -rf --one-file-system -- "$RUNTMP" 2>/dev/null; fi
 dt=$(( $(date +%s) - t0 ))
 case "$rc" in
   0)   statut=fait; note="code 0" ;;

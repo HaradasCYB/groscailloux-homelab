@@ -11,11 +11,12 @@ ConditionPathExists=/etc/homelab-offpeak/%i.args
 
 [Service]
 Type=oneshot
-# deploy par défaut (les Arrs et gluetun refusent root) ; --as root pose User=root dans homelab-offpeak@<nom>.service.d
+# Toujours deploy (2026-10-08) : offpeak.sh et son dossier d'état ne tournent jamais en root (un dossier créé par root
+# bloquait ensuite tous les travaux en deploy) ; avec --as root (dans le .args), seule la commande passe en root par
+# sudo -n. Aucun drop-in User= : --schedule retire celui d'une version antérieure.
 User=deploy
 Group=deploy
 WorkingDirectory=/opt/homelab
-Environment=OFFPEAK_UNIT=%n
 ExecStart=/opt/homelab/tools/offpeak/offpeak.sh --job %i
 # 3 = rien fait (hors créneau, gardes jamais vertes, autre passage en cours) : pas une panne de l'unité. Pas
 # d'OnFailure : avec --discord, offpeak.sh poste lui-même le bilan d'un échec (une alerte de plus ferait doublon).
