@@ -55,7 +55,7 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 - **Jamais de `token=`** dans un lien, une redirection ou un mail ; **jamais d'identifiant ni de mot de passe dans un mail** ; jetons et mots de passe jamais journalisés.
 - Erreur journalisée = `format!("{e:#}")`, et `.map_err(reqwest::Error::without_url)` d'abord si l'URL porte un secret (webhook, `apikey=`, `ApiKey=`).
 - `backups/` : rien de lisible par « autres » ; après un lot, `sudo find /opt/homelab/backups -perm -o+r ! -type l -exec chmod o-rwx {} +` ; dossier à secrets en 700/600.
-- Une seule clé API Jellyfin (« Jellyseerr » = `JELLYFIN_API_KEY`) ; ne pas en créer d'autre sans la noter dans SECRETS.md.
+- Une seule clé API Jellyfin depuis le 07/10 (« Jellyseerr » = `JELLYFIN_API_KEY` ; « claude-setup » révoquée) : toute nouvelle clé se note dans SECRETS.md.
 
 ### Données et suppressions
 - **Jamais de purge globale** de file ou de torrents : suppression ciblée et plafonnée (`max_actions_per_run`).
