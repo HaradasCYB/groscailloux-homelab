@@ -16,10 +16,12 @@
 #   --prefix zz_xxx    préfixe des comptes (zz_bench) : zz_xxx, zz_xxx2…
 #   --user-config K=V  réglage Jellyfin du compte (Configuration), répétable (ex. SubtitleMode=Smart)
 #   --candidate DIR    scripts et CSS candidats injectés dans CE navigateur seulement (voir tools/README.md)
-#   --no-inject        NO_INJECT=1 : ce que sert la production, rien d'injecté
+#   --no-inject        NO_INJECT=1 : ce que sert la production, rien d'injecté (sans l'option : NO_INJECT absent)
 #   --item ID          ITEM transmis au scénario
 #   --env K=V          variable transmise au scénario, répétable
-#   --out DIR          sorties du scénario (/out) ; défaut /opt/homelab/backups/bench/<date>/<scénario>
+#   --out DIR          sorties du scénario (/out) ; défaut : backups/bench/<date>/<scénario> pour un scénario de tools/,
+#                      le DOSSIER DU SCÉNARIO pour un ancien scénario de backups/ (contrat de runprod.sh : il y lit
+#                      ses entrées, ex. /out/gc-lang.candidate.js, /out/moverlay_lib.js)
 #   --timeout S        durée maximale d'un passage (300 s)
 #   --wait MIN         attendre jusqu'à MIN minutes que les gardes passent au vert (sinon refus immédiat)
 #   --force            passer outre les refus (19:00–00:00, lecture d'un membre en cours, maintenance)
@@ -28,8 +30,11 @@
 #
 # Contrat du scénario (conteneur, node 20, puppeteer 22) : JF_URL (adresse publique, par NPM : /gc-chat/ et
 # /gc-compte/ y sont servis), USER_NAME, PW, USER_ID, DEVICE (desktop|phone|iphone|android|tablet|tv), LAYOUT,
-# BENCH_DEVICE (l'appareil demandé), ITEM, CANDIDATE_DIR=/cand, NO_INJECT, /out (sorties), /repo (le dépôt, lecture
-# seule), /bench (tools/bench/lib : bench.js). Code de sortie du scénario = résultat du passage.
+# BENCH_DEVICE (l'appareil demandé), ITEM, CANDIDATE_DIR=/cand, NO_INJECT=1 (seulement avec --no-inject), /out
+# (sorties), /scen (dossier du scénario, lecture seule), /bench (tools/bench/lib : bench.js) et, en lecture seule,
+# /repo/crates/homelabd/assets et /repo/branding SEULEMENT (jamais .env, state/ ni backups/). Code de sortie du
+# scénario = résultat du passage. Contrats propres à certains anciens lanceurs NON repris (CANDIDATE=0/1 de
+# lg-tv-20260929, PW1/PW2 de syncplay-20261003, /work de t6_run.sh) : les poser par --env ou adapter le scénario.
 # Codes : 0 tous les passages réussis ; 1 un passage en échec ; 2 usage ; 3 refusé (garde) ; 4 nettoyage incomplet.
 set -uo pipefail
 export LANG=C.UTF-8 LC_ALL=C.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -89,7 +94,17 @@ for d in "${DEVS[@]}"; do
   case "$d" in desktop|desktop-legacy|phone|phone-legacy|iphone|android|tablet|tv|*:*) ;; *) fail "appareil inconnu : $d" ;; esac
 done
 SNAME=$(basename "$SCEN" .js)
-OUT=${OUT:-$HL/backups/bench/$(date +%Y%m%d)/$SNAME}
+SDIR=$(dirname "$SCEN")
+# le dossier du scénario est monté dans le conteneur : jamais la racine du dépôt ni un dossier qui contient des secrets
+if [ "$SDIR" = "$REPO" ] || [ "$SDIR" = "$HL" ] || [ "$SDIR" = / ] || [ -e "$SDIR/.env" ] || [ -e "$SDIR/.git" ]; then
+  fail "scénario dans $SDIR : ce dossier serait monté dans le conteneur (dépôt, .env) ; le ranger dans un sous-dossier"
+fi
+# 2026-10-08 (revue) : un ancien scénario (hors tools/) lit ses entrées dans /out = son propre dossier (runprod.sh,
+# t8_run.sh, syncplay_menu.sh…) ; un /out neuf le faisait planter, ou tourner SANS son correctif candidat (try/catch)
+case "$SCEN" in
+  */tools/bench/*|*/tools/tests/*) OUT=${OUT:-$HL/backups/bench/$(date +%Y%m%d)/$SNAME} ;;
+  *) OUT=${OUT:-$SDIR} ;;
+esac
 
 # ------------------------------------------------------------------------------------------------ gardes
 guards() {  # imprime le motif d'un refus ; 0 = voie libre
@@ -131,15 +146,21 @@ fi
 # ------------------------------------------------------------------------------------------------ comptes et nettoyage
 TMPD=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/gcbench.XXXXXX") || fail "mktemp"
 CT=gcbench-$$
+# comptes indexés par k (1…N) ; le NOM est noté AVANT la création, l'id dès que hl.py l'a écrit dans acc<k>.id :
+# un signal reçu pendant la création (piège différé jusqu'à la fin de la commande) ne laisse plus de compte derrière
 ACC_IDS=() ACC_NAMES=()
 CLEANED=0
 # shellcheck disable=SC2329  # appelée par les pièges ci-dessous
 cleanup() {
   [ "$CLEANED" = 1 ] && return; CLEANED=1
-  local i rc=0
+  local k id rc=0
   docker kill "$CT" > /dev/null 2>&1 || true   # pages fermées AVANT la suppression des comptes (sinon rafales de 403 /socket)
-  for i in "${!ACC_IDS[@]}"; do
-    "$HLPY" account-delete --id "${ACC_IDS[$i]}" --name "${ACC_NAMES[$i]}" | sed 's/^/nettoyage : /' || rc=4
+  for k in "${!ACC_NAMES[@]}"; do
+    id=${ACC_IDS[$k]:-}
+    [ -n "$id" ] || id=$(head -n 1 "$TMPD/acc$k.id" 2>/dev/null)
+    # pas d'id : création refusée ou jamais faite (hl.py retire lui-même un compte créé puis interrompu)
+    [ -n "$id" ] || continue
+    "$HLPY" account-delete --id "$id" --name "${ACC_NAMES[$k]}" | sed 's/^/nettoyage : /' || rc=4
   done
   rm -rf "$TMPD"
   return "$rc"
@@ -154,14 +175,16 @@ if [ "$OFFLINE" = 0 ]; then
   JF_PUBLIC=$("$HLPY" public JELLYFIN_PUBLIC_URL) || fail "adresse publique de Jellyfin introuvable ($JF_PUBLIC)"
   for k in $(seq 1 "$NACC"); do
     name=$PREFIX$([ "$k" = 1 ] || echo "$k")
-    args=(account-create "$name" --env-out "$TMPD/acc$k.env" --index "$k")
+    ACC_NAMES[k]=$name
+    args=(account-create "$name" --env-out "$TMPD/acc$k.env" --id-out "$TMPD/acc$k.id" --index "$k")
     for c in "${UCONF[@]}"; do args+=(--config "$c"); done
     if ! id=$("$HLPY" "${args[@]}"); then echo "création de $name impossible : $id"; exit 1; fi
-    ACC_IDS+=("$id"); ACC_NAMES+=("$name"); ENVFILES+=(--env-file "$TMPD/acc$k.env")
+    ACC_IDS[k]=$id; ENVFILES+=(--env-file "$TMPD/acc$k.env")
     echo "compte de banc : $name (caché, politique d'un membre ordinaire, supprimé à la fin)"
   done
 fi
-mkdir -p "$OUT" && chmod 700 "$OUT" 2>/dev/null
+# dossier de sorties créé ici : 0700 ; dossier existant (celui d'un ancien scénario) : droits inchangés
+[ -d "$OUT" ] || { mkdir -p "$OUT" && chmod 700 "$OUT"; } || { echo "sorties : $OUT impossible à créer"; exit 1; }
 
 # image : déjà là (identifiant), sinon tirée par son empreinte
 IMG_ID=$(docker image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null) || { docker pull -q "$IMAGE" > /dev/null && IMG_ID=$(docker image inspect -f '{{.Id}}' "$IMAGE"); } \
@@ -181,9 +204,14 @@ for tok in "${DEVS[@]}"; do
   echo "===== $SNAME · ${tok} (mise en page : ${L:-défaut})"
   run=(docker run --rm --name "$CT" --network host --cpus=1 --cpu-shares=256 --memory=2g --pids-limit=512
        --security-opt no-new-privileges "${ENVFILES[@]}"
-       -e "DEVICE=$D" -e "LAYOUT=$L" -e "BENCH_DEVICE=$tok" -e "ITEM=$ITEM" -e "NO_INJECT=$NOINJ" -e "TZ=Europe/Paris"
+       -e "DEVICE=$D" -e "LAYOUT=$L" -e "BENCH_DEVICE=$tok" -e "ITEM=$ITEM" -e "TZ=Europe/Paris"
        -e NODE_PATH=/usr/src/app/node_modules -e "NODE_OPTIONS=--require /bench/ua-hook.js"
-       -v "$(dirname "$SCEN")":/scen:ro -v "$BENCH_DIR/lib":/bench:ro -v "$REPO":/repo:ro -v "$OUT":/out)
+       -v "$SDIR":/scen:ro -v "$BENCH_DIR/lib":/bench:ro -v "$OUT":/out
+       # du dépôt, seulement ce que lisent les scénarios (2026-10-08, revue : tout /opt/homelab exposait .env, state/
+       # et backups/ au code du scénario, qui tourne sous l'uid de deploy)
+       -v "$REPO/crates/homelabd/assets":/repo/crates/homelabd/assets:ro -v "$REPO/branding":/repo/branding:ro)
+  # NO_INJECT seulement avec --no-inject : les anciens scénarios testent « process.env.NO_INJECT ? … », où « 0 » vaut vrai
+  [ "$NOINJ" = 1 ] && run+=(-e NO_INJECT=1)
   [ "$OFFLINE" = 0 ] && run+=(-e "JF_URL=$JF_PUBLIC")
   if [ -n "$CAND" ] && [ "$NOINJ" = 0 ]; then run+=(-v "$CAND":/cand:ro -e CANDIDATE_DIR=/cand); fi
   for e in "${XENV[@]}"; do run+=(-e "$e"); done
