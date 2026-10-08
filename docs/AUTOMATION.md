@@ -35,7 +35,7 @@ exemptés ; 0 = illimité). `GET /Sessions` : pour chaque compte au-delà du max
 récentes (première apparition la plus tardive, à égalité la moins avancée) qui durent depuis `grace_secs`
 (30 s, le temps de passer d'un appareil à l'autre) reçoivent un message à l'écran (« Ce compte regarde déjà
 sur 2 écrans… ») puis un ordre d'arrêt (`Sessions/{id}/Playing/Stop`) ; 3 tentatives au plus par lecture,
-`max_actions_per_run` arrêts par passage. Remplace `MaxActiveSessions`, laissé à 0 (voir CLAUDE.md).
+`max_actions_per_run` arrêts par passage. Remplace `MaxActiveSessions`, laissé à 0 (voir [runbooks/comptes-et-abonnements.md](runbooks/comptes-et-abonnements.md#1-comptes)).
 
 ### stack_health — 5 min (première passe ~30 s après le démarrage de homelabd)
 Auto-réparation du stack. `docker compose config --services` donne les services attendus (moins
@@ -210,12 +210,12 @@ demande crée la fiche et les saisons suivies, sans recherche. Sonarr garde le R
 
 Pour chaque Sonarr : `GET wanted/missing` → saisons avec épisodes diffusés manquants, hors file d'attente, pas
 cherchées récemment (`state.unknown_series` : sans candidat → `retry_after_hours` 24 h, pack pris → 7 j,
-épisode seul pris → 2 h, erreur → 1 h) et **absentes de l'autre machine** ; séries ajoutées le plus récemment d'abord. Par saison, via Prowlarr
-(indexer « C411 » déclaré dans Prowlarr, même clé) : `search?type=tvsearch&query={TmdbId:<tmdbId>}{Season:<n>}`
+épisodes pris → `episode_retry_mins` (5 min), erreur → 1 h) et **absentes de l'autre machine** ; séries ajoutées le plus récemment d'abord. Par saison, via Prowlarr
+(deux clés, indexeurs « C411 » et « C411 (2) » de Prowlarr, voir « Budget de l'indexer » plus bas) : `search?type=tvsearch&query={TmdbId:<tmdbId>}{Season:<n>}`
 → releases dont l'attribut **`tmdbId` est celui de la fiche** (le nom ne compte pas) → `GET parse` de Sonarr
 (saison, pack, épisodes, qualité) → garde-fous : marqueur FR (VFF > MULTi > FRENCH > VOSTFR), qualité autorisée
 par le profil et ≤ 1080p, au moins une source, épisodes manquants. Pack si la moitié de la saison manque,
-sinon épisodes ; tri langue, résolution, H.264, sources. **Pas de pack avant la fin de la diffusion** (2026-10-07) :
+sinon épisodes ; tri : langue, résolution, au moins deux sources, codec, sources, audio (voir « Codec » plus bas). **Pas de pack avant la fin de la diffusion** (2026-10-07) :
 quand un pack serait pris, les épisodes de la fiche sont relus (un GET) ; s'il reste un épisode **suivi** dont la date
 de diffusion est connue et à venir (`future_episodes`), le pack est écarté (« pack écarté (épisodes à venir : 2,
 3) ») et les épisodes sortis sont pris un à un (`choose_episodes`). C'est la `FullSeasonSpecification` de Sonarr, qui
@@ -274,10 +274,11 @@ réécrit pour les conteneurs (`prowlarr_url_for_arrs` = `http://prowlarr:9696` 
 injoignable), refus d'identification ou indexeur bloqué (`bypassable_rejection`), ou envoi accepté mais pas
 mis en file → `.torrent` récupéré par Prowlarr et ajouté au qBittorrent du même côté avec l'étiquette
 `homelab:series=<id>:season=<n>`, importé ensuite par `torrent_import`. Tout autre refus (liste noire,
-taille…) est respecté. **Rythme** : `max_queries_per_run` requêtes C411 (2 par passage, 12/h), `query_gap_secs`
-(15 s) d'écart ; filet de sécurité : 25 requêtes/heure sur C411 dans Prowlarr. La clé C411 est partagée par
-Prowlarr et les 4 Arrs (RSS ~16/h) : le 2026-09-17, le 429 est tombé vers 50 requêtes dans l'heure, pendant
-le rattrapage de l'arriéré (35 requêtes homelabd + RSS + une recherche Sonarr).
+taille…) est respecté. **Rythme** : au plus `max_queries_per_run` requêtes C411 par passage (6, soit 36/h au pire),
+`query_gap_secs` (5 s) d'écart, `max_new_per_run` en plus pour les demandes de moins d'une heure, le tout sous le budget
+par clé (« Budget de l'indexer » plus bas) ; filet de sécurité : Prowlarr coupe à 45 requêtes/heure par indexeur C411.
+Historique : le 2026-09-17, avec une seule clé partagée par Prowlarr et les 4 Arrs, le 429 est tombé vers 50 requêtes
+dans l'heure, pendant le rattrapage de l'arriéré ; d'où les deux clés et leurs compteurs.
 Résumé : `grabbed=1 none=2 pending=13`.
 
 **Codec** (2026-09-26) : à langue, résolution et partage égaux (≥ 2 sources), le **x265** passe devant le x264 et
@@ -344,11 +345,8 @@ toutes les 5 min et lève une pause 15 min après le dernier échec (10 fois par
 si l'une répond 429 (mise de côté `cooldown_after_429_mins`). `search_tmdb` et `search_text` sont les deux
 seules portes d'entrée : tâches et page passent par elles.
 
-### Ancien budget (remplacé)
-`homelab_core::budget` : un seul compteur horaire glissant (`state.c411_queries`) pour `series_search`,
-`movie_search` et la page `/recherche`. `[indexers] c411_max_per_hour` (20) moins `manual_reserve` (6) pour les
-tâches de fond, la réserve restant à la page. Avant le 2026-09-17, chacun avait son plafond (12/h, 1/h, 6/h)
-sans voir les autres.
+Historique : avant le 2026-09-17, chaque tâche avait son plafond (12/h, 1/h, 6/h) sans voir les autres ; un compteur
+commun (20/h, réserve 6) l'a remplacé ce jour-là, puis un compteur par clé (deux clés).
 
 ### russian_search — 10 min
 Voie russe : Sonarr et Radarr cherchent par leur titre (anglais), RuTracker range par le titre russe. Pour chaque
@@ -423,6 +421,33 @@ le bon identifiant, `Apply`, puis rafraîchissement complet des métadonnées. A
 passage, jamais un titre en cours de lecture, `dry_run` respecté. Un identifiant absent d'un côté ne conclut
 rien. Premier passage le 2026-09-17 : 6 titres corrigés sur 215.
 
+### original_language — 10 min, 07:30–11:30 (2026-10-08)
+
+But : la préférence audio « Langue d'origine » de Jellyfin 12 (`AudioLanguagePreference = "OriginalLanguage"`) choisit la
+piste d'après la métadonnée `OriginalLanguage` de la fiche, vide sur 262 fiches sur 275 au 08/10. La tâche y écrit la
+langue d'origine TMDB lue par Jellyseerr, par l'éditeur de métadonnées (`POST /Items/{id}` avec le seul corps
+`update_body`), **films d'abord**, du plus récent au plus ancien, puis séries si `series = true` (**`false` tant que le
+propriétaire n'a pas accepté** qu'une série réécrive la classification de ses saisons et épisodes). Les épisodes
+héritent de leur série et ne sont jamais écrits.
+
+- **Fenêtre** `window_start`–`window_end` (07:30–11:30) : après l'analyse de 05:00, les segments et les images de chapitre,
+  avant midi. Aucune vidéo lue ; tout passage pendant une analyse de la médiathèque est sauté ; jamais une fiche en
+  lecture ; jamais de Refresh.
+- Par passage : `max_movies_per_run` (4) ou `max_series_per_run` (1) ; `retry_hours` (24) pour une fiche sans langue TMDB
+  ou en échec net.
+- Issues : `written`, `unknown`, `locked`, `children_differ` (une série dont un enfant a sa propre classification n'est
+  pas écrite : Jellyfin la lui recopierait), `error`, plus `posted` (écriture partie sans réponse nette). **Une fiche
+  écrite, ou `posted`, n'est jamais réécrite d'office** : un retour arrière tient.
+- État `state.original_language` : ancienne et nouvelle valeur, enfants dont la classification vide a reçu celle de la
+  série. Résumé : à remplir, sans TMDB, en attente de nouvel essai, en lecture, remises à vide depuis l'écriture,
+  écritures non confirmées, séries hors liste, écritures constatées après coup.
+- Lecture de la médiathèque : avec ET sans compte puis filtre sur `SeriesId` (`GET /Items` avec un compte regroupe une
+  série présente dans deux dossiers ; sans compte, la liste des films est incomplète).
+- `--dry-run` montre le prochain passage, même hors fenêtre. Clés : `interval_secs`, `enabled`, `series`, `window_start`,
+  `window_end`, `max_movies_per_run`, `max_series_per_run`, `retry_hours`.
+- Retour arrière : `backups/original-language-20261008/rollback.py` (voir
+  [runbooks/lecture-et-transcodage.md](runbooks/lecture-et-transcodage.md#langue-dorigine-original_language-lot-4-0810-et-préférence-native)).
+
 ### seedbox_refresh — 5 min (si `[seedbox] enabled`)
 Lit l'historique `downloadFolderImported` (eventType 3) des Radarr/Sonarr de la seedbox depuis le
 dernier id traité (`state.seedbox_history` ; la première passe initialise le curseur sans rejouer).
@@ -440,7 +465,7 @@ VPS, `jellyseerr_sonarr_id` → Sonarr seedbox) : les ids de séries diffèrent 
 
 ### tracker_ratio — 30 min
 Share limits par tracker via `POST /api/v2/torrents/setShareLimits`.
-`unlimited` (c411) → ratio -1 / temps -1 ; `secondary` (yggleak, u2p, ygg.gratis) et
+`unlimited` (`c411.org`, `c411.tw`) → ratio -1 / temps -1 ; `secondary` (yggleak, u2p, ygg.gratis, `t-ru.org` = RuTracker) et
 `public` (liste de trackers publics) → 2.0 / 14 j ; défaut → 1.0 / 7 j.
 Ne touche un torrent que si sa limite actuelle diffère (ratio comparé à 2 décimales).
 
@@ -464,6 +489,30 @@ Rangée « Tendances cette semaine » de l'accueil Jellyfin. Classement lu dans 
 distincts puis heures ; un spectateur compte à partir de `min_minutes` sur le titre. Semaine trop calme :
 complétée par `fallback_days`. Tient à jour la collection `collection_name` (création, puis ajouts et
 retraits ciblés). Collection et non playlist : une playlist qui reçoit une série y déplie ses épisodes.
+
+### catalogue_report — 24 h (2026-10-08)
+
+Rapport « catalogue jamais regardé » (décidé par le propriétaire : un rapport sur `/status.html`, l'admin tranche).
+**Lecture seule** : ~52 requêtes Jellyfin, 4 aux Arrs, 3 à Jellyseerr, aucun fichier lu, rien de supprimé ni d'écrit ailleurs
+que dans `state.catalogue` (4 à 11 Ko : `catalogue`, `unmatched`, `never_all`, `never_aged`, `backlog`, `russian`).
+
+- **Arrivée** = date `added` de l'**Arr** (jamais celle de Jellyfin, recréée à chaque déménagement), repoussée à
+  `movieFile.dateAdded` pour un film et à `firstAired` pour une série (demandée avant sa sortie, elle n'arrive qu'avec ses
+  épisodes ; `firstAired` est en RFC 3339 comme `added`).
+- **Vu** = `IsPlayed` ou `IsResumable` d'**un** compte quelconque (tous les comptes, désactivés compris, lus avec `UserId`)
+  ou une ligne Playback Reporting de 60 s ou plus. Une erreur sur un compte fait échouer le passage (un « vu » incomplet
+  gonflerait le « jamais vu ») ; un côté Arr injoignable garde le rapport précédent.
+- Rapprochement Arr ↔ Jellyfin par dossier (`map_path`/`side_maps` d'`identity_check`), puis par identifiant TMDB/TVDB
+  unique ; sinon la fiche est **non évaluée** (« je ne sais pas » n'est pas « jamais vu »).
+- Demandeur = **sorte** seulement (`membre` l'emporte sur `admin`, sinon `aucune` ; `inconnu` si Jellyseerr est muet ou si
+  la fiche n'a pas d'identifiant TMDB), jamais un pseudo. Arriéré des séries déjà commencées à part ; ligne **voie russe**
+  (épisodes disponibles / lus), indépendante du seuil.
+- Réglages `[tasks.catalogue_report]` : `min_age_days` (60), `max_listed` (40), `max_backlog_listed` (15),
+  `user_pause_ms` (150). `--dry-run` calcule et journalise sans écrire.
+- **Limite connue** : les fiches Arr de la seedbox datent de la création des Arrs (12/09) ; elles n'atteignent 60 jours
+  qu'à partir du 11/11/2026. Au 08/10, la liste de décision ne contient que 6 films du VPS (22 Go) ; premier calcul :
+  277 titres (2,29 To), 165 jamais commencés (0,84 To), arriéré de 29 séries (0,71 To), voie russe 120 épisodes
+  disponibles, 0 lu. Pas d'historique : seul le dernier rapport est gardé.
 
 ### deletion_cleanup — 5 min
 
@@ -506,7 +555,7 @@ Une saison demandée n'est suivie que si elle n'a pas déjà des fichiers **sur 
 (rapprochement par tvdbId) : sans ça, une nouvelle demande routée vers la seedbox y faisait suivre
 toutes les saisons historiques, y compris celles présentes sur le VPS (doublons).
 
-### tba_bypass — 5 min
+### tba_bypass — 5 min (désactivée : dans `tasks.disabled` depuis `episodeTitleRequired = never`, gardée comme filet)
 `GET /api/v3/manualimport?folder=/downloads&filterExistingFiles=true` (Sonarr, timeout
 5 min). Candidat = exactement un rejet, commençant par « Episode has a TBA title », série et
 épisode identifiés, `episodeFileId == 0`. Alors `POST /api/v3/command` `ManualImport`
@@ -541,14 +590,15 @@ plusieurs minutes, délai dépassé du proxy de la seedbox — « timed out » �
 
 - Logique dans `homelab_core::manual_search`, rendu dans `crates/homelabd/src/search_page.rs` (serveur, sans
   JavaScript : la page de résultats se recharge seule tant que la recherche tourne, rien ne bloque une requête HTTP).
-- **C411 par identifiant TMDB** (une requête par saison ou par film, via Prowlarr), plafond propre à la page
-  (`[manual_search] max_queries_per_hour`, 6/h ; s'ajoute aux 12/h de `series_search` et 1/h de `movie_search`,
-  sous la limite de 25/h de Prowlarr). Plafond atteint, indexeur en pause ou fiche sans identifiant : la page le dit.
-- **Nyaa.si** en plus pour un animé (fiche dans un dossier anime ou de type anime) : `nyaa_queries` (2) requêtes
-  texte, un titre chacune. Nyaa ne donne que des liens **magnet** : `send_release` les ajoute directement au
-  qBittorrent du même côté avec l'étiquette `homelab:`, lue par `torrent_import`.
+- **C411 par identifiant TMDB** (une requête par saison ou par film, via Prowlarr), dans le budget par clé : la page
+  dispose de la réserve `[indexers] manual_reserve` (10 par heure et par clé). Puis, si l'identifiant ne donne rien ou
+  pour une saison, `[manual_search] text_queries` (2) noms de la fiche en texte libre (cours d'animés publiés sous leur
+  propre titre, marqués « autre saison »). Plafond atteint, indexeur en pause ou fiche sans identifiant : la page le dit.
+- **Nyaa n'est plus interrogé par la page** depuis le budget commun du 2026-09-17 (le bandeau de la page et la doc de
+  `manual_search::run` le disent encore : texte périmé) ; il ne sert qu'en secours automatique pendant une panne de
+  C411. Un lien **magnet** (secours) est ajouté directement au qBittorrent du même côté avec l'étiquette `homelab:`.
 - **Rien n'est filtré** : toutes les releases sont montrées, triées comme le choix automatique (sans écart d'abord,
-  puis bonne œuvre et bonne saison, langue, saison complète, résolution, H.264, sources) et **marquées** :
+  puis bonne œuvre et bonne saison, langue, saison complète, résolution, codec, sources) et **marquées** :
   « sans français », « VOSTFR », « plus de 1080p », « hors profil », « aucune source », « autre saison »,
   « saison inconnue », « titre non reconnu ». L'admin garde la main : un pack VOSTFR reste téléchargeable.
 - « Télécharger » passe par `series_search::send_release` (même chemin que les recherches automatiques) ;
@@ -566,8 +616,10 @@ en lecture seule — ni validation ni refus. Le plugin garde 30 min en cache le 
 Jellyseerr : un changement de droits met ce temps à se voir.
 
 ## Page /status : « Rien ne bouge »
-Les torrents terminés qu'aucune fiche n'a voulus (`no_match` de `torrent_import`, 15 au plus, les plus récents
-d'abord) sont listés sous le tableau des tâches : sans ça, un téléchargement fini restait invisible.
+Les torrents terminés qu'aucune fiche n'a voulus (`no_match` et `nothing_importable` de `torrent_import`, 15 au plus,
+les plus récents d'abord) sont listés sous le tableau des tâches : sans ça, un téléchargement fini restait invisible.
+Autres sections : « Saisons sans release » (`uncovered` de `series_search`), « Canari de lecture », « Catalogue jamais
+regardé » (`catalogue_report`).
 Depuis le 2026-10-07 : « Dernière erreur » sous chaque tâche (même règle que la ligne ↳ de `homelabctl status`),
 section « Alertes admin · N livrée(s), M non livrée(s) » (dernières alertes, canaux), et tout texte venu d'ailleurs
 (nom de torrent, côté, titre de série, objet d'alerte) échappé au rendu.
@@ -622,7 +674,7 @@ l'adresse, l'URL du webhook ni le corps), ou « alerte NON livrée » / « alert
 
 ## Pages d'administration (2026-09-23, portes du 2026-10-07)
 
-`crates/homelabd/src/admin_auth.rs` + `client_addr.rs`. Session par cookie (`/connexion`, voir CLAUDE.md) ; en plus :
+`crates/homelabd/src/admin_auth.rs` + `client_addr.rs`. Session par cookie (`/connexion`, voir [runbooks/homelabd.md](runbooks/homelabd.md#5-pages-dadministration-crateshomelabdsrcadmin_authrs-client_addrrs)) ; en plus :
 
 - **Adresse du client** : dernier saut de `X-Forwarded-For`, seulement si le pair TCP est dans `[web] trusted_proxies`
   (172.18.0.0/16) et n'est pas une adresse de l'hôte (127.0.0.1, 172.18.0.1 : `bind` UDP d'essai, en cache). Avec
@@ -733,9 +785,13 @@ contre 15 avant.
 
 ## Tchat des membres
 
-Bulle en haut à droite de l'interface web de Jellyfin (navigateur, Jellyfin Desktop, applis Android/iPhone,
-LG webOS). Salons `annonces` (modérateurs seulement), `entraide`, `discussion`, et un fil privé
-`prive:<id Jellyfin>` par membre, lisible par lui et par les modérateurs (`[chat] moderators`).
+« Aide et annonces » (nom de la bulle et du panneau depuis le 2026-10-08) : bulle en haut à droite de l'interface web de
+Jellyfin (navigateur, Jellyfin Desktop, applis Android/iPhone ; pas sur les télés ni les applis natives). Salons
+`annonces` (modérateurs seulement), `entraide` (tout le monde ; l'ancien salon `discussion` y a été fusionné le 08/10 par
+`merge_discussion`, à l'ouverture de `chat.db`, et `Channel::parse` accepte encore « discussion » comme synonyme), et un
+fil privé `prive:<id Jellyfin>` par membre, lisible par lui et par les modérateurs (`[chat] moderators`). Un compte neuf
+voit comme lus les messages publics de plus de `[chat] new_member_read_days` (14) jours (`ChatStore::init_reads`, une
+fois). Règles côté client (sondages, focus, Échap, bandeau) : [runbooks/tchat.md](runbooks/tchat.md).
 
 - **Chemin** : script chargé par JavaScript Injector (`branding/jellyfin/gc-chat-loader.js`) →
   `/gc-chat/app.js` → API `/gc-chat/api/*`, publiées par NPM (hôte Jellyfin) vers homelabd `/chat/*`.
@@ -744,16 +800,18 @@ LG webOS). Salons `annonces` (modérateurs seulement), `entraide`, `discussion`,
   droits ou hors `beta_users`, 429 au-delà du débit (1 message / 3 s, 30 / 10 min).
 - **Règles** (`homelab_core::chat`, testées) : texte nettoyé, 2 000 caractères ; suppression de son message
   pendant 15 min, de tout message pour un modérateur (message conservé, marqué supprimé).
-- **Mails** : toutes les minutes, s'il y a de nouveaux messages d'entraide ou privés de membres et que le
-  dernier récapitulatif a plus de 15 min, un mail à `CHAT_ADMIN_EMAIL`. Annonce avec « envoyer aussi par
+- **Mails** (nommés « Aide et annonces ») : toutes les minutes, s'il y a de nouveaux messages d'entraide ou privés de
+  membres et que le dernier récapitulatif a plus de `moderator_mail_interval_mins` (15), un mail à `CHAT_ADMIN_EMAIL`. Annonce avec « envoyer aussi par
   mail » : un mail par compte actif ayant une adresse valide dans Jellyseerr (2 s d'écart), sauf l'auteur.
 - **Messages privés de l'admin** : onglet Privé → « Nouveau message privé », un ou plusieurs membres actifs
   (`GET /members`, `POST /direct`, modérateurs seulement) ; chacun reçoit le message **séparément** dans son
   fil privé (personne ne voit les autres destinataires), avec mail facultatif (`direct_mail`, adresse
   Jellyseerr). Côté membre : badge et bannière « Message de l'admin » sur l'accueil (prioritaire sur
   l'annonce), qui disparaît une fois le message lu ou quand il répond.
-- **Client** : rafraîchi toutes les 5 s panneau ouvert, 60 s fermé, rien onglet caché ; bulle masquée pendant
-  la lecture ; bannière de la dernière annonce non lue sur l'accueil ; aucun HTML de message interprété.
+- **Client** : messages toutes les 5 s panneau ouvert (10 s sur télé), `/me` en filet à 120 s (20 s quand aucun salon ni
+  fil n'est interrogé) ; panneau fermé : 60 s, rien pendant une lecture, 3 min après 5 min sans activité ; `/messages` et
+  `/read` renvoient l'état des non-lus ; bulle masquée pendant la lecture ; bannière de la dernière annonce non lue sur
+  l'accueil ; aucun HTML de message interprété.
 - **Annonce depuis la ligne de commande** : `homelabctl chat announce [fichier] [--author <modérateur>] [--mail]
   [--no-discord]` (texte lu dans le fichier ou sur l'entrée standard) → `POST /admin/chat/announce` (jeton
   `HOMELABD_ONBOARD_TOKEN`, hors du préfixe `/gc-chat/` publié par NPM). L'auteur doit être dans `[chat] moderators`
@@ -781,7 +839,9 @@ préféré `fre`, sous-titres `fre`, mode **Smart** (sous-titres seulement quand
 `PlayDefaultAudioTrack = false` (Jellyfin choisit la piste française d'un MULTi au lieu de la piste « par défaut » du
 fichier). Rattrapage du 2026-09-21 sur les comptes sans préférence (sauvegarde `backups/jellyfin-language-20260921/`).
 Dans « Mon compte », le membre choisit « Français quand il existe » ou « Toujours en VO, sous-titres français »
-(`POST /compte/api/language`, audio vide + sous-titres `Always`).
+(`POST /compte/api/language` : audio `[accounts] vo_audio_language` (`jpn`) + sous-titres `Always`, mémorisation des
+pistes coupée ; dans les clients web, le script Mon compte bascule ensuite sur la piste de la langue d'origine, voir
+[runbooks/lecture-et-transcodage.md](runbooks/lecture-et-transcodage.md#7-langue-audio-et-sous-titres-des-comptes)).
 
 ## Suivi des demandes dans l'onglet Demandes (v1.19)
 
@@ -837,7 +897,7 @@ différée ». Un passage court oublie les essais des éléments qu'il vient de 
 après 13 extractions, jusqu'au balayage de 05:00), et ces éléments ne sont plus relus par `Ids=` six heures plus tard ;
 un élément non relu garde son essai.
 
-Bazarr (seedbox, `https://kakaouette.tofino.usbx.me/bazarr`) garde son rôle d'origine : profil « Français (+anglais) »,
+Bazarr (seedbox, `[seedbox] bazarr_url`) garde son rôle d'origine : profil « Français (+anglais) »,
 `use_embedded_subs = true` (une piste incrustée compte), `audio_exclude = True` sur le français, six fournisseurs dont
 OpenSubtitles.com (compte saisi dans son interface) — il ne télécharge que ce qui manque vraiment. Sonarr/Radarr seedbox
 le préviennent à l'import (connexion « Bazarr », webhook, 21/09). Sauvegarde d'avant : `backups/bazarr-20260921/`.
@@ -861,10 +921,22 @@ testées) + `subscription_ops` (ce qui touche Jellyfin/PayPal/mails, toujours vi
   `period_days`) ; `CANCELLED`/`SUSPENDED`/`EXPIRED`/`PAYMENT.FAILED` → note dans l'historique, le compte va au bout
   de sa période ; remboursement → alerte admin. 5xx = PayPal réessaie.
 - **`subscription_cycle` — 1 h** : fiches créées pour les comptes qui n'en ont pas (actifs → « à qualifier », jamais
-  suspendus tant que l'admin n'a pas tranché), rappels J-7 et J-1 (mail au membre, avec lien de paiement) pour
-  l'essai, l'abonnement manuel et l'offert à durée limitée, grâce `grace_days` après l'échéance, puis suspension
-  (`set_premium(false)`, mail « accès en pause », rien de supprimé). Récapitulatif Discord admin à chaque passage qui
-  a agi. `cycle_dry_run = true` : tout est annoncé, rien n'est appliqué. Depuis le 2026-10-07 :
+  suspendus tant que l'admin n'a pas tranché). `decide` (décision pure, testée) ne suit que deux sortes de fiches
+  (décision du propriétaire, 2026-10-08) :
+  - **essai de l'inscription publique** (`is_trial` : source `trial` posée par `start_trial`, statut essai ou grâce) :
+    rappel J-1 (jamais un palier égal à la durée de l'essai), grâce de `grace_days` à l'échéance, puis suspension ;
+  - **fiche liée à PayPal** (`paypal_sub_id`) : qui prélève (ACTIVE) → une information de renouvellement sans lien au
+    palier le plus lointain, marge `paypal_margin_hours`, puis grâce et suspension ; arrêtée chez PayPal → rappels J-7/J-1
+    avec lien, grâce, suspension ;
+  - **toute autre fiche est gérée à la main** (`managed_by_hand` : actif ou offert posé par l'admin, essai posé par
+    l'admin avec `subs set --status trial`, import, exempté, à qualifier, ancienne grâce manuelle) : ni rappel ni
+    suspension ; à l'échéance `decide` renvoie `ManualDue`, `run_cycle` regroupe les `ManualDue` d'un passage en **une**
+    alerte admin (« Abonnés : échéance à gérer à la main ») et note `due_noted` (colonne de `state/subscriptions.db` +
+    événement caché du membre) seulement si l'alerte est partie ; `/accounts` affiche « À gérer (échéance passée) ». En
+    `cycle_dry_run`, une ligne dans le récapitulatif, sans note.
+  Suspension = `set_premium(false)`, mail « accès en pause », rien de supprimé. Comptes protégés, `[subscriptions] exempt`
+  et fiches gardées (compte Jellyfin absent) toujours sautés. Récapitulatif Discord admin à chaque passage qui a agi.
+  `cycle_dry_run = true` : tout est annoncé, rien n'est appliqué. Depuis le 2026-10-07 :
   - un essai ne reçoit pas un palier au moins égal à sa durée (pas de J-7 pour un essai de 7 jours ; le J-1 part) ;
   - **abonnement PayPal automatique** (lié et pas arrêté chez PayPal, `auto_renews` ; statut inconnu = actif) : une
     seule information J-7 **sans lien** (« ton abonnement se renouvelle le JJ/MM », `Action::RenewalNotice`), grâce
@@ -943,15 +1015,15 @@ la seule source de vérité ; les comptes admin ne sont jamais listés ni modifi
   mises à 0 (une session Jellyseerr ouverte survit à la suspension Jellyfin).
 - **Activation** : refusée au-delà de `accounts.max_premium` ; permissions Jellyseerr restaurées (à
   défaut de sauvegarde, celles par défaut de Jellyseerr).
-- **Comptes protégés** (`accounts.protected` : Haradas, LeGrosCailloux) : affichés avec un badge,
+- **Comptes protégés** (`[accounts] protected` : les deux comptes de l'admin) : affichés avec un badge,
   sans interrupteur ni suppression, hors plafond. Les autres admins sont gérés normalement.
 - **Suppression** : bouton « Supprimer » → page de confirmation (`GET /accounts/delete`) → `POST
   /accounts/delete` : compte Jellyfin puis compte Jellyseerr (ses demandes partent avec). CLI :
   `homelabctl accounts delete <compte> --yes`.
 - **Plafonds** (`[accounts]`) : 25 comptes premium, 2 lectures simultanées par compte. Dimensionnés
-  pour 6 vCPU sans GPU (1 à 2 transcodages 1080p) et le lien seedbox (~190 Mbit/s, une douzaine de
-  flux) ; pic mesuré le 2026-09-14 : 4 lectures simultanées pour 13 comptes, 92 % de lecture directe.
-  Pas de limite de débit par utilisateur : elle forcerait des transcodages.
+  pour 6 vCPU sans GPU (un seul transcodage 1080p en temps réel) et le lien seedbox (~8–10 Mo/s par connexion, mesuré le
+  20/09) ; pic mesuré le 2026-09-14 : 4 lectures simultanées pour 13 comptes. Lecture directe : 65 % des lectures (30 j
+  au 04/10). Pas de limite de débit par utilisateur : elle forcerait des transcodages.
 
 ## Autres commandes
 

@@ -2,7 +2,7 @@
 
 Deux machines, un seul Jellyfin. La **seedbox** télécharge et stocke tout ce qui est nouveau ; le **VPS**
 diffuse, cherche les releases, automatise, surveille et garde la bibliothèque historique. Ce document montre qui
-fait quoi, par où passent les fichiers et ce qui se passe quand un élément tombe. État au 25/09/2026.
+fait quoi, par où passent les fichiers et ce qui se passe quand un élément tombe. État au 08/10/2026.
 
 > Version publique : ni adresse, ni nom d'hôte, ni détail d'exposition réseau. Le détail physique complet est
 > tenu à jour dans une page privée, hors dépôt.
@@ -12,7 +12,7 @@ fait quoi, par où passent les fichiers et ce qui se passe quand un élément to
 | Rôle | diffusion, recherche, automatisation, bibliothèque historique | tous les téléchargements, stockage des nouveautés |
 | Machine | VPS dédié · Ubuntu 26.04 · 6 vCPU · 17 Go + swap 4 Go · pas de GPU | seedbox partagée (plateforme Ultra.cc) · pas de root |
 | Stockage | 969 Go ext4 (médias historiques, état des services) | quota de 3,7 To (l'espace libre est celui du quota, pas du disque partagé) |
-| Services | 21 conteneurs Docker + `homelabd` (Rust, 29 tâches) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Bazarr, Unpackerr (conteneurs) |
+| Services | 21 conteneurs Docker + `homelabd` (Rust, 31 tâches) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Bazarr, Unpackerr, Jackett, FlareSolverr (conteneurs) |
 
 Lien entre les deux : latence ~97 ms, 8 à 10 Mo/s par connexion (~30 Mo/s à quatre) ; API en HTTPS, fichiers en
 SFTP (lecture + suppression, aucune écriture).
@@ -27,7 +27,7 @@ flowchart LR
   subgraph VPS
     direction TB
     subgraph host[Hôte · systemd]
-      homelabd["homelabd<br/>24 tâches + watcher<br/>pages membres et admin"]
+      homelabd["homelabd<br/>31 tâches + watcher<br/>pages membres et admin"]
       rclone["rclone mount<br/>SFTP · cache 120 Go"]
       stack["homelab-stack · backup hebdo<br/>purge transcodes (1 min)"]
     end
@@ -39,7 +39,7 @@ flowchart LR
       end
       subgraph biblio[Bibliothèque VPS · ne télécharge plus]
         arrs[Radarr · Sonarr]
-        prowlarr[Prowlarr · C411 seul]
+        prowlarr[Prowlarr · C411 · secours]
         pyload[pyLoad]
       end
       subgraph netns[Réseau de gluetun]
@@ -72,7 +72,7 @@ flowchart LR
   seerr -- demandes --> proxy
   gluetun -- WireGuard --> vpn
   sbqbit <-- BitTorrent --> trackers
-  autobrr -- releases C411 --> sbarrs
+  autobrr -. flux C411 coupé le 08/10 .-> sbarrs
   sbarrs -- via proxy --> sbqbit
   sbqbit --> sbstore
 ```
@@ -89,7 +89,8 @@ flowchart LR
 ## Parcours d'une demande
 
 Jellyseerr envoie chaque demande aux Radarr/Sonarr **de la seedbox**, en leur interdisant de chercher
-(`preventSearch`). C'est **homelabd** qui cherche, par l'identifiant TMDB, chez **C411** seul, via Prowlarr : une
+(`preventSearch`). C'est **homelabd** qui cherche, par l'identifiant TMDB, chez **C411**, via Prowlarr (secours public
+pendant une panne de C411 : World-torrent, Nyaa pour les animés) : une
 recherche d'Arr sur un animé partait en rafale épisode par épisode et bloquait la clé. Le RSS de C411 reste actif
 dans les Arrs de la seedbox pour les sorties du jour. Qualité : 1080p au plus, français d'abord (VF, MULTi, VOF…),
 VO en dernier recours ; pour les animés, MULTi puis VOSTFR.
@@ -156,8 +157,8 @@ flowchart LR
 
 - **Dossier parent** : rclone monte dans `/mnt/seedbox/media`, mais Jellyfin lie `/mnt/seedbox` (dossier
   ordinaire) avec `rslave`. Chaque (re)montage apparaît dans le conteneur sans le recréer.
-- **Sauvegardes** : `homelabctl backup` (dimanche 04:40) archive l'état du VPS (configs, `.env`, bases SQLite par
-  `VACUUM INTO`, dump MySQL de Guacamole, unités systemd), ~3 Go ; l'archive est testée avant qu'on supprime les
+- **Sauvegardes** : `homelabctl backup` (dimanche 04:30 + jusqu'à 15 min) archive l'état du VPS (configs, `.env`, bases
+  SQLite copiées par l'API de sauvegarde de SQLite, dump MySQL de Guacamole, unités systemd), ~3 Go ; l'archive est testée avant qu'on supprime les
   anciennes, 4 sont gardées. Les médias ne sont pas sauvegardés, ni la config des applis de la seedbox. Copie hors
   site : à l'étude.
 
@@ -193,8 +194,11 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 | `stuck_handler` | 5 min | téléchargements bloqués > 8 h | 5 max, ciblé |
 | `indexer_unblock` | 5 min | lève la pause d'un Arr sur C411 | 15 min après le dernier échec ; 10 fois/24 h au plus ; jamais pendant une panne du site (une alerte par incident) |
 | `monitor_sync` | 10 min | saisons suivies = saisons demandées | par serveur Jellyseerr |
-| `anime_library` | 30 min | range l'animation japonaise (TMDB), type « anime » | tags anime / pas-anime |
+| `anime_library` | 5 min | range l'animation japonaise (TMDB), type « anime » ; voie russe | tags anime / pas-anime ; une analyse complète à la fois |
 | `identity_check` | 30 min | corrige les fiches Jellyfin mal identifiées | 3 par passage, jamais pendant une lecture |
+| `original_language` | 10 min, 07:30–11:30 | langue d'origine TMDB des films (séries : décision en attente) | jamais de Refresh, jamais pendant une lecture ou une analyse ; une fiche écrite n'est jamais réécrite |
+| `russian_search` | 10 min | voie russe : RuTracker par titre original | seulement les fichiers manquants |
+| `catalogue_report` | 24 h | rapport « catalogue jamais regardé » sur `/status.html` | lecture seule, aucune suppression |
 | `subtitle_sync` | 5 min | sous-titres incrustés → fichiers annexes (sur la seedbox) | item revu toutes les 6 h au plus ; gros ASS jamais par défaut |
 | `deletion_cleanup` | 5 min | suppressions Jellyfin / Jellyseerr | seulement en attente ou en cours |
 | `trending` | 6 h | rangée « Tendances » de l'accueil | titres présents seulement |
@@ -246,7 +250,7 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 - Pages d'administration de homelabd : session par cookie signé (un an), jeton jamais dans les adresses ; IP de
   confiance de l'admin sans connexion. `/accounts` et `/recherche` ajoutent l'auth HTTP NPM « admin-outils ».
 - Accès VPS → seedbox : une clé SFTP limitée à la lecture et à la suppression pour le montage ; API en HTTPS avec
-  clés. Deux clés C411 (RSS des Arrs, recherches de homelabd).
+  clés. Deux clés C411 dans Prowlarr, chacune sous son budget horaire ; la seconde sert aussi au RSS des Arrs.
 - Entrée web : NPM en HTTPS. Les ports Docker contournent ufw : tout nouveau service se publie sur
   `127.0.0.1:<port>`.
 
@@ -263,4 +267,4 @@ journalctl -u homelabd -f   # journal des tâches
 ```
 
 Voir aussi : [ONBOARDING.md](ONBOARDING.md) · [ARCHITECTURE.md](ARCHITECTURE.md) ·
-[AUTOMATION.md](AUTOMATION.md) · [DEPLOY.md](DEPLOY.md) · [SECRETS.md](SECRETS.md).
+[AUTOMATION.md](AUTOMATION.md) · [DEPLOY.md](DEPLOY.md) · [SECRETS.md](SECRETS.md) · [runbooks/](runbooks/README.md).

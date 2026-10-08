@@ -1,16 +1,32 @@
 # CLAUDE.md
 
-Guide pour Claude Code dans ce dépôt. Lire aussi docs/ARCHITECTURE.md et docs/AUTOMATION.md.
+Guide pour Claude Code dans ce dépôt : ce qu'il est, les commandes, les interdits, les valeurs en vigueur et où lire
+la suite. Le détail (procédures, pourquoi, historique) est dans [docs/runbooks/](docs/runbooks/README.md) : **avant de
+toucher un domaine, lire son runbook** (§ 5).
 
-## Ce qu'est ce dépôt
+## 1. Ce qu'est ce dépôt
 
-`/opt/homelab` est **à la fois** le dépôt git (branche `main`, remote `HaradasCYB/groscailloux-homelab`)
-et le répertoire de production : compose, config et code Rust sont versionnés ; l'état des
-services (`<service>/`), `library/`, `backups/`, `state/`, `logs/` et `.env` sont ignorés par
-git. « Déployer » = `docker compose up -d` pour les conteneurs, `cargo build` + `install` +
-`systemctl restart homelabd` pour l'automatisation (`sudo ./setup.sh` fait tout).
+`/opt/homelab` est **à la fois** le dépôt git (branche `main`, remote `HaradasCYB/groscailloux-homelab`, **public**) et
+le répertoire de production : compose, configuration (`homelab.toml`) et code Rust sont versionnés ; l'état des services
+(`<service>/`), `library/`, `backups/`, `state/`, `logs/` et `.env` sont ignorés par git. « Déployer » = `docker compose up
+-d` pour les conteneurs, `cargo build` + `install` + `systemctl restart homelabd` pour l'automatisation (`sudo ./setup.sh`
+fait tout). Deux machines : le **VPS** (lecture, recherche, automatisation, bibliothèque historique) et la **seedbox**
+(tous les téléchargements, montée sur le VPS par rclone).
 
-## Commandes
+| Document | Contenu |
+| --- | --- |
+| [docs/INFRA.md](docs/INFRA.md) | vue d'ensemble avec schémas : machines, parcours d'une demande, stockage, résilience |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | services, flux, réseau, sécurité des accès, homelabd en bref |
+| [docs/AUTOMATION.md](docs/AUTOMATION.md) | chaque tâche de homelabd, ses états, ses réglages et ses garde-fous |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | hôte neuf, mise à jour, VPN, seedbox, sauvegarde et restauration, démarrage |
+| [docs/SECRETS.md](docs/SECRETS.md) | chaque variable de `.env` (noms seulement) et leur rotation |
+| [docs/ONBOARDING.md](docs/ONBOARDING.md) | arrivée d'un membre, côté admin |
+| [docs/JELLYFIN-12.md](docs/JELLYFIN-12.md) | migration 10.11 → 12.1 et retour arrière |
+| [docs/runbooks/](docs/runbooks/README.md) | un runbook par domaine + historique des incidents + table « ancien CLAUDE.md → nouvel emplacement » |
+| [tools/README.md](tools/README.md) | outils versionnés : hors pic (`offpeak.sh`), bancs (`bench.sh`), tests |
+| [CHANGELOG.md](CHANGELOG.md) | versions livrées |
+
+## 2. Commandes
 
 ```bash
 docker compose config --quiet             # TOUJOURS avant un up -d
@@ -18,1404 +34,182 @@ docker compose up -d [svc]                # recrée seulement ce qui a changé
 docker compose ps ; docker compose logs -f <svc>
 
 cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test
-cargo build --release --target x86_64-unknown-linux-musl -j4      # laisser 2 vCPU à Jellyfin
+cargo build --release --target x86_64-unknown-linux-musl -j4      # dans /opt/homelab ; laisser 2 vCPU à Jellyfin
 sudo install target/x86_64-unknown-linux-musl/release/homelab{d,ctl} /usr/local/bin/ && sudo systemctl restart homelabd
 
-homelabctl check | list | status | run <task> --dry-run | onboard | vpn | backup | chat announce <fichier>
-journalctl -u homelabd -f
+homelabctl check | list | status | run <tâche> [--dry-run] | onboard | accounts | subs | vpn | backup | chat announce <fichier>
+journalctl -u homelabd -f                 # passages calmes en debug : RUST_LOG=debug pour tout voir
+curl -s 127.0.0.1:8766/health             # battement de l'ordonnanceur + version (git describe)
+
+tools/offpeak/offpeak.sh … --dry-run      # seul outil « hors pic, si personne ne regarde » (voir tools/README.md)
+tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interface (comptes zz_ toujours supprimés)
 ```
 
-## Règles
+## 3. Interdits et règles dures
 
-- **Secrets** : uniquement dans `.env`. Ne jamais mettre une valeur en dur dans compose, TOML,
-  code, scripts ou docs ; ne jamais coller `.env`, `backups/` ou une config de service dans un
-  outil externe. Les scripts `scripts/*.sh` restants sourcent `.env`. `backups/` : rien de lisible par
-  « autres » (07/10, 48 480 entrées corrigées) ; root y crée en 644, donc après un lot :
-  `sudo find /opt/homelab/backups -perm -o+r ! -type l -exec chmod o-rwx {} +`. `npm/data/database.sqlite.bak-*`
-  (mots de passe des listes d'accès en clair) est en 600 root ; `npm/data` reste en 755 (homelabd lit ses
-  journaux). Une seule clé API Jellyfin (« Jellyseerr » = `JELLYFIN_API_KEY`) : « claude-setup » révoquée le 07/10.
-- **Images** : pinnées `tag@sha256`. Pour mettre à jour : nouveau tag + digest (`docker pull`
-  puis `docker image inspect --format '{{index .RepoDigests 0}}'`), `up -d <svc>`, mettre
-  `diun/images.yml` en cohérence. Pas de `:latest` nu. **diun/images.yml** : un bloc par image, jamais de clé
-  sans `- name:` (les clés orphelines de Jackett/FlareSolverr ont rendu diun aveugle du 18/09 au 07/10) ;
-  `homelabctl check` et la tâche `diun_watch` (24 h, alerte) refusent clés en double et image du compose sans
-  entrée `repo:tag`. `sort_tags: semver` sur les tags semver purs (le tri par défaut est alphabétique : 9.5.9 passe
-  devant 13.2.3), pas sur les tags linuxserver. Formats amont (07/10) : Jellyfin 12 en `x.y`, qBittorrent
-  `5.2.4_v2.0.15-lsN`, Glances sans `v` (`4.5.4`, le digest d'un tag est celui de son index, pas celui de
-  `latest`). Un nouveau motif se teste avec un diun jetable (`DIUN_WATCH_RUNONSTARTUP=true`, sans notification).
-- **Pas de `chown -R /opt/homelab`** : npm/, homarr/ (root), grafana/ (472), guacamole/mysql (999).
-- **qBittorrent.conf** : arrêter le conteneur avant d'éditer, sinon il écrase le fichier.
-- **Jamais de purge globale** de queue ou de torrents : toute suppression est ciblée et
-  plafonnée (`max_actions_per_run`), c'est un invariant des tâches `stuck_handler`/`disk_pressure`.
-- **Une saison entière en une requête** : sans pack, `series_search` prend **une release par épisode manquant**
-  dans le même lot de résultats (`choose_episodes`, plafond `max_grabs_per_season` 20), puis reprend 15 min
-  après. Avant, c'était un épisode toutes les 2 h : 22 h pour une saison de 11 épisodes (BLACK TORCH, le
-  2026-09-17). **Jamais de pack de saison** tant qu'un épisode suivi a une date de diffusion à venir
-  (`future_episodes` : l'Arr ne voit pas les packs envoyés à qBittorrent) ; le plafond de taille d'un pack est
-  jaugé sur les manquants **datés** (`choose_sized`) : saison toute sans date ⇒ pack > `max_gb_per_episode` refusé,
-  épisodes un à un. Black Clover S02, 03/10 : pack de 51 fichiers pris pour 1 épisode diffusé.
-- **Deux clés C411, deux compteurs** (`homelab_core::indexer`) : indexers Prowlarr « C411 » et « C411 (2) »,
-  `[indexers] c411_max_per_hour` = 40 **par clé** (80/h au total), `manual_reserve` 10 pour `/recherche`. Une
-  clé qui répond 429 est mise de côté `cooldown_after_429_mins` (15) et la requête repart **aussitôt sur
-  l'autre** : tant qu'une clé répond, rien ne s'arrête. La clé RSS des Arrs est la deuxième (`C411_RSS_API_KEY`).
-- **Réglages des 4 Arrs (audit du 2026-09-18)** : `episodeTitleRequired = never` (les animés tout juste sortis
-  ont un titre « TBA » : c'était la cause du rejet que `tba_bypass` contournait — tâche désormais dans
-  `tasks.disabled`, gardée comme filet) ; `importExtraFiles = true` avec `srt,ass,ssa,sub,idx` (les
-  sous-titres externes des VOSTFR étaient **jetés**) ; `animeEpisodeFormat` avec `{absolute:000}` ;
-  `rssSyncInterval = 15` (le tracker sert le RSS avec un cache 5 min et ETag) ; corbeille configurée aussi sur
-  le VPS (`/data/media/*/.recycle`, purge 14 j par `cleanup`). Toutes les fiches du VPS sont passées sur le
-  profil **FR-friendly H.264** (elles étaient sur « HD - 720p/1080p », sans aucun format personnalisé).
-  Sauvegarde : `backups/arr-settings-20260918-072920/`.
-- **Type « anime » obligatoire** : une série rangée dans Anime est mise en `seriesType = anime` par
-  `anime_library` (au déplacement et en rattrapage), sinon Sonarr ne comprend pas la numérotation absolue
-  (« Bleach - 367 ») et les imports tombent à côté. 23 séries corrigées le 2026-09-18, sans perte de fichier.
-- **Tout ce qui est neuf passe par la SEEDBOX** (2026-09-18) : `[downloads] auto_sides = ["seedbox"]` — `series_search`
-  et `movie_search` ignorent les Arrs du VPS — **et** `enableRss = false` sur l'indexer C411 de Sonarr et Radarr du
-  VPS (sauvegarde `backups/vps-rss-off-20260918-093803/`). Le VPS garde ses fiches, ses fichiers, `torrent_import` et
-  `deletion_cleanup` ; il ne prend simplement plus aucune release. Remettre `"vps"` dans `auto_sides` **ne suffit
-  pas** : il faut aussi rallumer le RSS côté Arr. Jellyseerr envoie déjà tout sur la seedbox (`isDefault` sur les
-  serveurs id 1). Depuis le 07/10, Sonarr et Radarr du VPS ont aussi `rssSyncInterval = 0` (96 avertissements « No
-  available indexers » par jour) : remettre le VPS en service = remettre 15 (`config/indexer`, GET puis PUT de ce seul
-  champ) **en plus** ; l'état de santé `IndexerRssCheck` en erreur est normal. Sauvegarde `backups/lot1-20261007/arrs/`.
-- **Les numéros de profil diffèrent d'une machine à l'autre** : VPS `6` = FR-friendly H.264, `7` = Anime - JAP/VOSTFR ;
-  seedbox `7` = FR-friendly H.264, `8` = Anime - JAP/VOSTFR. Le 2026-09-18, les 24 séries et 46 films du VPS avaient
-  été basculés sur le `7` du VPS en croyant viser FR-friendly : ils se sont retrouvés sur le profil japonais (VOSTFR
-  +3000, JAP Audio +2500, **FRENCH −500**, `minFormatScore` 0 au lieu de −9999), donc prêts à préférer la VOSTFR et à
-  refuser une release française. Remis sur le `6` le jour même, sans perte (352 épisodes, 46 films ; `upgradeAllowed`
-  est à `false`, rien n'est retéléchargé). **Toujours vérifier le NOM du profil, jamais son numéro.**
-- **Une recherche par identifiant peut ne couvrir qu'une partie d'une saison** : Bleach S17 le 2026-09-18, C411 par
-  `{TmdbId}{Season}` renvoie 41 releases couvrant E01–26 et E41–48, **jamais E27–40**. `series_search::uncovered`
-  compare les épisodes manquants aux candidats ; s'il en reste, le repli en texte libre est lancé **en plus** de
-  l'identifiant (`how = "tmdb+texte"`), et ce qui reste introuvable est écrit dans l'état (`uncovered`) puis affiché
-  sur `/status.html` (« Saisons sans release »). Sans ça la recherche repartait tous les jours pour rien, en silence.
-  Une saison notée « introuvable » puis **complétée** (pack de cours, import manuel) sort de la liste au passage
-  suivant de `series_search` (`stale_uncovered`, 2026-09-19 : Bleach S17 27-40 restait affichée à 48/48).
-- **Les cours d'un animé sont récupérés seuls** (2026-09-18, v1.12.0) : quand la recherche laisse un trou dans
-  une saison d'**animé**, `series_search` repère les packs que l'Arr rattache à **cette** fiche mais à une autre
-  saison (`cour_pack`), télécharge leur `.torrent` par Prowlarr (lecture seule, **aucune annonce au tracker**),
-  en lit la liste des fichiers (`homelab_core::torrent_file`, décodeur bencode maison) et n'agit que si
-  `offset_mapping` est certain : trou d'un seul tenant, autant de fichiers vidéo que d'épisodes manquants,
-  numérotés en suite continue, aucun épisode déjà pourvu. La correspondance voyage dans l'étiquette
-  qBittorrent `homelab:series=<id>:season=<n>:offset=<k>:eps=<from>-<to>` ; `torrent_import` l'applique en
-  court-circuitant **et** les épisodes proposés par Sonarr **et** `map_episodes` (`EpisodeSource::OursOnly`),
-  les deux lisant la saison annoncée par les fichiers. Un pack de cours n'est **jamais** proposé à l'Arr
-  (`goes_straight_to_qbittorrent`) : il l'accepterait comme la saison qu'il croit lire. Trois pièges traités :
-  l'indexer donne aux packs l'identifiant TMDB **du cours** (313552) et non de la série (30984) — le refus par
-  identifiant est donc contourné **pour ce seul chemin**, la sécurité venant de la table d'alias de l'Arr et de
-  la lecture du `.torrent` ; le titre du cours est un titre alternatif qui arrivait après le titre principal et
-  que `text_queries` (2) n'atteignait jamais (`gap_names` le fait passer devant) ; et le pack **S01** est déjà
-  mappé correctement par le scene mapping TVDB (50/50 en saison 17), donc `cour_pack` l'écarte. Interrupteur
-  `[tasks.series_search] cour_packs`. Le 2026-09-18, Bleach S17 est passée de 34 à **48/48** épisodes diffusés,
-  sans qu'aucune autre saison ne bouge.
-- **Les cours d'un animé sont publiés sous leur propre titre** : `BLEACH.Thousand-Year.Blood.War.S01/S02/S03` (packs
-  H264 MULTi VFF) couvrent Bleach S17. Sonarr n'en rattache correctement que **S01** (→ saison 17) ; **S02 → saison 2
-  et S03 → saison 3 de Bleach**. Les prendre automatiquement écraserait deux vraies saisons : le garde-fou d'égalité
-  de saison de `series_candidate` les refuse, et il ne faut pas le retirer. Ces releases sont montrées sur
-  `/recherche` marquées « autre saison », à l'admin de trancher.
-- **Intégrales (2026-10-03)** : un pack sans numéro de saison n'est **jamais** renvoyé par `{TmdbId}{Season}`, et
-  Sonarr ne lit rien dans son nom, pas même la qualité. *Space Dandy*, demandé par un membre, est ainsi resté
-  « 0 candidat » alors que C411 avait l'intégrale MULTi 1080p x265. `series_search::try_integrale` intervient
-  seulement quand rien d'autre n'est acceptable :
-  - il reprend les intégrales vues dans les résultats, sinon fait une requête `{TmdbId}` sans saison, si le dernier
-    épisode manquant a au moins 14 jours ;
-  - il lit le `.torrent` et passe chaque fichier au `parse` de Sonarr (scene mapping : `02x01` → S01E14) ;
-  - il ne télécharge que les fichiers des épisodes manquants de la saison : torrent ajouté arrêté, autres fichiers
-    désélectionnés, puis démarrage.
-  Si une intégrale reste introuvable : recherche Prowlarr texte sans catégorie, puis la même recette à la main (voir
-  docs/AUTOMATION.md). Interrupteur `[tasks.series_search] integrale_packs`.
-- **Aucune recherche depuis Sonarr/Radarr** : C411 y est en **RSS seulement** (`enableAutomaticSearch` et
-  `enableInteractiveSearch` à `false` sur les 4 Arrs, depuis le 2026-09-17). Un bouton « Search » sur une saison
-  d'animé interrogeait C411 épisode par épisode : 30 requêtes d'un coup, « API Request Limit reached, disabled
-  for 01:00:00 », et comme C411 est seul, Sonarr passait en « All indexers are unavailable ». Toutes les
-  recherches se font dans **`/recherche`** (budget horaire). L'avertissement « No indexers available with
-  Automatic Search enabled » est normal et voulu. **Deux clés C411** : `C411_RSS_API_KEY` pour le RSS des Arrs,
-  la clé historique pour les recherches (Prowlarr) — une rafale de recherche ne peut plus couper le RSS.
-- **Œuvres dérivées** : une release dont le titre contient `mini`, `specials`, `OVA`, `recap`, `abridged`,
-  `junior`… absent des titres de la fiche est écartée du choix automatique (`series_search::derivative`) ; le
-  repli en texte libre exige en plus que l'Arr rattache la release à **cette** fiche. Le 2026-09-17, le pack
-  *Smoking Behind the Supermarket with You (Mini Episodes)* (12 min/épisode) avait été pris et importé à la
-  place de la série officielle (24 min) : fichiers et torrent retirés, vraie saison 1 récupérée.
-- **Voie russe (2026-09-26, pour un membre)** : seule exception à « C411 seul » et « aucune recherche
-  Arr ». **RuTracker** dans le **Jackett de la seedbox** (`app-jackett`, `172.17.0.1:16129`, compte dans `.env`
-  `RUTRACKER_USERNAME/PASSWORD` — mot de passe collé dans une conversation, à changer), derrière le **FlareSolverr de
-  la seedbox** (`app-flaresolverr`, 16111 : RuTracker présente un défi Cloudflare à l'IP de la seedbox ; sans lui,
-  « Challenge detected but FlareSolverr is not configured »). Les Arrs de la seedbox ne joignent **pas** le Prowlarr
-  du VPS. Indexer Torznab « RuTracker » dans Sonarr (id 10) et Radarr (id 8) de la seedbox, **tag `russe`** (ne sert
-  qu'à ces fiches), RSS + recherche automatique ; C411 inchangé (sans tag, sans recherche) : une recherche de l'Arr sur
-  une fiche `russe` n'interroge que RuTracker. **C'est un CHOIX, pas la langue TMDB** : le membre autorisé a la permission
-  Jellyseerr « demandes avancées » (8192) et choisit le dossier `…/Russian` ou `…/Russian Movies` à la demande ; un film
-  russe demandé normalement suit la voie classique (C411, VF si elle existe). `anime_library` : fiche dans un dossier
-  russe ⇒ tag `russe` posé, recherche `SeriesSearch`/`MoviesSearch` si incomplète (au plus toutes les
-  `ru_search_retry_hours`, `state.russian_searches`) ; tag `russe` posé à la main hors du dossier ⇒ déplacée
-  (`russian_choice`). `series_search`/`movie_search` ignorent la voie russe (`russian_route`). Jellyfin : « Séries
-  russes » `1de6d599992bb110f4cab5814bc899be` et « Films russes » `4b5799916c780f2a26b93b2970081b95`, **données au
-  seul compte autorisé** (+ comptes `EnableAllFolders` : Haradas, LeGrosCailloux, **un admin non protégé**), pas dans
-  `JELLYFIN_LIB_EXTRA` ; activées dans Jellyseerr (6 bibliothèques). Sauvegardes `backups/russe-20260926/`.
-  **Le choix, côté membre (2026-09-27)** : bouton « Chercher en russe » / « Voie russe · revenir au classique » sur
-  **ses propres** cartes de l'onglet Demandes (script Mon compte, `GET|POST /compte/api/route`), seulement pour les
-  comptes de `HOMELABD_RUSSIAN_USERS` (`.env`) ; le serveur vérifie que la demande est la sienne (Jellyseerr
-  `requestedBy`, `serviceId` 1). **Aucun effet sur les autres membres** : passage en russe refusé (bouton masqué,
-  409) si un autre membre a aussi demandé le titre ou s'il a déjà des fichiers (il disparaîtrait de Séries/Films) ;
-  bibliothèques russes données au seul compte autorisé — **l'admin non protégé** (`EnableAllFolders`) est passé en
-  liste explicite sans elles le 2026-09-27 (sauvegarde dans `backups/russe-20260926/`) ; restent
-  visibles des deux comptes protégés. Limite connue : Jellyseerr affiche « disponible » à tous pour un titre russe.
-  Retour au classique = tag retiré + fiche remise dans `seedbox_default_*_root` +
-  `series_search`/`movie_search` lancés. **Choix à la demande (2026-09-27, voulu par l'utilisateur)** :
-  `JellyseerrShowAdvanced = true` dans Jellyfin Enhanced (global) ; le script Mon compte **cache le bloc** à tous
-  (CSS `gc-ru-css`) sauf au compte autorisé, pour qui il ne reste qu'un choix « Version » (Classique / Russe, libellés
-  et phrase d'explication), et **enveloppe `JE.jellyseerrAPI.requestMedia/requestTvSeasons`** : les réglages avancés ne
-  partent QUE pour un dossier russe choisi par un compte autorisé, sinon la demande part sans réglages (profil et
-  dossier Anime automatiques, comme avant). **Jellyseerr ne contrôle PAS le dossier à la création d'une demande**
-  (seule son interface le masque) : `anime_library` remet en classique un titre arrivé dans un dossier russe si aucun
-  de ses demandeurs n'est autorisé (`russian_folder_allowed`). Banc : `backups/russe-20260926/ru_filter_test.js` (le
-  vrai app.js dans une page simulée). Sauvegarde de la config du plugin : `…/jellyfin-enhanced-config-before.json`. **Sonarr/Radarr ne trouvent pas une œuvre russe** (ils cherchent le
-  titre anglais : « The Interns » → 0, « Интерны » → 18) : tâche **`russian_search`** (10 min) = recherche RuTracker
-  par **titre original** TMDB via le Jackett de la seedbox (joignable du VPS : `…/jackett`, `SEEDBOX_JACKETT_API_KEY`),
-  plage d'épisodes en **numérotation absolue** (`E1-120`, `S4E61-268`, `(101-120)`), torrent `homelab:russe` avec
-  **seuls les fichiers manquants** (`Интерны_060.avi`, `S2E02` → absolu par l'Arr), import `ManualImport` copy puis
-  analyse complète. Tracker `t-ru.org` (RuTracker) dans `tracker_ratio.secondary` (ratio compté chez eux). Vignettes
-  des 2 bibliothèques : `backups/russe-20260926/lib-ru-*.png` (images TMDB : hors du dépôt public).
-- **Indexers** : **C411 est le seul indexer**, dans les 4 Arrs comme dans Prowlarr (2026-09-17 : les 34
-  indexers publics passant par Jackett ont été retirés, Jackett et FlareSolverr arrêtés et sortis du compose ;
-  ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes et remplissaient le
-  journal d'erreurs — sauvegarde `backups/indexers-20260917-204443/`). Un seul compteur horaire pour tout ce
-  qui l'interroge : `[indexers] c411_max_per_hour` (40 **par clé**, deux clés), dont `manual_reserve` (10) gardées pour
-  `/recherche` (voir « Deux clés C411 » plus haut). **Profils** FR-friendly : 1080p max (jamais 2160p), `minFormatScore=-9999`, FR d'abord,
-  VO/VOSTFR en dernier recours.
-- **Le codec source n'est PAS un critère de charge** (mesuré le 2026-09-18, à corriger dans les têtes) : avec les
-  réglages réels de Jellyfin (`superfast`, 4 threads, pas de GPU), un transcodage 1080p tourne à **1,85×
-  que la source soit h264 ou HEVC** — le coût est dans l'**encodage x264**, pas dans le décodage (décodage seul :
-  h264 6,25×, HEVC 6,74×). L'ancienne note « HEVC 0,72× → préférer x264 » était fausse. Sur 7 jours, les 19
-  transcodages venaient **tous de sources h264**, aucun d'une source HEVC, alors que le HEVC est 53 % des 1 494
-  épisodes : les clients des membres lisent le HEVC en direct. Garder `h264` comme départage en fin de tri
-  (`choose`) ne coûte rien, mais **ne jamais écarter une release parce qu'elle est en x265**, surtout quand c'est
-  la seule en français (cas courant des animés sur C411).
-- **La vraie limite : UN SEUL transcodage 1080p à la fois** (mesuré le 2026-09-18) : 1 flux 1,42× ; **2 flux
-  0,82×/0,85×** ; 3 flux 0,60×/0,69× — dès deux transcodages simultanés on passe sous le temps réel et ça
-  saccade pour tout le monde. D'où l'intérêt de la lecture directe et de `gc-quality-helper.js`. **Lecture directe :
-  65 % des lectures et des heures** (mesuré le 04/10/2026 sur 30 j, lectures ≥ 60 s ; l'ancien « 98 % » était faux,
-  et la baisse date du 14 au 26/09, sous 10.11.8) : remux 18 % du temps, son seul 7,5 %, vidéo 9,4 %. Le Chromecast
-  fait 63 % des conversions vidéo (sources HEVC + règle NPM 720p) ; l'appli iOS remuxe presque tout (MKV) ou
-  convertit le son (DTS) ; Jellyfin Desktop, Android TV et JellyWatch lisent en direct.
-- **C411 annonce sur deux domaines** : `c411.org` **et** `tk.c411.tw`. Toute règle par tracker doit viser les deux
-  (`tracker_ratio.unlimited`, décision torrent de `deletion_cleanup`). Jusqu'au 2026-09-14, 24 torrents
-  `c411.tw` héritaient de la limite globale de qBittorrent (ratio 1 / 7 j puis **arrêt**) : 53 torrents C411
-  étaient arrêtés, relancés ce jour-là.
-- **Recherche des séries = homelabd, par identifiant TMDB** (tâche `series_search`), plus par Sonarr :
-  Jellyseerr est en **`preventSearch`** sur les deux Sonarr. C411 renvoie les releases d'une série par
-  `{TmdbId}{Season}` quel que soit leur nom (japonais, anglais, français) et **ignore l'identifiant IMDb**
-  (100 releases sans rapport). Sonarr garde le RSS, l'import et le suivi. Ne pas remettre la recherche
-  à la demande dans Jellyseerr : un animé = 3 à 4 requêtes C411 par épisode → **429** → pause de l'indexeur
-  qui s'allonge jusqu'à 24 h (le 2026-09-17, niveau 9). `animeCategories=[5070]` et
-  `animeStandardFormatSearch=true` restent dans les deux Sonarr pour le RSS. Films : `movie_search` cherche **dès le passage suivant** (`missing_hours = 0`, passage toutes les 5 min) — Radarr
-  n'a plus de recherche depuis le 2026-09-17 et le RSS ne ramène que les nouveautés (Matrix a attendu 4 h le
-  2026-09-19 avec l'ancien délai de 24 h). Filet : C411 limité à 25 requêtes/heure
-  dans Prowlarr ; homelabd en envoie au plus 12/h pour les séries et 1/h pour les films : la clé est
-  partagée avec les 4 Arrs et le 429 est tombé vers 50 requêtes/heure le 2026-09-17. Éviter les recherches interactives en rafale sur un animé.
-- **Indexeur en pause** : `indexer_unblock` (5 min) lève la pause (table `IndexerStatus`, application arrêtée ~20 s,
-  base sauvegardée) `quiet_mins` (15) après le dernier échec ; au-delà de `max_unblocks_per_day` (10) en 24 h, alerte
-  seulement. **C411 en panne** (07/10) : avant de lever une pause C411, sonde du site (`indexer::c411_reachable`, caps
-  sans clé ni quota ; pas `c411_up`, qui lit l'état de la clé de recherche). Site en panne (503, page de maintenance
-  en 200) ⇒ rien n'est arrêté, résumé « C411 en panne : pause laissée », une alerte par incident (marqueur
-  `c411_outage` dans `state.indexer_alerts`, retiré au retour du site). Du 30/09 au 02/10 : 34 arrêts inutiles des
-  Arrs seedbox. Copies `*.homelab-*` de la seedbox purgées une fois par jour (marqueur `purge:seedbox`).
-- **Import d'un téléchargement que l'Arr n'a pas demandé** : `ManualImport` en `importMode: copy`
-  (hardlink), jamais `auto` (= déplacement, le torrent perd ses fichiers) ; `GET manualimport` sans
-  `downloadId` (liste vide sinon). C'est ce que fait `torrent_import`.
-- **Arrêter un service volontairement** : l'ajouter à `tasks.stack_health.ignore` dans
-  `homelab.toml` (+ restart homelabd) ou désactiver la tâche, sinon `stack_health` le relance
-  dans les 5 min. `guacamole` est en `restart: "no"` exprès (course au boot avec guacdb).
-- **Alertes admin (07/10, v1.20.0)** : tout passe par `alerts::admin` (mail + Discord admin), qui journalise chaque
-  envoi (« alerte envoyée », objet et canaux seulement) et le note dans `state.alerts` (`/status.html`, `homelabctl
-  status`). **Règle** : un appelant qui note « déjà signalé » ne le fait que si l'alerte est partie
-  (`alerts::delivered`), ou s'il n'existe aucun canal (`alerts::retry_later(sent, configured)`). Ce que ça couvre :
-  - tâche en échec `[alerts] fail_streak` (6) fois de suite **et** depuis `fail_minutes` (30) : une alerte, puis un
-    message à son retour ; au plus `fail_alerts_max` (3) par `fail_alerts_window_mins` (10). `RunInfo` garde
-    `last_error` (300 car.), `last_error_at`, `errors_by_day` (14 j), `fail_streak` ; `errors` est un total depuis
-    l'origine (lire la ligne ↳ de `homelabctl status`) ;
-  - capacité : `disk_pressure.alert_pct` et `seedbox_health.quota_alert_pct` (85), une alerte par franchissement
-    (`capacity_rearm_pts`) ; `stack_health` : relance **ratée**, une par service et par `alert_every_secs` ;
-  - tâches quotidiennes `cert_watch` (certificat < 21 j ou chaîne NPM → Jellyfin cassée, sondée sur 127.0.0.1:443
-    avec le nom de `JELLYFIN_PUBLIC_URL`, 3 essais à 30 s), `backup_watch` (archive > 8 j), `diun_watch` ; elles
-    passent aussi à chaque démarrage de homelabd et réalertent tant que le défaut dure ;
-  - unités root `OnFailure=homelab-alert@%n.service` (homelab-backup, homelabd-watchdog, seedbox-mount-watch,
-    jellyfin-transcodes-purge ; `scripts/homelab-alert.sh`, un message par unité et par heure). Ces minuteurs sont
-    en `LogLevelMax=notice` : seules les lignes préfixées `<5>`/`<4>` par leurs scripts restent au journal ;
-  - `/health` = battement de l'ordonnanceur : 503 `scheduler_stale` après 20 min sans aucun tour de boucle
-    (chien de garde : relance vers 26 min). Jamais de seuil par tâche (un passage lent mais légitime ferait
-    redémarrer en boucle). Version = `git describe` (build.rs).
-  Journal système versionné : `systemd/journald-homelab.conf` (2 Go, rotation quotidienne, 45 j), posé par
-  `homelabctl install`, puis `systemctl restart systemd-journald` (ne coupe aucun service). `SplitMode=uid` gardé :
-  `journalctl -u homelabd` sans sudo.
-- **Audit lecture du 2026-09-18** (v1.14.0) — les trois causes mesurées et ce qui a été fait :
-  1. **Trickplay tournait 6 h chaque matin sans jamais finir** (« Cancelled after 360 minutes » à 11:30, 256 items
-     sur ~1 840) et Intro Skipper jusqu'à 3 h : **506–521 Mbit/s entrants de 05 h à 08 h**, ~1,2 To/matin à
-     travers un cache rclone de 20 Go → cache vidé chaque matin, tout repartait sur le réseau le soir. Trickplay
-     passé **hebdomadaire (dimanche 05:30, butée 6 h)** — puis **déclencheur retiré le 2026-09-25** : tout ce qui
-     arrive va sur la seedbox, la tâche ne lisait plus que des titres seedbox par le lien et s'arrêtait à 6 h sans
-     finir ; les vignettes existantes (3,3 Go, surtout le VPS) restent affichées ; retour : `POST
-     /ScheduledTasks/<id>/Triggers` avec `backups/jellyfin-trickplay-20260925/triggers-before.json`. Intro Skipper à 05:30 (`ProcessThreads 2`,
-     `MaxParallelism 1`, `ScanCommercial false`), images de chapitre 06:30 en `P480` (extraction désactivée par
-     bibliothèque : tâche vide), `LibraryScanFanoutConcurrency 2`. Fenêtre en semaine : tout est fini à 08:30.
-  2. **rclone** (`systemd/homelab-seedbox-mount.service`) : cache **120G** avec `--vfs-cache-min-free-space 80G`
-     (rclone évince seul avant `disk_pressure hard_pct 95`), `--vfs-cache-max-age 168h`, `--vfs-read-chunk-size
-     4M` (un chunk est livré entier : 8M = 0,67 s au premier Mio), `--sftp-connections 32`. `--vfs-read-ahead`
-     reste absent (palier B, à mesurer) : le refus historique visait le doublement de chunk du mode
-     `streams = 0`, pas cette option. **Le lien seedbox est > 500 Mbit/s entrant** (mesuré), pas ~190.
-  3. **Le tmpfs `/cache/transcodes` (2 Go) se remplit de segments abandonnés** : Jellyfin ne les efface pas tous à la fin
-     d'un job (28 jobs, 926 fichiers, 2 Go le 2026-09-20 à 17:55 ; les plus vieux de la veille). Plein, ffmpeg écrit des
-     segments **vides** servis en 200 (`[Length 0]` dans le journal NPM) : le lecteur les télécharge à toute vitesse et
-     n'affiche jamais rien (« chargement infini », un membre bloqué 4 essais ; la lecture directe passe, tout remux ou
-     transcodage échoue). Diagnostic : `docker exec jellyfin df -h /cache/transcodes`. Purge horaire par timer transitoire
-     `scripts/jellyfin-transcodes-purge.sh` (unités `systemd/jellyfin-transcodes-purge.{service,timer}`, **chaque
-     minute**, installées par `homelabctl install`) : routine = jobs sans ffmpeg actif vieux de > 2 min (un job terminé
-     n'est jamais réutilisé) ; **urgence** automatique dès 85 % (tout ce qui n'a pas de ffmpeg actif, puis les segments
-     > 10 min des jobs actifs) + message Discord admin ; `--check` pour voir, `--urgent` à la main, `--force` refusé tant
-     qu'un ffmpeg tourne. Mécanisme mesuré : le tmpfs se remplit **par paliers à la fin de chaque job** (~400 Mo laissés
-     par un 1080p), pas au fil d'une lecture (`EnableSegmentDeletion`, 300 s gardées + 180 s d'avance = ~480 s × débit
-     par job actif). **Un job actif plus gros que le tmpfs ne se purge pas** (remux 4K 60 Mbit/s ≈ 3,6 Go) : tmpfs porté
-     à **4 Go** et `mem_limit 6g` (compose, appliqué hors pic le 2026-09-21 04:30). « Chargement infini » sur tout ce qui
-     transcode = `--check` d'abord.
-  4. **Jellyfin** : tmpfs 2 Go compté dans `mem_limit 4g` → `ThrottleDelaySeconds 180`, `SegmentKeepSeconds 300`
-     (retour arrière 5 min sans relance ffmpeg ; 720 après la sortie du tmpfs, palier B) ; **`cpus: 4` retiré**
-     (deux transcodages passaient à 0,82× ; `cpu_shares` arbitre) ; healthcheck explicite `start_period 180s`
-     (l'image en a un à 0 : une migration de base au boot était redémarrée par `stack_health` après ~3,5 min).
-  `cpu_shares` posés sur npm (2048), gluetun/jellyseerr/guacdb/guacd/guacamole (512), duckdns (256) ; homarr
-  `cpus: 1`. HoverTrailer et Media Bar jouent des bandes-annonces **YouTube** (zéro CPU serveur) : seul
-  `EnableThemeVideoFallback` touchait Jellyfin, mis à `false`. **Plafond à l'acquisition** : 110 Mo/min sur les
-  qualités 1080p des 4 Arrs (`qualitydefinition`, ≈ 14,7 Mbit/s), `[indexers] max_gb_per_movie 15`,
-  `max_gb_per_episode 3` ; pas de plafond par utilisateur (il forcerait des transcodages). Observabilité :
-  Telegraf lit l'API RC rclone (`rclone_vfs`, `rclone_core`) et la tâche **`hls_loop_watch`** lit le journal
-  NPM (UTC) pour signaler un client qui redemande le même segment ≥ 20 fois en 5 min (mail admin). Les
-  changements qui coupent la lecture (restart du montage, recréation des conteneurs) s'appliquent **hors pic**
-  par timer transitoire (`backups/playback-audit-*/apply-offpeak.sh`). Port 8096 et `PublishedServerUrl` gardés :
-  compteur `iptables -nvL DOCKER | grep dpt:8096` à 0, à relire après 7 jours avant de fermer.
-- **Lecture Jellyfin** : aucune tâche lourde (trickplay, analyse de segments, scan complet,
-  extraction) entre 13 h et 05 h ; trickplay jamais pendant les scans (il lit tout le fichier, par le
-  lien seedbox pour ses titres). `cpu_shares` : jellyfin 2048, fond 512 — le garder sur tout nouveau service de fond.
-- **Aucune option qui lit la vidéo à l'ajout d'un titre** (Intro Skipper `AutoDetectIntros`, source
-  d'images « Screen Grabber », `SaveLocalMetadata`/NFO) : sur les dossiers seedbox, chaque lecture passe
-  par le lien (~24 Mo/s partagés) et fait buffer les spectateurs. Pas de `--vfs-read-ahead` sur rclone.
-- **Médias en écriture pour Jellyfin** (`/media` et `/seedbox` sans `:ro`, rclone sans `--read-only`) : seulement
-  pour que le bouton « Supprimer » marche. Aucune option qui écrit dans les dossiers médias
-  (`SaveLocalMetadata`, `SaveSubtitlesWithMedia`, trickplay avec le média : tous à `false` ; `MetadataSavers`
-  vide sur Films et Séries, sinon Jellyfin écrit des `.nfo`). Une suppression dans Jellyfin est suivie par
-  `deletion_cleanup` (fiche Arr, Jellyseerr, torrent).
-- **Clé rclone de la seedbox** (`authorized_keys` côté seedbox, commentaire `homelab-sftp-rd`) : `sftp-server -P
-  write,mkdir,rename,…` = lecture + suppression, **aucune écriture** (un `open` en création peut laisser un fichier
-  vide). Sauvegarde `~/.ssh/authorized_keys.bak-20260915`. Une écriture sur `/mnt/seedbox` réussit en local puis
-  reste coincée dans le cache (`cache/rclone/vfsMeta`, rclone réessaie toutes les 5 min, « permission denied ») :
-  arrêter le montage, retirer les entrées (vfsMeta + vfs), relancer.
-- **Comptes** : premium = compte Jellyfin actif, non-premium = `IsDisabled` ; passer par
-  `homelab_core::accounts` (page `/accounts`, `homelabctl accounts`) qui garde les permissions Jellyseerr.
-  `accounts.protected` (Haradas, LeGrosCailloux) : jamais suspendus ni supprimés par la page ; les autres
-  admins sont gérés comme tout le monde. Plafonds dans `[accounts]` : 25 premium, **2 lectures
-  simultanées** par compte (tâche `playback_limit`, comptes protégés exemptés) ; pas de `RemoteClientBitrateLimit`
-  (forcerait des transcodages). **`MaxActiveSessions` reste à 0** (`max_devices_per_user`) : il ne joue qu'à la
-  connexion (403 « maximum number of sessions », affiché comme une erreur d'identifiants ou sans message) et
-  l'appli **iOS crée une nouvelle session à chaque ouverture** : le 2026-09-15, 5 sessions fantômes d'un iPhone
-  bloquaient la TV et la voiture d'un membre, Quick Connect compris.
-- **Langue d'affichage** : jellyfin-web la garde **dans l'appareil** (localStorage `<userId>-language` et
-  `<userId>-datetimelocale`, `userSettings.language()` lit avec `enableOnServer = false`) — la copie dans les
-  `DisplayPreferences` du serveur **n'est jamais lue** (vérifié le 2026-09-19 : posée à `fr` côté serveur, l'appli
-  restait en anglais). Sans clé, c'est la langue de l'appareil : un membre sous Windows en anglais voyait « Home »,
-  « Favorites », « Ends at 11:09 PM », alors que « Découvrir/Demandes/Calendrier » (renommés par notre CSS) et les
-  titres des rangées (Home Screen Sections) restaient en français. Script **public** `branding/jellyfin/gc-lang.js`
-  (« Groscailloux Langue ») : pose `fr` pour les comptes connus de l'appareil (`jellyfin_credentials`) avant le
-  démarrage de l'appli. **Première connexion (04/10)** : la clé est posée dès la réponse du serveur à la connexion
-  (XHR et fetch de `/Users/AuthenticateByName` et `AuthenticateWithQuickConnect`, `User.Id`), avant que l'appli ne la
-  lise : français **sans rechargement**. Avant, la clé était posée après coup puis la page rechargée : l'appli mettait
-  ~10 s à retrouver le compte, et un rechargement parti pendant la connexion la faisait redémarrer sur l'écran de
-  connexion (mise en page « legacy », 12.1). Filet : un rechargement unique, jamais sur `#/login` ni avant que les
-  identifiants soient enregistrés (garde `sessionStorage`). Une clé `language` déjà présente = choix du membre, rien
-  n'est touché. Banc : `backups/jellyfin12-test-20261003/runprod.sh lang_nr.js ":desktop desktop-legacy:desktop"`
-  (navigateur anglais, 9 cas). Une sonde qui écoute `beforeunload` dans tous les cadres voit aussi les iframes YouTube
-  de Media Bar : ce ne sont pas des rechargements de la page.
-- **Saut du lecteur Jellyfin** : `skipForwardLength` / `skipBackLength` à **10 s** (`[accounts] skip_forward_ms`
-  et `skip_back_ms`, posés à la création d'un compte par `jellyfin::set_skip_lengths`). Jellyfin met **30 s en
-  avant** par défaut. Le bouton d'avance rapide **et** les flèches gauche/droite passent par le même réglage
-  (`playbackManager.fastForward(skipForwardLength())` dans `playback-video.*.chunk.js`) : il n'y a donc qu'une
-  valeur à changer. C'est un `DisplayPreferences` **par compte** (`usersettings`, client `emby`), pas un réglage
-  serveur : les 16 comptes existants ont été convertis le 2026-09-18 (sauvegarde
-  `backups/jellyfin-skip-20260918-155125/`), et un compte créé ensuite le reçoit à l'onboarding. Une appli déjà
-  ouverte garde l'ancienne valeur en cache jusqu'au rechargement. Ni les raccourcis de Jellyfin Enhanced
-  (lettres et chiffres seulement) ni nos scripts injectés ne touchent aux flèches.
-- **Onboarding et mails (2026-09-20, v1.16.0)** : le mail de bienvenue finissait en **spam** — `curl smtps` sans
-  `Date`/`Message-ID`, identifiant + mot de passe en clair, « Jellyseerr Groscailloux », accents retirés, liens
-  duckdns. `mail.rs` construit maintenant un MIME complet (`Date`, `Message-ID`, `Reply-To`, RFC 2047, quoted-printable,
-  `multipart/alternative`) ; `SMTP_FROM_NAME` = « Groscailloux ». **Jamais d'identifiant ni de mot de passe dans un
-  mail** : un bouton vers `/bienvenue/<jeton>` (`homelab_core::welcome`, jeton haché SHA-256 dans
-  `state.welcome_links`, `[onboard] link_ttl_mins` = 60, usage unique) où le membre choisit son mot de passe ; page
-  expirée → renvoi par adresse (réponse neutre, `renew_per_hour`). Page publique `/inscription` (`public_signup`,
-  honeypot, rate limit IP, `max_signups_per_day`, adresse connue → neutre) ; l'admin reçoit « nouveau compte à
-  activer » et le membre « ton compte est actif » à l'activation depuis `/accounts` (colonne « Lien », bouton
-  Renvoyer). **Les liens vivent dans l'état du daemon** : `homelabctl onboard|accounts link|mail-test` passent par
-  `POST /onboard`, `/admin/link`, `/admin/mail-test` (jeton `HOMELABD_ONBOARD_TOKEN` en en-tête) — un lien émis par
-  la CLI dans le fichier d'état serait invisible du daemon et écrasé à sa prochaine sauvegarde (vu le 2026-09-20).
-  Test sans polluer : compte temporaire dont l'adresse est **celle de l'expéditeur** (`SMTP_FROM`, aucun rebond) ;
-  jamais d'adresse inventée (rebonds = réputation Gmail). Jetons et mots de passe jamais journalisés.
-- **Discord (2026-09-20, v1.17.0)** : deux **webhooks** dans `.env` (`DISCORD_WEBHOOK_MEMBERS` = salon des membres,
-  `DISCORD_WEBHOOK_ADMIN` = salon privé, repli sur membres ; `DISCORD_ROLE_MEMBERS` facultatif), **jamais dans le
-  dépôt ni les journaux** (`discord::mask`). `homelab_core::discord` poste les embeds de homelabd (annonces du tchat →
-  membres ; `alerts::admin` = mail **et** Discord admin pour `hls_loop_watch`, `indexer_unblock`, inscription à
-  activer, mail de bienvenue non parti, récap du tchat ; `stack_health` → Discord seulement). `homelabctl discord
-  apply` configure par API les 4 Arrs (connexions « Discord membres » : Radarr `onDownload/onUpgrade`, Sonarr
-  **`onImportComplete`** — un message par téléchargement, jamais `onDownload` = un par épisode ; « Discord admin » :
-  santé) et l'agent Discord de Jellyseerr (types 2|8|64|128 : demande, disponible, refusée, validée d'office) ;
-  `test` poste un essai ; `remove` retire tout ; sauvegardes JSON dans `backups/discord-<date>/` (contiennent
-  l'URL : 600). Chemins Arr toujours préfixés `api/v3/` (la base de `ArrClient` est la racine). Un webhook collé
-  dans une conversation est compromis : le recréer dans Discord (Modifier le salon → Intégrations → Webhooks) et
-  relancer `apply`.
-- **Abonnés (v1.18, 2026-09-20)** : `homelab_core::subscriptions` (fiches SQLite `state/subscriptions.db`, décisions pures
-  `decide` testées) + `subscription_ops` (tout passage par `accounts::set_premium`) ; tâches `subscription_cycle` (1 h,
-  réel depuis le 27/09) et `subscription_reconcile` (au démarrage de homelabd puis toutes les 24 h : l'heure du
-  contrôle est celle du dernier redémarrage) ; `[subscriptions]` dans le TOML.
-  PayPal : **en live** (`PAYPAL_ENV=live` + `PAYPAL_*` dans `.env` ; `PAYPAL_SANDBOX_*` pour les essais) : `/premium`
-  montre le bouton d'abonnement de l'application REST ; `DONATION_*` n'y sert plus qu'en repli si l'application
-  repasse en sandbox (`/premium?test=1` montre alors le bouton sandbox). Webhook
-  `/paypal/webhook` sur l'hôte public de `/premium` (hôte NPM 20, sans liste d'accès), signature vérifiée chez PayPal,
-  id dans `PAYPAL_WEBHOOK_ID` (`homelabctl subs paypal --webhook <url>` le crée). « Mon compte » = script Injector
-  « Groscailloux Mon compte » → `/gc-compte/` (NPM hôte 1, base **et** `1.conf`, sauvegarde `backups/npm-20260920-gc-compte/`)
-  → homelabd `/compte/`. Statut « à qualifier » = compte actif sans abonnement connu : **jamais suspendu par le cycle**,
-  l'admin tranche sur `/accounts`. Aucun secret ni identifiant PayPal dans le dépôt, les journaux ou les pages.
-  **Revue du 07/10** :
-  - abonnement PayPal lié et non arrêté (`auto_renews`) : **jamais de rappel avec lien de paiement** (un clic = second
-    abonnement = deux prélèvements) ; une information J-7 sans lien ; grâce à échéance + `paypal_margin_hours` (36) ;
-    prélèvement raté ⇒ mail de suspension sans lien (mettre à jour le moyen de paiement chez PayPal) ;
-  - second abonnement d'un compte dont l'abonnement lié est ACTIVE chez PayPal : ni rattaché ni compté
-    (`Payment::Duplicate`), alerte admin une fois par jour, `/premium/activate?err=deja` ; le rembourser ou le résilier
-    **à la main** dans PayPal. La fiche garde `paypal_status` et `paypal_paid_at` ;
-  - `subscription_reconcile` n'applique qu'un paiement constaté (`last_payment` > `paypal_paid_at` + 12 h). Facturation
-    due depuis plus de 36 h sans paiement : alerte « Prélèvement PayPal en attente » (une par abonnement et par jour),
-    rien n'est prolongé. Arrêt chez PayPal : noté, accès jusqu'à l'échéance payée ;
-  - `/premium?compte=X` ne dit « déjà abonné » que pour un lien signé `&k=` (HMAC de `HOMELABD_ONBOARD_TOKEN` et du
-    compte, 16 hexa, porté par les mails) : la page publique ne révèle plus qui paie. Renouveler le jeton rend les
-    anciennes clés caduques, sans risque ;
-  - compte Jellyfin disparu : les fiches sans rien à perdre (à qualifier, suspendu ou exempté, sans échéance ni
-    PayPal) partent ; les autres, `max_orphan_removals_per_run` (3) au plus d'un coup. Au-delà, ou si Jellyfin renvoie
-    une liste vide ou illisible, **rien n'est retiré**, le cycle ne touche plus ces fiches et l'admin est prévenu
-    (événement `orphan_held`) : pour une suppression en masse voulue, relever la clé le temps d'un passage ;
-  - essai : pas de rappel J-7 dès l'inscription ; un parrainage ne date jamais un accès offert sans échéance.
-- **Lot « lecture et suivi » (v1.19, 2026-09-21)** : `playback_canary` (15 min, transcodage réel de 2 segments, alerte
-  admin au premier échec, `state.canary`) ; **langue par compte** posée à l'onboarding (`[accounts] audio_language
-  = "fre"`, `subtitle_language = "fre"`, `subtitle_mode = "Smart"`, `PlayDefaultAudioTrack = false`) et rattrapée le
-  21/09 sur 16 comptes (sauvegarde `backups/jellyfin-language-20260921/`), choix « VO sous-titrée » dans « Mon
-  compte » (**refait le 2026-09-25** : l'ancien mode ne choisissait pas la VO, il lisait la piste « par défaut » du
-  fichier, la française dans la plupart des MULTi — JoJo en VF. Désormais `[accounts] vo_audio_language = "jpn"`
-  côté serveur (animés, tous appareils) + script Mon compte qui, au démarrage d'un titre parti en français, bascule
-  sur la piste de la **langue d'origine** (TMDB via Jellyseerr, `GET /compte/api/original`, anglais si inconnue ;
-  rien pour une origine française ni l'audiodescription) par `SetAudioStreamIndex` envoyé à sa propre session, une
-  fois par titre ; applis TV natives : japonais seulement ; banc `backups/jellyfin-vo-20260925/`). **`PlayDefaultAudioTrack` = false dans les DEUX modes** (à `true`, Jellyfin prend la piste « par défaut » du
-  fichier AVANT la langue préférée : SNK en VF en mode VO, corrigé le 26/09, 3 comptes). Choisir un mode
-  coupe aussi `RememberAudioSelections`/`RememberSubtitleSelections` du compte : une piste retenue pour un titre
-  (table `UserData.AudioStreamIndex`, invisible par l'API) passait avant la langue du compte — Harry Potter resté
-  en anglais après le passage en VF ; **avancement des demandes** dans l'onglet Demandes de Jellyfin Enhanced (`/compte/api/requests`,
-  `homelab_core::requests_progress`, cartes `.je-request-card` + `data-tmdb-id`) — clés d'état
-  `unknown_series` = `<arr>:<seriesId>:<saison>`, `movie_search` = `<arr>:<movieId>` avec `<arr>` = `sonarr`,
-  `radarr`, `sonarr-seedbox`, `radarr-seedbox`, Jellyseerr `serviceId` 0 = VPS, 1 = seedbox, `externalServiceId` =
-  id Arr ; **sous-titres** = Bazarr de la seedbox (profil « Français (+anglais) », `subsync` off), rien sur le VPS.
-  **Sous-titres incrustés = 2 à 12 minutes d'extraction par le lien** (mesuré du 19 au 21/09) : Jellyfin relit tout le
-  fichier seedbox pour sortir une piste incrustée ; le lecteur attend ou abandonne (499). Réglé par `subtitle_sync` :
-  extraction **sur la seedbox** à codec identique (`.fr.default.ass`, `.fr.forced.ass`, `.fr.hi.ass`, `.fr.srt`, SRT
-  sans panneaux dérivé de l'ASS), puis FullRefresh de la fiche (seul moyen de voir un fichier annexe). **Ne jamais
-  convertir l'ASS en SRT pour l'usage principal** : les lignes de panneaux (titre d'épisode, « PROCHAIN ÉPISODE ») se
-  retrouvent en bas de l'image comme des mentions malentendants (vu le 21/09). Bazarr reste à `use_embedded_subs =
-  true` (rôle d'origine). Un membre qui bascule l'audio en VO **en cours de lecture** garde la piste de sous-titres
-  choisie au départ (« Forcé » en mode Smart) : c'est jellyfin-web, pas une panne ; « Toujours en VO » dans Mon compte
-  sélectionne la piste complète d'office. Taille des sous-titres SRT : réglage jellyfin-web **par appareil**
-  (`<userId>-localplayersubtitleappearance3`, `textSize` : smaller .8em, small inherit, normal 1.36em, large 1.72em,
-  larger 2em, extralarge 2.2em), posé « large » par défaut par le script Mon compte et modifiable dans Mon compte ;
-  l'ASS a ses propres styles. **jellyfin-web pose ces tailles en style INLINE sur `.videoSubtitlesInner`, une seule
-  fois, à la création de l'élément de sous-titres** : changer le réglage pendant une lecture ne bougeait rien tant
-  qu'on ne changeait pas de piste (le détour par le « sous-titre secondaire » affiche deux pistes à la fois). Le
-  script pose donc une règle `#gc-sub-size` en `!important` (une règle importante de feuille de style l'emporte sur
-  un style inline) sur `.videoSubtitlesInner`, `.videoSecondarySubtitlesInner` et `video::cue`, relue à chaque tour
-  de boucle : la taille s'applique aussitôt, y compris si elle est changée dans Réglages → Sous-titres de Jellyfin.
-  **Les grabs côté seedbox ne passent jamais par la file de Sonarr/Radarr** (pas de Prowlarr là-bas : ajout direct au
-  qBittorrent avec l'étiquette `homelab:`) : la barre lit aussi les torrents étiquetés des deux qBittorrent
-  (`requests_progress::homelab_tag`/`from_torrent`), sinon Black Clover à 46 % s'affichait « recherche, prochaine
-  tentative dans 7 j » (2026-09-21).
-- **Demandes Jellyseerr** : validation automatique pour tous (bit 128, `accounts.jellyseerr_auto_approve`, posé à
-  la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
-  Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).
-  Sauvegarde d'avant : `backups/jellyseerr-settings-main-20260915-094557.json`. Une réponse de `settings/main`
-  contient la clé API : ne jamais l'afficher (filtrer les champs). Job « Download Sync » toutes les 5 min
-  (`0 */5 * * * *`, 07/10) au lieu de chaque minute : `POST /api/v1/settings/jobs/<id>/schedule` avec
-  `{"schedule": "…"}` (`cronSchedule` → 400). Les barres d'avancement des membres viennent de homelabd, pas de ce job.
-- **Tchat des membres** (`homelab_core::chat`, API `crates/homelabd/src/chat_api.rs`, client
-  `crates/homelabd/assets/chat/app.js`) : servi sous `/gc-chat/` **sur l'adresse de Jellyfin** (NPM hôte 1,
-  `location ^~ /gc-chat/` → `172.18.0.1:8766/chat/` ; le `^~` est obligatoire, sinon la règle de cache
-  des `.js` de NPM envoie `app.js` à Jellyfin). Chargé par le plugin **JavaScript Injector** (script
-  « Groscailloux Tchat » = `branding/jellyfin/gc-chat-loader.js`, « Requires authentication ») : une mise à
-  jour du tchat = rebuild de homelabd, pas le plugin. Identité = jeton de session Jellyfin vérifié par
-  `/Users/Me`, cache mémoire 5 min (une suspension prend effet sous 5 min), jamais écrit ni journalisé.
-  Modérateurs et phase de test (`beta_users`) dans `[chat]` ; base `state/chat.db` (sauvegardée par
-  `homelabctl backup`). Mails : récapitulatif à `CHAT_ADMIN_EMAIL` (repli `GUIDE_CONTACT_EMAIL`), annonces
-  aux comptes actifs ayant une adresse **valide** dans Jellyseerr (celle de Haradas y vaut `haradas`).
-  Pas de tchat dans les applis natives (Android TV, Swiftfin), **ni sur les téléviseurs** (2026-09-19 : agent
-  webOS/Tizen… ou classe `layout-tv` → `gc-chat-loader.js` n'insère pas `app.js`, et `app.js` se retire quand même
-  s'il est chargé).
-  **Téléviseurs** (webOS, Tizen, Android TV — détectés par l'agent, l'absence de pointeur ou ≤ 2 cœurs) :
-  boucle à 3 s au lieu de 1 s, sondages espacés (10 s ouvert / 180 s fermé), ni ombre ni animation, et les
-  bandeaux (annonce, message privé, aide à la qualité) se ferment à la touche **Retour** (keyCode 461 webOS,
-  10009 Tizen) **et** s'effacent seuls au bout de 12 s : sans pointeur, la croix est inatteignable. Mesuré le
-  2026-09-16 sur un téléviseur simulé (processeur bridé 6x) : nos scripts coûtent ~2 points de processeur sur
-  l'accueil et rien de mesurable en lecture — la lenteur vient du client webOS lui-même. **Disposition TV**
-  (`layout-tv`, appli webOS = client web du serveur) : jellyfin-web laisse l'en-tête **défiler hors écran** dès qu'une
-  carte a le focus (page décalée de ~600 px, `.skinHeader` en `position: relative`) — au pointeur Magic Remote,
-  Rechercher/Tchat/Notifications/Profil sont inaccessibles ; et à 1080p les cinq onglets chevauchaient la cloche
-  NotifySync et le bouton Aléatoire de Jellyfin Enhanced. Depuis le 2026-09-19 le calque épingle l'en-tête et
-  resserre onglets et boutons sur `.layout-tv` (sondes `backups/cast-tests-20260919/tv_*.js` : agent webOS 1080p,
-  boîtes et chevauchements mesurés, navigation ↑ vérifiée). **Interface TV distincte (v1.15.0)** : script
-  **public** `branding/jellyfin/gc-tv.js` (« Groscailloux TV », `RequiresAuthentication: false` → `public.js`,
-  exécuté dès le chargement, avant la connexion et avant Media Bar) : sur agent TV il neutralise Media Bar
-  (`window.slideshowPure.SlideshowManager.loadSlideshowData` et `CONFIG.enableTrailers`, objets exposés en fin de
-  `slideshowpure.js`) et retire `#randomItemButton` (JE) et `.headerSyncButton` ; le bloc `.layout-tv` du calque
-  cache `#slides-container`, remet `.homeSectionsContainer` à `top: 1.6em` (le calque le décale de 80vh sous le
-  bandeau), cache les rangées HSS non essentielles (classe = SectionId : `gc-tendances`, `BecauseYouWatched…`,
-  `gc-mieux-notes`, `Genre-…`, `gc-films-fr`, `DiscoverMovies/TV`, `MyJellyseerrRequests`, `WatchAgain`), les blocs
-  secondaires des fiches (`#similarCollapsible`, genres/tags/studios, Elsewhere `.streaming-lookup-container`,
-  `.audio-languages-container`) et `.gc-chat-btn`. Règle : **tout ce qui est TV est sous `.layout-tv` ou gardé par
-  l'agent utilisateur — jamais par le nombre de cœurs** (un vieux portable y passerait). Vérification :
-  `tv_home_lite.js` (DEVICE=tv|desktop|iphone, candidats injectés par `CANDIDATE_JS`/`CANDIDATE_CSS`) — bureau et
-  iPhone doivent être identiques avant/après. Media Bar charge encore `youtube.com/iframe_api` au chargement (avant
-  tout script injecté), sans lecteur : négligeable. Les pages « Demandes » et fiches d'un **admin** déclenchent
-  des rafales Jellyfin Enhanced (`arr/series-slugs` par carte, réservé aux admins : 249 requêtes/min vues depuis la
-  TV) ; `JellyseerrShowNetworkDiscovery` coupé le 2026-09-19 (928 réponses 503/jour : il exige une clé TMDB dans le
-  plugin, absente). **Jamais de `window.confirm/alert/prompt`** dans
-  les scripts injectés : la WebView de l'appli iPhone et Jellyfin Desktop les ignorent (réponse « non » sans rien
-  afficher) — le bouton Supprimer du tchat était inerte pour cette raison ; confirmer dans la page.
-- **Saccades en cours de lecture** : Jellyfin choisit **une seule qualité par session** (pas d'ABR). En « Auto »,
-  un 1080p part tel quel (~5 Mbit/s) : si le débit du membre baisse, la lecture cale et jellyfin-web relance le
-  flux toutes les ~30 s, ce qui aggrave le retard (en 12.x, un journal `FFmpeg.*` par relance ; `hls_loop_watch`
-  alerte au-delà de 30 relances d'un titre dans l'heure). Le 2026-09-15, un membre a
-  eu ce cas (4,7 Mbit/s demandés, 2 à 4 Mbit/s disponibles ; serveur à 80 % de CPU libre, fichier déjà à 93 % dans
-  le cache rclone) ; à 1,5 Mbit/s la même lecture a tenu 55 min sans une relance. Pour diagnostiquer : taille et
-  cadence des segments dans `npm/data/logs/proxy-host-1_access.log` (horodatage **UTC**), journaux ffmpeg
-  (`jellyfin/config/log/FFmpeg.*`), croissance du cache dans `journalctl -u homelab-seedbox-mount`, et
-  `docker_container_net` dans InfluxDB. Aide en place : `branding/jellyfin/gc-quality-helper.js` (JavaScript
-  Injector, « Groscailloux Qualité ») surveille la progression de l'image — les événements `waiting` ne suffisent
-  pas, hls.js les absorbe — et propose au 3ᵉ blocage de passer au palier sous 2 Mbit/s **par le menu du lecteur**
-  (roue crantée → Qualité) : la commande `SetMaxStreamingBitrate` n'est pas gérée par le client web
-  (« does not recognize ») et écrire `maxbitrate-Video-*` ne change pas la lecture en cours. **Ce palier ne vaut que
-  pour la lecture en cours** (2026-09-25) : jellyfin-web le mémorise par appareil (`maxbitrate-Video-<réseau>` +
-  `enableautobitratebitrate-Video-<réseau>` à `false` dans `localStorage`) et ~60 lectures en 10 jours restaient
-  réencodées à 1–3 Mbit/s ; le script note ce qu'il a posé (`gc-quality-lowered`) et remet « Auto » à la sortie du
-  lecteur, sauf si le membre a changé la qualité entre-temps (banc : `backups/quality-tests-20260916/`, phases 5–6).
-  **Revu sous 12.1 (05/10)** : un saut ou un rechargement de flux ouvre 8 s de calme (`QUIET_MS`, `seeking`/`seeked`/
-  `loadstart`) — un saut comptait pour un blocage ; bandeau en haut aussi sur PC et tablette (il cachait 4 boutons du
-  lecteur 12.1) ; la note du palier attend que jellyfin-web l'ait écrit (au plus 10 s) et ne garde que les clés de notre
-  palier. Banc `backups/jellyfin12-test-20261003/t8_run.sh t8_quality.js`.
-- **« Lire sur » (diffuser vers un autre appareil)** : filtré par `branding/jellyfin/gc-cast-filter.js`
-  (JavaScript Injector, déployé avec `scripts/jellyfin-js-apply.py`) : **seulement ses propres appareils
-  connectés**, quel que soit le réseau. Jusqu'au 2026-09-19 il exigeait aussi la même adresse publique que
-  l'appareil courant ; or un iPhone derrière le **Relais privé iCloud** (ou un VPN) joint le serveur par deux
-  adresses à la fois — la box (86.194.x) et un relais DataPacket (79.127.x), à 7 s d'écart dans le journal NPM —
-  et sa propre TV disparaissait du menu (vu sur le compte admin). Condition réseau retirée, garde-fou par compte
-  conservé et testé (`node` sur la liste réelle de `/Sessions`). Le menu ne peut lister qu'un appareil **ouvert
-  et connecté** avec le même compte : Desktop fermé ou TV éteinte = liste vide, ce n'est pas une panne. Jellyfin
-  garde la liste des cibles en mémoire pendant la vie de la page : le filtre doit être chargé avant la première
-  ouverture du menu. **Google Cast n'existe que dans Chrome et l'appli Android** ; ailleurs jellyfin-web met une
-  note « (Google Cast non pris en charge) » sous le titre — un `<p class="actionSheetText">`, pas une entrée, la
-  liste étant vide (vérifié en test). `branding/jellyfin/gc-airplay.js` (« Groscailloux AirPlay », v1.14.2) la
-  remplace sur iPhone/iPad/Mac par une entrée **AirPlay** (v2 le 2026-09-19 : vidéo en cours →
-  `webkitShowPlaybackTargetPicker()` dans le clic ; sinon la feuille est fermée, le bouton Lire **natif** de la
-  fiche est cliqué et le sélecteur est tenté dès que la vidéo est prête ; le rappel « icône AirPlay du lecteur »
-  n'est affiché que si le sélecteur refuse), la retire ailleurs, et écrit « Aucun autre appareil connecté avec ce
-  compte » quand la liste est vide. **Le bouton « Lire » du bandeau Media Bar (`.slide .btnPlay`) est inopérant
-  dans l'appli iPhone** : il fait `POST /Sessions/{id}/Playing` vers sa propre session (v3, 2026-09-19, journal
-  client « video: none within 8000ms ») — depuis l'accueil, le script clique le bouton « Détails » de la
-  diapositive active (`#slides-container .slide.active[data-item-id] .detail-button`), attend le `.btnPlay` de
-  la fiche, puis lance ; sans titre affiché, il ferme la feuille et l'explique en une ligne. Les dialogues jellyfin-web 10.11 se ferment **uniquement** par
-  `history.back()` (entrée `history.state.usr.dialogs[]`) : clic synthétique sur le fond et Escape n'ont aucun
-  effet ; sans entrée d'historique (WebView), le script retire la feuille lui-même. Chaque appui envoie ses étapes
-  à `ClientLog/Document` (`jellyfin/config/log/upload_*.log`, lignes « gc-airplay … ») : lire ce journal avant
-  toute hypothèse sur ce que fait l'appli iPhone. Une version déployée est **remplacée** par la suivante
-  (`VERSION`, override de `__gcAirPlayDone`) : le lot `private.js` peut porter les deux pendant un test. Test :
-  `backups/cast-tests-20260919/airplay_test.js` (puppeteer, compte temporaire, script candidat injecté par
-  interception de `/JavaScriptInjector/private.js` ; UA iPhone + simulateur du sélecteur, 22 cas dont accueil, fiche et page sans titre ; relance avec
-  `NO_INJECT=1` après déploiement).
-  Google Cast ne marche que dans **Chrome sur ordinateur** et dans l'**appli Android du Play Store** (celle de
-  F-Droid n'a pas le Cast, licence). **Chrome sur Android n'a pas le SDK Cast web** : jellyfin-web y écrit
-  « (Google Cast non pris en charge) » et notre script, qui retirait cette note, laissait « Aucun autre appareil
-  connecté avec ce compte » — un membre a cru à une restriction de notre part (2026-09-22, Abdou sur Chrome
-  Android, TV sans appli Jellyfin). Depuis, `gc-airplay.js` (VERSION 4) affiche sur Android « installe l'appli
-  Jellyfin du Play Store ». Rien chez nous ne bloque le Cast : `gc-cast-filter.js` ne filtre que les **sessions
-  Jellyfin** (`getSessions`), jamais les cibles Cast ou AirPlay du navigateur. Récepteur Cast du serveur :
-  `CastReceiverApplications` = Stable `F007D354`, posé sur les comptes. AirPlay passe par le bouton du lecteur
-  dans Safari/iPhone.
-  **Sous-titres en AirPlay** (2026-09-29) : jellyfin-web ne déclare que des sous-titres `External`, dessinés par la
-  page par-dessus la vidéo ; AirPlay n'envoie que le flux HLS → télé sans sous-titres (Chainsaw Man, un membre et
-  l'admin). `gc-airplay.js` (appareils Apple seulement) ajoute `{Format: vtt, Method: Hls}` **en tête** des
-  `SubtitleProfiles` de chaque `PlaybackInfo` (XHR du SDK et fetch) : en lecture HLS (remux ou conversion), le serveur
-  met les sous-titres dans le flux (`#EXT-X-MEDIA TYPE=SUBTITLES`, piste choisie `DEFAULT=YES`), affichés nativement par
-  l'iPhone et transmis par AirPlay, sans conversion vidéo. Lecture **directe** (MP4 lisible tel quel) : non couverte.
-  Banc `backups/lg-tv-20260929/sub_airplay.js` (`ITEM=<id> run.sh sub_airplay.js "iphone:0 iphone:1 desktop:1"`).
-  **Limite vue le 29/09** : le récepteur AirPlay **intégré à une télé LG** (`AirPlay/2.0 … MFi_AirPlay_Device`)
-  télécharge bien `subtitles.m3u8` et `stream.vtt` mais n'affiche rien ; sur une télé LG, utiliser l'appli Jellyfin de
-  la télé. Seule autre voie : incruster les sous-titres pendant l'AirPlay (conversion vidéo complète, non faite).
-  **Chromecast = son AAC imposé par NPM** (2026-09-27) : le récepteur Jellyfin (agent `CrKey`) s'est mis à déclarer
-  l'AC3/E-AC3 ; Jellyfin copiait donc le son dans le HLS et la télé restait sur « Ready to cast » après le 1ᵉʳ segment
-  (jusqu'au 23/09 : `AudioCodec=aac`, des centaines de segments). Bloc `location ~* ^/videos/[^/]+/master\.m3u8$` de
-  l'hôte 1 (base **et** `1.conf`, sauvegarde `backups/npm-20260927-chromecast/`) : pour `CrKey` seulement,
-  `AudioCodec=aac` + `aac-audiochannels=2` sur la liste maîtresse (main.m3u8 et segments en héritent) ; `proxy.conf`
-  passe `$request_uri`, d'où un `proxy_pass …$uri?$gc_args` propre au bloc. Contrôle : `curl -A '…CrKey/1.56…'` sur un
-  `master.m3u8` → `CODECS="…,mp4a.40.2"`, sans l'agent → `ac-3`.
-  **Chromecast 1080p : H.264 niveau 4.1 et 8 Mbit/s au plus** (2026-09-29, même bloc, `MaxWidth` ≠ 3840) : un Chromecast
-  1080p recevait du niveau 4.2 à 18 Mbit/s (*James et la Pêche géante*, HEVC 10 bits à fort débit), chargeait 1 à 2
-  segments puis restait figé en envoyant des `Ping` (chargement infini), alors que son lien mesurait ~45 Mbit/s ; le
-  Chromecast 4K d'un autre membre n'est pas touché. Captures nommées obligatoires dans ces `set` (`${1}` → « unknown "1"
-  variable »). **Puis 720p / 4 Mbit/s** (même soir, choix de l'utilisateur) : en 1080p la conversion tournait à ~1,3× et
-  chaque avance coûtait 10 à 15 s de chargement ; `MaxWidth=1280`, `MaxHeight=720`, `VideoBitrate` ≤ 4 000 000.
-  Contrôle : `curl -A '…CrKey…'` avec `MaxWidth=1920` → `RESOLUTION=…x720`, `CODECS="avc1.640029,…"`, `BANDWIDTH` ≈ 4,3 M.
-  **Profil `high10` → `high`** (07/10, même bloc, après la règle du niveau, `$gc_pf` à captures `gcpp`/`gcps`, tous les
-  `CrKey`, 4K compris) : depuis le 27/09 le récepteur demande `high10` en premier, et Jellyfin annonçait alors
-  `avc1.4240xx` (Baseline) alors que ffmpeg encode en High ; le contrôle du 29/09 utilisait `h264-profile=high` et ne
-  reproduisait pas la vraie requête. Contrôle : `h264-profile=high10&h264-level=42&MaxWidth=1920` →
-  `CODECS="avc1.640029,mp4a.40.2"`. Rien ne prouve encore que ce soit la cause des gels : à valider en séance réelle.
-  Plusieurs appuis rapprochés sur l'avance = autant de relances de ffmpeg (4 en 17 s vues le 29/09) : avancer d'un geste.
-  « Transcode Nag » : `ExcludedClientPatterns = ["Chromecast"]` (29/09, sauvegarde `backups/transcode-nag-20260929/`) —
-  ce n'était PAS la cause du blocage (vérifié : le Chromecast s'est figé pareil sans le message), gardé car le message
-  n'a pas de sens sur une télé. Un Chromecast figé peut aussi ne plus rien demander au serveur : le débrancher 10 s.
-  **Télés LG (webOS) : changement de piste audio par le serveur** (2026-09-29) : jellyfin-web (webOS ≥ 4,
-  `video.audioTracks` présent) bascule la piste **dans le lecteur de la télé** sans rien demander au serveur, et sur
-  les LG ça ne fait rien (VO demandée sur *Obsession*, restée en VF). `gc-tv.js`, sur agent webOS seulement :
-  `audioTracks` masqué sur la **vidéo insérée dans la page** (jamais sur le prototype : l'élément de test du profil de
-  lecture garde `audioTracks`, sinon Jellyfin remuxe aussi la VF par défaut, qu'il juge « secondaire » dès qu'elle
-  n'est pas la 1re piste du fichier), et toute demande `PlaybackInfo` (XHR du SDK **et** fetch) pour une autre piste
-  que celle « par défaut » du fichier part avec `EnableDirectPlay=false` → remux, image et son copiés. Piste par
-  défaut = lecture directe comme avant. Sous-titres ×1,4 + contour et panneau Mon compte en 22 px sur TV (`app.js`).
-  **Panneau Mon compte à la télécommande** (29/09) : jellyfin-web ne voit pas notre panneau, les flèches déplaçaient la
-  sélection DERRIÈRE. Sur TV, `app.js` capte ←↑→↓ (écouteur `window` en capture, avant jellyfin-web) et passe d'un
-  élément du panneau à l'autre, OK garde l'activation native, Retour ferme ; langue et taille = boutons (`choices`) au
-  lieu de `<select>`. Banc `backups/lg-tv-20260929/lg_panel.js`.
-  Banc `backups/lg-tv-20260929/` (`run.sh lg_audio.js "tv:0"` : télé LG **émulée** — `audioTracks` et HEVC/E-AC3
-  déclarés —, `lg_screens.js` : captures) ; le Chromium du banc ne décode pas le HEVC : le lecteur y finit en
-  « Erreur de lecture », seules les décisions du serveur sont mesurées.
-- **Applis TV natives (Android TV, Fire TV Stick)** : 2ᵉ usage de la maison (133 lectures, 72 h sur 30 j au
-  2026-09-22, dont un Fire TV Stick en appli 0.19.10, plus un membre sur le client tiers JellyWatch), **100 % en
-  lecture directe**. Elles ne chargent **pas** jellyfin-web : ni calque CSS, ni script injecté (tchat, Mon compte,
-  AirPlay, aide à la qualité, `gc-tv.js`), ni rangées Home Screen Sections. Tout ce qui les améliore passe par les
-  **métadonnées et les réglages de compte**. L'appli ne stocke pas sa disposition d'accueil côté serveur
-  (`DisplayPreferences` client `jellyfin-androidtv` : `TvHome` vide) : rien à pré-régler de ce côté. Les segments
-  d'Intro Skipper leur donnent déjà « Passer l'intro » (**38 épisodes sur 40** en ont, mesuré) : inutile d'ajouter
-  TheIntroDB, dont les versions compatibles 10.x s'arrêtent d'ailleurs à l'ABI 10.9.
-- **`EnableEmbeddedTitles` : à laisser à `false`** (2026-09-22). Les groupes de release écrivent leur nom dans la
-  métadonnée `title` du MKV ; avec cette option, Jellyfin l'affichait à la place du titre — **30 films** s'appelaient
-  `Matrix.Reloaded.2003.MULTi.VFF.1080p…` ou `A Quiet Place - 2018 - BluRay Rip 1080p - PARISTOCAT`, ce qui remplit
-  l'écran d'une télé. Option remise à `false` sur Films, Séries, Anime et Films d'animation (sauvegarde
-  `backups/jellyfin-libs-20260922/virtualfolders-before.json`). **Une fiche déjà créée garde ce nom** : ni un
-  `Refresh`, même `FullRefresh` + `ReplaceAllMetadata`, ni un rafraîchissement d'images ne le remplacent — **seul
-  `RemoteSearch` + `Apply` renomme** (vérifié sur deux titres). C'est ce que fait `identity_check`
-  (`fix_release_names`, `looks_like_release`, une tentative par fiche et par mois via `state.renamed_items`).
-- **Images manquantes** : 22 titres sans logo et 24 sans vignette au 2026-09-22 ; un rafraîchissement d'images
-  ciblé (`ImageRefreshMode=FullRefresh`, `MetadataRefreshMode=None`) n'a rien ramené — TMDB n'en a pas pour ces
-  titres obscurs. Ne pas relancer la chasse sans changer de fournisseur d'images.
-- **Adresses des clients** : `KnownProxies = 172.18.0.0/16` (réseau Docker entier) dans la configuration
-  réseau de Jellyfin, lu **au démarrage seulement**. Avant le 2026-09-15 il valait l'ancienne IP de NPM
-  (`.15`, NPM est passé en `.16`) : Jellyfin voyait tout le monde comme NPM, donc comme réseau local.
-  Aucune limite de débit « distant » n'est réglée, ce qui compte si ça change.
-- **NPM hôte 1 (Jellyfin)** : sa configuration avancée contient les réglages SyncPlay (tampons coupés,
-  délais 3600 s ; avant le 2026-09-15 ils n'étaient que dans le fichier conf, pas en base) et la route du
-  tchat. Toujours éditer base **et** fichier ensemble (sauvegarde `backups/npm-*-chat`).
-- **Faille de Home Screen Sections 3.0.2 fermée par NPM (05/10, issue amont #298, sans correctif publié)** : toute
-  session pouvait enregistrer ou remplacer une rangée d'accueil de tout le monde (`POST /HomeScreen/RegisterSection`),
-  et lire les rangées d'un autre compte en passant son `userId`. Bloc
-  dans la configuration avancée de l'hôte 1 (base et `1.conf`, après `gzip_vary on;`) :
-  - `RegisterSection` et `/CollectionSections/` (inutile depuis l'extérieur) → 403 (aucune extension ne passe par HTTP :
-    0 appel en 6 semaines) ;
-  - `/HomeScreen/Sections`, `/HomeScreen/Section/*`, `/ModularHomeViews/UserSettings` passent d'abord par
-    `auth_request` sur `/UserViews/GroupingOptions?<même chaîne>` : Jellyfin juge lui-même le `userId` (le sien ou
-    session admin) → autre compte 403, sans session 401 ; les écritures (hors GET/HEAD) sont réservées aux admins
-    (`/Plugins`) : un membre ne peut plus enregistrer ses propres rangées (jamais utilisé) ;
-  - une chaîne de requête entièrement encodée n'est décodée ni par la garde ni par HSS (400 « userId requis ») ;
-  - `assets.conf` passe avant : la garde suppose qu'aucune rangée n'a d'id finissant par une extension d'asset.
-  Outils et sauvegarde : `backups/npm-20261005-014624-hss/` (`apply_npm_hss.py --check|--apply|--remove`,
-  `test_hss_guard.sh` : 19/20, l'écart étant le cas encodé ci-dessus). À retirer quand l'auteur publiera un correctif.
-- **SyncPlay bloqué après un saut (audit du 2026-10-03)** :
-  - **Symptôme** : roue de chargement, puis pause/lecture obligatoire.
-  - **Ce n'est ni NPM** (websocket, délais 3600 s, tampons coupés) **ni la conversion** : les membres lisaient en
-    direct.
-  - **Journaux** (deux groupes, tous sur **Jellyfin Desktop 1.0.0**, lecteur mpv) : à chaque saut, l'appli qui a
-    sauté ne répond jamais « prêt ». jellyfin-web (`PlaybackCore.scheduleSeek`) attend l'événement `playing` du
-    lecteur 30 s, puis ressaute sans répondre. L'autre appli répond en 60 ms avec son **ancienne** position, et le
-    serveur lui programme une pause « dans 1 392 s ».
-  - **Contournement** : `branding/jellyfin/gc-syncplay.js` (« Groscailloux SyncPlay », JavaScript Injector, privé).
-    - Seulement dans Jellyfin Desktop (`NativeShell.AppHost.appName()` ou `window.jmpInfo`).
-    - Il remplace `scheduleSeek` : pause, puis saut, attente que le lecteur soit à 5 s de la cible (12 s au plus),
-      puis « prêt » **à la cible**. Le serveur n'accepte un « prêt » en pause qu'à 500 ms près, sinon il ressaute en
-      boucle (« seeking to wrong position, correcting »).
-    - Le module SyncPlay est retrouvé par le registre webpack (`self.webpackChunk`, `__webpack_require__.m`) d'après
-      son code, jamais son numéro ; sans module trouvé, le script ne fait rien. Il marche aussi sur le jellyfin-web
-      12.1.
-    - Forçable dans un navigateur par `localStorage['gc-syncplay-force'] = '1'` ; état dans `window.__gcSyncPlay`.
-    - Banc : `backups/syncplay-20261003/run.sh [0|1]` (deux navigateurs, comptes temporaires, `NO_INJECT=1` pour la
-      version servie). Mesuré : reprise du groupe 0,5 s après le saut.
-  - **Correctif de fond** : Jellyfin **12.1**, en service depuis le 03/10 (voir « Jellyfin 12.1 » ci-dessous). Le
-    script reste en place tant que la 12.1 n'est pas validée en séance réelle dans Jellyfin Desktop.
-  - Le widget « Releases » de Homarr affiche la dernière version publiée, pas celle qui tourne.
-- **Jellyfin 12.1 (bascule le 2026-10-03 à 23:01, coupure 2 min 08)** : procédure et constats dans `docs/JELLYFIN-12.md`.
-  - **Instantané 10.11.8** : `backups/jellyfin-snapshot-10.11.8-20261003/` (root 700 : config complète prise Jellyfin
-    arrêté, image d'avant, compose et diun d'avant). Retour arrière : `sudo …/rollback.sh --yes` (~2 min, la config
-    12.1 est mise de côté). Suppression le **10/10 à 12:00** par le minuteur **transitoire** `jellyfin-snapshot-purge`
-    (perdu si le VPS redémarre : supprimer alors à la main).
-  - **`EnableLegacyAuthorization = true`** dans `config/system.xml` : la migration le met à `false`, et alors
-    `X-Emby-Token` et `?api_key=` répondent 401. Or toutes les applis ouvrent leur websocket par `api_key` et le
-    Chromecast lit ses flux ainsi. Le couper un jour = passer d'abord homelabd, `scripts/` et nos scripts à
-    `Authorization: MediaBrowser Token="…"` (accepté par 10.11 et 12.x).
-  - **Collection Sections n'a pas de version 12.x** (`MissingMethodException IUserManager.get_Users` au démarrage) :
-    ses 4 rangées d'accueil (Tendances, Anime, Les mieux notés, Films français) manquaient. **Recompilée le 04/10**
-    (validé par l'utilisateur) contre Jellyfin 12.1.0 depuis le code relu de la copie communautaire
-    DD00031/jellyfin-plugin-collection-sections (3541f2e : cible 12 + 3 petits fichiers, aucune logique changée), SDK
-    .NET 10 en conteneur. Une copie compilée pour 12.0 n'est pas sûre en 12.1 : Home Screen Sections 3.0.1 (12.0)
-    cassait en 12.1. Même GUID, donc configuration reprise. Testée sur l'instance d'essai : « Active », 4 rangées et
-    leur contenu. **Installée en prod le 04/10 à 02:17** (autorisation de l'utilisateur) : 16 rangées pour un membre,
-    dont les 4 de Collection Sections (10 à 16 titres). Paquet, `install.sh` (refus si lecture en cours, redémarre
-    Jellyfin) et `rollback.sh` dans `backups/jellyfin-collectionsections-20261004/`, avec l'ancienne version 2.3.10.0.
-    Provisoire : l'auteur intègre la fonction à Home Screen Sections ; à sa sortie, basculer et retirer ce paquet.
-  - **Intro Skipper 12.0.4 : segments figés et réglages sobres (05/10, décidé par l'utilisateur)**. La migration de ses
-    données (1.10.11.19 → 12.0.4) avait importé les analyses **sans `ConfigHash`** : toute la médiathèque était à refaire
-    (~700 Go par le lien seedbox en 8 à 9 matinées, ~74 Go et 1,3 cœur par matin), alors que 1 948 des 2 026 titres en
-    file avaient déjà leurs segments. Aucune base en ligne ne convenait (TheIntroDB : 403 Cloudflare depuis l'IP du VPS,
-    45 % des séries ; chapitres : 24 % ; AniSkip : 34 %). Ce qui a été fait :
-    - **gel** : 3 635 segments passés en Source « User » par l'API officielle du plugin
-      (`PUT /Episode/{itemId}/Segments/{segmentId}`, bornes identiques, même identifiant) — toutes les intros, récaps,
-      aperçus, génériques d'animés et de films. Un segment User n'est **jamais** recalculé, quel que soit le hash. Les 130
-      génériques **suspects** des séries non animées (> 180 s ou début avant la moitié du fichier : l'ancienne version se
-      trompait, ex. *Blacklist* S2 sautait 4 à 6 min) sont restés automatiques pour être refaits. Empreinte de la table
-      Segments identique avant/après ; 861 identifiants réécrits côté Jellyfin (bornes identiques) ;
-    - **réglages** : `ScanRecap = false` (aucune appli ne propose de passer un récap par défaut, Android TV compris ; les
-      76 existants restent servis), `AnalysisLengthLimit = 6`, `MaximumCreditsDuration = 300`,
-      `MaximumMovieCreditsDuration = 600`, `PathExclusions` = les 5 dossiers de films (les génériques de films existants
-      restent servis, les nouveaux films n'en auront plus), `SeriesExclusions` = Mentalist (intros de ~8 s introuvables)
-      et Brooklyn Nine-Nine (génériques introuvables). Attendu : rattrapage ~60–75 Go en 1 à 2 matinées, croisière ~60 Go
-      par semaine au lieu de ~86 ;
-    - **règle vérifiée dans le code** (remplace l'ancien « ne toucher à aucun réglage ») : un changement de réglage ne
-      remet en file que ce qui a été analysé sous le hash courant, jamais un segment User ; `AnalysisLengthLimit` entre
-      dans les hashes Intro/Recap, `Maximum*CreditsDuration` dans celui des génériques ; les `Scan*` et les exclusions
-      dans aucun. **Rallumer `ScanRecap` remettrait toute la médiathèque en file pour les récaps** ;
-    - **INTERDIT en production** (efface aussi les segments User, la file en mémoire étant remplie) : « Exécuter » la tâche à
-      la main, `POST /Intros/ScanSeason` (bouton d'analyse d'une saison), `DELETE /Intros/Show/…`,
-      `POST /Intros/ExcludedTimestamps/Clear` (« Clear excluded timestamp data »), EraseTimestamps,
-      `POST /Intros/AnalyzerActions/UpdateSeason` ; fermer toute page de réglages du plugin ouverte avant un changement par
-      l'API (elle renverrait l'ancienne configuration) ;
-    - **corriger un segment figé faux** : `DELETE /Episode/{itemId}/Segments/{segmentId}` (le supprime ; l'élément est
-      réanalysé au passage suivant, sauf s'il garde un autre segment User du même type ; jamais sur un élément exclu) ;
-    - **fichier remplacé au même chemin** (scripts codec-replace) : supprimer d'abord ses segments User, sinon le vieux
-      segment reste servi pour le nouveau fichier ; **refaire le gel avant toute mise à jour du plugin** ;
-    - outils, journal et sauvegardes : `backups/introskipper-sobre-20261005/` (`freeze.py --dry-run`, `apply-config.py
-      --restore`, `prod-20261005/` : journal CSV, copies cohérentes de la base avant/après, procédure de retour arrière).
-      Le passage du 05/10 à 05:30 a été mis en pause (déclencheur remis à 09:00) ; contrôle du 1er passage sobre :
-      `grep -E '\[Mode: (Introduction|Credits)\] Analyzing' log_<date>.log` (« [Mode: Preview] » est normal : chapitres,
-      0 ffmpeg), tâche « Completed », `rclone_core.bytes` 03–07Z autour de 60 Go.
-  - **Intro Skipper au démarrage** : « ffmpeg did not exit within 2000ms » quand la machine est chargée par un
-    redémarrage. Sans gravité : un échec n'est pas retenu (`FFmpegVersionGate` revérifie au prochain usage), seul un
-    avertissement reste affiché dans sa page de réglages jusqu'au redémarrage suivant.
-  - **Nouvelle interface par défaut** : la 12.1 a deux interfaces. « modern » (React, barre `header.MuiAppBar-root`)
-    est celle des navigateurs sans réglage (`layout` absent → `modern`) **et** des applis dont `NativeShell` répond
-    `desktop`/`mobile` (Jellyfin Desktop, applis iPhone/Android). L'ancienne n'est servie que pour `desktop-legacy`,
-    `mobile-legacy` et `tv` (clé `localStorage` `layout`, ou Réglages → Affichage → « Mode d'affichage » : Bureau,
-    Mobile, TV ; « Auto » = la nouvelle). Les télés restent sur l'ancienne. **L'ancien en-tête `.skinHeader` reste
-    dans la page, caché** : tout ce qui s'y accroche est invisible dans la nouvelle interface. Le tchat et Mon compte
-    ont disparu ainsi le soir de la bascule. Ils visent maintenant la barre **visible** : boîte de `a[href="#/search"]`
-    dans `header.MuiAppBar-root`, sinon `.skinHeader .headerRight` (`headerBox()` des deux `app.js`).
-  - **Nouvelle interface adaptée (04/10, choix de l'utilisateur : la garder)** : `branding/jellyfin/gc-header.js`
-    (« Groscailloux En-tête », privé) agit seulement quand la barre moderne est affichée. Il pose :
-    - le logo `banner-light` à la place de l'icône et du nom du serveur. Jellyfin Enhanced sert nos images de marque
-      pour tout nom `banner-light.<n'importe quoi>.png` sous `/web/`, d'où l'adresse fixe `/web/banner-light.gc.png` ;
-    - sur l'accueil, une rangée d'onglets Accueil, Favoris, Découvrir, Demandes, Calendrier sous la barre ; les pages de
-      Jellyfin Enhanced sont `#/home?tab=2|3|4` (index = 2 + rang de son bouton). On navigue par l'adresse : son bouton
-      ne réagit plus une fois replié dans son menu « ⋯ » (1366 px). Le lien « Favoris » et ses icônes sont cachés
-      là où la rangée les remplace ;
-    - les libellés : la barre est dessinée avant le chargement du français et ne se redessine qu'à un changement de
-      palier de largeur. « Favorites », « Search », « User Menu »… restaient en anglais, même avec la langue posée. On
-      utilise une table anglais → français sur les seuls textes de la barre ;
-    - la cloche NotifySync (`#netflix-bell`, accrochée à l'ancien en-tête caché) déplacée après le tchat. NotifySync ne
-      la recrée pas tant qu'elle existe ;
-    - la hauteur réelle de la barre dans `--gc-header-h` ; le bandeau d'annonce du tchat et le bloc de Media Bar se
-      calent dessous ;
-    - dans les deux interfaces, les boutons de la bannière Media Bar 3.0 (« Play », « Details », « Favorite », écrits
-      en dur, sans réglage de langue) traduits en « Lire », « Infos », « Favori ».
-    - **menu SyncPlay** (v5, 05/10, demandé par l'utilisateur) : chaque groupe (`#app-sync-play-menu li.MuiListItem-root`
-      dont la rangée contient le bouton « Rejoindre groupe ») passe en grille sur une ligne (avatars | nom | bouton,
-      rangée intérieure en `display: contents`, aucun nœud React déplacé), fond et survol, menu borné à 420 px (nom long
-      coupé) ; un clic, Entrée ou Espace sur la ligne déclenche le bouton d'origine (`spRowClick` : double clic, répétition
-      et clics à moins de 1,5 s ignorés) ; `tabindex=-1` posé sur les lignes pour la navigation aux flèches.
-      `#sync-play-active-subheader` (groupe où l'on est, bouton « Quitter ») : même mise en page, **jamais cliquable**.
-      Banc : `backups/jellyfin12-test-20261003/syncplay_menu.sh "desktop iphone"` (`SP_PREFIX` unique, `CLICK=1` ne clique
-      que le groupe du banc par son nom exact : un vrai groupe de membre peut être ouvert). **Après un banc** : un compte
-      supprimé garde sa session (et son groupe SyncPlay, visible de tous) ; fermer l'appareil de test précis par
-      `DELETE /Devices?id=<id vérifié>`.
-    Reprise par version (`VERSION`, `window.__gcHeaderV`) : une version plus récente prend la main et l'ancienne
-    s'arrête (rangée et CSS retirés). Un banc qui essaie une candidate retire en plus la version déployée du
-    `private.js` servi (`deployed-*.txt` dans `CANDIDATE_DIR`).
-    Jamais retirer un élément dessiné par React : il le retirerait lui-même ensuite et planterait. On cache, on
-    déplace nos éléments, on change des textes. « Lire sur » est un **menu MUI** (`#app-remote-play-menu`), présent
-    caché dès le chargement et recréé avec la barre. `gc-airplay.js` v5 le surveille (texte réécrit par React à
-    l'ouverture, d'où `characterData`) : AirPlay sur appareil Apple, appli du Play Store sur Android, « aucun autre
-    appareil » ailleurs. Banc : `runprod.sh modern_ui.js ":desktop :phone :iphone :android"` (`CANDIDATE_DIR` :
-    scripts et `groscailloux-tv.css` candidats) et `airplay_flow.js` (geste complet, sélecteur simulé).
-  - **Media Bar 3.0** : son bloc texte `.slide-content` est ancré en haut (20 px) **et** en bas, avec débordement
-    masqué. Le descendre par `top` le rétrécit et coupe les boutons ; le calque le décale par `translate` sous
-    l'en-tête. Les règles Media Bar 2.x du calque (`.plot-container`, `.info-container`…) sont à revoir.
-    - **Il place lui-même les rangées** (`.homeSectionsContainer { margin-top: calc(--slideshow-content-top −
-      --slideshow-page-offset) }`) : le calque **remplace** cette marge (`80vh − 8.5em` en paysage ; en portrait sur
-      téléphone, `--slideshow-content-top − --gc-header-h` et bannière à `--slideshow-height`). Un `top` ajouté
-      par-dessus (règle 2.x) faisait un double décalage : sur PC, 1re rangée à 1 276 px sur 900, aucune rangée au
-      premier écran (04/10).
-    - **`--slideshow-page-offset` est faux** : `LayoutSync.update()` mesure `document.querySelector('.page')`, la
-      première page du DOM, toujours cachée (`#loginPage`, page Jellyfin Enhanced) ; la valeur devient la position de
-      défilement à chaque chargement de rangées, et les rangées remontent sur la bannière jusqu'à disparaître. Figée à
-      0 dans le calque (`:root`, `!important` de feuille contre le style inline du plugin).
-    - Ligne d'infos (`.spec-line`) : 8,6–9,4 px et éléments coupés sur téléphone en portrait ; 11 px dans le calque,
-      seul le genre se raccourcit.
-  - **Interface mobile (revue du 04/10, gc-header v3 + calque + app.js)** : 28 défauts relevés sur téléphone et
-    tablette, chacun contre-vérifié au banc avant correction (`backups/jellyfin12-test-20261003/mfix_home.js`, avant /
-    après, `CANDIDATE_DIR` avec `chat.js`/`compte.js`). Points durables :
-    - la barre moderne débordait **à gauche, sur ☰** (seul accès aux bibliothèques) : Jellyfin Enhanced force
-      `flex-wrap: nowrap` sur la boîte des boutons, qui rétrécit sous son contenu, et `justify-content: flex-end` jette
-      le surplus à gauche. Sous 600 px : boutons de Jellyfin Enhanced cachés (⋯, Aléatoire), icônes à 40 px, ☰ au-dessus,
-      SyncPlay caché sous 360 px (380 px avec le bouton Retour des applis). **Contrôle : balayage `elementFromPoint` de
-      ☰**, pas la présence des boutons ;
-    - `.gc-tabs` servait à deux de nos scripts (rangée d'accueil et onglets du tchat) : les règles de `gc-header.js`
-      visent `header.MuiAppBar-root > nav.gc-tabs`, celles du tchat `.gc-panel .gc-tabs` ;
-    - bandeau d'annonce du tchat à `z-index` 1050 dans la nouvelle interface (sous la barre MUI 1100, le tiroir 1200,
-      les menus 1300) : à 99999 il couvrait « Accueil » et « Favoris » du menu ☰ ;
-    - bibliothèques : ElegantFin remet le décalage de l'ancien en-tête (2 × 5 em) que jellyfin-web 12.1 annule ;
-      `html.gc-modern .libraryPage…{padding-top:.5em}` ;
-    - barre opaque sur écran tactile dès que la page défile (`html.gc-scrolled`, posé par `gc-header.js`) ;
-    - aide à la qualité : en haut sur téléphone (en bas, elle couvrait les commandes du lecteur 25 s) ;
-    - bloc « Également disponible » (Elsewhere) caché sur téléphone ; région du plugin = France ; calendrier de Jellyfin
-      Enhanced en 24 h (`CalendarTimeFormat = 17:00/17:30`) ; sauvegardes `backups/jellyfin-mobile-ui-20261004/` ;
-    - PC : la rangée d'onglets monte **dans** la barre (`nav.gc-tabs.gc-inline`, position absolue, centrée dans la
-      fenêtre ou dans l'espace libre) quand elle tient entre les bibliothèques et les boutons de droite avec 16 px de
-      marge, en version compacte (`gc-compact` : 14 px, sans icônes) si la normale ne tient pas ; sinon elle reste
-      dessous. Mesuré : en 1920 px avec 7 bibliothèques (comptes admin), 490 px libres pour 561 px de rangée normale ;
-    - sous 900 px (MUI `md`), jellyfin-web ne dessine **ni son logo ni les bibliothèques** : `gc-header.js` (v4) insère
-      son propre `a.gc-logo` après ☰ seulement s'il reste 192 px (tablette en portrait, téléphone en paysage) ;
-    - la section « Collections » des fiches (nouvelle en 12.1) cache les 4 collections techniques des rangées d'accueil
-      par leur id (`data-id`, chemin `collections/<nom> [boxset]`) : **une collection renommée ou ajoutée réapparaît**,
-      mettre son id dans le calque ;
-    - barre A–Z des bibliothèques React : 12 px réservés à droite et cartes réduites d'autant (`--effectiveWidth`
-      d'ElegantFin) ; à revoir après une montée d'ElegantFin ;
-    - roue de réglages de Media Bar cachée sur écran tactile seulement (`@media (hover: none)`) ;
-    - texte blanc sur fond bleu : `#1b6fd8` sur téléphone (contraste 4,9:1), `#2f8fff` inchangé ailleurs ;
-    - libellés anglais des extensions (Jellyfin Enhanced, langues audio `Intl.DisplayNames`, tailles « Go ») traduits
-      par `gc-header.js` dans toutes les interfaces, sans jamais remplacer un nœud.
-- **Jellyfin Enhanced (audit du 03/10)** :
-  - **Rafraîchissement** : page Téléchargements toutes les **120 s**, au lieu de 30 (`DownloadsPollIntervalSeconds`).
-    À 30 s, avec un appel `arr/*` par carte, deux admins dont la page restait ouverte derrière le lecteur de Jellyfin
-    Desktop faisaient 63 % de tout le trafic Jellyfin (39 900 requêtes par jour).
-  - **Mises à jour des extensions : manuelles**. La tâche « Mettre à jour les extensions » n'a plus de déclencheur
-    (sauvegarde `backups/jellyfin-tuning-20261004/`). Une mise à jour automatique s'activait au redémarrage suivant,
-    sans vérification. **Le catalogue ne remplace pas une compilation 10.11 par la compilation Jellyfin 12 du même numéro**
-    (JavaScript Injector 4.0.0.0, NotifySync 5.8.4.0) : à chaque mise à jour manuelle, vérifier `targetAbi` dans
-    `meta.json` et le dépôt « jf12 » de l'auteur.
-- **UNE seule connexion temps réel par page (05/10, régression du lot ci-dessous)** : le serveur 12.1 n'envoie un
-  message destiné à une session (GroupJoined/GroupLeft et commandes SyncPlay, `SetAudioStreamIndex` de la bascule VO,
-  « Lire sur », arrêts de `playback_limit`) qu'à **une** de ses websockets, la plus récemment active
-  (`MaxBy(LastActivityDate)`). NotifySync 5.8.4.0 en compilation Jellyfin 12 ouvre **sa propre** websocket sur le même
-  jeton (`/socket?ApiKey=`) dès que `ApiClient.isWebSocketOpen()` est faux — toujours en 12.x, où seul le SDK en ouvre —
-  et jette tout sauf LibraryChanged/UserDataChanged : 3 sockets par page, SyncPlay aléatoire (4 créations sur 44 vues par
-  le client le 05/10 ; groupe affiché « à rejoindre » sans « Quitter », ou « Quitter » refusé en 403). Correctif :
-  `branding/jellyfin/gc-socket.js` (« Groscailloux Socket unique », script **public**, en tête de `public.js`) pose un
-  accesseur sur `window.ApiClient` et, en 12.x seulement, fait répondre vrai à `isWebSocketOpen` et relaie
-  LibraryChanged/UserDataChanged du SDK en événement `message` (cloche toujours en temps réel ; état dans
-  `window.__gcOneSocket`). Contrôle : fermetures de websockets groupées par **2** dans le journal Jellyfin/NPM, et chaque
-  « created group » suivi de « requested Ping ». Toute nouvelle extension qui ouvre une websocket = même piège. Banc
-  `backups/jellyfin12-test-20261003/zz_spns/zz_spns_create.sh "r"`. À signaler à NotifySync (utiliser
-  `ApiClient.subscribe`).
-- **Lot d'extensions du 05/10 (validé, appliqué sans surveillance à 08:47, coupure 52 s, 0 erreur)** : Jellysleep (1 seul
-  minuteur en un mois) et GetAvatar (script bloquant dans index.html, galerie jamais ouverte) **retirés** ; JavaScript
-  Injector et NotifySync passés sur leurs **compilations Jellyfin 12** (même GUID, configurations reprises, NotifySync sur
-  sa branche `jellyfin-12`) ; **Fanart 15.0.0.0** installé, juste après TheMovieDb dans les sources d'images Movie et Series
-  (clé projet intégrée ; actif aussi sur les collections, choix de l'utilisateur). Outils, paquets épinglés (MD5 +
-  SHA-256), sauvegarde et retour arrière : `backups/jellyfin-plugins-20261005/` (`apply-restart-batch.sh`,
-  `rollback-restart-batch.sh <dossier apply-prod-*> --yes`, `prepare-test2.sh` pour une instance d'essai sur :18097).
-  Logos posés ensuite par `fanart-logos.py` (`RemoteImages/Download` seulement : aucune fiche rafraîchie, aucune vidéo
-  relue ; langues fr/en/sans, russe pour la voie russe) : 5 titres. **Jamais de `Refresh` sur une série pour une image** :
-  il est récursif (épisodes sondés par le lien seedbox).
-  - **Sous-titres** : Jellyfin Enhanced impose sa taille en `vw` (1.2vw par défaut) : règle
-    `video.htmlvideoplayer::cue` (plus spécifique que la nôtre) et style **inline `!important`** sur
-    `.videoSubtitlesInner`. Sur iPhone en portrait, 1.2vw = ~5 px. **Décision de l'utilisateur (04/10) : sur téléphone
-    et TV, la taille de Mon compte l'emporte** (`applySubtitleSize` de `compte/app.js` : règle
-    `video.htmlvideoplayer.htmlvideoplayer::cue` (0,2,2) et style inline remis par un `MutationObserver` sur l'attribut
-    style, car Jellyfin Enhanced le réécrit à chaque réplique ; téléphone et tablette = px bornés par le petit côté de
-    l'écran, `clamp(14px, 4.2vmin, 22px)` × coefficient du réglage ; **télé = `4.8vh` × coefficient** (52 / 65 / 84 px
-    en 1080p : en em, la mise en page TV partant de 45,9 px, le ×1,4 donnait 87 à 141 px, régression du 04/10 corrigée
-    le 05/10, banc `backups/lg-tv-20260929/t6_run.sh t6_subs.js "tv:0"`). Sur PC, rien n'est décidé : Jellyfin Enhanced
-    garde la main.
-- **Journaux Jellyfin** : `jellyfin/config/config/logging.json` (copie de `logging.default.json`) :
-  - extensions bavardes en `Warning` : Playback Reporting (61 % du volume), Collection Sections (Jellysleep retiré le
-    05/10) ;
-  - traductions manquantes de Home Screen Sections en `Error` ;
-  - **durée de garde : c'est `LogFileRetentionDays` de `config/system.xml` qui compte**, passé de 3 à **14 jours** le
-    04/10 (accord de l'utilisateur ; `GET /System/Configuration`, ce seul champ changé, `POST` de l'objet entier, sans
-    redémarrage ; sauvegarde `backups/jellyfin-mobile-ui-20261004/`, ~75 Mo de journaux). La tâche quotidienne
-    « Supprimer les fichiers journaux » efface tout ce qui dépasse dans `config/log` (journaux principaux, `FFmpeg.*`,
-    `upload_*`). Le `retainedFileCountLimit` (14) de `logging.json` ne compte que les `log_*.log` : il n'agissait
-    jamais tant que la garde était à 3 jours. Jamais d'édition à la main de `system.xml` Jellyfin démarré.
-- **Mise en pause des conversions (throttling) : elle marche**, en 10.11 comme en 12.1 (vérifié le 04/10). Piège de
-  lecture : le patch de pause de jellyfin-ffmpeg exclut le temps en pause de `speed=` et `elapsed=` et n'écrit rien
-  pendant une pause ; un job bridé ressemble donc à une conversion continue à 6× (un film Chromecast : 118 « Transcoding
-  is paused », ~73 min de pause sur 84). Chaque « Transcoding is paused » = une pause. Avance réelle = dernier segment
-  écrit (`Opening … N.mp4` du journal FFmpeg) − dernier `hls1/main/N.mp4` demandé (journal NPM, UTC) : 60 à 72 segments
-  de 3 s attendus (seuil 180 s). Un job inactif reste vivant tant que le client envoie `/Sessions/Playing/Ping`.
-- **Collections après un remplacement de fichier** :
-  - le nouveau fichier crée un nouvel élément Jellyfin, et les collections gardent un **lien mort** vers l'ancien
-    chemin (« Unable to find linked item », 217 avertissements en 3 jours) ;
-  - remettre le nouvel élément dans ses collections (`POST /Collections/<id>/Items?ids=`) ;
-  - les liens morts partent avec la tâche « Nettoyer les collections et les listes de lecture » (au démarrage).
-- **Identifications surveillées** : la tâche `identity_check` (30 min) compare l'identifiant de chaque fiche
-  Jellyfin à celui de Sonarr/Radarr, qui fait foi, et corrige seule (`RemoteSearch` + `Apply` + métadonnées,
-  3 titres au plus par passage, jamais pendant une lecture). Les nouveaux dossiers portent l'identifiant
-  (`seriesFolderFormat = {Series Title} [tvdbid-{TvdbId}]`, `movieFolderFormat` avec `[tmdbid-…]`) ; les
-  anciens n'ont pas été renommés. Le 2026-09-17, 6 titres étaient mal identifiés (dont *The Walking Dead* vu
-  comme *Dead City* et *Tomb Raider* comme *Lara Croft*).
-- **Titre mal identifié par Jellyfin** : un film au titre court ou ambigu peut être rattaché au mauvais TMDB
-  (le 2026-09-15, *Midnight* 2021 → *Before Midnight* 2013) ; Jellyseerr, qui compare les ids TMDB, laisse alors la
-  demande « en cours ». Corriger par `POST /Items/RemoteSearch/Movie` (ProviderIds Tmdb) puis
-  `/Items/RemoteSearch/Apply/{id}`, et lancer le job Jellyseerr `jellyfin-full-scan` (le scan « recently added »
-  ne revoit pas un titre ajouté la veille). **Séries aussi** : le 2026-09-16, le dossier « Attack on Titan » a été
-  rattaché au spin-off *Junior High School* (TVDB 299882) alors que Sonarr avait la bonne fiche (267440) —
-  `POST /Items/RemoteSearch/Series` (ProviderIds Tvdb), `Apply` (peut dépasser 3 min, vérifier ensuite plutôt que
-  relancer) puis `Refresh` récursif en `FullRefresh` + `ReplaceAllMetadata` pour rattacher tous les épisodes.
-- **Animés** : bibliothèques Jellyfin « Anime » (séries) et « Films d'animation » (films), dossiers `/anime` et
-  `/anime-films` (VPS), `Anime` et `Anime Movies` (seedbox), rangés par `anime_library` d'après **TMDB** (genre
-  Animation + origine japonaise), jamais d'après le type « anime » de Sonarr. Forcer : tag `anime` ou `pas-anime`
-  dans l'Arr (`pas-anime`, id 4 sur le Sonarr seedbox, posé le 07/10 sur 2 fiches sans TMDB : avant, « unknown: left in
-  place » toutes les 5 min ; journaliser un inconnu une fois par jour reste à faire dans le code). Tout déplacement
-  en masse hors de cette tâche : `deletion_cleanup` dans `tasks.disabled` pendant ce
-  temps. Ids Jellyfin : Anime `0c41907140d802bb58430fed7e2cd79e`, Films d'animation `bebdce85c5b682ddbce0412f41cff060`
-  (dans `JELLYFIN_LIB_EXTRA` et les `EnabledFolders` des comptes ; ordre du menu `OrderedViews` : Films, Séries, Anime, Films
-  d'animation, Collections, posé à la création du compte) ; Jellyseerr : les 4 bibliothèques activées,
-  `activeAnimeDirectory` + `animeTags` des deux Sonarr sur le dossier et le tag anime. **Une bibliothèque Jellyfin
-  créée par l'API reste vide**, et **un déplacement sur la seedbox n'apparaît pas** dans la nouvelle bibliothèque,
-  tant que l'analyse complète de la médiathèque n'est pas passée (ni `Items/{id}/Refresh`, ni
-  `Library/Media/Updated`, ni un redémarrage ; vu le 2026-09-17, analyse de 65 à 315 s) : ranger en masse
-  **avant 13 h**, ou attendre l'analyse de 05 h. **Depuis le 2026-09-26, `anime_library` lance lui-même l'analyse
-  complète après un déplacement** (`scan_after_move`, au plus une toutes les `scan_min_gap_mins` = 20 ; passage toutes
-  les 5 min au lieu de 30) : *Your Name*, importé en 3 min, avait attendu 45 min invisible (rangé dans « Films
-  d'animation » après le signal de `seedbox_refresh`). **Corrigé le 2026-09-27** : ce « 2 à 3 min » était faux — les
-  titres apparaissaient vers 87–91 % d'analyses qui, relancées à la main par-dessus, **s'annulaient les unes les autres**
-  (`Library/Refresh` annule celle en cours ; journaux : annulées après 25 à 65 min). `anime_library` ne relance plus
-  une analyse tant qu'une autre tourne (`library_scan_running`) ; ne pas en lancer à la main par-dessus non plus. Après une réidentification, vérifier les `ProviderIds` contre
-  l'Arr : le 2026-09-17, *L'Attaque des Titans* est repartie sur son spin-off et *Slime* sur *Slime Diaries*.
-- **Codec : x265 d'abord, x264 ensuite, AV1 en dernier** (2026-09-26, demandé par l'utilisateur ; remplace « codec à
-  égalité » du 18/09). Clé de `choose`, `best_movie_release` et `/recherche` : **langue > résolution > ≥ 2 sources >
-  codec (`series_search::codec_rank` : HEVC 2, H.264 ou non indiqué 1, AV1 0) > sources**. Le x265 n'est jamais
-  **exigé** : un x264 en VF passe devant un x265 sans français, un x265 à une seule source derrière un x264 bien
-  partagé. Mêmes scores côté Arrs, sur FR-friendly et Anime - MULTi/VOSTFR des 4 Arrs : `HEVC 10-bit`/`HEVC 8-bit` +200,
-  `H.264` +100, `AV1` 0 (sous les marches de langue, ≥ 500 ; sauvegarde `backups/arr-codec-priority-20260926/`). Mesuré
-  le 26/09 : 1080p HEVC **1,1–1,3 Go/h** contre **3,4–4,25 Go/h** en H.264 (le H.264 = 51 % du volume pour 38 % des
-  titres) ; sur 30 jours, 13 % des lectures HEVC réencodées contre 20 % des H.264 (le réencodage vient des plafonds de
-  débit Chromecast/iOS, pas du codec ; Safari réencode un HEVC en MKV, les vieux Chromecast aussi). L'AV1, aussi
-  léger, est mal lu par les vieux clients. Le nom « FR-friendly H.264 » des profils est resté, il ne décrit pas le
-  codec. **Audio ensuite** (même jour) : `audio_rank` 3 = AAC/E-AC3/AC3/Opus (ou non indiqué), 2 = FLAC, 1 = DTS,
-  0 = DTS-HD MA/DTS:X/TrueHD, départage **après** le codec ; formats Arr « Audio DTS » −50 et « Audio DTS-HD/TrueHD »
-  −100 (titre de release, sauvegarde `…/*-customformat-before-audio.json`). Mesuré sur 30 jours : 80 % des lectures
-  d'une piste DTS réencodaient le son (Chromecast, appli iOS), aucune en AAC ; une piste DTS (1,5 Mbit/s) pèse 60 % de
-  l'image d'un épisode HEVC. `radarr-seedbox` a encore un profil « Anime - JAP/VOSTFR » (HEVC −10000) : n'y mettre aucun film.
-- **Langue des ANIMÉS** (2026-09-18, demandé par l'utilisateur) : **MULTi 4 > VOSTFR 3 > VF 2 > FRENCH 1 >
-  VO 0** (`lang_rank_for(title, anime)`, `seriesType == "anime"`). Un MULTi porte les deux pistes audio ; la
-  VOSTFR garde l'audio japonais. Un « MULTI.VFF » compte comme MULTi pour un animé, comme VF pour le reste
-  (comportement d'origine préservé). Même ordre côté Sonarr : le profil **« Anime - MULTi/VOSTFR »** (VPS 7,
-  seedbox 8) a été réparé — il rejetait tout HEVC 10 bits et tout doublage français (`minFormatScore = 0` avec
-  `HEVC 10-bit -10000` et `FRENCH -500`) — puis aligné (MULTi 3000, VOSTFR 2000, VFF 1000, FRENCH 500, sans
-  marqueur français −2000, codecs à 0, `minFormatScore = -9999`, mêmes qualités ≤ 1080p que FR-friendly). Les
-  **26 fiches animées** (20 seedbox + 6 VPS) y sont passées, sans perte (429 et 119 fichiers avant comme après).
-  Sauvegarde `backups/arr-anime-profile-20260918-142927/`. **Ne pas oublier `activeAnimeProfileId` dans
-  Jellyseerr** (VPS 7, seedbox 8, sauvegarde `backups/jellyseerr-sonarr-20260918/before-anime-profile.json`) :
-  basculer les fiches existantes ne suffit pas, les **nouvelles demandes** arrivaient encore sur FR-friendly
-  (Frieren, le 2026-09-18). Jellyseerr a un profil séparé pour les animés, repéré par `animeTags`.
-- **Nommage des fansubs** : `Erased S01 - 06 VOSTFR [1080p][X265].mkv` — Sonarr lit `S01` comme une **saison
-  entière**, ne voit jamais le « - 06 », refuse chaque fichier (« Single episode file contains all episodes in
-  seasons ») **et**, si on ignore ce rejet, propose les 12 épisodes pour le premier fichier. Le 2026-09-18, les
-  2,11 Gio d'Erased sont restés complets et non importés, en état **définitif** (`nothing_importable`), invisibles.
-  Corrigé : `series_search::fansub_episode` lit ce numéro, le rejet passe dans `is_identification_rejection`, et
-  dès qu'un fichier est lu ainsi le torrent bascule en `EpisodeSource::OursOnly` — **sinon Sonarr gagne et un
-  seul fichier est rattaché aux 12 épisodes** (vu en production avant le correctif). `no_match` **et**
-  `nothing_importable` remontent maintenant dans « Rien ne bouge » sur `/status.html`.
-- **Numéro nu (`Titre - 07`)** (2026-10-03) : Sonarr ne lit `Angels of Death - 07 (…).mkv` que pour un **animé**. Pour
-  une série classique, aucun épisode n'était reconnu et le pack restait « téléchargé mais pas rangé ».
-  `torrent_import::bare_episode` lit ce numéro dans la saison de l'étiquette (`season=`, posée par `series_search`),
-  et **seulement là**. `bare_episodes` refuse tout le pack si les titres diffèrent, si deux fichiers portent le même
-  numéro, ou si un numéro dépasse la saison. Un nom qui porte sa saison (`S01 - 06`) reste du ressort de la lecture
-  fansub. Même jour : piste **russe** par défaut dans ce pack (son et sous-titres). Correction sur des copies
-  (`mkvpropedit`, anglais par défaut), jamais sur les fichiers du torrent, qui doivent rester intacts pour le partage.
-- **Numéro en tête (`05. Titre de l'épisode`)** (2026-10-08) : `numbered_pack` ne sert que si Sonarr n'a rien lu dans
-  aucun nom du torrent (`sonarr_read_something` : aucun `parsedEpisodeInfo`, aucun épisode proposé par `manualimport`,
-  ni fansub ni `map_episodes`). Lecture décidée pour tout le pack, seulement avec `season=` dans l'étiquette, refusée en
-  bloc au moindre doute (forme mixte, doublon, trou, numéro hors saison, suite qui ne commence pas à 1 après une autre
-  saison). Un titre qui contient un autre nombre est écarté. La source reste `ArrFirst`. Une entrée `torrent_import`
-  déjà en `nothing_importable` est **définitive** (`is_final`) : le correctif ne la rouvre pas, il faut la retirer de
-  l'état, daemon arrêté.
-- **Épisodes sans date / VOF** (2026-09-23, *Le Voyageur*) : TheTVDB date souvent tard les séries françaises et
-  Sonarr **exclut de `wanted/missing` tout épisode sans date** : `series_search` lit donc aussi les épisodes des séries
-  dont une saison suivie, commencée depuis moins de `undated_window_days` (730), est incomplète, et cherche leurs
-  épisodes suivis sans date (`undated_missing`). **« VOF » = version originale française** : compte comme VF dans
-  `langs_of`, et ajouté aux formats n° 4 « No French Marker », « VFF » et « FRENCH » des 4 Arrs (avant : −2000,
-  « sans français » ; sauvegarde `backups/arr-cf-vof-20260923/`). Un nouveau marqueur de langue = code **et** formats
-  des 4 Arrs.
-- **Langue** : `lang_rank` classe VF 4 > MULTi 3 > FRENCH 2 > VOSTFR 1 > **VO 0** ; une release sans français
-  n'est prise qu'en dernier recours (`[indexers] allow_no_french`), quand aucune française n'est acceptable.
-  Plafonds de taille du choix automatique : `max_gb_per_episode` (3) et `max_gb_per_movie` (15) — sinon un pack
-  de 134 Go à une seule source peut gagner contre un 27,8 Go bien partagé. Un refus « blocked till … » compte
-  comme une **erreur** (nouvelle tentative dans l'heure), plus comme « aucun candidat » (24 h).
-  **Panne de C411 ≠ « aucune release »** (2026-09-30) : Prowlarr répond à une recherche par une liste **vide** avec un
-  code 200 quand C411 est en panne (503) ou en maintenance (page HTML « Incident en cours » servie en 200, rien dans
-  `indexerstatus`). Trois films d'un membre sont ainsi passés pour introuvables et attendaient 24 h. Désormais, sur une
-  liste vide, `indexer::indexer_down` regarde `indexerstatus` (échec < 10 min ou `disabledTill` à venir) **et** sonde
-  `<baseUrl>/api?t=caps` (sans clé, aucun quota) ; panne ⇒ erreur, nouvelle tentative au bout de `error_retry_hours`.
-  **Secours public quand C411 est en panne : World-torrent** (2026-09-30, demandé par l'utilisateur : public, sans
-  compte). Indexer « World-torrent » (id 10) dans le **Prowlarr du VPS** (joignable sans Cloudflare ; Torrent9 testé :
-  0 résultat, retiré ; 1337x/TPB : presque rien en VF). `[indexers] fallback = "World-torrent"` ; **films seulement**
-  pour l'instant (`movie_search`) : seulement si `indexer::is_outage`. Il ne cherche que par **titre français** et la
-  ponctuation le perd → titre TMDB français (Jellyseerr `movie_details`) nettoyé + année, puis début du titre + année
-  (`movie_search::fallback_queries`) ; pas d'identifiant TMDB chez lui : la release n'est gardée que si le `parse` de
-  Radarr la rattache à CETTE fiche ; mêmes règles de langue/taille/codec. Son lien « .torrent » est une redirection 301
-  vers un magnet : `send_release` passe par le magnet pour le secours. Torrents publics : l'hébergeur de la seedbox
-  les arrête une fois terminés (normal, aucun ratio à tenir). Le 30/09 : 3 films d'un membre pris ainsi (VF2 1080p ×2,
-  TRUEFRENCH 720p). **Séries et animés (2026-10-01)** : `series_search::fallback_candidates` — animé : **Nyaa.si**
-  (Prowlarr id 12, `[indexers] fallback_anime`, liens magnet) puis World-torrent ; autre série : World-torrent. Requêtes =
-  deux premiers noms connus sans ponctuation (`fallback_names` : titre TMDB français, titre d'origine) ; release gardée
-  seulement si l'Arr la rattache à CETTE fiche et saison, et **français seulement** (`lang_rank_for` > 0 : la plupart
-  des releases Nyaa sont sous-titrées en anglais, jamais prises pendant une panne). Secours sans candidat acceptable =
-  `fallback_none` : secours refait au bout de `[indexers] fallback_retry_hours` (12), mais **dès que C411 répond**
-  (sonde `indexer::c411_up`, sans quota, une fois par passage) la saison ou le film repart aussitôt sur C411
-  (`series_search::fallback_due`) ; avant, c'était `error` → un passage par heure (8 requêtes/h pour *Le Voyageur*,
-  01/10). Aucun « trou » affiché sur `/status.html` pendant une panne. Le 30/09, S04E19 de *Re:ZERO* (sorti
-  pendant la panne) a été pris à la main sur Nyaa : `SUBFRENCH 1080p CR WEB-DL x264-Tsundere-Raws`.
-- **Titre supprimé puis redemandé : le torrent est réutilisé, pas retéléchargé** (2026-09-18). `deletion_cleanup`
-  garde les torrents en partage (C411 : ratio 1 ou 7 j) alors que les fichiers médias, eux, sont supprimés.
-  Redemandé, `torrents/add` répondait « Fails. » (déjà présent) et **rien ne s'importait** : Bleach S17, 0/20
-  épisodes pris. `series_search` cherche maintenant l'`infoHash` de la release (fourni par Prowlarr) parmi les
-  torrents du qBittorrent concerné ; s'il est là et complet, il le **réétiquette** vers la nouvelle fiche
-  (`qbit::retag`) et efface son enregistrement `torrent_import` (sinon `is_candidate` le saute, il est marqué
-  `imported`). L'import repart en lien physique en quelques minutes, sans un octet réseau.
-- **Suppression d'une demande dans Jellyseerr** : `deletion_cleanup` supprime la fiche Arr **et ses fichiers**,
-  retire les torrents devenus inutiles, puis la fiche média. **Seuls les médias « en attente » (2) ou « en
-  cours » (3) sans demande** sont concernés : un scan Jellyfin crée une fiche média pour tout ce qui est déjà
-  dans la bibliothèque (237 médias pour 117 demandes), toutes « disponible » ou « partiel » — les toucher
-  effacerait la médiathèque.
-- **Recherche manuelle** : passer par la page **`/recherche`** de homelabd (hôte d'onboarding, liste « admin-outils »
-  + jeton), jamais par la recherche de Sonarr/Radarr sur un **animé** : celle-ci interroge chaque indexeur avec
-  chaque titre connu, épisode par épisode (le 2026-09-17 : plusieurs minutes, « timed out » du proxy seedbox à
-  300 s, et 429 de C411 pendant une heure). La page cherche par identifiant TMDB chez C411 (1 requête, plafond
-  `[manual_search] max_queries_per_hour`) et chez Nyaa pour les animés (liens **magnet** : ajoutés au qBittorrent
-  du côté concerné avec l'étiquette `homelab:`). Toutes les releases sont montrées et marquées (VOSTFR, hors
-  profil, autre saison…), le choix reste à l'admin.
-- **Dossiers de saison** : `enableSeasonFolders` était à `false` sur les deux Sonarr de Jellyseerr — toute fiche créée
-  par une demande rangeait ses épisodes à plat (28 séries sur 77 le 2026-09-18, dont Bleach et ses 366 épisodes).
-  Remis à `true` (sauvegarde `backups/jellyseerr-sonarr-20260918/`) ; les tâches homelabd créaient déjà avec
-  `seasonFolder: true`. Les fiches déjà à plat le restent tant qu'on ne les renomme pas.
-- **Vue d'ensemble des membres** : onglets Demandes et Calendrier de Jellyfin Enhanced ouverts à tous
-  (`DownloadsFilterByUserRequests` et `CalendarFilterByLibraryAccess` à `false`, `SonarrInstances`/`RadarrInstances`
-  = VPS **et** seedbox) et droit Jellyseerr « voir les demandes » (bit 16384) sur les comptes actifs, dans
-  `defaultPermissions` et à l'activation (`[accounts] jellyseerr_view_requests`). Chaque membre voit donc les
-  demandes des autres, avec leur pseudo. Le lien compte Jellyfin ↔ Jellyseerr est en cache 30 min dans le plugin.
-  Sauvegardes : `backups/jellyfin-ui-20260917-191027-overview/`.
-- **Historique Arr** : `GET history?movieId=` / `?seriesId=` n'existe pas, le filtre est ignoré et tout
-  l'historique revient. Utiliser `history/movie?movieId=` et `history/series?seriesId=` (seul `downloadId`
-  filtre vraiment `GET history`).
-- **Ports Docker publiés sur `127.0.0.1` seulement** (2026-09-23 ; **8096 fermé le 2026-09-25** : 0 paquet direct en
-  7 jours, `PublishedServerUrl` = `${JELLYFIN_PUBLIC_URL}`, recréation de jellyfin hors pic par le minuteur
-  `jellyfin-port-close` du 26/09 04:30, journal `backups/jellyfin-port-20260925/recreate.log`) : tout passe par NPM (noms de conteneurs) ou par
-  `localhost` (homelabd, telegraf en `network_mode: host`). Restent ouverts à Internet : 80/443 (NPM), 6881 (torrent),
-  81 (admin NPM : limité à l'IP de l'admin en amont + identifiants, **on n'y touche pas**, décision de l'utilisateur). Un
-  nouveau service : `"127.0.0.1:<port>:<port>"`. Recréer gluetun impose de recréer qbittorrent (voir plus bas).
-- **Pages d'administration de homelabd = session par cookie** (2026-09-23, `crates/homelabd/src/admin_auth.rs`) :
-  `/`, `/onboard`, `/accounts*`, `/recherche*` (jeton d'onboarding) et `/status*` (jeton d'état ou d'onboarding)
-  passent par une couche commune. `/connexion` (POST, jeton dans le corps) pose le cookie `gc_admin` (HMAC du jeton,
-  **1 an**, `HttpOnly; Secure; SameSite=Lax`, sans état : survit aux redémarrages, **renouveler un jeton ferme les
-  sessions**) ; un vieux lien `?token=` ouvre la session puis redirige sans jeton. La couche réinjecte le jeton **en
-  interne** (requête, ou `X-Onboard-Token` pour `POST /onboard`) : les pages n'ont pas bougé. **Jamais de `token=`
-  dans un lien, une redirection ou un mail** (il finissait en clair dans les journaux NPM, ~5 000 fois ; purgés le
-  2026-09-23, jetons renouvelés). La CLI garde l'en-tête. 10 échecs / 15 min par IP (POST sans session compris),
-  100 au total (jamais pour un appel local : la CLI reste ouverte). `/accounts` et `/recherche` gardent **en plus**
-  l'auth HTTP NPM « admin-outils ». Les journaux NPM des Arrs contiennent leur clé API (`access_token=` des websockets
-  de leur interface) : normal, journaux en 750. **Portes (07/10, `client_addr.rs`)** :
-  - `X-Forwarded-For` (dernier saut) n'est cru que d'un pair TCP de `[web] trusted_proxies` (172.18.0.0/16), jamais
-    d'une adresse de l'hôte (127.0.0.1, 172.18.0.1 : testé par `bind`). Avant, `curl -H 'X-Forwarded-For: <IP
-    maison>' 127.0.0.1:8766` donnait une session admin d'un an. Les limites des pages publiques (`/inscription`,
-    `/premium/*`, `/bienvenue/renouveler`) lisaient le PREMIER élément, falsifiable : c'est maintenant le saut de NPM ;
-  - **IP de la maison** (`HOMELABD_ADMIN_TRUSTED_IPS`) : session d'office **seulement vue par NPM confirmé par
-    Docker** (`trusted_proxy_container = "npm"`, adresse relue en tâche de fond par `docker inspect --type container`
-    toutes les 60 s, et 10 s après un pair inconnu du réseau : NPM recréé). Docker muet : `X-Forwarded-For` reste la
-    clé des limites, sans session automatique (passer par `/connexion`) ; une ligne « docker inspect en échec » par
-    panne. Conteneur NPM renommé = changer la clé ;
-  - chemins d'admin (`/`, `/accounts*`, `/recherche*`, `/status*`, `/onboard`, `/connexion`, `/admin*`) : 404 si
-    `Host` n'est ni l'hôte de `ONBOARD_PUBLIC_URL` ni une adresse locale (l'hôte premium envoyait tout à homelabd sans
-    « admin-outils ») ; changer de domaine d'onboarding = changer `ONBOARD_PUBLIC_URL` ;
-  - `/admin/*` (homelabctl) : appel local sans `X-Forwarded-For` seulement, 404 sinon ; une ligne `warn` par adresse
-    et par 15 min. `POST /onboard` est fermé sans jeton configuré ;
-  - le jeton n'est jamais dans le HTML : la couche le remplace par un jeton de formulaire (HMAC) dans les pages et fait
-    l'inverse dans un POST avec session.
-- **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
-  `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
-- **Journal des versions** : tout changement visible pour les membres ou l'admin ajoute une ligne dans
-  `CHANGELOG.md` (section de la version en cours, en haut, avec ses commits ; 1.0.x corrections, 1.x.0 nouveautés).
-  Jamais de pseudo de membre, d'IP, de domaine ni d'e-mail dans le dépôt (public) : écrire « un membre ».
-- **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans
-  `registry()`, section `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run respecté,
-  tests unitaires de la décision, paragraphe dans docs/AUTOMATION.md.
-- **Changement de comportement** = changement de `homelab.toml` (seuils, intervalles) avant
-  changement de code. **Attention** : `Config` refuse tout champ inconnu (`deny_unknown_fields`) — dès qu'une clé
-  nouvelle est dans `homelab.toml`, l'ancien `homelabctl` échoue et l'ancien homelabd **ne redémarrerait plus** :
-  installer le nouveau binaire dans la foulée (vu le 2026-09-25 avec `vo_audio_language`). Les valeurs par défaut du code doivent rester égales à celles du TOML : c'est vérifié par le
-  test `config::toml_matches_defaults` (seuls `paths`, `urls`, `seedbox.*` et `tasks.disabled` sont exemptés).
-- **Recréer `gluetun` = recréer `qbittorrent`** : qBittorrent est en `network_mode: service:gluetun` ; quand gluetun
-  est recréé (changement de compose, `cpu_shares`…), compose laisse qbittorrent « Up » **sur l'espace réseau de
-  l'ancien conteneur** : injoignable de partout (Homarr, NPM, homelabd `localhost:8080`), alors que son healthcheck
-  interne reste vert. Le 2026-09-19, l'application hors pic de 04:30 a coupé qBittorrent du VPS 11 h (tracker_ratio,
-  torrent_import côté VPS, tuile Homarr rouge). Toujours `docker compose up -d --force-recreate --no-deps
-  qbittorrent` après un `up -d` qui a recréé gluetun, puis reposer le port transféré (`/tmp/gluetun/forwarded_port` →
-  `setPreferences listen_port`, le hook ne rejoue pas seul).
-- **Bases SQLite dans la sauvegarde (05/10)** : `[backup] sqlite` liste les bases des services ; chacune est copiée par
-  l'API de sauvegarde SQLite (rusqlite `backup`, lecture seule, `quick_check`) dans `state/backup-snapshots/<chemin>`, et la
-  base vivante (+ `-wal`, `-shm`, `-journal`) sort de l'archive. Restauration : les bases sont sous
-  `state/backup-snapshots/`, pas à leur place (recettes dans docs/DEPLOY.md). La sauvegarde tourne par
-  `homelab-backup.service` (root), pas dans homelabd. Nouvelle base d'un service = l'ajouter à la liste.
-- **Historique de lecture** : Playback Reporting en conservation illimitée depuis le 05/10 (`MaxDataAge = -1` dans la
-  configuration NOMMÉE `GET|POST /System/Configuration/playback_reporting`, pas dans `/Plugins/<id>/Configuration` ;
-  **0 effacerait tout**). Il gardait 3 mois et effaçait chaque nuit un jour de plus (base au 07/07 le 05/10).
-- **Compression NPM (05/10)** : l'hôte 1 a `gzip_types` js/css/json/svg (+ `gzip_proxied any`, `gzip_vary on`) dans sa
-  configuration avancée (base et `1.conf`, sauvegarde `backups/npm-20261005-gzip/`) : `gzip on` de NPM ne visait que le
-  HTML, et Jellyfin ne compresse plus derrière `X-Forwarded-Proto: https` (InPlayerPreview 393 → 116 Ko). Plus les listes
-  HLS (`application/vnd.apple.mpegurl`, `application/x-mpegurl`, 07/10) : un `main.m3u8` de 1,4 Mo → 44 Ko, seulement si
-  le client envoie `Accept-Encoding: gzip`, segments jamais compressés. À valider en lecture réelle (iPhone,
-  Chromecast, Tizen/webOS, AirPlay d'une télé LG).
-- **Site par défaut de NPM = « 404 Page »** (07/10) : setting `default-site` = `404` et
-  `/data/nginx/default_host/site.conf` rendu par le moteur de NPM (gabarit `/app/templates/default.conf`). L'ancien
-  serveur « Congratulations » incluait `assets.conf` (`proxy_pass` vers 127.0.0.1:80) : chaque `.js/.css/.ico` demandé
-  par l'IP nue bouclait jusqu'à « 512 worker_connections are not enough » (13 épisodes du 27/09 au 05/10, des
-  robots). Ne jamais le remettre. Retour : `backups/lot1-20261007/npm/LISEZMOI.txt`. Pour imiter NPM, rendre son
-  gabarit avec son moteur (`docker exec -w /app npm node --input-type=module`, `./lib/utils.js`,
-  `./internal/nginx.js`) plutôt que l'écrire à la main ; outil `backups/lot1-20261007/npm/apply_lot1_npm.py`.
-- **Sauvegarde d'état (`homelabctl backup`, tâche `backup`)** : tout dossier volumineux sous `/opt/homelab` doit être
-  dans `[backup] excludes` — le 2026-09-20, `cache/rclone` (fichiers **creux** de plusieurs centaines de Go) a produit
-  une archive de **149 Go** (au lieu de 3) et poussé le disque à 92 %. Après un nouveau dossier de cache ou de données
-  massives : l'ajouter aux exclusions, puis contrôler la taille de l'archive suivante et son manifeste (`.list.gz`).
-- **Reboot** : `homelab-stack.service` relance compose ; vérifier `docker compose ps` et
-  `systemctl status homelabd` après, et `pgrep -cx xfce4-session` = 1 (bureau VNC).
-- **Bureau VNC (Guacamole, noVNC)** : unité `systemd/vncserver@.service` (`-fg`, **sans PIDFile** : TigerVNC nomme
-  son PID d'après `hostname -f`, l'ancienne unité l'attendait sous `%H`) et session `systemd/vnc-xstartup` →
-  `~/.config/tigervnc/xstartup` (verrou `flock` par écran, boucle XFCE qui s'arrête avec le serveur X ; installer
-  par fichier neuf + `mv`, bash relit un script en cours). Le 2026-09-23, l'ancienne unité a relancé 144 fois au
-  boot et laissé **138 sessions XFCE** sur `:1` (frappes perdues) ; sauvegarde `backups/vnc-20260923/`.
-- `scripts/` ne contient plus que des outils ponctuels (les anciens scripts bash planifiés ont été
-  retirés) : `jellyfin-branding-apply.sh`, `jellyfin-ui-rollback.sh` (voir « Interface Jellyfin »),
-  `jellyseerr-rotate-key.py` (voir « Pièges connus »), `jellyfin-js-apply.py` (scripts JavaScript Injector, dont
-  « Groscailloux Mon compte »),
-  `move-to-seedbox.py` et `seedbox-cleanup.py` (voir « Seedbox »).
+### Secrets et dépôt public
+- Secrets **uniquement dans `.env`** : jamais en dur dans compose, TOML, code, scripts ou docs ; les scripts de `scripts/` sourcent `.env`.
+- **N'afficher aucun secret** : ni `.env`, ni configuration de service, ni URL avec jeton, ni réponse `settings/main` de Jellyseerr (elle contient la clé), ni colonne `password` de NPM ou Homarr ; masquer les chaînes hexadécimales longues.
+- Ne jamais coller `.env`, `backups/` ou une configuration de service dans un outil externe ; un secret collé dans une conversation est compromis : le régénérer.
+- **Dépôt public** : aucun pseudo de membre, IP, domaine ni e-mail (écrire « un membre », « l'admin », « l'adresse publique de la seedbox (voir `[seedbox]` de homelab.toml) »).
+- **Jamais de `token=`** dans un lien, une redirection ou un mail ; **jamais d'identifiant ni de mot de passe dans un mail** ; jetons et mots de passe jamais journalisés.
+- Erreur journalisée = `format!("{e:#}")`, et `.map_err(reqwest::Error::without_url)` d'abord si l'URL porte un secret (webhook, `apikey=`, `ApiKey=`).
+- `backups/` : rien de lisible par « autres » ; après un lot, `sudo find /opt/homelab/backups -perm -o+r ! -type l -exec chmod o-rwx {} +` ; dossier à secrets en 700/600.
+- Une seule clé API Jellyfin depuis le 07/10 (« Jellyseerr » = `JELLYFIN_API_KEY` ; « claude-setup » révoquée) : toute nouvelle clé se note dans SECRETS.md.
 
-## Interface Jellyfin (« Groscailloux TV », 2026-09-14)
+### Données et suppressions
+- **Jamais de purge globale** de file ou de torrents : suppression ciblée et plafonnée (`max_actions_per_run`).
+- **Jamais de DELETE en boucle non vérifié** : `GET /Devices?userId=` ignore le filtre (tous les membres déconnectés le 15/09) ; vérifier le nombre et `LastUserId` de chaque élément.
+- `DELETE /Items/<id>` de Jellyfin **efface le disque** : jamais pour « nettoyer » une vue ou une bibliothèque.
+- `deletion_cleanup` ne touche que les médias Jellyseerr « en attente » ou « en cours » sans demande, jamais « disponible » ou « partiel ».
+- Déplacement ou déménagement de titres en masse hors de `anime_library` : `deletion_cleanup` dans `tasks.disabled` pendant toute l'opération.
+- Import d'un téléchargement non demandé par l'Arr : `ManualImport` en `importMode: copy`, **jamais `auto`** ; candidat choisi par **chemin exact** ; `torrent_import` ne remplace jamais un fichier et n'importe jamais un fichier incomplet.
+- **`homelabctl` n'écrit jamais l'état** ; toute modification manuelle de `state/homelabd.json` se fait **daemon arrêté**.
+- Mesurer « exclusif / partagé » (inodes) avant d'annoncer un gain d'espace.
 
-- **Thème** : ElegantFin **épinglé** + calque maison, source `branding/jellyfin/groscailloux-tv.css`, appliqué par
-  `scripts/jellyfin-branding-apply.sh` (sauvegarde l'ancien, refuse tout `@import` en `@main/@master/@latest`).
-  Ne pas éditer le CSS dans l'interface. Monter ElegantFin = changer le tag, repasser le banc d'essai
-  (captures bureau + téléphone), puis appliquer. Jellyfin 10.11 lit ce CSS dans `Branding/Configuration`
-  (champ `CustomCss`), plus `Branding/Css`.
-- **Écran de connexion** : aucun compte listé (`IsHidden = true` pour tous, et dans `non_admin_policy` pour les
-  nouveaux, depuis le 2026-09-15 : la liste publique exposait les noms). Titre : `--loginPageText` dans le calque
-  (« Connecte-toi » ; plus long, il passe sur deux lignes et chevauche le cadre).
-- **Logo** : `branding/jellyfin/logo/` (source `logo.html`, rendu par Chromium), déposé via
-  `POST /JellyfinEnhanced/UploadBrandingImage` (noms : `banner-light.png`, `banner-dark.png`,
-  `icon-transparent.png`, `favicon.ico`, `apple-touch-icon.png`).
-- **Retour arrière** : `scripts/jellyfin-ui-rollback.sh backups/jellyfin-ui-<date>` (config, plugins,
-  préférences d'affichage ; `--with-db` seulement si Jellyfin ne démarre plus).
-- Plugins IAmParadox27 (Home Screen Sections, Plugin Pages, Collection Sections) : un même numéro de
-  version existe pour plusieurs ABI ; installer par le catalogue du serveur (`/Packages`), qui prend la
-  compilation compatible, et vérifier `targetAbi` dans `meta.json`.
-- La bibliothèque « Collections » est donnée à tous les comptes (`JELLYFIN_LIB_EXTRA`) : sans elle, un
-  compte ordinaire ne voit ni les sagas ni les rangées de collections.
-- Jellyfin Enhanced : `ThemeSelectorEnabled = false` (ses couleurs Jellyfish entreraient en conflit avec
-  ElegantFin). Onglets Découvrir / Demandes / Calendrier = pages natives de Jellyfin Enhanced, renommées en
-  français dans le calque CSS (`#je-native-tab-btn-*`). Les anciens onglets Movies / TV Shows / Requests /
-  Letterboxd venaient de SeerrFin (retiré).
-- Après un redémarrage de Jellyfin, une appli restée ouverte (Jellyfin Desktop) garde l'ancienne page : nouveau
-  CSS mais anciens scripts (pas de rangées, ancien logo, SyncPlay qui envoie des titres Seerr sans id →
-  `Guid can't be empty`). Faire recharger (Ctrl+R) ; un redémarrage coupe aussi les groupes SyncPlay.
-- **Accueil** (configs de plugins hors git, sauvegardées dans `backups/jellyfin-ui-*`) : Home Screen Sections
-  (16 rangées, ordre Netflix, chargement 4 par 4 : au-delà l'accueil ralentit à froid ; « Séries à venir »
-  désactivée car badge et dates en anglais incrustés par le plugin), Collection Sections (Tendances,
-  Anime, Les mieux notés, Films français), Auto Collections (collections françaises, orphelines supprimées).
-  Un compte absent de Jellyseerr ne voit pas les rangées « Découvrir ».
-- Tester l'interface : navigateur jetable + compte ordinaire temporaire ; remplacer le CSS dans CE navigateur
-  en interceptant `Branding/Configuration` (et contourner le service worker), jamais en production. **Un élément
-  se contrôle par sa taille à l'écran (`getBoundingClientRect`), jamais par sa seule présence** : le 03/10, le banc
-  disait « tchat présent » alors que le bouton était dans l'en-tête caché de la 12.1. Banc des en-têtes :
-  `backups/jellyfin12-test-20261003/runprod.sh header_dump.js ":desktop mobile:phone desktop-legacy:desktop"`
-  (compte temporaire, `CANDIDATE_DIR` pour essayer des `app.js` candidats sans toucher à la prod).
+### Docker, VPN, système
+- `docker compose config --quiet` avant tout `up -d`.
+- Images épinglées **`tag@sha256`**, pas de `:latest` nu, et `diun/images.yml` en cohérence (un bloc `- name:` par image).
+- **Pas de `chown -R /opt/homelab`** (npm/ et homarr/ root, grafana/ 472, guacamole/mysql 999).
+- **`qBittorrent.conf` : conteneur arrêté avant d'éditer**, sinon il écrase le fichier.
+- Jamais `172.18.0.0/16` dans `bypass_auth_subnet_whitelist` de qBittorrent (seulement `127.0.0.0/8` et `172.18.0.1/32`) ; garder `web_ui_reverse_proxy_enabled`.
+- **Recréer `gluetun` = recréer `qbittorrent`** (`up -d --force-recreate --no-deps qbittorrent`) puis reposer le port transféré.
+- `COMPOSE_PROFILES` changé seulement par `homelabctl vpn` ; jamais les deux profils (vpn, novpn) en même temps.
+- Nouveau service : port publié en `"127.0.0.1:<port>:<port>"` et `cpu_shares: 512`.
+- Arrêter un service volontairement = l'ajouter à `[tasks.stack_health] ignore` (+ restart homelabd), sinon il est relancé sous 5 min.
+- **SSH du VPS (sshd, clés, mots de passe, fail2ban), port 81 de NPM et listes d'accès NPM : on n'y touche pas** (signaler seulement).
+- **Redémarrages (VPS, Jellyfin, montage rclone, conteneurs qui coupent la lecture) : hors pic et sans lecture en cours**, par `tools/offpeak/offpeak.sh`.
+- Scripts : `head -n N` et `tail -n N` (coreutils uutils : `tail -25 a b` échoue) ; `.env` sans expression shell ; hook gluetun en POSIX sh avec `wget`.
+- Tout dossier volumineux sous `/opt/homelab` → `[backup] excludes` ; toute nouvelle base SQLite d'un service → `[backup] sqlite`.
+- Instance d'essai jamais laissée en marche après son banc, et sa copie de base supprimée avec elle.
 
-## Seedbox
+### homelabd (code, configuration, installation)
+- Changement de comportement = **d'abord `homelab.toml`** ; une valeur réglable ne s'écrit que là, la doc cite la clé.
+- **`deny_unknown_fields`** : une clé ajoutée à `homelab.toml` impose d'installer **homelabd ET homelabctl** dans la foulée ; ne pas fusionner dans `main` une clé nouvelle avant la fenêtre d'installation.
+- **Installer depuis l'arbre de travail de `/opt/homelab`, jamais depuis un worktree** ; une cible cargo (`CARGO_TARGET_DIR`) par worktree.
+- Après un redémarrage de homelabd : `git status --short`, `curl` d'une route d'une autre session (ex. `/premium`), `homelabctl check`.
+- Nouvelle tâche : module dans `tasks/`, `registry()`, `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run, tests de la décision, paragraphe dans AUTOMATION.md.
+- homelabd est cloisonné (`ProtectSystem=strict`) : tout nouveau dossier écrit va dans `ReadWritePaths` de `systemd/homelabd.service`.
+- Un GET **à effet** (recherche ou téléchargement Prowlarr, `release` d'un Arr, canari) n'est jamais rejoué : `.send()`, pas `send_retry`.
+- Une alerte n'est notée « signalée » que si elle est partie (`alerts::retry_later`) ; jamais de seuil `/health` par tâche.
 
-- Accès admin : `ssh seedbox` (clé `~/.ssh/seedbox_ed25519`) ; apps via `app-<x> …`, en conteneurs
-  Docker sur la seedbox (Radarr 16127, Sonarr 16126, Jackett 16129, FlareSolverr 16111 sur
-  `172.17.0.1`), qBittorrent natif `127.0.0.1:16141`, autobrr natif `127.0.0.1:16123`. API
-  publiques : `https://kakaouette.tofino.usbx.me/<app>`.
-- **Redémarrage de l'hôte seedbox = applis arrêtées** (2026-10-01 vers 20:50) : l'hôte partagé a redémarré et Sonarr,
-  Radarr, Bazarr, Jackett, FlareSolverr, autobrr et unpackerr ne sont **pas** repartis seuls (qBittorrent et le montage
-  rclone, si). Vu le lendemain par `homelabctl check` (« 502 Bad Gateway » sur les Arrs seedbox) : ~16 h sans import ni
-  recherche. Relance : `ssh seedbox 'app-sonarr start; app-radarr start; app-bazarr start; app-jackett start;
-  app-flaresolverr start; app-autobrr start; app-unpackerr start'` (`app-<x>` : `start|restart|backup…`, pas de
-  `status`). **Automatisé le 2026-10-02** : crontab de la seedbox → `~/.local/bin/homelab-apps-watch.sh` (source :
-  `scripts/seedbox/homelab-apps-watch.sh`, `@reboot` + toutes les 5 min, crontab d'avant dans
-  `~/.local/state/crontab-avant-20261002.txt`) ; tâche homelabd `seedbox_health` = alerte admin après 10 min. Ports
-  locaux sur la seedbox : Sonarr 16126, Radarr 16127, Bazarr 16131, Jackett 16129, FlareSolverr **172.17.0.1**:16111,
-  autobrr 16123, qBittorrent 16141. Depuis le 07/10, `seedbox_refresh`, `monitor_sync` et `russian_search` **sautent**
-  le côté injoignable (« arr unreachable: side skipped this run », passage réussi) comme `deletion_cleanup` et
-  `torrent_import`, au lieu de ~400 erreurs pour la panne du 30/09-02/10 : `seedbox_health` reste la seule alerte.
-  `monitor_sync` : tant qu'un Sonarr est muet, l'autre ne suit aucune nouvelle saison (il peut en retirer).
-- **Arrs et Bazarr de la seedbox (07/10)** : Sonarr et Radarr journalisent en Info (debug : 25 h d'historique) ;
-  versions 4.0.20 et 6.4.4 à installer hors pic. Bazarr : fournisseur tvsubtitles retiré (403 permanents depuis
-  l'IP de l'hébergeur), `Excluded Tags` = `russe` sur Sonarr et Radarr (une fiche russe ne reçoit plus de sous-titres
-  automatiques). API Bazarr : `POST /api/system/settings` en formulaire, une clé `settings-<section>-<clé>` par valeur
-  (répétée pour une liste), sans `languages-enabled`/`languages-profiles`. `config/host` d'un Arr contient le hash
-  du mot de passe et la clé : sauvegarde en 600. Retour : `backups/lot1-20261007/arrs/ROLLBACK.sh`.
-- **Résilience (audit du 2026-10-02)** : redémarrage du VPS (propre ou forcé) → tout repart (Docker activé, 20/21
-  conteneurs `unless-stopped`, Guacamole relancé par `stack_health`, montage, homelabd et minuteurs activés) ; panique
-  noyau → redémarrage en 10 s (`kernel.panic = 10`). **Montage seedbox absent ou vide** : testé sur une instance
-  Jellyfin jetable (même image, fausse médiathèque) — l'analyse écrit « Library folder … is inaccessible or empty,
-  skipping » et **ne supprime rien** ; les titres reviennent au retour du montage. Ajouts : sonde qBittorrent vue de
-  l'hôte avec recréation (gluetun), `seedbox_health`, chien de garde `homelabd-watchdog.timer`, homelabd en
-  `Restart=always`. Reste à faire (phase 3, plan de l'utilisateur) : sauvegarde hors du VPS.
-- **Espace seedbox = le quota du compte** (`quota -s` sur la seedbox : 3,7 To, 2,9 To utilisés au 2026-09-23), pas le
-  `df` du disque partagé (20 To, 5,7 To libres, 234 comptes).
-- Montage : rclone dans **`/mnt/seedbox/media`**, Jellyfin lie le **parent** `/mnt/seedbox`
-  (rslave). Lier le point de montage FUSE lui-même casse la reprise après coupure.
-- Nouvelles demandes Jellyseerr → Arrs seedbox (id 1). Ne rien importer côté seedbox qui existe
-  déjà sur le VPS (doublons dans Jellyfin) : `torrent_import` le refuse (`dup_other_side`).
-- Jellyfin : « Films » et « Séries » ont chacune deux dossiers (`/media/…` et `/seedbox/media/…`) ;
-  plus de bibliothèques « (Seedbox) ». qBittorrent seedbox : `[seedbox] qbit_url` + `SEEDBOX_QBIT_PASSWORD`.
-- Jellyseerr : ne jamais appeler `settings/jellyfin/library?sync=true` sans renvoyer `?enable=`
-  avec la liste complète des bibliothèques. **Le `GET settings/jellyfin/library` sans paramètre désactive lui aussi
-  tout** (vérifié le 2026-09-20 dans `settings.json`) : lire l'état par `GET /api/v1/settings/jellyfin`
-  (champ `libraries`), et n'appeler `?enable=<4 ids>` qu'en écriture. Un `?sync=true` peut rester bloqué plusieurs
-  minutes : `--max-time 60`.
-- **Déménager un titre du VPS vers la seedbox** : `scripts/move-to-seedbox.py` (`--list` numérote, `--titles a-b`,
-  `--worker i/n` pour paralléliser, `--dry-run`), ordre immuable : rsync (`-a --partial`, ssh admin, `nice`/`ionice`)
-  → vérification nom+taille de chaque fichier → fiche de l'Arr seedbox **créée non surveillée** (ou fiche existante,
-  ex. Law & Order S10–13 ajoutées à côté de S1–17) → `RescanSeries`/`RescanMovie`, contrôle du nombre de fichiers,
-  puis surveillance de ce qui a un fichier → **seulement alors** suppression VPS (fiche + fichiers, torrents liés
-  s'ils ont fini de partager depuis 7 j) → `Library/Media/Updated` Deleted/Created. Pièges : rsync ≥ 3.2.4 protège
-  lui-même le chemin distant (**pas de guillemets** : `seedbox:/home/x/y z`, sinon `mkdir ".../'/home/…'"`) ; le
-  montage rclone **ne voit pas un nouveau dossier** tant que le **dossier parent** n'a pas été rafraîchi
-  (`vfs/refresh dir=Movies` puis `dir=Movies/<titre>`) ; `deletion_cleanup` dans `tasks.disabled` pendant toute
-  l'opération (une fiche seedbox fraîche dont le montage ne voit pas encore les fichiers serait « sans fichier ») ;
-  jamais pendant une lecture du titre (`/Sessions`). Jellyfin recrée l'item (nouvel id) : l'état « vu » suit les
-  identifiants TMDB/TVDB. Débit mesuré : ~17 Mo/s par flux, ~25 Mo/s à deux. Deux workers en parallèle ont mis un
-  Sonarr seedbox en « database is locked » (500) : le script réessaie. **Hors pic seulement, un flux, `--bwlimit 15000`**
-  (timer `move-to-seedbox-offpeak`, 08:30–12:30, `RuntimeMaxSec=4h`) : le 2026-09-20 à 17:28, avec deux rsync à
-  20 Mo/s, un membre n'a pas pu lire un film de la seedbox (4 essais, segments HLS servis puis requête suivante jamais
-  aboutie, cache rclone figé une minute). Mesuré après arrêt : **le VPS reçoit ~8–10 Mo/s par connexion** quelle que
-  soit la source (OVH 8,6 Mo/s, seedbox 7–10 Mo/s, RTT seedbox 97 ms), l'agrégat monte avec le nombre de flux (4 ssh =
-  30 Mo/s ; les « 500 Mbit/s » du 18/09 étaient l'agrégat trickplay). Une lecture = un flux ≈ 65 Mbit/s : assez, mais
-  sans marge pour un à-coup ; l'hôte seedbox est partagé (charge 45–60, 128 cœurs). Le transfert reprend seul le
-  lendemain 08:30 sur ce qui reste (`state-0.json`), `deletion_cleanup` reste coupée jusqu'à la fin.
-- **Supprimer des titres de la seedbox pour de vrai** (2026-09-25, 35 titres jamais regardés, 450 Gio) : fiche
-  Radarr/Sonarr **avec** fichiers, torrents liés (par inode, sauf délai C411), **dossier du titre dans la corbeille
-  Arr** (`media/Movies/.recycle`, `media/TV Shows/.recycle` : sinon rien n'est libéré avant 14 j), fiche média
-  Jellyseerr, puis `vfs/refresh` et `Library/Media/Updated`. Modèle : `backups/seedbox-cleanup-20260925/delete.py`
-  (`--dry-run` d'abord ; fiches sauvegardées). « Jamais regardé » = ni `PlaybackActivity` (depuis le 28/06) ni
-  `Played`/`IsResumable` d'aucun compte. La date d'ajout de Jellyfin n'est pas fiable (items recréés par les
-  déménagements) : prendre `added` de l'Arr. Espace = `quota -s` sur la seedbox. Un `ssh seedbox cmd args` recolle
-  les arguments en une ligne shell : passer les chemins par l'entrée standard.
-- **Ménage de la seedbox** (`scripts/seedbox-cleanup.py`, 2026-09-20) : les torrents **sans catégorie** (ajoutés à la
-  main les 11–12/09 : ISO, logiciels, musique, PDF, sport, docs) sont repérés par inode — un torrent dont **aucun**
-  fichier n'est relié à `media/` (hors `.recycle`) est retiré avec ses fichiers ; un torrent partiellement relié est
-  laissé ; jamais un torrent de catégorie `sonarr`/`radarr`. Règle C411 : fini depuis < 7 j et ratio < 1 = **reporté**
-  (`deferred.json`, timer transitoire `seedbox-cleanup-deferred` quotidien à 13:05). Les corbeilles Arr (`.recycle`,
-  purge 14 j) peuvent contenir des fichiers **partagés par inode avec la médiathèque** (Attack on Titan, 112 Go
-  affichés, 0 libéré) : toujours mesurer « exclusif / partagé » avant d'annoncer un gain. `du -sh ~` sur la seedbox
-  renvoie 0 (`~` est un lien symbolique) : `du -sh ~/`.
+### Arrs, indexeurs, Jellyseerr
+- **Aucune recherche depuis Sonarr/Radarr** (C411 en RSS seulement) : chercher par `/recherche` ; ne pas remettre la recherche à la demande dans Jellyseerr (`preventSearch`).
+- **Viser un profil de qualité par son NOM, jamais par son numéro** (VPS 6 = seedbox 7 = FR-friendly H.264).
+- Tout ce qui est neuf passe par la seedbox : remettre le VPS en service exige `auto_sides` **et** le RSS de l'indexeur **et** `rssSyncInterval`.
+- Ne jamais écarter une release parce qu'elle est en x265 ; garder le garde-fou d'égalité de saison de `series_candidate`.
+- Nouveau marqueur de langue = code (`langs_of`) **et** formats des 4 Arrs ; changer le profil anime = aussi `activeAnimeProfileId` dans Jellyseerr.
+- Toute règle par tracker vise les deux domaines de C411 (`c411.org` et `tk.c411.tw`).
+- Prowlarr sans application liée ; avant de retirer un service, chercher qui l'appelle (`grep -r <nom>:<port>`, `baseUrl` des indexeurs).
+- **Jellyseerr (Seerr 3.2) : `GET settings/jellyfin/library` sans paramètre et `?sync=true` sans `?enable=` désactivent toutes les bibliothèques** ; lire par `GET /api/v1/settings/jellyfin`.
+- Historique d'un titre : `history/movie?movieId=` et `history/series?seriesId=` (`history?movieId=` ignore le filtre).
+- Voie russe = choix du membre, jamais la langue TMDB ; ne pas contourner l'arrêt des torrents publics par l'hébergeur de la seedbox.
+- Flux C411 d'autobrr désactivé : le réactiver remet le bruit d'origine (décision du propriétaire).
 
-## Pièges connus
+### Jellyfin
+- **Aucune tâche lourde entre 13 h et 05 h** ; trickplay jamais pendant une analyse ; **aucune option qui lit la vidéo à l'ajout** d'un titre ni qui écrit dans les dossiers médias.
+- **Pas de `Refresh` récursif d'une série** pour une image ou par commodité (il relit les épisodes par le lien seedbox) : seulement dans les recettes d'identification et de remplacement, hors pic.
+- **Intro Skipper : interdits en production** « Exécuter » la tâche, `POST /Intros/ScanSeason`, `DELETE /Intros/Show/…`, `POST /Intros/ExcludedTimestamps/Clear`, EraseTimestamps, `POST /Intros/AnalyzerActions/UpdateSeason` ; jamais rallumer `ScanRecap` ; refaire le gel avant toute mise à jour du plugin.
+- **Mises à jour d'extensions : manuelles**, en vérifiant `targetAbi` (le catalogue garde une compilation 10.11 du même numéro) ; JavaScript Injector ne purge jamais le script d'une extension retirée.
+- Jamais d'analyse complète lancée par-dessus une autre (elles s'annulent) ; `GET /Items` toujours avec `UserId`.
+- Jamais d'édition à la main de `system.xml` Jellyfin démarré ; garder `EnableLegacyAuthorization = true`, `EnableEmbeddedTitles = false`, `MaxActiveSessions = 0`, aucun `RemoteClientBitrateLimit`.
+- Playback Reporting : `MaxDataAge = -1` dans la configuration **nommée** (`0` effacerait tout).
+- `EnableAllFolders` seulement pour les deux comptes protégés.
+- Toute nouvelle extension qui ouvre une websocket reproduit le piège corrigé par `gc-socket.js` (une seule websocket par page en 12.x).
+- Ne jamais convertir un sous-titre ASS en SRT pour l'usage principal.
 
-- **Tests** : un environnement de test, jamais la prod. Pour le tchat : une **seconde instance de homelabd**
-  (binaire de la branche, `HOMELABD_DRY_RUN=1`, toutes les tâches dans `tasks.disabled`, `auto_import`
-  coupé, port `127.0.0.1:18766`, `state_file` et `chat.db_file` à part, modérateurs = comptes de test), et
-  le navigateur de test qui redirige `/gc-chat/*` vers elle ; voir `backups/chat-tests-20260915/`. Comptes ordinaires temporaires (supprimés avec
-  `homelabctl accounts delete`), et pour les captures, réponses d'API simulées **dans le navigateur de test**
-  (interception, voir `backups/chat-tests-20260915/chatshots.js`). Une session ouverte par l'API compte dans
-  la limite de 2 appareils : supprimer puis recréer le compte de test plutôt que toucher aux appareils. Une instance
-  d'essai (Jellyfin…) ne reste **jamais** en marche après son banc, et sa copie de base part avec elle (`docker rm -f
-  <nom> && sudo rm -rf /var/tmp/<nom>`, ou 700 si elle doit rester) : `jellyfin12-test` a gardé jusqu'au 07/10 une
-  copie de la base de prod (49 jetons d'appareil valides) en 0644 ; elle se recrée par `prepare.sh`.
-- **Fichier fantôme dans rclone = Jellyfin bloqué** (2026-09-27) : un fichier supprimé sur la seedbox (ici l'ancien
-  BLACK TORCH S01E01, remplacé par le x265) resté dans le cache de répertoires de rclone ; le `ffprobe` de Jellyfin
-  qui l'ouvre ne rend **jamais** la main (ouverture SFTP bloquée, état D, `kill -9` sans effet) et garde le fichier
-  « vivant » dans rclone. Huit `ffprobe` bloqués 13 à 19 h : **plus aucun titre nouveau n'apparaissait** (films
-  « Ajout à la médiathèque » pendant 1 h+, file de rafraîchissement bouchée) et l'analyse restait figée à 91 %.
-  Diagnostic : `ps -eo pid,stat,etime,args | grep jellyfin-ffmpeg/ffprobe` (état `D`, heures) et `rc core/stats`
-  (transfert à 0 octet). Seul remède : `vfs/forget` puis **redémarrer `homelab-seedbox-mount`**. Automatisé :
-  `scripts/seedbox-mount-watch.sh` (timer `seedbox-mount-watch`, 5 min) — ffprobe > 15 min → forget ; toujours bloqué →
-  redémarrage du montage s'il n'y a pas de lecture seedbox, d'office après 60 min ; alerte Discord admin ; `--check`.
-- **`GET /Items` sans `UserId` renvoie une liste incomplète** (2026-09-21 : 2 064 items, aucun des 13 épisodes importés le
-  matin ; avec l'id d'un admin : 2 004 items, tous présents). Toute lecture de la médiathèque par l'API passe par un
-  compte (`UserId=<admin>`), comme `subtitle_sync` et le canari.
-- **`GET /Devices?userId=` ignore le filtre** et renvoie **tous** les appareils : le 2026-09-15, une boucle
-  `DELETE /Devices` dessus a déconnecté tous les membres de toutes leurs applis. Aucune suppression en boucle
-  sans vérifier le nombre et le propriétaire (`LastUserId`) de chaque élément.
-- **JavaScript Injector** active aussi les scripts d'autres plugins qui s'y enregistrent, et **ne les purge jamais** :
-  une extension retirée laisse son script dans `PluginJavaScripts` (cas de Jellysleep, retiré le 05/10 avec son entrée).
-- **Rotation de la clé API Jellyseerr** (faite le 2026-09-15, clé exposée dans une conversation) : `POST
-  /api/v1/settings/main/regenerate`, puis tous les consommateurs dans la foulée : `.env` (`JELLYSEERR_API_KEY`,
-  restart homelabd), `JellyseerrApiKey` de Jellyfin Enhanced **et** de Home Screen Sections (API des plugins),
-  Homarr (intégration « Jellyseerr », secret chiffré : Homarr arrêté, base sauvegardée). Tout est fait par
-  `sudo scripts/jellyseerr-rotate-key.py` (~12 s de coupure, aucune clé affichée). Nouveau consommateur de la clé
-  = l'ajouter au script.
+### Interface et scripts injectés
+- Un élément se contrôle **par sa taille à l'écran** (`getBoundingClientRect`), jamais par sa seule présence.
+- Jamais retirer un élément dessiné par React ; jamais de `window.confirm/alert/prompt` ; tout ce qui est TV sous `.layout-tv` ou l'agent, jamais par le nombre de cœurs.
+- Le CSS ne s'édite pas dans l'interface : `branding/jellyfin/groscailloux-tv.css` + `scripts/jellyfin-branding-apply.sh` ; scripts par `sudo scripts/jellyfin-js-apply.py`.
+- NPM : éditer la base **et** le fichier `.conf` ensemble ; `location ^~ /gc-chat/` (le `^~` est obligatoire) ; captures nommées dans les `set`.
+- Homarr : base modifiée Homarr arrêté et sauvegardé, titres de section ≤ 20 caractères, aucun widget de demandes, d'utilisateurs ou de sessions sur le tableau public.
 
-- `.env` est lu par bash (`.` ), compose et dotenvy : pas d'expression shell, guillemets seulement
-  autour des valeurs avec espaces.
-- Le hook `hooks/qbit-update-port.sh` s'exécute dans l'image gluetun (busybox) : POSIX sh,
-  `wget` uniquement.
-- `GET /api/v3/manualimport` de Sonarr dure ~25 s sur un gros `/downloads` (timeout 5 min).
-  Avec `folder=` un fichier **situé dans le dossier d'une série**, Sonarr renvoie tous les fichiers de
-  la saison : toujours choisir le candidat par **chemin exact**, jamais le premier (le 12/09, S17E41 a
-  été rattaché à E48 par erreur, corrigé en réimportant chaque fichier vers son épisode).
-- Prowlarr n'a aucune application configurée : les indexers vivent dans Sonarr/Radarr et les
-  publics passent par **Jackett** (+ FlareSolverr pour Cloudflare). Seule exception, depuis le 2026-09-16 :
-  **C411 est aussi déclaré dans Prowlarr** (même clé, 25 requêtes/heure), uniquement pour les recherches de
-  `series_search` et `movie_search` (par identifiant TMDB, texte libre en secours). La clé n'est pas lisible par l'API des Arrs (champ masqué) : elle
-  vient de leur base. Ne pas y brancher d'application, sinon Prowlarr réécrirait les indexers des Arrs. Avant de retirer un service,
-  vérifier qui l'appelle : `grep -r <nom>:<port>` dans les configs et les champs `baseUrl` des
-  indexers Arr (`GET /api/v3/indexer`) — le retrait de Jackett/FlareSolverr le 2026-09-10 a coupé
-  les indexers publics pendant deux jours.
-- **Indexer bloqué par un Arr** : après des échecs (délais dépassés, 429), Sonarr met l'indexer en pause
-  jusqu'à **24 h** (« Indexer C411 is blocked till … due to failures ») ; ni `testall` ni un réenregistrement ne
-  lèvent le blocage (pas d'API : `indexerstatus` → 404), et aucune recherche ni `release/push` ne passe.
-  L'état est dans la table `IndexerStatus` ; `indexer_unblock` s'en charge. Pendant la pause, `series_search`
-  passe par qBittorrent (étiquette `homelab:`).
-- **Remplacer un titre par une version plus légère** (2026-09-26, 23 titres, 881 Go retirés pour ~220 Go, quota
-  seedbox 1 921 Go / 3 725) : `torrent_import` examine **tout** torrent complet de la seedbox, quelle que soit son
-  étiquette — tant que l'ancien fichier est là il note le nouveau « rien à importer » **pour de bon**, et il a même
-  créé une fiche Radarr fausse (« Spider-Cast ») pour un nom ambigu. Donc : télécharger, puis supprimer l'ancien
-  fichier par l'Arr (fiche gardée) et importer soi-même en `ManualImport` copy — aperçu `manualimport?folder=`
-  **sans** id de fiche (avec l'id, l'Arr renvoie les fichiers déjà rangés), épisodes « Unknown Series » lus par
-  `SxxEyy`. Chercher par identifiant **sans saison** : les « INTEGRALE » n'apparaissent pas par saison (Hunter x
-  Hunter 237 → 42 Go). Écarter HDR/DV (transcodage sans GPU) et ne remplacer un MULTi que par un MULTi. Modèle :
-  `backups/codec-replace-20260926/` (`verify.py`, `grab.py`, `replace.py`, `--dry-run` d'abord). **Version à jour :
-  `backups/codec-replace-20260927/`** (2ᵉ lot, 18 titres sur 40 vérifiés, ~123 Go) : MULTi exigé aussi pour les séries,
-  fichiers incomplets écartés, `vfs/forget` + `vfs/refresh` récursif **juste après** la suppression par l'Arr (le
-  2026-09-27, Jellyfin a ouvert l'ancien *Sans un bruit : Jour 1* 14 s après sa suppression et s'est bloqué — le chien
-  de garde a débloqué à 16 min), packs « `04. Titre.mkv` » d'une seule saison lus par le numéro en tête.
-  **Après coup, Jellyfin** : `Library/Media/Updated` sur le dossier ne suffit pas pour une grosse série dont tous les
-  noms de fichiers changent (Hunter x Hunter restée à 65/150, L'Attaque des Titans à 66/97) : `POST
-  /Items/<id série>/Refresh?Recursive=true` par série, puis comparer le nombre d'épisodes Jellyfin à `episodeFileCount`.
-  Ça ne marche que pour des fichiers **remplacés dans des saisons déjà connues** : une série **nouvelle**, une saison
-  nouvelle ou de nouveaux épisodes dans une saison seedbox ne sont vus qu'après `POST /Library/Refresh` (analyse
-  complète, ~7 min ; *Кухня* le 26/09 : resté à 25/57 avec le rafraîchissement de la série, 57/57 après l'analyse).
-- **Série introuvable sur C411, trouvée en vidéo** (Кухня, Dailymotion, 26/09) : `yt-dlp` autonome dans `~/bin` de la
-  seedbox, URL **`/embed/video/<id>`** (la page normale ne propose que 480p), `-f hls-720` réessayé (le 720p n'est
-  servi qu'à certains appels), remux MKV `-c copy` audio `rus`, puis `ManualImport` en **`move`** (pas de torrent).
-  Scripts : `backups/kukhnya-20260926/` (`dl.py` sur la seedbox, `import.py` depuis le VPS, épisodes terminés seulement).
-- **Jamais d'import d'un fichier incomplet** (2026-09-27) : un torrent « terminé » peut contenir des fichiers
-  **désélectionnés après le début du téléchargement**, donc tronqués sur le disque. Кухня : 117 fichiers désélectionnés à
-  11 % ; `torrent_import` a importé 48 épisodes tronqués (saisons 4-6), retirés le jour même (sauvegarde
-  `backups/fix-20260927/`). Depuis : `TorrentFile.progress/priority`, `torrent_import::incomplete_paths` écarte tout
-  fichier à `progress < 1` ou priorité 0 ; `russian_search` ajoute le torrent **arrêté** (`add_torrent_with(…, true)`),
-  désélectionne, **puis** démarre.
-- **L'hébergeur de la seedbox arrête les torrents « publics »** (trouvé le 2026-09-27) : Ultra.cc fait tourner toutes
-  les 5 min `~/.config/.stop_pub/qbittorrent/qbt_pub.py`, qui lit le drapeau `private` du `.torrent` et, s'il manque,
-  **bride l'envoi et arrête le torrent une fois terminé** (journal qBittorrent : « Torrent stopped », via l'API). Les
-  torrents **RuTracker** n'ont pas ce drapeau : ils se téléchargent mais ne partagent pas (ratio du compte RuTracker
-  bas, à surveiller). **Ne pas contourner** cette règle de l'hébergeur (conditions d'utilisation) ; C411 est privé,
-  non concerné.
-- **`torrent_import` ne remplace jamais un fichier** : épisode (ou film) déjà présent ⇒ fichier écarté, et la
-  correspondance d'épisodes de l'Arr prime sur l'analyse du nom. Le 2026-09-17, « The.Final.Season.E01 » (sans
-  saison) a été lu S01E01 et la saison 1 d'une série écrasée ; réparé en réimportant les fichiers d'origine
-  (toujours présents dans le dossier du torrent, hardlink) avec la correspondance de Sonarr, et vérifié saison
-  par saison. Vérifier l'historique (`episodeFileDeleted`, raison `Upgrade`) après tout import manuel.
-- **`homelabctl` n'écrit jamais le fichier d'état** (2026-09-25, E9) : il l'ouvre en lecture seule
-  (`TaskContext::new_read_only`). `homelabctl run <tâche>` demande le passage au daemon (`POST /admin/run`, jeton
-  d'onboarding en en-tête, réponse à la fin du passage, 409 si la tâche tourne déjà) ; `--dry-run` reste local et
-  n'écrit rien ; `accounts on|off|delete` passent par `POST /admin/accounts` (les droits Jellyseerr à restaurer sont
-  dans l'état). Avant, la CLI écrasait l'état du daemon et inversement. Écriture d'état : `fsync` avant le renommage.
-  Une tâche ne tourne jamais deux fois en même temps (verrou dans `scheduler::run_once`). **Écriture (07/10)** : état
-  sérialisé en mémoire puis écrit en UN appel par un écrivain unique numéroté (jamais un état plus ancien après un plus
-  récent ; avant : ~38 000 `write` de 4 octets par sauvegarde, 4,2 Go/j). `state.update` = durable (rend la main une
-  fois écrit) ; `state.update_lazy` = simple tenue (début d'un passage, fin d'un passage « calme ») écrite avec la
-  sauvegarde suivante, au plus tard au tour suivant de `StateStore::run_lazy_flusher` (60 s, lancé par homelabd) ou à
-  l'arrêt (`flush`) : jamais de donnée qui compte en lazy. Le fichier peut donc retarder sur la mémoire d'une minute
-  au plus ; `homelabctl status` affiche `running? depuis HH:MM` (début récent sans fin enregistrée : en cours ou fini
-  depuis moins d'une minute) ou `interrompu? JJ/MM HH:MM` (début plus vieux que `RUN_TIMEOUT`, 600 s : daemon arrêté
-  en plein passage) ; `/status.html` lit la mémoire. Passage calme = réussi, sans action, résumé identique au précédent :
-  `run_done` en `debug` (`RUST_LOG=debug` pour tout voir) ; journal de homelabd passé de 4 344 à 312 lignes sur la même
-  fenêtre de 9 h (08/10). Le résumé du canari est `lecture OK` (côté et latence dans `state.canary.last_detail` et en
-  `debug`) pour qu'un passage réussi soit « calme » ; les lignes « passage » de `hls_loop_watch` et « ok » de
-  `disk_pressure`/`playback_canary` sont en `debug` quand il n'y a rien à signaler.
-- **Deux sessions dans le dépôt** : le binaire installé doit être construit depuis **l'arbre de travail tel quel**
-  (`cargo build … -j4` dans `/opt/homelab`), jamais depuis un arbre indexé/worktree qui exclut les fichiers non
-  validés d'une autre session — le 2026-09-19, cinq installs ainsi construits ont retiré les routes `/premium`
-  (pages non validées d'une autre session) du binaire en service, 404 sur le lien public jusqu'à ce que
-  l'utilisateur le remarque. Le worktree ne sert qu'à `fmt/clippy/test` de ce qu'on committe. Après un restart,
-  `git status --short` puis `curl 127.0.0.1:8766/<route de l'autre session>`. Une cible cargo (`CARGO_TARGET_DIR`)
-  **par worktree** : partagée, cargo juge les crates « à jour » par date avec un hachage indépendant du chemin et
-  reprend les artefacts d'un autre arbre (tests d'un autre agent, symboles absents) ; copier une cible existante
-  (`cp -a`) pour garder les dépendances.
-- **Journaliser une erreur = `error = format!("{e:#}")`**, jamais `%e`, qui n'en donne que le premier niveau (depuis le
-  08/10, `e8a5d3f`). Une erreur reqwest dont l'URL porte un secret (webhook Discord, `apikey=`, `ApiKey=`, lien
-  d'indexer) passe d'abord par `.map_err(reqwest::Error::without_url)`, sinon `{e:#}` l'écrit en clair dans le journal,
-  dans `last_error` de l'état et dans les alertes. Les clients qui passent leur clé en en-tête gardent l'URL.
-- **Clients HTTP : un GET coupé est rejoué une fois** (`SendRetry::send_retry`, 07/10) : seulement sur une coupure de
-  transport (`is_request`/`is_connect`, jamais un délai dépassé, jamais un POST/PUT/DELETE), journal « GET coupé :
-  nouvelle tentative (une seule) » avec la cause. Les GET à effet (recherche ou téléchargement Prowlarr, `release` d'un
-  Arr, `get_bytes` du canari) restent en `.send()` : tout nouveau GET à effet aussi. Jellyseerr (Node, keep-alive 5 s)
-  a son client avec `pool_idle_timeout` 4 s. Cause vue le 08/10 sur la seedbox : « connection closed before message
-  completed » (course au keep-alive), à traiter par client si elle revient souvent.
-- **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans
-  `ReadWritePaths` de `systemd/homelabd.service` (sinon « Read-only file system », vu le 2026-09-17).
-- Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
-  même après un scan global, jusqu'au redémarrage de Jellyfin (`docker compose restart jellyfin`). Après le
-  redémarrage, les membres ne la voient plus, mais ses `CollectionFolder` restent en base (visibles des comptes
-  `EnableAllFolders`, admins compris) : il faut **une analyse complète** (qui les retire de la base, 131 s le 2026-09-20)
-  **puis un second redémarrage** (les vues sont en mémoire), et Jellyseerr ne les oublie qu'après son propre `?sync=true`
-  (+ `?enable=`). Ordre complet : supprimer la bibliothèque → analyse → redémarrage → Jellyseerr sync + enable.
-- **Comptes « toutes les bibliothèques »** : seuls les admins protégés doivent avoir `EnableAllFolders = true` ; un membre
-  ordinaire a la liste explicite des 5 bibliothèques (Films, Séries, Anime, Films d'animation, Collections), pas de TV en
-  direct, pas de téléchargement, verrouillage après 5 échecs (modèle `non_admin_policy`). Ardus et caca, créés avant
-  l'onboarding v2, ont été réalignés le 2026-09-20 (sauvegarde `backups/jellyfin-ui-20260920-mymedia/*-before.json`).
-- **Rangée « Mes médias » en tête** (Home Screen Sections `MyMedia`, `OrderIndex 0` depuis le 2026-09-20, demandé par
-  l'admin : jusque-là 17ᵉ et dernière, chargée au défilement, invisible sur téléphone sans tout faire défiler). L'ordre
-  du plugin est **global** (identique pour les 17 comptes, vérifié par `GET /HomeScreen/Sections?userId=`) ; il se
-  modifie par `POST /Plugins/b8298e012697407ab44daa8dc795e850/Configuration` (sans redémarrage). **Contrôler comme
-  l'appli** : `GET /HomeScreen/Sections?UserId=…&Language=fr&Page=1&NumResultsPerPage=4&PageHash=<uuid v4>` — l'appel
-  sans pagination est mis en cache **24 h par compte** (`CacheTimeoutSeconds`) et montre l'ancien ordre après un
-  changement, alors que les applis (nouveau `PageHash` à chaque accueil) voient le nouveau tout de suite. Sauvegarde
-  `backups/jellyfin-ui-20260920-mymedia/`.
-  `DELETE /Items/<id>` **efface le disque** (c'est le bouton « Supprimer » de Jellyfin) : jamais pour
-  « nettoyer » une vue ou une bibliothèque.
-- **qBittorrent** : ne jamais remettre `172.18.0.0/16` dans `bypass_auth_subnet_whitelist` (NPM y
-  est : qBit serait public sans mot de passe) ; seulement `127.0.0.0/8` et `172.18.0.1/32`.
-  Garder `web_ui_reverse_proxy_enabled` (proxies de confiance `172.18.0.0/16`) : sans ça, qBit voit
-  toutes les connexions venir de NPM et un ban (5 échecs, 1 h) bloque l'accès web pour tout le monde
-  (arrivé le 2026-09-14). Lever un ban : redémarrer qbittorrent (bans en mémoire). File d'attente coupée sur le VPS
-  **et** la seedbox (`queueing_enabled = false`, VPS le 07/10 par `setPreferences`) : avec `max_active_uploads` 10,
-  10 torrents `stalledUP` gardaient les places et 12 torrents C411 restaient `queuedUP` sans partager. **qBittorrent
-  5.2** nomme son cookie `QBT_SID_<port>` : le client de homelabd l'accepte comme `SID` ; avant de monter un
-  qBittorrent en 5.2, Sonarr ≥ 4.0.18 et Radarr ≥ 6.2.1 (ceux du VPS d'abord ; la seedbox est compatible).
-- **NPM** : pas d'identifiants admin NPM ici ; la liste d'accès « admin-outils » (id 2) a été écrite en
-  imitant NPM (base + `npm/data/access/2` + bloc dans `location /` de chaque site), sauvegarde
-  `backups/npm-20260912-212419/`. Tout nouvel outil d'admin exposé : même liste. Ne jamais afficher
-  les colonnes `password` des tables NPM ou Homarr. Juste après un `nginx -s reload`, la 1re requête peut encore être
-  servie par un ancien worker : contrôler une seconde après, jamais sur la seule première requête.
-- **Compter les ffmpeg** : `pgrep -fc '[j]ellyfin-ffmpeg/ffmpeg'` (avec crochets) ; sans eux, `pgrep -f` compte aussi
-  le shell qui porte le motif (faux « 2 ffmpeg » vu le 07/10).
-- **Homarr** : modifier la base Homarr **arrêté** et après sauvegarde ; titres de section ≤ 20 caractères
-  (sinon le tableau ne se charge plus) ; secrets d'intégration chiffrés AES-256-CBC avec
-  `SECRET_ENCRYPTION_KEY` ; pings des outils protégés par NPM en URL interne (`http://sonarr:8989/ping`…).
-  **Widget « Téléchargements »** : `limitPerIntegration` est appliqué **côté serveur, avant** le filtre « masquer
-  les terminés » du client — avec 10 et 315 torrents finis sur la seedbox, les 10 envoyés étaient tous terminés
-  et le widget restait vide malgré des téléchargements en cours (2026-09-19). Passé à 500 (options de l'item
-  `83gkiwxp5m1hwbu9iymgj53g`, sauvegarde `backups/homarr-db-20260919-165303-downloads-limit.sqlite`).
-  **Tableau public** (`isPublic`) : Homarr sert aux anonymes les données de TOUT widget lié à une intégration (tRPC,
-  sans cookie). « Demandes récentes » y exposait les 20 dernières demandes avec le pseudo des demandeurs : déplacé le
-  07/10 sur le tableau privé « Operations ». Aucun widget de demandes, d'utilisateurs ou de sessions sur le tableau
-  public (contrôle : GET anonyme de `widget.mediaRequests.getLatestRequests` → 403) ; calendriers et Nouveautés y
-  restent, contenu non vérifié. Cadence des tâches de fond : table `cron_job_configuration`, lue au démarrage ;
-  « downloads » passée de 5 s à `* * * * *` (une session WebAPI qBittorrent par passage, ~17 000 par jour) ; retour =
-  supprimer la ligne et redémarrer Homarr. Base : `homarr/db` est à root, d'où `sudo` ; enchaîner arrêt, sauvegarde,
-  modification et démarrage en une commande (`stack_health` relance sous 5 min). Session de test :
-  `HOMARR_ADMIN_PASSWORD` (compte « groscailloux ») par `/api/auth/callback/credentials`, puis `/api/auth/signout`.
-- L'UI d'onboarding est sur l'hôte (8766) ; NPM doit cibler `172.18.0.1:8766`, pas un conteneur.
+### Seedbox
+- rclone : Jellyfin lie le **parent** `/mnt/seedbox` ; pas de `--vfs-read-ahead` sans mesure ; la clé SFTP n'a ni écriture ni création (lecture + suppression).
+- Déménagement VPS → seedbox : hors pic, un flux, `--bwlimit 15000`, jamais pendant une lecture du titre.
+- `ssh seedbox cmd args` recolle les arguments : passer les chemins par l'entrée standard.
+
+### Bancs et essais
+- Jamais en production : comptes `zz_` toujours supprimés, **jamais un vrai groupe SyncPlay**, pas de banc de 19:00 à 00:00 ni pendant une lecture.
+- `tools/bench/bench.sh` est le seul lanceur de banc et `tools/offpeak/offpeak.sh` le seul exécutant hors pic : `--dry-run` d'abord, rien qui chevauche un créneau `lot3-*`.
+- Tester un mail avec un compte temporaire dont l'adresse est celle de l'expéditeur (`SMTP_FROM`), jamais une adresse inventée.
+
+### Git et versions
+- Tout changement visible pour les membres ou l'admin = une ligne dans `CHANGELOG.md` (section de la version en cours, avec ses commits ; 1.0.x corrections, 1.x.0 nouveautés).
+- Pousser après chaque lot, après avoir cherché secrets et pseudos dans le diff ; **jamais de `--force` sur `main`**.
+
+## 4. Valeurs en vigueur
+
+Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la source qui a raison (et la doc qu'on corrige).
+
+| Valeur | En vigueur (08/10) | Source de vérité |
+| --- | --- | --- |
+| Budget C411 | 40 requêtes/h **par clé**, 2 clés ; 10 gardées pour `/recherche` ; clé en 429 mise de côté 15 min | `homelab.toml` `[indexers]` `c411_max_per_hour`, `manual_reserve`, `cooldown_after_429_mins` |
+| Filet Prowlarr | 45 requêtes/h par indexeur C411 | Prowlarr, `queryLimit` de « C411 » et « C411 (2) » |
+| Indexeurs de Prowlarr | C411, C411 (2), Nyaa.si, World-torrent (secours) | Prowlarr `GET /api/v1/indexer` ; `[indexers] fallback`, `fallback_anime` |
+| Rythme des recherches | séries : 6 requêtes par passage de 10 min, 5 s d'écart, 60 épisodes au plus par saison ; films : 3 par passage de 5 min | `[tasks.series_search]` `max_queries_per_run`, `query_gap_secs`, `max_grabs_per_season` ; `[tasks.movie_search]` `max_per_run` |
+| Plafonds de taille | 3 Go par épisode, 15 Go par film | `[indexers]` `max_gb_per_episode`, `max_gb_per_movie` |
+| Côté qui télécharge | seedbox seule | `[downloads] auto_sides` |
+| Profils de qualité | FR-friendly H.264 : VPS 6, seedbox 7 | Arrs `GET /api/v3/qualityprofile` (par nom) ; `[seedbox] quality_profile_id` |
+| Comptes | 25 premium, 2 lectures simultanées, sessions illimitées | `[accounts]` `max_premium`, `max_playbacks_per_user`, `max_devices_per_user` |
+| Langue des comptes | audio `fre`, sous-titres `fre` en Smart ; mode VO = `jpn` | `[accounts]` `audio_language`, `subtitle_language`, `subtitle_mode`, `vo_audio_language` |
+| Saut du lecteur | 10 s | `[accounts]` `skip_forward_ms`, `skip_back_ms` |
+| PayPal | **live** depuis le 20/09 | `.env` `PAYPAL_ENV` |
+| Abonnements | cycle réel ; grâce 3 j ; essai 7 j ; marge PayPal 36 h ; fiches hors PayPal à la main | `[subscriptions]` `cycle_dry_run`, `grace_days`, `trial_days`, `paypal_margin_hours` |
+| Jellyfin | 12.1 | `docker-compose.yml`, image du service `jellyfin` |
+| Tmpfs de transcodage | 4 Go, `mem_limit` 6g ; purge chaque minute, urgence à 85 % | `docker-compose.yml` (`jellyfin`) ; `systemd/jellyfin-transcodes-purge.timer` |
+| Montage seedbox | cache 120G, 80G libres gardés, blocs 4M, 32 connexions | `systemd/homelab-seedbox-mount.service` |
+| Disque du VPS | alerte 85 %, suppression 95 %, journal seul 98 % | `[tasks.disk_pressure]` `alert_pct`, `hard_pct`, `crit_pct` |
+| Quota seedbox | alerte 85 % | `[tasks.seedbox_health] quota_alert_pct` |
+| Tâche en échec | alerte après 6 échecs de suite et 30 min | `[alerts]` `fail_streak`, `fail_minutes` |
+| Boucles HLS | 20 demandes d'un segment en 5 min ; 30 ffmpeg par titre et par heure | `[tasks.hls_loop_watch]` `threshold`, `max_jobs_per_item_hour` |
+| Sauvegarde d'état | dimanche 04:30 (+ jusqu'à 15 min), 4 gardées | `systemd/homelab-backup.timer` ; `[backup] keep_last` |
+| Langue d'origine | films seulement (`series = false`, décision en attente), 07:30–11:30 | `[tasks.original_language]` |
+| Tchat | annonces de plus de 14 j lues d'office pour un compte neuf | `[chat] new_member_read_days` |
+| Tâches de homelabd | 31 (dont `tba_bypass`, désactivée) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
+| Ports ouverts à Internet | 80/443 (NPM), 6881 (BitTorrent), 81 (admin NPM) ; le reste sur 127.0.0.1 | `docker-compose.yml` |
+
+Mesures de référence (pas des réglages) : un seul transcodage 1080p tient en temps réel ; lecture directe 65 % (04/10) ;
+lien seedbox ~8–10 Mo/s par connexion — voir [lecture-et-transcodage.md](docs/runbooks/lecture-et-transcodage.md) et
+[seedbox-et-rclone.md](docs/runbooks/seedbox-et-rclone.md).
+
+## 5. Runbooks : avant de toucher X, lire…
+
+| Si tu touches… | Lire |
+| --- | --- |
+| Sonarr, Radarr, Prowlarr, C411, profils, choix des releases, imports, Jellyseerr, `/recherche`, autobrr | [arrs-et-indexeurs.md](docs/runbooks/arrs-et-indexeurs.md) |
+| Tag `russe`, RuTracker, Jackett de la seedbox | [voie-russe.md](docs/runbooks/voie-russe.md) |
+| Seedbox, quota, montage rclone, déménagement, ménage, remplacement de fichiers | [seedbox-et-rclone.md](docs/runbooks/seedbox-et-rclone.md) |
+| Transcodage, tmpfs, Chromecast, AirPlay, télés, langues, sous-titres, lecture qui saccade | [lecture-et-transcodage.md](docs/runbooks/lecture-et-transcodage.md) |
+| Serveur Jellyfin, bibliothèques, identification, extensions, Intro Skipper, journaux | [jellyfin-serveur-et-extensions.md](docs/runbooks/jellyfin-serveur-et-extensions.md) |
+| Calque CSS, scripts `branding/jellyfin/`, interface 12.1, télé, « Lire sur », SyncPlay | [jellyfin-interface.md](docs/runbooks/jellyfin-interface.md) |
+| Comptes, onboarding, mails, abonnements, PayPal, Mon compte | [comptes-et-abonnements.md](docs/runbooks/comptes-et-abonnements.md) |
+| « Aide et annonces » (tchat) | [tchat.md](docs/runbooks/tchat.md) |
+| NPM (hôtes, configuration avancée, site par défaut) | [npm.md](docs/runbooks/npm.md) |
+| Homarr | [homarr.md](docs/runbooks/homarr.md) |
+| Code Rust, `homelab.toml`, installation, état, alertes, Discord, pages d'admin | [homelabd.md](docs/runbooks/homelabd.md) |
+| Compose, images, diun, gluetun, qBittorrent, redémarrage, bureau VNC | [vps-docker-et-systeme.md](docs/runbooks/vps-docker-et-systeme.md) |
+| Sauvegardes, `backups/`, instances d'essai | [sauvegardes.md](docs/runbooks/sauvegardes.md) |
+| Bancs d'interface, travaux hors pic, `tools/`, lot 3 | [outils-bancs-et-hors-pic.md](docs/runbooks/outils-bancs-et-hors-pic.md) |
+| « Pourquoi cette règle ? » | [incidents.md](docs/runbooks/incidents.md) |
+
+## 6. En cours au 08/10
+
+- **Lot 3** (mises à jour de NPM, Seerr, Arrs du VPS, outils, Homarr, gluetun, rclone, MySQL, puis redémarrage du VPS) :
+  exécutant `backups/lot3-20261008/run.sh`, minuteurs `lot3-J1` à `lot3-J3` (09–11/10, 08:05–12:30) et `lot3-REBOOT`
+  (12/10, 04:10–07:00). Après chaque jour : valider compose et diun dans git, reporter `NOTES-DOC.txt` dans les runbooks.
+- Instantané Jellyfin 10.11.8 supprimé le 10/10 à 12:00 par un minuteur transitoire (perdu si le VPS redémarre avant).
+- Décisions du propriétaire en attente : séries de `original_language` ; bascule du mode VO vers la préférence native
+  « Langue d'origine » ; flux autobrr ; textes de Mon compte pour les fiches gérées à la main ; import CSV des abonnés
+  historiques.
+- À valider en séance réelle : Chromecast `high10` → `high`, compression des listes HLS, SyncPlay en 12.1 dans Jellyfin
+  Desktop (avant de retirer `gc-syncplay.js`).
+- Commentaires périmés à corriger au prochain lot de code (commentaires seuls, aucune clé : sans risque pour
+  `deny_unknown_fields`) : `homelab.toml` l. 488 (« lien seedbox ~190 Mbit/s » : ~8–10 Mo/s par connexion, voir
+  [seedbox-et-rclone.md](docs/runbooks/seedbox-et-rclone.md)), l. 520-522 (« C411 est le SEUL indexer » : World-torrent et
+  Nyaa en secours, RuTracker pour la voie russe), l. 527-530 (« le codec ne départage rien », formats à 0 : `codec_rank`
+  HEVC 2 > H.264 1 > AV1 0, Arrs à +200/+100), l. 599 (« monté en lecture seule » : lecture + suppression) ; docstring de
+  `scripts/jellyfin-js-apply.py` (« tous Requires authentication » : 3 scripts publics ; Jellysleep, retiré le 05/10).
+- Provisoire : Collection Sections recompilée (à remplacer par Home Screen Sections), garde NPM de Home Screen Sections (à
+  retirer quand l'amont corrige).

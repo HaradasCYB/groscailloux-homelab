@@ -7,8 +7,8 @@ Une valeur avec espace se met entre guillemets doubles ; pas d'expression shell 
 | Variable | Où l'obtenir | Utilisé par |
 |---|---|---|
 | `TZ` | `Europe/Paris` | tous les conteneurs |
-| `HOST_IP` | IP publique du VPS | Jellyfin `PublishedServerUrl` |
-| `JELLYFIN_PUBLIC_URL`, `JELLYSEERR_PUBLIC_URL` | URLs NPM | mail d'onboarding |
+| `HOST_IP` | IP publique du VPS | **plus lue nulle part** (compose, homelabd, scripts) : `PublishedServerUrl` vient de `JELLYFIN_PUBLIC_URL` ; à retirer de `.env` et de `.env.example` |
+| `JELLYFIN_PUBLIC_URL`, `JELLYSEERR_PUBLIC_URL` | URLs NPM | mails, guide, `PublishedServerUrl` de Jellyfin (compose), `cert_watch` |
 | `CHAT_ADMIN_EMAIL` (facultatif, repli `GUIDE_CONTACT_EMAIL`) | adresse de l'admin | récapitulatifs du tchat |
 | `ONBOARD_PUBLIC_URL`, `GUIDE_CONTACT_EMAIL`, `GUIDE_CONTACT_DISCORD` | URL NPM de l'onboarder, contact de l'admin | page `/guide`, lien du mail de bienvenue |
 | `SECRET_ENCRYPTION_KEY` | `openssl rand -hex 32` | Homarr |
@@ -19,7 +19,7 @@ Une valeur avec espace se met entre guillemets doubles ; pas d'expression shell 
 | `GRAFANA_ADMIN_USER`, `GRAFANA_ADMIN_PASSWORD` | choisis | grafana |
 | `MYSQL_ROOT_PASSWORD`, `GUACAMOLE_DB_*`, `MYSQL_USER_PASSWORD` | choisis au premier boot | guacdb, guacamole |
 | `SONARR_API_KEY`, `RADARR_API_KEY`, `PROWLARR_API_KEY` | Settings → General | homelabd |
-| `JELLYFIN_API_KEY` | Dashboard → API Keys | homelabd |
+| `JELLYFIN_API_KEY` | Dashboard → API Keys (clé « Jellyseerr », la seule : « claude-setup » révoquée le 07/10) | homelabd |
 | `JELLYSEERR_API_KEY` | Settings → General | homelabd |
 | `JELLYFIN_LIB_FILMS`, `JELLYFIN_LIB_SERIES` | GUID dans l'URL de chaque bibliothèque | onboarding (policy) |
 | `QUALITY_PROFILE_ID` | Sonarr/Radarr → Profiles (id dans l'URL) | auto_import |
@@ -27,20 +27,42 @@ Une valeur avec espace se met entre guillemets doubles ; pas d'expression shell 
 | `ADMIN_EMAIL` | boîte lue par l'admin | diun |
 | `HOMELABD_ONBOARD_TOKEN` | `openssl rand -hex 32` | `POST /onboard` |
 | `COMPOSE_PROFILES` | `vpn` ou `novpn`, géré par `homelabctl vpn` | docker compose |
-| `JELLYFIN_LIB_EXTRA` | ids de bibliothèques supplémentaires (virgules) : la bibliothèque « Collections » | onboarding (policy) |
+| `JELLYFIN_LIB_EXTRA` | ids de bibliothèques supplémentaires (virgules), données à chaque nouveau compte avec Films et Séries : Anime, Films d'animation et Collections (jamais les bibliothèques russes) | onboarding (policy) |
 | `SEEDBOX_RADARR_API_KEY`, `SEEDBOX_SONARR_API_KEY` | `~/.apps/<app>/config.xml` sur la seedbox | homelabd, Jellyseerr |
-| `SEEDBOX_JACKETT_API_KEY` | `~/.apps/jackett/Jackett/ServerConfig.json` | indexers des Arrs seedbox |
+| `SEEDBOX_JACKETT_API_KEY` | `~/.apps/jackett/Jackett/ServerConfig.json` | indexeur RuTracker des Arrs seedbox, `russian_search` (voie russe) |
 | `SEEDBOX_QBIT_PASSWORD` | mot de passe WebUI qBittorrent seedbox (installeur hébergeur) | client des Arrs seedbox, `torrent_import` |
 | `SEEDBOX_*_PASSWORD` (jackett, radarr, sonarr, bazarr, autobrr) | générés, passés à `app-<x> install -p` | UIs web seedbox |
+| `SEEDBOX_BAZARR_API_KEY` | réglages de Bazarr (seedbox) | `[seedbox] bazarr_url` : client `clients::bazarr` (page d'état, `seedbox_health`) |
+| `C411_RSS_API_KEY` | compte C411 (seconde clé) | **copie de référence**, lue par aucun fichier versionné : clé saisie dans l'indexeur C411 (RSS) des 4 Arrs et dans « C411 (2) » de Prowlarr |
+| `RUTRACKER_USERNAME`, `RUTRACKER_PASSWORD` | compte RuTracker | **copie de référence** : compte saisi dans le Jackett de la seedbox (voie russe) ; mot de passe collé dans une conversation, à changer |
+| `HOMELABD_RUSSIAN_USERS` | pseudos des comptes autorisés (virgules) ; hors dépôt | bouton « Chercher en russe » de Mon compte |
+| `TMDB_API_KEY` | compte TMDB | **lue par aucun fichier versionné** (réserve) |
+| `DISCORD_WEBHOOK_MEMBERS`, `DISCORD_WEBHOOK_ADMIN` | Discord : Modifier le salon → Intégrations → Webhooks | homelabd (`homelab_core::discord`, alertes), `homelabctl discord apply` (Arrs, Jellyseerr), `scripts/homelab-alert.sh`, `homelabd-watchdog.sh` ; jamais dans le dépôt ni les journaux |
+| `DISCORD_ROLE_MEMBERS` (facultatif) | identifiant du rôle à mentionner | annonces sur le salon des membres |
+| `PAYPAL_ENV` | `live` (en service depuis le 20/09) ou `sandbox` | homelabd : choisit `PAYPAL_*` ou `PAYPAL_SANDBOX_*` |
+| `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`, `PAYPAL_PLAN_ID`, `PAYPAL_WEBHOOK_ID` | application REST PayPal **live** (même application et même plan que le bouton `DONATION_*`) ; webhook créé par `homelabctl subs paypal --webhook <url>` | abonnements (`/premium`, `/paypal/webhook`, `subscription_reconcile`) |
+| `PAYPAL_SANDBOX_CLIENT_ID`, `PAYPAL_SANDBOX_SECRET`, `PAYPAL_SANDBOX_PLAN_ID`, `PAYPAL_SANDBOX_WEBHOOK_ID` | application sandbox (identifiants collés dans une conversation le 20/09 : à régénérer) | essais seulement (`/premium?test=1` si `PAYPAL_ENV=sandbox`) |
+| `PREMIUM_PUBLIC_URL` | URL NPM de l'hôte public de `/premium` | liens des mails d'abonnement, webhook |
+| `DONATION_NOTIFY_EMAIL` | adresse de l'admin | notification d'une demande d'activation premium |
 
-La clé SSH `~/.ssh/seedbox_sftp_ro` (hors dépôt) ne donne que du SFTP lecture seule sur la
-seedbox (`restrict,command="…sftp-server -R"`). La clé API C411 vit dans les Arrs et autobrr de la
-seedbox, pas dans `.env`.
+La clé SSH du montage rclone, `~/.ssh/seedbox_sftp_ro` (hors dépôt ; nom historique), est autorisée côté seedbox avec
+le commentaire `homelab-sftp-rd` et `restrict,command="…sftp-server -P write,mkdir,rename,…"` : **lecture + suppression,
+aucune écriture** (le bouton « Supprimer » de Jellyfin doit pouvoir effacer). La clé d'administration est
+`~/.ssh/seedbox_ed25519` (`ssh seedbox`).
+
+Clés C411 : la clé de recherche n'est que dans Prowlarr (indexeur « C411 ») ; la seconde (`C411_RSS_API_KEY`) sert au RSS
+des 4 Arrs et à « C411 (2) » de Prowlarr ; une **troisième clé**, distincte, est dans la base d'autobrr seulement (flux
+désactivé le 08/10, comptée dans aucun budget : à révoquer chez C411 si le flux n'est pas rallumé).
 
 ## Rotation
 
 - Clé API d'un Arr / Jellyfin / Jellyseerr : régénérer dans l'UI, mettre à jour `.env`,
   `sudo systemctl restart homelabd` (les conteneurs n'en dépendent pas).
+- Clé API **Jellyseerr** : elle a d'autres consommateurs (Jellyfin Enhanced, Home Screen Sections, intégration Homarr) :
+  toujours `sudo scripts/jellyseerr-rotate-key.py` (tout en une fois, ~12 s de coupure, aucune clé affichée).
+- Webhook Discord : un webhook collé dans une conversation est compromis ; le recréer dans Discord, mettre à jour `.env`,
+  restart homelabd, puis `homelabctl discord apply` (Arrs et Jellyseerr).
+- Un secret collé dans une conversation (mot de passe RuTracker, identifiants PayPal sandbox…) est à régénérer.
 - `INFLUX_TOKEN` : mettre à jour `.env`, `sudo ./setup.sh` (régénère `telegraf.conf`),
   `docker compose restart telegraf`, datasource Grafana.
 - Secrets de conteneurs (`WIREGUARD_*`, `DUCKDNS_TOKEN`, `MYSQL_*`, `GRAFANA_*`) : `.env` puis
@@ -58,8 +80,8 @@ seedbox, pas dans `.env`.
 ## Où sont les autres secrets
 
 - Certificats Let's Encrypt : `npm/letsencrypt/` (root) — inclus dans `homelabctl backup`.
-- Mots de passe utilisateurs : uniquement dans Jellyfin (hashés). Le mail d'onboarding est le
-  seul endroit où un mot de passe transite en clair ; il n'est jamais loggé.
+- Mots de passe utilisateurs : uniquement dans Jellyfin (hashés). Aucun mot de passe ne transite par mail : le membre le
+  choisit sur `/bienvenue/<jeton>` (lien à usage unique, jeton haché dans l'état) ; jamais journalisé.
 - L'archive `backups/homelab-state-*.tar.zst` contient `.env` et les configs des services :
   la traiter comme un secret (mode 600).
 
@@ -67,10 +89,10 @@ seedbox, pas dans `.env`.
 
 | Variable | Rôle |
 |---|---|
-| `NPM_ADMIN_TOOLS_PASSWORD` | mot de passe HTTP (utilisateur `groscailloux`) de la liste d'accès NPM « admin-outils » (id 2) devant Sonarr, Radarr, qBittorrent, Prowlarr, Jackett, Grafana, Portainer, pyLoad, Guacamole. NPM le stocke aussi en clair dans sa base (conception NPM) et en apr1 dans `npm/data/access/2`. |
-| `HOMARR_ADMIN_PASSWORD` | compte Homarr `groscailloux` (groupe admin) pour le tableau privé « Operations ». Le compte propriétaire `legroscailloux` existe toujours. |
+| `NPM_ADMIN_TOOLS_PASSWORD` | mot de passe HTTP (utilisateur `groscailloux`) de la liste d'accès NPM « admin-outils » (id 2) devant Sonarr, Radarr, qBittorrent, Prowlarr, Grafana, Portainer, pyLoad, Guacamole, `/accounts` et `/recherche`. NPM le stocke aussi en clair dans sa base (conception NPM) et en apr1 dans `npm/data/access/2`. |
+| `HOMARR_ADMIN_PASSWORD` | compte Homarr `groscailloux` (groupe admin) pour le tableau privé « Operations ». Le compte propriétaire existe aussi. |
 | `HOMELABD_STATUS_TOKEN` | jeton de `/status` et `/status.html` (homelabd), ouvre une session limitée à ces deux pages (`/connexion`) ; l'iFrame du tableau Operations n'a plus de jeton. |
-| `DONATION_PAYPAL_CLIENT_ID`, `DONATION_PAYPAL_PLAN_ID` | bouton PayPal de la page de don `/don`. Publics une fois la page affichée, mais gardés hors du dépôt pour ne pas y lier le compte PayPal. |
+| `DONATION_PAYPAL_CLIENT_ID`, `DONATION_PAYPAL_PLAN_ID` | bouton PayPal de la page de don `/don`, et bouton de repli de `/premium` si `PAYPAL_ENV` repassait en sandbox. Publics une fois la page affichée, mais gardés hors du dépôt pour ne pas y lier le compte PayPal. |
 | `GRAFANA_ADMIN_PASSWORD` | changé le 2026-09-12 (`grafana cli admin reset-admin-password`) : l'ancien avait fuité. Grafana l'enregistre dans sa base, la variable ne sert qu'au premier démarrage. |
 
-Changer l'un d'eux : mettre à jour `.env` **et** l'endroit qui l'utilise (NPM : base + fichier `access/2` puis `nginx -s reload` ; Homarr : hash bcrypt en base ; homelabd : `systemctl restart homelabd` et l'URL de l'iFrame dans Homarr).
+Changer l'un d'eux : mettre à jour `.env` **et** l'endroit qui l'utilise (NPM : base + fichier `access/2` puis `nginx -s reload` ; Homarr : hash bcrypt en base ; homelabd : `systemctl restart homelabd`, plus aucune URL à changer dans Homarr : l'iFrame n'a plus de jeton).

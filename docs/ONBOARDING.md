@@ -30,7 +30,7 @@ passe par un lien à usage unique : **aucun identifiant ni mot de passe ne part 
 ## 3. Après le mot de passe : les premiers pas
 
 La page `/bienvenue/<jeton>` affiche, une fois le mot de passe enregistré, le parcours **Premiers pas** (appareil →
-appli à installer et connexion, langue VF/VO, première demande, tchat et Discord, guide). Le même contenu reste
+appli à installer et connexion, langue VF/VO, première demande, « Aide et annonces » et Discord, guide). Le même contenu reste
 accessible à tout moment sur `https://<onboarder>/premiers-pas`, et le guide complet sur `/guide`.
 
 ## 4. Situations courantes
@@ -55,7 +55,10 @@ accessible à tout moment sur `https://<onboarder>/premiers-pas`, et le guide co
   automatiquement, à trancher sur `/accounts`), suspendu.
 - `homelabctl subs list | set | extend | link | import` ; paiements PayPal suivis par webhook (`AUTOMATION.md`,
   `subscription_cycle`, `subscription_reconcile`).
-- Le cycle suspend réellement les abonnements échus depuis le 27/09/2026 (`[subscriptions] cycle_dry_run = false`).
+- Le cycle agit réellement depuis le 27/09/2026 (`[subscriptions] cycle_dry_run = false`), mais **seulement sur les essais de
+  l'inscription publique et les abonnements PayPal** : toute autre fiche (actif ou offert posé par l'admin, essai posé à la
+  main, import, exempté, à qualifier) est gérée à la main depuis le 08/10 — jamais suspendue, aucun rappel ; à son
+  échéance, l'admin reçoit une information et `/accounts` affiche « À gérer (échéance passée) ». PayPal est en live.
 
 ## 6. Ce qu'il ne faut pas faire
 
