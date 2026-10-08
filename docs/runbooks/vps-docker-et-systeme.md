@@ -18,8 +18,9 @@ VPN ou qBittorrent, ou avant un redémarrage du VPS. Déploiement et restauratio
   notification).
 - **Ports publiés sur `127.0.0.1` seulement** (Docker contourne ufw) : tout passe par NPM (noms de conteneurs) ou par
   `localhost` (homelabd, telegraf en `network_mode: host`). Restent ouverts à Internet : 80/443 (NPM), 6881 (BitTorrent),
-  81 (admin NPM, **on n'y touche pas**). Le port 8096 de Jellyfin est fermé à Internet depuis le 25/09
-  (`127.0.0.1:8096:8096`, `PublishedServerUrl` = `${JELLYFIN_PUBLIC_URL}`). Nouveau service : `"127.0.0.1:<port>:<port>"`.
+  81 (admin NPM, **on n'y touche pas**). Le port 8096 de Jellyfin est fermé à Internet depuis le 25/09 (0 paquet direct en
+  7 jours ; `127.0.0.1:8096:8096`, `PublishedServerUrl` = `${JELLYFIN_PUBLIC_URL}` ; Jellyfin recréé hors pic le 26/09,
+  journal `backups/jellyfin-port-20260925/recreate.log`). Nouveau service : `"127.0.0.1:<port>:<port>"`.
 - `cpu_shares` : 512 sur tout service de fond, 2048 pour Jellyfin et NPM (voir
   [lecture-et-transcodage.md](lecture-et-transcodage.md#2-fenêtre-des-tâches-lourdes-et-options-interdites)).
 - **Pas de `chown -R /opt/homelab`** : `npm/`, `homarr/` (root), `grafana/` (472), `guacamole/mysql` (999).

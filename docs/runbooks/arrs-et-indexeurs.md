@@ -78,8 +78,8 @@ propre runbook : [voie-russe.md](voie-russe.md).
 - **Secours public pendant une panne** (seulement si `indexer::is_outage`) : `[indexers] fallback = "World-torrent"`
   (films et séries), `fallback_anime = "Nyaa.si"` (animés : Nyaa d'abord, puis World-torrent).
   - World-torrent ne cherche que par **titre français**, et la ponctuation le perd : titre TMDB français (Jellyseerr)
-    nettoyé + année, puis début du titre + année (`movie_search::fallback_queries`) ; séries : deux premiers noms connus
-    sans ponctuation (`series_search::fallback_names`).
+    nettoyé + année (Jellyseerr `movie_details`), puis début du titre + année (`movie_search::fallback_queries`) ; séries : deux premiers noms connus
+    sans ponctuation (`series_search::fallback_candidates`, `fallback_names`).
   - Pas d'identifiant TMDB chez eux : une release n'est gardée que si le `parse` de l'Arr la rattache à **cette** fiche
     (et cette saison) ; mêmes règles de langue, de taille et de codec ; **français seulement** pour les séries
     (`lang_rank_for` > 0 : la plupart des releases Nyaa sont sous-titrées en anglais).
@@ -114,13 +114,15 @@ propre runbook : [voie-russe.md](voie-russe.md).
 - **FR-friendly** : 1080p au plus (jamais 2160p : pas de GPU), `minFormatScore = -9999`, français d'abord (formats VFF,
   VOF, MULTi, FRENCH), `No French Marker` −2000 (VO/VOSTFR en dernier recours), rejets durs (langues étrangères, CAM/TS,
   sample, 3D) à −100000, `upgradeAllowed = false`.
-- **Anime - MULTi/VOSTFR** : MULTi 3000, VOSTFR 2000, VFF 1000, FRENCH 500, sans marqueur français −2000,
+- **Anime - MULTi/VOSTFR** (Sonarr ; réparé le 18/09 : il rejetait tout HEVC 10 bits et tout doublage français avec
+  `minFormatScore = 0`, `HEVC 10-bit -10000` et `FRENCH -500` ; sauvegarde `backups/arr-anime-profile-20260918-142927/`) :
+  MULTi 3000, VOSTFR 2000, VFF 1000, FRENCH 500, sans marqueur français −2000,
   `minFormatScore = -9999`, mêmes qualités ≤ 1080p. Jellyseerr a un profil séparé pour les animés, repéré par
   `animeTags` : **`activeAnimeProfileId`** des deux Sonarr de Jellyseerr = VPS 7, seedbox 8 (sinon les nouvelles
-  demandes d'animés partent en FR-friendly).
+  demandes d'animés partent en FR-friendly ; sauvegarde `backups/jellyseerr-sonarr-20260918/before-anime-profile.json`).
 - **Codec et audio côté Arrs** (26/09, sur FR-friendly et Anime des 4 Arrs) : `HEVC 10-bit`/`HEVC 8-bit` +200,
   `H.264` +100, `AV1` 0 (sous les marches de langue, ≥ 500) ; « Audio DTS » −50 et « Audio DTS-HD/TrueHD » −100 (titre de
-  release). Sauvegarde `backups/arr-codec-priority-20260926/`.
+  release). Sauvegardes `backups/arr-codec-priority-20260926/` (dont `*-customformat-before-audio.json`).
 - **Marqueurs de langue** : « VOF » (version originale française) compte comme VF (`langs_of`) et figure dans les formats
   n° 4 « No French Marker », « VFF » et « FRENCH » des 4 Arrs (sauvegarde `backups/arr-cf-vof-20260923/`). **Un nouveau
   marqueur de langue = code (`langs_of`) ET formats des 4 Arrs.**
@@ -137,14 +139,14 @@ propre runbook : [voie-russe.md](voie-russe.md).
 - **Dossiers** : `seriesFolderFormat = {Series Title} [tvdbid-{TvdbId}]`, `movieFolderFormat` avec `[tmdbid-…]`
   (identification Jellyfin) ; les anciens dossiers n'ont pas été renommés. `enableSeasonFolders = true` sur les deux
   Sonarr de Jellyseerr (sauvegarde `backups/jellyseerr-sonarr-20260918/`) ; les fiches restées à plat le restent tant
-  qu'on ne les renomme pas.
+  qu'on ne les renomme pas ; les tâches de homelabd créent leurs fiches avec `seasonFolder: true`.
 - **Historique d'un titre** : `GET history?movieId=` / `?seriesId=` n'existe pas (filtre ignoré, tout revient). Utiliser
   `history/movie?movieId=` et `history/series?seriesId=` ; seul `downloadId` filtre vraiment `GET history`.
 - **Seedbox** : Sonarr et Radarr y journalisent en Info ; `config/host` d'un Arr contient le hash du mot de passe et la
   clé (sauvegarde en 600). Voir [seedbox-et-rclone.md](seedbox-et-rclone.md).
 - **Montée de version d'un Arr du VPS** : le lot 3 la prépare (`backups/lot3-20261008/<service>/apply.sh`, avec
   `check.sh` et `rollback.sh`) ; à reporter ici après son exécution (voir
-  [outils-bancs-et-hors-pic.md](outils-bancs-et-hors-pic.md#exécutant-du-lot-3-jusquau-1210)).
+  [outils-bancs-et-hors-pic.md](outils-bancs-et-hors-pic.md#5-exécutant-du-lot-3-jusquau-1210)).
 
 ## 4. Choix d'une release (`choose`, `best_movie_release`, `/recherche`)
 
@@ -210,7 +212,8 @@ propre runbook : [voie-russe.md](voie-russe.md).
   l'étiquette (`season=`, posée par `series_search`), et seulement là ; `bare_episodes` refuse tout le pack si les titres
   diffèrent, si deux fichiers ont le même numéro ou si un numéro dépasse la saison. `S01 - 06` reste à la lecture fansub.
 - **Numéro en tête `05. Titre de l'épisode`** (`numbered_pack`) : seulement si Sonarr n'a rien lu dans aucun nom du torrent
-  (`sonarr_read_something`), avec `season=` dans l'étiquette, refusé en bloc au moindre doute (forme mixte, doublon, trou,
+  (`sonarr_read_something` : aucun `parsedEpisodeInfo`, aucun épisode proposé par `manualimport`, ni fansub ni
+  `map_episodes`), avec `season=` dans l'étiquette, refusé en bloc au moindre doute (forme mixte, doublon, trou,
   numéro hors saison, suite qui ne commence pas à 1 après une autre saison) ; un titre qui contient un autre nombre est
   écarté ; la source reste `ArrFirst`.
 - Pistes par défaut fausses dans un pack (ex. piste russe par défaut) : corriger sur des **copies** (`mkvpropedit`),
@@ -229,15 +232,16 @@ propre runbook : [voie-russe.md](voie-russe.md).
   raison `Upgrade`).
 - **Jamais d'import d'un fichier incomplet** : un torrent « terminé » peut contenir des fichiers désélectionnés après le
   début du téléchargement, donc tronqués. `torrent_import::incomplete_paths` écarte tout fichier à `progress < 1` ou
-  priorité 0 ; un ajout avec sélection de fichiers se fait torrent **arrêté** (`add_torrent_with(…, true)`), puis
-  désélection, **puis** démarrage.
+  priorité 0 (`TorrentFile.progress/priority`) ; un ajout avec sélection de fichiers se fait torrent **arrêté**
+  (`add_torrent_with(…, true)`), puis désélection, **puis** démarrage. Sauvegarde de l'incident : `backups/fix-20260927/`.
 - **`torrent_import` examine tout torrent complet de la seedbox**, quelle que soit son étiquette : tant qu'un ancien
   fichier est là, il note le nouveau « rien à importer » pour de bon. Une entrée en `nothing_importable` est
   **définitive** (`is_final`) : un correctif ne la rouvre pas, il faut la retirer de l'état, **daemon arrêté**.
 - **Doublons** : rien n'est importé côté seedbox qui existe déjà sur le VPS (`dup_other_side`).
 - **Titre supprimé puis redemandé** : `deletion_cleanup` garde les torrents en partage (C411 : ratio 1 ou 7 j) alors que
-  les fichiers sont supprimés. `series_search` cherche l'`infoHash` de la release parmi les torrents du qBittorrent
-  concerné ; présent et complet, il le **réétiquette** (`qbit::retag`) et efface son enregistrement `torrent_import`.
+  les fichiers sont supprimés ; redemandé, `torrents/add` répondait « Fails. » (déjà présent) et rien ne s'importait.
+  `series_search` cherche l'`infoHash` de la release parmi les torrents du qBittorrent concerné ; présent et complet, il le
+  **réétiquette** (`qbit::retag`) et efface son enregistrement `torrent_import` (sinon `is_candidate` le saute).
 - **Remplacer un titre par une version plus légère** : procédure dans [seedbox-et-rclone.md](seedbox-et-rclone.md#remplacer-un-titre-par-une-version-plus-légère).
 
 ## 7. Jellyseerr
@@ -247,7 +251,7 @@ propre runbook : [voie-russe.md](voie-russe.md).
   (`defaultQuotas`, admins et gestionnaires exemptés). Sauvegarde d'avant : `backups/jellyseerr-settings-main-20260915-094557.json`.
 - **Vue d'ensemble des membres** : droit « voir les demandes » (bit 16384) sur les comptes actifs, dans
   `defaultPermissions` et à l'activation (`[accounts] jellyseerr_view_requests`) ; réglages Jellyfin Enhanced dans
-  [jellyfin-interface.md](jellyfin-interface.md#vue-densemble-des-membres).
+  [jellyfin-interface.md](jellyfin-interface.md#10-vue-densemble-des-membres).
 - **Une réponse de `settings/main` contient la clé API** : ne jamais l'afficher (filtrer les champs).
 - **Job « Download Sync »** toutes les 5 min (`0 */5 * * * *`, 07/10) au lieu de chaque minute :
   `POST /api/v1/settings/jobs/<id>/schedule` avec `{"schedule": "…"}` (`cronSchedule` → 400). Les barres d'avancement
@@ -263,7 +267,7 @@ propre runbook : [voie-russe.md](voie-russe.md).
   scan Jellyfin crée une fiche média pour tout ce qui est déjà dans la bibliothèque, toutes « disponible » ou
   « partiel » : les toucher effacerait la médiathèque.
 - **Titre mal identifié par Jellyfin** ⇒ demande restée « en cours » : recette dans
-  [jellyfin-serveur-et-extensions.md](jellyfin-serveur-et-extensions.md#identification-des-titres).
+  [jellyfin-serveur-et-extensions.md](jellyfin-serveur-et-extensions.md#4-identification-des-titres).
 - **Rotation de la clé API Jellyseerr** : `sudo scripts/jellyseerr-rotate-key.py` (régénère, puis met à jour `.env`
   `JELLYSEERR_API_KEY` + restart homelabd, `JellyseerrApiKey` de Jellyfin Enhanced **et** de Home Screen Sections, et
   l'intégration Homarr, Homarr arrêté ; ~12 s de coupure, aucune clé affichée). Nouveau consommateur de la clé = l'ajouter

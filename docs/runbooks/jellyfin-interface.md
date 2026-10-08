@@ -16,7 +16,7 @@ Jellyfin (tchat, Mon compte) ou à un réglage d'affichage. Serveur et extension
   cœurs** (un vieux portable y passerait).
 - **Ne pas éditer le CSS dans l'interface** : source `branding/jellyfin/groscailloux-tv.css`, appliquée par
   `scripts/jellyfin-branding-apply.sh` (sauvegarde l'ancien, refuse tout `@import` en `@main/@master/@latest`). Jellyfin
-  lit ce CSS dans `Branding/Configuration` (champ `CustomCss`).
+  lit ce CSS dans `Branding/Configuration` (champ `CustomCss`), plus dans `Branding/Css`.
 - **Tester sur un navigateur jetable avec un compte ordinaire temporaire**, CSS ou scripts candidats remplacés dans CE
   navigateur (interception de `Branding/Configuration` et de `/JavaScriptInjector/private.js`, service worker
   contourné), jamais en production. Lanceur : `tools/bench/bench.sh` (comptes `zz_` toujours supprimés).
@@ -83,11 +83,15 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
     (navigation par l'adresse : son bouton ne réagit plus replié dans son menu « ⋯ ») ; sur PC, la rangée monte **dans** la
     barre (`nav.gc-tabs.gc-inline`) si elle tient avec 16 px de marge, compacte (`gc-compact`) sinon, sinon dessous ;
   - libellés de la barre traduits par table anglais → français (la barre est dessinée avant le chargement du français) ;
-    libellés des extensions traduits dans toutes les interfaces, boutons de la bannière Media Bar 3.0 (« Play »,
+    libellés des extensions (Jellyfin Enhanced, langues audio `Intl.DisplayNames`, tailles « Go ») traduits dans toutes les
+    interfaces, boutons de la bannière Media Bar 3.0 (« Play »,
     « Details », « Favorite ») en « Lire », « Infos », « Favori » ;
   - cloche NotifySync (`#netflix-bell`) déplacée après le tchat ; hauteur réelle de la barre dans `--gc-header-h` ;
-  - **menu SyncPlay** (v5) : chaque groupe en grille sur une ligne, clic/Entrée/Espace sur la ligne = bouton d'origine
-    (`spRowClick` : double clic et clics à moins de 1,5 s ignorés), `#sync-play-active-subheader` jamais cliquable.
+  - **menu SyncPlay** (v5) : chaque groupe (`#app-sync-play-menu li.MuiListItem-root` dont la rangée contient « Rejoindre
+    groupe ») en grille sur une ligne (avatars | nom | bouton, rangée intérieure en `display: contents`, aucun nœud React
+    déplacé), menu borné à 420 px ; clic/Entrée/Espace sur la ligne = bouton d'origine (`spRowClick` : double clic et
+    clics à moins de 1,5 s ignorés), `tabindex=-1` sur les lignes ; `#sync-play-active-subheader` jamais cliquable. Banc
+    `backups/jellyfin12-test-20261003/syncplay_menu.sh` (`SP_PREFIX` unique ; `CLICK=1` ne clique que le groupe du banc).
 - **Barre de bureau** : pas de bouton ☰ à 900 px et plus (bibliothèques dans la barre) ; il apparaît sous 900 px
   (« Ouvrir le menu », premier bouton de `.MuiToolbar-root`). Le banc `tools/bench/scenarios/header.js` exige ☰ sous
   900 px et sur téléphone ou tablette, et balaie toute sa largeur tous les 3 px (`--env WIDTH=800` pour un bureau étroit).
@@ -95,10 +99,14 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
   descendre par `top` coupe les boutons : le calque le décale par `translate`. Il place lui-même les rangées
   (`.homeSectionsContainer { margin-top: … }`) : le calque **remplace** cette marge (`80vh − 8.5em` en paysage ; en
   portrait, `--slideshow-content-top − --gc-header-h`) ; un `top` ajouté par-dessus faisait un double décalage.
-  `--slideshow-page-offset` est faux (mesuré sur la première `.page` du DOM, toujours cachée) : figé à 0 dans le calque.
+  `--slideshow-page-offset` est faux : `LayoutSync.update()` mesure `document.querySelector('.page')`, la première page du
+  DOM, toujours cachée (`#loginPage`, page Jellyfin Enhanced), et les rangées remontaient sur la bannière : figé à 0 dans
+  le calque (`:root`, `!important` de feuille contre le style inline du plugin). En portrait sur téléphone, bannière à
+  `--slideshow-height`.
   Ligne `.spec-line` à 11 px. Les règles Media Bar 2.x du calque (`.plot-container`, `.info-container`…) sont à revoir.
 - **Interface mobile** (revue du 04/10, 28 défauts contre-vérifiés au banc) — points durables :
-  - Jellyfin Enhanced force `flex-wrap: nowrap` sur la boîte des boutons, qui déborde **à gauche, sur ☰** : sous 600 px,
+  - Jellyfin Enhanced force `flex-wrap: nowrap` sur la boîte des boutons, qui rétrécit sous son contenu, et
+    `justify-content: flex-end` jette le surplus **à gauche, sur ☰** (seul accès aux bibliothèques) : sous 600 px,
     boutons de Jellyfin Enhanced cachés (⋯, Aléatoire), icônes à 40 px, ☰ au-dessus, SyncPlay caché sous 360 px (380 px
     avec le bouton Retour des applis). Contrôle : balayage `elementFromPoint` de ☰ ;
   - `.gc-tabs` sert à deux scripts : règles de `gc-header.js` sur `header.MuiAppBar-root > nav.gc-tabs`, du tchat sur
@@ -107,12 +115,13 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
   - bibliothèques : `html.gc-modern .libraryPage…{padding-top:.5em}` (ElegantFin remet le décalage de l'ancien en-tête) ;
     barre A–Z : 12 px réservés à droite (`--effectiveWidth` d'ElegantFin, à revoir après une montée) ;
   - barre opaque sur écran tactile dès que la page défile (`html.gc-scrolled`) ; roue de Media Bar cachée sur écran
-    tactile (`@media (hover: none)`) ; texte blanc sur bleu `#1b6fd8` sur téléphone (contraste 4,9:1) ;
+    tactile (`@media (hover: none)`) ; texte blanc sur bleu `#1b6fd8` sur téléphone (contraste 4,9:1), `#2f8fff` inchangé ailleurs ;
   - bloc « Également disponible » (Elsewhere) caché sur téléphone ;
   - section « Collections » des fiches : les 4 collections techniques des rangées d'accueil sont cachées par leur id
-    (`data-id`) : **une collection renommée ou ajoutée réapparaît**, mettre son id dans le calque.
+    (`data-id`, chemin `collections/<nom> [boxset]`) : **une collection renommée ou ajoutée réapparaît**, mettre son id dans le calque.
   Sauvegardes `backups/jellyfin-mobile-ui-20261004/` ; bancs `backups/jellyfin12-test-20261003/` (`mfix_home.js`,
-  `modern_ui.js`, `header_dump.js`, `airplay_flow.js`), lancés par `tools/bench/bench.sh`.
+  `modern_ui.js`, `header_dump.js`, `airplay_flow.js`), lancés par `tools/bench/bench.sh` (l'ancien `runprod.sh` et ses variables
+  `CANDIDATE_DIR`, `CANDIDATE_JS`, `CANDIDATE_CSS` sont remplacés par `--candidate`).
 
 ## 5. Téléviseurs
 
@@ -121,34 +130,40 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
   ferment à la touche **Retour** (keyCode 461 webOS, 10009 Tizen). Coût mesuré sur une télé simulée : ~2 points de
   processeur sur l'accueil, rien en lecture (la lenteur vient du client webOS lui-même).
 - **Disposition TV** (`layout-tv`, appli webOS = client web du serveur) : le calque **épingle l'en-tête** (jellyfin-web le
-  laissait défiler hors écran dès qu'une carte avait le focus) et resserre onglets et boutons. Sondes
+  laissait défiler hors écran dès qu'une carte avait le focus, `.skinHeader` en `position: relative` : Rechercher, Tchat,
+  Notifications et Profil inatteignables au pointeur Magic Remote) et resserre onglets et boutons. Sondes
   `backups/cast-tests-20260919/tv_*.js`.
 - **`gc-tv.js`** (public, exécuté avant la connexion et avant Media Bar) : sur agent TV, neutralise Media Bar
   (`window.slideshowPure.SlideshowManager.loadSlideshowData` et `CONFIG.enableTrailers`), retire `#randomItemButton` et
   `.headerSyncButton` ; piste audio des LG ([lecture-et-transcodage.md](lecture-et-transcodage.md#6-airplay-télés-lg-applis-tv-natives)).
   Le bloc `.layout-tv` du calque cache `#slides-container`, remet `.homeSectionsContainer` à `top: 1.6em`, cache les
   rangées non essentielles (classe = SectionId : `gc-tendances`, `BecauseYouWatched…`, `gc-mieux-notes`, `Genre-…`,
-  `gc-films-fr`, `DiscoverMovies/TV`, `MyJellyseerrRequests`, `WatchAgain`), les blocs secondaires des fiches et
-  `.gc-chat-btn`. Vérification : `tv_home_lite.js` (DEVICE=tv|desktop|iphone) : bureau et iPhone identiques avant/après.
+  `gc-films-fr`, `DiscoverMovies/TV`, `MyJellyseerrRequests`, `WatchAgain`), les blocs secondaires des fiches
+  (`#similarCollapsible`, genres/tags/studios, Elsewhere `.streaming-lookup-container`, `.audio-languages-container`) et
+  `.gc-chat-btn`. Les objets neutralisés de Media Bar sont exposés en fin de `slideshowpure.js`. Vérification : `tv_home_lite.js` (DEVICE=tv|desktop|iphone) : bureau et iPhone identiques avant/après.
 - **Panneau Mon compte à la télécommande** : jellyfin-web ne voit pas notre panneau ; sur TV, `app.js` capte ←↑→↓
   (écouteur `window` en capture), OK garde l'activation native, Retour ferme ; langue et taille = boutons au lieu de
   `<select>` ; panneau en 22 px. Banc `backups/lg-tv-20260929/lg_panel.js`.
 - Les pages « Demandes » et fiches d'un **admin** déclenchent des rafales Jellyfin Enhanced (`arr/series-slugs` par carte,
-  réservé aux admins).
+  réservé aux admins). Media Bar charge encore `youtube.com/iframe_api` au chargement (avant tout script injecté), sans
+  lecteur : négligeable.
 
 ## 6. Langue d'affichage et saut
 
 - **Langue d'affichage** : jellyfin-web la garde **dans l'appareil** (localStorage `<userId>-language` et
-  `<userId>-datetimelocale`) ; la copie dans les `DisplayPreferences` du serveur n'est jamais lue. `gc-lang.js` (public)
+  `<userId>-datetimelocale` ; `userSettings.language()` lit avec `enableOnServer = false`) ; la copie dans les
+  `DisplayPreferences` du serveur n'est jamais lue. `gc-lang.js` (public)
   pose `fr` pour les comptes connus de l'appareil (`jellyfin_credentials`) avant le démarrage, et **dès la réponse du
   serveur à la connexion** (XHR et fetch de `/Users/AuthenticateByName` et `AuthenticateWithQuickConnect`) : français sans
-  rechargement. Filet : un rechargement unique, jamais sur `#/login` ni avant que les identifiants soient enregistrés.
+  rechargement. Filet : un rechargement unique, jamais sur `#/login` ni avant que les identifiants soient enregistrés
+  (garde `sessionStorage`).
   Une clé `language` déjà présente = choix du membre, rien n'est touché. Banc
   `backups/jellyfin12-test-20261003/lang_nr.js` (navigateur anglais, 9 cas ; son code de sortie est 0 même avec des ✗).
   Une sonde `beforeunload` voit aussi les iframes YouTube de Media Bar : ce ne sont pas des rechargements.
 - **Saut du lecteur à 10 s** (`[accounts] skip_forward_ms` / `skip_back_ms`, posés à la création par
   `jellyfin::set_skip_lengths`) ; Jellyfin met 30 s par défaut. Le bouton d'avance **et** les flèches passent par
-  `skipForwardLength` : une seule valeur. C'est un `DisplayPreferences` **par compte** (client `emby`) ; une appli déjà
+  `skipForwardLength` (`playbackManager.fastForward(skipForwardLength())` dans `playback-video.*.chunk.js`) : une seule
+  valeur (`skipBackLength` pour le recul). C'est un `DisplayPreferences` **par compte** (`usersettings`, client `emby`) ; une appli déjà
   ouverte garde l'ancienne valeur jusqu'au rechargement. Comptes existants convertis le 18/09 (sauvegarde
   `backups/jellyfin-skip-20260918-155125/`).
 
@@ -164,14 +179,16 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
     feuille est fermée, le bouton Lire natif de la fiche est cliqué et le sélecteur tenté dès que la vidéo est prête ;
   - sur Android, « installe l'appli Jellyfin du Play Store » (Chrome sur Android n'a pas le SDK Cast web) ; ailleurs,
     « Aucun autre appareil connecté avec ce compte » quand la liste est vide ;
-  - le bouton « Lire » du bandeau Media Bar (`.slide .btnPlay`) est inopérant dans l'appli iPhone : depuis l'accueil, le
-    script ouvre la fiche de la diapositive active, attend son `.btnPlay`, puis lance ;
+  - le bouton « Lire » du bandeau Media Bar (`.slide .btnPlay`) est inopérant dans l'appli iPhone (il fait
+    `POST /Sessions/{id}/Playing` vers sa propre session) : depuis l'accueil, le script clique « Détails » de la diapositive
+    active (`#slides-container .slide.active[data-item-id] .detail-button`), attend le `.btnPlay` de la fiche, puis lance ;
   - sous-titres en AirPlay : [lecture-et-transcodage.md](lecture-et-transcodage.md#6-airplay-télés-lg-applis-tv-natives) ;
   - en 12.1, « Lire sur » est un **menu MUI** (`#app-remote-play-menu`) présent caché dès le chargement et recréé avec la
     barre : la v5 le surveille (`characterData`) ;
   - les dialogues jellyfin-web 10.11 (interface « legacy ») se ferment **uniquement** par `history.back()` (entrée
     `history.state.usr.dialogs[]`) ; sans entrée d'historique (WebView), le script retire la feuille lui-même ;
   - chaque appui envoie ses étapes à `ClientLog/Document` (`jellyfin/config/log/upload_*.log`, lignes « gc-airplay … »).
+  - hors de nos scripts, AirPlay passe par le bouton du lecteur dans Safari et l'appli iPhone.
   Bancs : `backups/cast-tests-20260919/airplay_test.js` (22 cas, `NO_INJECT=1` après déploiement),
   `backups/jellyfin12-test-20261003/airplay_flow.js`.
 
@@ -185,7 +202,8 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
     attend `playing` 30 s) et le serveur programmait une pause lointaine pour l'autre.
   - Le script remplace `scheduleSeek` : pause, saut, attente que le lecteur soit à 5 s de la cible (12 s au plus), puis
     « prêt » **à la cible** (le serveur n'accepte un « prêt » en pause qu'à 500 ms près). Le module est retrouvé par le
-    registre webpack d'après son code, jamais son numéro ; sans module trouvé, il ne fait rien.
+    registre webpack (`self.webpackChunk`, `__webpack_require__.m`) d'après son code, jamais son numéro ; sans module
+    trouvé, il ne fait rien.
   - Banc : `backups/syncplay-20261003/run.sh [0|1]` (deux navigateurs, comptes temporaires). Mesuré : reprise 0,5 s après.
 - NPM de l'hôte 1 garde les réglages SyncPlay (websocket, délais 3600 s, tampons coupés) : [npm.md](npm.md).
 - **Après un banc SyncPlay** : un compte supprimé garde sa session et son groupe SyncPlay (visible de tous) : fermer
@@ -200,7 +218,8 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
   faux (toujours en 12.x) : 3 sockets par page, SyncPlay aléatoire.
 - **`gc-socket.js`** (public, en tête de `public.js`) pose un accesseur sur `window.ApiClient` et, en 12.x seulement, fait
   répondre vrai à `isWebSocketOpen` et relaie LibraryChanged/UserDataChanged du SDK (cloche toujours en temps réel ; état
-  dans `window.__gcOneSocket`). Contrôle : fermetures de websockets groupées par **2** dans le journal, et chaque « created
+  dans `window.__gcOneSocket`). NotifySync ouvrait sa websocket sur le même jeton (`/socket?ApiKey=`) ; le serveur choisit
+  la plus récemment active (`MaxBy(LastActivityDate)`). Contrôle : fermetures de websockets groupées par **2** dans le journal, et chaque « created
   group » suivi de « requested Ping ». **Toute nouvelle extension qui ouvre une websocket = même piège.** Banc
   `backups/jellyfin12-test-20261003/zz_spns/zz_spns_create.sh "r"`. À signaler à NotifySync (utiliser `ApiClient.subscribe`).
 
@@ -213,7 +232,8 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
   `backups/jellyfin-ui-20260917-191027-overview/`.
 - **Avancement des demandes** dans l'onglet Demandes : script Mon compte sur les cartes `.je-request-card` (`data-tmdb-id`),
   données de `GET /compte/api/requests` (`homelab_core::requests_progress`). Les prises côté seedbox ne passent jamais par
-  la file de Sonarr/Radarr : la barre lit aussi les torrents étiquetés `homelab:` des deux qBittorrent. Clés d'état :
+  la file de Sonarr/Radarr : la barre lit aussi les torrents étiquetés `homelab:` des deux qBittorrent
+  (`requests_progress::homelab_tag` / `from_torrent`). Clés d'état :
   `unknown_series` = `<arr>:<seriesId>:<saison>`, `movie_search` = `<arr>:<movieId>` (`<arr>` = `sonarr`, `radarr`,
   `sonarr-seedbox`, `radarr-seedbox`) ; Jellyseerr `serviceId` 0 = VPS, 1 = seedbox, `externalServiceId` = id Arr. Détail :
   [AUTOMATION.md](../AUTOMATION.md#suivi-des-demandes-dans-longlet-demandes-v119).

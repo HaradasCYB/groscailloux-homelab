@@ -20,7 +20,8 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   + l'observateur `auto_import`.
 - **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans `ReadWritePaths`
   de `systemd/homelabd.service` (sinon « Read-only file system »).
-- **Journaliser une erreur = `error = format!("{e:#}")`**, jamais `%e` (premier niveau seulement). Une erreur reqwest
+- **Journaliser une erreur = `error = format!("{e:#}")`**, jamais `%e` (premier niveau seulement ; depuis le 08/10,
+  `e8a5d3f`). Une erreur reqwest
   dont l'URL porte un secret (webhook Discord, `apikey=`, `ApiKey=`, lien d'indexeur) passe d'abord par
   `.map_err(reqwest::Error::without_url)`, sinon `{e:#}` l'écrit en clair dans le journal, dans `last_error` et dans les
   alertes. Les clients qui passent leur clé en en-tête gardent l'URL.
@@ -52,7 +53,8 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
 
 - **`homelabctl` n'écrit jamais le fichier d'état** : il l'ouvre en lecture seule (`TaskContext::new_read_only`).
   `homelabctl run <tâche>` demande le passage au daemon (`POST /admin/run`, jeton d'onboarding en en-tête, 409 si la
-  tâche tourne déjà) ; `--dry-run` reste local et n'écrit rien ; `accounts on|off|delete`, `onboard`, `accounts link`,
+  tâche tourne déjà) ; `--dry-run` reste local et n'écrit rien ; `accounts on|off|delete` (`POST /admin/accounts` : les
+  droits Jellyseerr à restaurer sont dans l'état), `onboard`, `accounts link`,
   `mail-test`, `chat announce` passent aussi par l'API locale du daemon. Une tâche ne tourne jamais deux fois en même
   temps (verrou dans `scheduler::run_once`).
 - **Écriture de l'état** : sérialisé en mémoire puis écrit en **un** appel par un écrivain unique numéroté (jamais un état
@@ -102,13 +104,18 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   par une couche commune. `/connexion` (POST, jeton dans le corps) pose le cookie `gc_admin` (HMAC du jeton, **1 an**,
   `HttpOnly; Secure; SameSite=Lax`, sans état : **renouveler un jeton ferme les sessions**).
 - **Jamais de `token=` dans un lien, une redirection ou un mail** (il finissait en clair dans les journaux NPM) ; un vieux
-  lien `?token=` ouvre la session puis redirige sans jeton. Le jeton n'est jamais dans le HTML (jeton de formulaire HMAC).
+  lien `?token=` ouvre la session puis redirige sans jeton. La couche réinjecte le jeton **en interne** (requête, ou
+  `X-Onboard-Token` pour `POST /onboard`) : les pages n'ont pas bougé ; la CLI garde l'en-tête. Le jeton n'est jamais dans le HTML (jeton de formulaire HMAC).
 - 10 échecs / 15 min par IP (POST sans session compris), 100 au total (jamais pour un appel local).
 - **`X-Forwarded-For`** (dernier saut) n'est cru que d'un pair TCP de `[web] trusted_proxies` (172.18.0.0/16), jamais
   d'une adresse de l'hôte (127.0.0.1, 172.18.0.1). **IP de la maison** (`HOMELABD_ADMIN_TRUSTED_IPS`) : session d'office
   seulement vue par NPM **confirmé par Docker** (`trusted_proxy_container = "npm"`, adresse relue par `docker inspect`
   toutes les 60 s et 10 s après un pair inconnu) ; Docker muet ⇒ formulaire `/connexion`. Conteneur NPM renommé =
   changer la clé.
-- Chemins d'admin : 404 si `Host` n'est ni l'hôte de `ONBOARD_PUBLIC_URL` ni une adresse locale ; `/admin/*` (CLI) :
+- Les limites des pages publiques (`/inscription`, `/premium/*`, `/bienvenue/renouveler`) lisent le saut de NPM (avant le
+  07/10 : le premier élément de `X-Forwarded-For`, falsifiable ; et `X-Forwarded-For` posé depuis l'hôte donnait une
+  session admin d'un an).
+- Chemins d'admin (`/`, `/accounts*`, `/recherche*`, `/status*`, `/onboard`, `/connexion`, `/admin*`) : 404 si `Host` n'est
+  ni l'hôte de `ONBOARD_PUBLIC_URL` ni une adresse locale (l'hôte premium envoyait tout à homelabd) ; `/admin/*` (CLI) :
   appel local sans `X-Forwarded-For` seulement ; `POST /onboard` fermé sans jeton configuré.
 - `/accounts` et `/recherche` gardent **en plus** l'auth HTTP NPM « admin-outils ».

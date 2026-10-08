@@ -25,7 +25,7 @@ qui saccade ou « charge à l'infini ». Tâches liées : [AUTOMATION.md](../AUT
 ## 2. Fenêtre des tâches lourdes et options interdites
 
 - **Aucune tâche lourde (trickplay, analyse de segments, analyse complète, extraction) entre 13 h et 05 h**. Fenêtre en
-  semaine : analyse de la médiathèque 05:00, Intro Skipper 05:30 (`ProcessThreads 2`, `MaxParallelism 1`,
+  semaine (déclencheurs relus le 08/10) : analyse de la médiathèque 05:00, analyse des segments de média 05:15, Intro Skipper 05:30 (`ProcessThreads 2`, `MaxParallelism 1`,
   `ScanCommercial false`), images de chapitre 06:30 en `P480` (extraction désactivée par bibliothèque : tâche vide),
   `LibraryScanFanoutConcurrency 2`, normalisation audio 07:00, `original_language` 07:30–11:30 ; tout est fini vers 08:30.
 - **Trickplay** : plus généré (déclencheur retiré le 25/09 : tout arrive sur la seedbox, la tâche relisait chaque titre
@@ -90,7 +90,7 @@ qui saccade ou « charge à l'infini ». Tâches liées : [AUTOMATION.md](../AUT
   `maxbitrate-Video-*` ne change pas la lecture en cours). **Ce palier ne vaut que pour la lecture en cours** :
   jellyfin-web le mémorise par appareil (`maxbitrate-Video-<réseau>` + `enableautobitratebitrate-Video-<réseau>` à
   `false`) ; le script note ce qu'il a posé (`gc-quality-lowered`) et remet « Auto » à la sortie du lecteur, sauf si le
-  membre a changé la qualité entre-temps. Sous 12.1 : un saut ou un rechargement ouvre 8 s de calme (`QUIET_MS`) ;
+  membre a changé la qualité entre-temps. Sous 12.1 : un saut ou un rechargement ouvre 8 s de calme (`QUIET_MS`, `seeking`/`seeked`/`loadstart`) ;
   bandeau en haut sur PC, tablette et téléphone ; la note du palier attend que jellyfin-web l'ait écrit (≤ 10 s).
   Bancs : `backups/quality-tests-20260916/` (phases 5–6), `backups/jellyfin12-test-20261003/t8_quality.js`.
 - **Plusieurs appuis rapprochés sur l'avance** = autant de relances de ffmpeg : avancer d'un geste.
@@ -117,19 +117,22 @@ qui saccade ou « charge à l'infini ». Tâches liées : [AUTOMATION.md](../AUT
 - **Sous-titres en AirPlay** : jellyfin-web ne déclare que des sous-titres `External`, dessinés par la page ; AirPlay
   n'envoie que le flux HLS. `gc-airplay.js` (appareils Apple seulement) ajoute `{Format: vtt, Method: Hls}` **en tête**
   des `SubtitleProfiles` de chaque `PlaybackInfo` (XHR du SDK et fetch) : en lecture HLS (remux ou conversion), le
-  serveur met les sous-titres dans le flux (`#EXT-X-MEDIA TYPE=SUBTITLES`). Lecture directe : non couverte. Banc
-  `backups/lg-tv-20260929/sub_airplay.js`. **Limite** : le récepteur AirPlay intégré à une télé LG télécharge
+  serveur met les sous-titres dans le flux (`#EXT-X-MEDIA TYPE=SUBTITLES`, piste choisie `DEFAULT=YES`), affichés par l'iPhone et
+  transmis par AirPlay. Lecture directe : non couverte. Banc `backups/lg-tv-20260929/sub_airplay.js`
+  (`ITEM=<id> run.sh sub_airplay.js "iphone:0 iphone:1 desktop:1"`). **Limite** : le récepteur AirPlay intégré à une télé LG (`AirPlay/2.0 … MFi_AirPlay_Device`) télécharge
   `subtitles.m3u8` et `stream.vtt` mais n'affiche rien : sur une LG, utiliser l'appli Jellyfin de la télé.
-- **Télés LG (webOS) : changement de piste audio** : jellyfin-web (webOS ≥ 4) bascule la piste dans le lecteur de la télé
+- **Télés LG (webOS) : changement de piste audio** : jellyfin-web (webOS ≥ 4, `video.audioTracks` présent) bascule la piste dans le lecteur de la télé
   sans rien demander au serveur, et sur les LG ça ne fait rien. `gc-tv.js`, sur agent webOS seulement : `audioTracks`
   masqué sur la **vidéo insérée dans la page** (jamais sur le prototype : sinon Jellyfin remuxe aussi la VF par défaut),
   et toute `PlaybackInfo` pour une autre piste que celle par défaut part avec `EnableDirectPlay=false` → remux, image et
-  son copiés. Bancs `backups/lg-tv-20260929/` (`run.sh lg_audio.js "tv:0"`, télé émulée ; le Chromium du banc ne décode
+  son copiés. Bancs `backups/lg-tv-20260929/` (`run.sh lg_audio.js "tv:0"`, télé émulée ; `lg_screens.js` : captures ; le Chromium du banc ne décode
   pas le HEVC : seules les décisions du serveur sont mesurées).
-- **Applis TV natives** (Android TV, Fire TV Stick, JellyWatch) : 2ᵉ usage de la maison, **100 % en lecture directe** ;
+- **Applis TV natives** (Android TV, Fire TV Stick, client tiers JellyWatch) : 2ᵉ usage de la maison (133 lectures, 72 h sur
+  30 j au 22/09), **100 % en lecture directe** ;
   elles ne chargent **pas** jellyfin-web (ni calque CSS, ni script injecté, ni rangées Home Screen Sections). Tout ce qui
   les améliore passe par les **métadonnées et les réglages de compte**. Leur disposition d'accueil n'est pas stockée côté
-  serveur (`TvHome` vide). Les segments d'Intro Skipper leur donnent « Passer l'intro » ; inutile d'ajouter TheIntroDB.
+  serveur (`DisplayPreferences` client `jellyfin-androidtv` : `TvHome` vide). Les segments d'Intro Skipper leur donnent « Passer l'intro » (38 épisodes sur 40 en ont,
+  mesuré) ; inutile d'ajouter TheIntroDB.
 
 ## 7. Langue audio et sous-titres des comptes
 

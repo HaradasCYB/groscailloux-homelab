@@ -54,7 +54,24 @@ Ces outils remplacent les copies de `backups/` (8 variantes d'« appliquer hors 
 - Non fait (lot 4) : `tools/ops/` pour les outils d'application et de retour arrière (`apply_npm_hss.py`, `freeze.py`,
   codec-replace, `delete.py`…), qui restent dans `backups/` ; alerte sur des comptes `zz_` de plus de 2 h.
 
-## 3. Fenêtre de homelabd
+## 3. `scripts/` (inventaire au 08/10)
+
+| Fichier | Lancé par | Rôle |
+| --- | --- | --- |
+| `homelab-alert.sh` | `systemd/homelab-alert@.service` (`OnFailure=`) | message Discord admin quand une unité root échoue |
+| `homelabd-watchdog.sh` | `homelabd-watchdog.timer` (2 min) | relance homelabd quand `/health` ne répond plus |
+| `jellyfin-transcodes-purge.sh` | `jellyfin-transcodes-purge.timer` (chaque minute) | purge du tmpfs de transcodage ([lecture-et-transcodage.md](lecture-et-transcodage.md#3-conteneur-jellyfin-et-tmpfs-de-transcodage)) |
+| `seedbox-mount-watch.sh` | `seedbox-mount-watch.timer` (5 min) | ffprobe bloqués, fichier fantôme ([seedbox-et-rclone.md](seedbox-et-rclone.md#4-montage-rclone)) |
+| `jellyfin-branding-apply.sh` | à la main | calque CSS ([jellyfin-interface.md](jellyfin-interface.md)) |
+| `jellyfin-ui-rollback.sh` | à la main | retour arrière de l'interface |
+| `jellyfin-js-apply.py` | à la main (`sudo`) | scripts JavaScript Injector (publics et privés) |
+| `jellyseerr-rotate-key.py` | à la main (`sudo`) | rotation de la clé API Jellyseerr et de ses consommateurs |
+| `move-to-seedbox.py` | à la main, hors pic | déménagement VPS → seedbox |
+| `seedbox-cleanup.py` | à la main | ménage des torrents sans catégorie de la seedbox |
+| `seedbox/gc-extract-sub.sh`, `seedbox/gc-ass2srt.py` | `subtitle_sync` par ssh (copiés dans `~/bin/` de la seedbox) | extraction des sous-titres sur la seedbox |
+| `seedbox/homelab-apps-watch.sh` | crontab de la seedbox | relance des applis de la seedbox |
+
+## 4. Fenêtre de homelabd
 
 - Une tâche qui n'a rien à faire n'écrit plus de `run_done` au journal (passage « calme » en `debug`) : un script qui
   attend la fin d'un passage de `stack_health` par `grep 'run_done task="stack_health"'` (ancien `wait_homelabd_window` de
@@ -63,7 +80,7 @@ Ces outils remplacent les copies de `backups/` (8 variantes d'« appliquer hors 
   prochain passage = `last_end` + intervalle (sémantique `OnUnitActiveSec`). C'est ce que font `offpeak.sh
   --homelabd-window` et `decision_fenetre` de `backups/lot3-20261008/common.sh`.
 
-## 4. Exécutant du lot 3 (jusqu'au 12/10)
+## 5. Exécutant du lot 3 (jusqu'au 12/10)
 
 - Le lot 3 (mises à jour : NPM, Seerr, Arrs du VPS, outils d'administration, Homarr, gluetun, rclone, MySQL, puis
   redémarrage du VPS) garde **son propre exécutant**, `backups/lot3-20261008/run.sh J1|J2|J3|REBOOT`, lancé par les

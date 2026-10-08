@@ -19,7 +19,8 @@ Lecture et transcodage : [lecture-et-transcodage.md](lecture-et-transcodage.md).
 - **Jamais d'édition à la main de `system.xml` Jellyfin démarré** : `GET /System/Configuration`, changer le seul champ,
   `POST` de l'objet entier.
 - **Redémarrer Jellyfin** : hors pic, sans lecture en cours. Une appli restée ouverte (Jellyfin Desktop) garde l'ancienne
-  page (nouveau CSS, anciens scripts) : faire recharger (Ctrl+R) ; un redémarrage coupe aussi les groupes SyncPlay.
+  page (nouveau CSS, anciens scripts : pas de rangées, ancien logo, SyncPlay qui envoie des titres sans id → « Guid can't be
+  empty ») : faire recharger (Ctrl+R) ; un redémarrage coupe aussi les groupes SyncPlay.
 
 ## 2. Réseau
 
@@ -123,20 +124,22 @@ Lecture et transcodage : [lecture-et-transcodage.md](lecture-et-transcodage.md).
   `POST /Plugins/b8298e012697407ab44daa8dc795e850/Configuration` (sans redémarrage) ; « Mes médias » (`MyMedia`) en
   tête (`OrderIndex 0`, sauvegarde `backups/jellyfin-ui-20260920-mymedia/`). **Contrôler comme l'appli** :
   `GET /HomeScreen/Sections?UserId=…&Language=fr&Page=1&NumResultsPerPage=4&PageHash=<uuid v4>` ; l'appel sans
-  pagination est en cache **24 h par compte** et montre l'ancien ordre. Faille 3.0.2 (issue amont #298) fermée par NPM :
+  pagination est en cache **24 h par compte** (`CacheTimeoutSeconds`) et montre l'ancien ordre. Faille 3.0.2 (issue amont #298) fermée par NPM :
   [npm.md](npm.md#garde-de-home-screen-sections).
 - **Jellyfin Enhanced** (réglages serveur) : page Téléchargements rafraîchie toutes les **120 s**
   (`DownloadsPollIntervalSeconds` ; à 30 s, deux pages admin restées ouvertes faisaient 63 % du trafic Jellyfin) ;
   `ThemeSelectorEnabled = false` ; `JellyseerrShowNetworkDiscovery` coupé (il exige une clé TMDB absente : 928 réponses
   503/jour) ; `JellyseerrShowAdvanced = true` (voie russe) ; région = France ; calendrier en 24 h
-  (`CalendarTimeFormat = 17:00/17:30`). Vue d'ensemble des membres : [jellyfin-interface.md](jellyfin-interface.md#vue-densemble-des-membres).
+  (`CalendarTimeFormat = 17:00/17:30`). Vue d'ensemble des membres : [jellyfin-interface.md](jellyfin-interface.md#10-vue-densemble-des-membres).
 - **NotifySync et les websockets** : voir « Une seule connexion temps réel par page » dans
-  [jellyfin-interface.md](jellyfin-interface.md#une-seule-connexion-temps-réel-par-page).
+  [jellyfin-interface.md](jellyfin-interface.md#9-une-seule-connexion-temps-réel-par-page).
 
 ### Intro Skipper
 
 - **Version 12.0.4, segments figés et réglages sobres** (05/10, décision du propriétaire). La migration 1.10.11.19 →
-  12.0.4 avait importé les analyses sans `ConfigHash` : toute la médiathèque était à refaire (~700 Go par le lien seedbox).
+  12.0.4 avait importé les analyses sans `ConfigHash` : toute la médiathèque était à refaire (~700 Go par le lien seedbox en
+  8 à 9 matinées), alors que 1 948 des 2 026 titres en file avaient déjà leurs segments. Aucune base en ligne ne convenait
+  (TheIntroDB : 403 Cloudflare depuis l'IP du VPS, 45 % des séries ; chapitres : 24 % ; AniSkip : 34 %).
   **Gel** : 3 635 segments passés en Source « User » par l'API du plugin (`PUT /Episode/{itemId}/Segments/{segmentId}`,
   bornes identiques) ; un segment User n'est **jamais** recalculé. Les 130 génériques suspects des séries non animées
   (> 180 s ou début avant la moitié du fichier) sont restés automatiques pour être refaits.
@@ -159,8 +162,8 @@ Lecture et transcodage : [lecture-et-transcodage.md](lecture-et-transcodage.md).
   plugin.**
 - Contrôle d'un passage : `grep -E '\[Mode: (Introduction|Credits)\] Analyzing' log_<date>.log` (« [Mode: Preview] » est
   normal : chapitres, sans ffmpeg), tâche « Completed », `rclone_core.bytes` de 03 à 07 h UTC autour de 60 Go.
-- Au démarrage, « ffmpeg did not exit within 2000ms » quand la machine est chargée : sans gravité (revérifié au prochain
-  usage), un avertissement reste dans sa page de réglages jusqu'au redémarrage suivant.
+- Au démarrage, « ffmpeg did not exit within 2000ms » quand la machine est chargée : sans gravité (`FFmpegVersionGate`
+  revérifie au prochain usage), un avertissement reste dans sa page de réglages jusqu'au redémarrage suivant.
 - Outils, journal et sauvegardes : `backups/introskipper-sobre-20261005/` (`freeze.py --dry-run`, `apply-config.py
   --restore`, `prod-20261005/` : journal CSV, copies de la base avant/après, procédure de retour arrière).
 

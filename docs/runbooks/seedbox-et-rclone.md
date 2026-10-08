@@ -82,7 +82,7 @@ place et arrêt de la seedbox : [DEPLOY.md](../DEPLOY.md#seedbox-optionnelle). S
 - Un import seedbox est signalé à rclone puis à Jellyfin par `seedbox_refresh`. Un titre **nouveau** (série nouvelle,
   saison nouvelle, nouveaux épisodes dans une saison seedbox, déplacement entre bibliothèques) n'apparaît qu'après une
   analyse complète de la médiathèque (`POST /Library/Refresh`, ~7 min) ; ne pas en lancer une par-dessus une autre
-  (voir [jellyfin-serveur-et-extensions.md](jellyfin-serveur-et-extensions.md#bibliothèques-et-analyses)).
+  (voir [jellyfin-serveur-et-extensions.md](jellyfin-serveur-et-extensions.md#3-bibliothèques-et-analyses)).
 
 ## 6. Déménager un titre du VPS vers la seedbox
 
@@ -91,7 +91,8 @@ place et arrêt de la seedbox : [DEPLOY.md](../DEPLOY.md#seedbox-optionnelle). S
   **créée non surveillée** (ou fiche existante) → `RescanSeries`/`RescanMovie`, contrôle du nombre de fichiers, puis
   surveillance de ce qui a un fichier → **seulement alors** suppression côté VPS (fiche + fichiers, torrents liés s'ils ont
   fini de partager depuis 7 j) → `Library/Media/Updated` Deleted/Created.
-- Pièges : rsync ≥ 3.2.4 protège lui-même le chemin distant (**pas de guillemets** : `seedbox:/home/x/y z`) ; parent à
+- Pièges : rsync ≥ 3.2.4 protège lui-même le chemin distant (**pas de guillemets** : `seedbox:/home/x/y z`, sinon
+  `mkdir ".../'/home/…'"`) ; parent à
   rafraîchir dans rclone (§ 4) ; `deletion_cleanup` dans `tasks.disabled` pendant toute l'opération (une fiche seedbox
   fraîche dont le montage ne voit pas encore les fichiers serait « sans fichier ») ; jamais pendant une lecture du titre
   (`/Sessions`). Jellyfin recrée l'élément (nouvel id) : l'état « vu » suit les identifiants TMDB/TVDB. Deux workers en
@@ -131,7 +132,7 @@ place et arrêt de la seedbox : [DEPLOY.md](../DEPLOY.md#seedbox-optionnelle). S
 - Après coup, Jellyfin : `Library/Media/Updated` ne suffit pas pour une grosse série dont tous les noms changent : `POST
   /Items/<id série>/Refresh?Recursive=true` par série, puis comparer le nombre d'épisodes Jellyfin à `episodeFileCount` ;
   série, saison ou épisodes **nouveaux** : seulement par l'analyse complète. Remettre les nouveaux éléments dans leurs
-  collections ([jellyfin-serveur-et-extensions.md](jellyfin-serveur-et-extensions.md#collections-après-un-remplacement-de-fichier)).
+  collections ([jellyfin-serveur-et-extensions.md](jellyfin-serveur-et-extensions.md#5-collections-après-un-remplacement-de-fichier)).
 - Outils : `backups/codec-replace-20260927/` (version à jour : `verify.py`, `grab.py`, `replace.py`, `--dry-run` d'abord ;
   1er lot dans `backups/codec-replace-20260926/`).
 
