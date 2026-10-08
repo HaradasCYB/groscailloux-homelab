@@ -61,6 +61,18 @@ impl JellyseerrClient {
         json(resp, "jellyseerr movie").await
     }
 
+    /// Langue d'origine TMDB d'un film (`kind = "movie"`) ou d'une série (`"tv"`), code ISO 639-1 tel que TMDB le
+    /// donne (`ja`, `en`, `fr`…), `None` si TMDB n'en a pas. Même source que `/compte/api/original` (mode VO de
+    /// Mon compte) et que la tâche `original_language` (2026-10-08).
+    pub async fn original_language(&self, kind: &str, tmdb_id: i64) -> Result<Option<String>> {
+        let d = if kind == "tv" {
+            self.tv_details(tmdb_id).await?
+        } else {
+            self.movie_details(tmdb_id).await?
+        };
+        Ok(Some(original_language_of(&d)).filter(|l| !l.is_empty()))
+    }
+
     pub async fn status(&self) -> Result<Value> {
         let resp = self.req(Method::GET, "api/v1/status").send_retry().await?;
         json(resp, "jellyseerr status").await
@@ -225,5 +237,34 @@ impl JellyseerrClient {
             }
         }
         Ok(out)
+    }
+}
+
+/// Champ `originalLanguage` d'une fiche TMDB vue par Jellyseerr (film ou série), vide s'il manque.
+pub fn original_language_of(details: &Value) -> String {
+    details
+        .get("originalLanguage")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn original_language_is_read_from_tmdb_details() {
+        assert_eq!(
+            original_language_of(&json!({"originalLanguage": "ja"})),
+            "ja"
+        );
+        assert_eq!(
+            original_language_of(&json!({"originalLanguage": " en "})),
+            "en"
+        );
+        assert_eq!(original_language_of(&json!({"title": "x"})), "");
+        assert_eq!(original_language_of(&json!({"originalLanguage": null})), "");
     }
 }

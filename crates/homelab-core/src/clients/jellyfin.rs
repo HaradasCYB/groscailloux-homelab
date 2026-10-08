@@ -93,6 +93,30 @@ impl JellyfinClient {
             .unwrap_or_default())
     }
 
+    /// Fiche complète d'un élément vue par un compte (`GET /Items/{id}?userId=`, tous les champs).
+    pub async fn item(&self, item_id: &str, user_id: &str) -> Result<Value> {
+        let resp = self
+            .req(Method::GET, &format!("Items/{item_id}"))
+            .query(&[("userId", user_id)])
+            .send_retry()
+            .await?;
+        json(resp, "jellyfin Items/{id}").await
+    }
+
+    /// Écrit les métadonnées d'un élément (`POST /Items/{id}`, l'éditeur de métadonnées de Jellyfin), **sans**
+    /// rafraîchissement ni lecture du fichier. Le corps doit venir de `tasks::original_language::update_body` : Jellyfin
+    /// remet à vide tout champ « toujours écrit » absent du corps. Sur une série, Jellyfin réécrit aussi chaque saison
+    /// et chaque épisode (classification, nom de série) : quelques secondes pour 170 épisodes, d'où le délai.
+    pub async fn update_item(&self, item_id: &str, body: &Value) -> Result<()> {
+        let resp = self
+            .req(Method::POST, &format!("Items/{item_id}"))
+            .json(body)
+            .timeout(Duration::from_secs(180))
+            .send_retry()
+            .await?;
+        check(resp, "jellyfin POST Items/{id}").await.map(|_| ())
+    }
+
     /// Fiches proposées par les fournisseurs de métadonnées pour un élément (`Series` ou `Movie`).
     pub async fn remote_search(&self, kind: &str, item_id: &str, ids: Value) -> Result<Vec<Value>> {
         let resp = self

@@ -96,6 +96,10 @@ pub struct State {
     /// pour ne pas réessayer sans fin un titre que TMDB nomme ainsi.
     #[serde(default)]
     pub renamed_items: BTreeMap<String, i64>,
+    /// original_language : dernier passage par fiche Jellyfin (id → écriture ou essai), avec la valeur d'avant et la
+    /// valeur écrite pour pouvoir revenir en arrière (2026-10-08).
+    #[serde(default)]
+    pub original_language: BTreeMap<String, OriginalLanguageRecord>,
     /// subtitle_sync : dernier essai par item Jellyfin (id → essai). Sans ça, un item que Jellyfin ne liste pas
     /// encore était repris toutes les 5 min (22/09 : 7 700 appels ssh et 6 000 rafraîchissements pour rien).
     #[serde(default)]
@@ -132,6 +136,32 @@ pub struct State {
 pub struct WatchAlert {
     pub at: i64,
     pub key: String,
+}
+
+/// Passage de `original_language` sur une fiche.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OriginalLanguageRecord {
+    pub at: i64,
+    /// `movie` ou `series`.
+    pub kind: String,
+    pub name: String,
+    pub tmdb: i64,
+    /// `written` (écrite et relue), `unknown` (TMDB sans langue utilisable), `locked` (fiche verrouillée),
+    /// `error` (lecture ou écriture en échec). Tout autre que `written` est réessayé après `retry_hours`.
+    pub outcome: String,
+    /// OriginalLanguage avant écriture (vide = aucune) et valeur écrite : revenir en arrière = réécrire `old`.
+    #[serde(default)]
+    pub old: String,
+    #[serde(default)]
+    pub new: String,
+    /// Série : saisons et épisodes dont la classification était vide avant l'écriture (ids compacts) ; Jellyfin leur
+    /// a donné celle de la série (`children_rating`). Revenir en arrière = remettre leur classification à vide.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children_unrated: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub children_rating: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -675,7 +675,7 @@ async fn details(st: &SubsState, kind: &str, tmdb: i64) -> Value {
                 "original_title": original,
                 "year": date.get(..4).unwrap_or(""),
                 "poster": d.get("posterPath").and_then(Value::as_str).unwrap_or(""),
-                "lang": d.get("originalLanguage").and_then(Value::as_str).unwrap_or(""),
+                "lang": homelab_core::clients::original_language_of(&d),
             })
         }
         Err(_) => {
