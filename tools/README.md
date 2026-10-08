@@ -117,6 +117,8 @@ Contre-épreuve : `--env MUTATE=1` doit échouer. La décision côté serveur (`
 python3 tools/lib/test_hl.py      # fenêtre homelabd, maintenance en cours (deux travaux en attente ne se bloquent pas),
                                   # politique et création interrompue des comptes de banc, dates, variables ${NOM} du TOML
 bash tools/lib/test_common.sh     # créneau horaire (à cheval sur minuit compris), nettoyage des textes Discord
+sh scripts/test_seedbox-rclone-conf.sh   # config effective du montage seedbox : hôte et compte DANS le fichier,
+                                         # refus qui nomment la variable (jamais sa valeur)
 ```
 
 Aucun appel réseau ni fichier de production. À relancer après toute modification de `lib/`.
