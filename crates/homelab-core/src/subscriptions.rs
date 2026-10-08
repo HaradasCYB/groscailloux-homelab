@@ -6,6 +6,13 @@
 //! ([`decide`]) sont pures et testées ; leur application (suspension, mails) vit dans la tâche
 //! `subscription_cycle`. Premium = compte Jellyfin actif ([`crate::accounts::set_premium`]) :
 //! ce module n'y touche jamais directement.
+//!
+//! Depuis le 2026-10-08 (décision du propriétaire : « les abonnés hors PayPal, je les gère moi-même ») le
+//! cycle ne suit plus que les **essais de l'inscription publique** ([`is_trial`]) et les fiches **liées à
+//! un abonnement PayPal** (actif ou arrêté chez PayPal). Toute autre fiche ([`managed_by_hand`] : actif,
+//! offert ou essai posé par décision de l'admin, import, exempté, à qualifier) n'est jamais suspendue et
+//! ne reçoit aucun rappel ; à son échéance, l'admin est prévenu une seule fois ([`Action::ManualDue`]) et
+//! `/accounts` l'affiche « à gérer (échéance passée) ».
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -104,6 +111,10 @@ pub struct Subscriber {
     /// Date du dernier paiement PayPal appliqué à la fiche : le contrôle quotidien ne prolonge que
     /// pour un paiement plus récent.
     pub paypal_paid_at: Option<i64>,
+    /// Fiche gérée à la main ([`managed_by_hand`]) : échéance pour laquelle l'admin a déjà été prévenu
+    /// (2026-10-08). Une information par échéance : une nouvelle échéance (prolongation, nouvelle
+    /// décision) en donnera une autre.
+    pub due_noted: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -128,6 +139,9 @@ pub enum Action {
     ToGrace,
     /// Grâce écoulée : suspendre (compte Jellyfin désactivé, rien de supprimé).
     Suspend,
+    /// Fiche gérée à la main ([`managed_by_hand`]) arrivée à échéance : une information à l'admin, une
+    /// seule fois par échéance ; le compte reste actif, rien n'est écrit au membre (2026-10-08).
+    ManualDue,
 }
 
 /// Statut PayPal d'un abonnement qui prélève encore.
@@ -228,6 +242,43 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
         .into()
 }
 
+/// Essai gratuit de l'**inscription publique** (source `trial`, posée par `start_trial`), y compris
+/// pendant la grâce qui suit sa fin : le passage en grâce (`set_status` sans source) garde la source
+/// `trial`. Un « essai » posé par l'admin (`subs set --status trial`, case de `/accounts`) porte la
+/// source `manual` : c'est une décision de l'admin, gérée à la main dès le départ (aucun rappel, une
+/// information à l'échéance) — sinon il recevait les rappels « t'abonner » puis, passé en grâce avec la
+/// source `manual`, n'était plus jamais suspendu (2026-10-08). Un essai prolongé par l'admin après sa
+/// fin redevient « actif » (`admin_extend`) : c'est alors aussi une décision de l'admin.
+pub fn is_trial(s: &Subscriber) -> bool {
+    s.source == "trial" && matches!(s.status, Status::Trial | Status::Grace)
+}
+
+/// Fiche gérée à la main par l'admin (2026-10-08) : ni essai, ni abonnement PayPal lié. Source manuelle,
+/// import (CSV ou compte trouvé sans abonnement), offert avec ou sans échéance, exempté, à qualifier :
+/// homelabd ne voit aucun paiement pour elles, il ne les suspend donc jamais et ne leur écrit jamais.
+/// Une fiche liée à PayPal le reste même arrêtée chez PayPal (rappels avec lien, grâce, suspension).
+pub fn managed_by_hand(s: &Subscriber) -> bool {
+    s.paypal_sub_id.is_none() && !is_trial(s)
+}
+
+/// Fiche gérée à la main dont l'échéance est passée : `/accounts` l'affiche « à gérer (échéance passée) ».
+/// Seuls les statuts qui portent une échéance comptent (actif, grâce, offert, essai posé par l'admin) ;
+/// un exempté ou un « à qualifier » n'en a pas de sens.
+pub fn hand_due(s: &Subscriber, now: i64) -> bool {
+    managed_by_hand(s)
+        && matches!(
+            s.status,
+            Status::Active | Status::Grace | Status::Offered | Status::Trial
+        )
+        && s.expires_at.is_some_and(|e| now >= e)
+}
+
+/// Un événement de l'historique est-il montré au membre dans « Mon compte » ? Ni les événements PayPal
+/// bruts, ni la note « échéance à gérer à la main » (`due_noted`, 2026-10-08), qui s'adresse à l'admin.
+pub fn member_visible(kind: &str) -> bool {
+    !matches!(kind, "paypal_event" | "due_noted")
+}
+
 /// Décisions pures pour une fiche à l'instant `now`.
 pub fn decide(s: &Subscriber, now: i64, cfg: &SubsConfig) -> Vec<Action> {
     let mut out = Vec::new();
@@ -238,6 +289,14 @@ pub fn decide(s: &Subscriber, now: i64, cfg: &SubsConfig) -> Vec<Action> {
         // « offert » avec une échéance = cadeau limité dans le temps, traité comme un abonnement
         Status::Trial | Status::Active | Status::Grace | Status::Offered => {}
         _ => return out,
+    }
+    // 2026-10-08 : hors essai et hors PayPal, l'admin gère à la main. Ni rappel, ni grâce, ni
+    // suspension : à l'échéance, une information à l'admin, une fois par échéance.
+    if managed_by_hand(s) {
+        if hand_due(s, now) && s.due_noted != Some(exp) {
+            out.push(Action::ManualDue);
+        }
+        return out;
     }
     let auto = auto_renews(s);
     // prélèvement automatique : l'échéance est la date de facturation annoncée par PayPal, qui
@@ -528,7 +587,8 @@ CREATE TABLE IF NOT EXISTS subscribers (
   reminded INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL,
   paypal_status TEXT,
-  paypal_paid_at INTEGER
+  paypal_paid_at INTEGER,
+  due_noted INTEGER
 );
 CREATE INDEX IF NOT EXISTS subscribers_paypal ON subscribers(paypal_sub_id);
 CREATE TABLE IF NOT EXISTS events (
@@ -558,9 +618,14 @@ CREATE TABLE IF NOT EXISTS referral_credits (
 
 /// Colonnes ajoutées après la création de la table (2026-10-07), posées à l'ouverture d'une base plus
 /// ancienne. Un ancien binaire les ignore (liste de colonnes explicite).
-const ADDED_COLUMNS: &[(&str, &str)] = &[("paypal_status", "TEXT"), ("paypal_paid_at", "INTEGER")];
+/// `due_noted` : 2026-10-08 (fiches gérées à la main).
+const ADDED_COLUMNS: &[(&str, &str)] = &[
+    ("paypal_status", "TEXT"),
+    ("paypal_paid_at", "INTEGER"),
+    ("due_noted", "INTEGER"),
+];
 
-const COLS: &str = "user_id, username, status, starts_at, expires_at, source, paypal_sub_id, paypal_email, referral_code, referred_by, referral_credited, note, reminded, updated_at, paypal_status, paypal_paid_at";
+const COLS: &str = "user_id, username, status, starts_at, expires_at, source, paypal_sub_id, paypal_email, referral_code, referred_by, referral_credited, note, reminded, updated_at, paypal_status, paypal_paid_at, due_noted";
 
 fn row_to_sub(r: &rusqlite::Row<'_>) -> rusqlite::Result<Subscriber> {
     let status: String = r.get(2)?;
@@ -581,6 +646,7 @@ fn row_to_sub(r: &rusqlite::Row<'_>) -> rusqlite::Result<Subscriber> {
         updated_at: r.get(13)?,
         paypal_status: r.get(14)?,
         paypal_paid_at: r.get(15)?,
+        due_noted: r.get(16)?,
     })
 }
 
@@ -752,6 +818,17 @@ impl SubStore {
             params![user_id, 1i64 << day.min(62), now],
         )?;
         Ok(())
+    }
+
+    /// L'admin a été prévenu de l'échéance `exp` d'une fiche gérée à la main : noté sur la fiche (une
+    /// information par échéance) et dans l'historique (événement `due_noted`, que « Mon compte » ne
+    /// montre pas au membre).
+    pub fn note_due(&self, user_id: &str, exp: i64, detail: &str, now: i64) -> Result<()> {
+        self.db().execute(
+            "UPDATE subscribers SET due_noted = ?2, updated_at = ?3 WHERE user_id = ?1",
+            params![user_id, exp, now],
+        )?;
+        self.log(user_id, "due_noted", detail, "cycle", now)
     }
 
     pub fn set_note(&self, user_id: &str, note: &str, now: i64) -> Result<()> {
@@ -1125,6 +1202,7 @@ mod tests {
             updated_at: 0,
             paypal_status: None,
             paypal_paid_at: None,
+            due_noted: None,
         }
     }
 
@@ -1138,54 +1216,321 @@ mod tests {
         }
     }
 
+    /// Fiche liée à un abonnement PayPal arrêté chez PayPal (annulé) : plus de prélèvement, rappels
+    /// avec lien, grâce puis suspension.
+    fn stopped(status: Status, expires_in_days: Option<f64>) -> Subscriber {
+        Subscriber {
+            paypal_status: Some("CANCELLED".into()),
+            ..paypal(status, expires_in_days)
+        }
+    }
+
+    /// Essai de l'inscription publique (commencé il y a longtemps : les paliers de rappel tombent).
+    fn trial(status: Status, expires_in_days: Option<f64>) -> Subscriber {
+        Subscriber {
+            source: "trial".into(),
+            starts_at: NOW - 60 * DAY,
+            ..sub(status, expires_in_days)
+        }
+    }
+
     const NOW: i64 = 1_000_000;
 
     #[test]
     fn reminders_then_grace_then_suspend() {
+        // abonnement PayPal arrêté chez PayPal : le cycle complet, comme avant le 2026-10-08
         let c = cfg();
-        assert_eq!(decide(&sub(Status::Active, Some(20.0)), NOW, &c), vec![]);
         assert_eq!(
-            decide(&sub(Status::Active, Some(6.5)), NOW, &c),
+            decide(&stopped(Status::Active, Some(20.0)), NOW, &c),
+            vec![]
+        );
+        assert_eq!(
+            decide(&stopped(Status::Active, Some(6.5)), NOW, &c),
             vec![Action::Remind(7)]
         );
         assert_eq!(
-            decide(&sub(Status::Active, Some(0.5)), NOW, &c),
+            decide(&stopped(Status::Active, Some(0.5)), NOW, &c),
             vec![Action::Remind(1)]
         );
-        let mut s = sub(Status::Active, Some(0.5));
+        let mut s = stopped(Status::Active, Some(0.5));
         s.reminded = 1 << 1;
         assert_eq!(decide(&s, NOW, &c), vec![]);
         assert_eq!(
-            decide(&sub(Status::Active, Some(-1.0)), NOW, &c),
+            decide(&stopped(Status::Active, Some(-1.0)), NOW, &c),
             vec![Action::ToGrace]
         );
-        assert_eq!(decide(&sub(Status::Grace, Some(-1.0)), NOW, &c), vec![]);
+        assert_eq!(decide(&stopped(Status::Grace, Some(-1.0)), NOW, &c), vec![]);
         assert_eq!(
-            decide(&sub(Status::Grace, Some(-3.0)), NOW, &c),
+            decide(&stopped(Status::Grace, Some(-3.0)), NOW, &c),
             vec![Action::Suspend]
         );
         assert_eq!(
-            decide(&sub(Status::Active, Some(-10.0)), NOW, &c),
+            decide(&stopped(Status::Active, Some(-10.0)), NOW, &c),
             vec![Action::Suspend]
         );
     }
 
     #[test]
-    fn exempt_unknown_suspended_never_touched_offered_only_with_expiry() {
+    fn exempt_unknown_suspended_never_touched() {
         let c = cfg();
         for st in [Status::Exempt, Status::Unknown, Status::Suspended] {
-            assert_eq!(decide(&sub(st, Some(-30.0)), NOW, &c), vec![], "{st:?}");
+            for exp in [None, Some(-30.0), Some(0.5)] {
+                assert_eq!(decide(&sub(st, exp), NOW, &c), vec![], "{st:?} {exp:?}");
+                assert!(!hand_due(&sub(st, exp), NOW), "{st:?} {exp:?}");
+            }
+            // même lié à PayPal : un exempté, un « à qualifier » ou un suspendu n'est pas suivi
+            assert_eq!(decide(&stopped(st, Some(-30.0)), NOW, &c), vec![], "{st:?}");
         }
+        assert!(managed_by_hand(&sub(Status::Exempt, None)));
+        assert!(managed_by_hand(&sub(Status::Unknown, None)));
         assert_eq!(decide(&sub(Status::Active, None), NOW, &c), vec![]);
         assert_eq!(decide(&sub(Status::Offered, None), NOW, &c), vec![]);
-        assert_eq!(
-            decide(&sub(Status::Offered, Some(-30.0)), NOW, &c),
-            vec![Action::Suspend]
+        assert!(!hand_due(&sub(Status::Offered, None), NOW));
+    }
+
+    /// Fiche gérée à la main (2026-10-08) : jamais de rappel au membre, de grâce ni de suspension, quel
+    /// que soit le délai ; une seule information à l'admin par échéance.
+    fn assert_hand_managed(make: impl Fn(Option<f64>) -> Subscriber, what: &str) {
+        let c = cfg();
+        // avant l'échéance, y compris aux paliers J-7 et J-1 : rien
+        for d in [40.0, 20.0, 7.0, 6.5, 1.0, 0.5, 0.01] {
+            let s = make(Some(d));
+            assert!(managed_by_hand(&s), "{what} J-{d}");
+            assert_eq!(decide(&s, NOW, &c), vec![], "{what} J-{d}");
+            assert!(!hand_due(&s, NOW), "{what} J-{d}");
+        }
+        // échéance atteinte, puis bien au-delà de la grâce : une information, jamais de suspension
+        for d in [0.0, -1.0, -3.0, -3.5, -10.0, -400.0] {
+            let s = make(Some(d));
+            assert_eq!(decide(&s, NOW, &c), vec![Action::ManualDue], "{what} J+{d}");
+            assert!(hand_due(&s, NOW), "{what} J+{d}");
+            // l'admin a été prévenu de cette échéance : plus rien
+            let noted = Subscriber {
+                due_noted: s.expires_at,
+                ..s.clone()
+            };
+            assert_eq!(decide(&noted, NOW, &c), vec![], "{what} J+{d} prévenu");
+            assert!(hand_due(&noted, NOW), "{what} J+{d} reste « à gérer »");
+            // nouvelle échéance (prolongation, nouvelle décision), passée à son tour : nouvelle information
+            let again = Subscriber {
+                due_noted: s.expires_at.map(|e| e - 30 * DAY),
+                ..s
+            };
+            assert_eq!(
+                decide(&again, NOW, &c),
+                vec![Action::ManualDue],
+                "{what} J+{d} autre échéance"
+            );
+        }
+        // des rappels déjà partis avant le 2026-10-08 ne changent rien
+        let mut s = make(Some(-5.0));
+        s.reminded = (1 << 7) | (1 << 1);
+        assert_eq!(decide(&s, NOW, &c), vec![Action::ManualDue], "{what}");
+    }
+
+    #[test]
+    fn manual_active_is_never_reminded_nor_suspended() {
+        assert_hand_managed(|e| sub(Status::Active, e), "actif manuel");
+        // « Actif » posé sur un compte importé (prolongation d'un « à qualifier ») : pareil
+        assert_hand_managed(
+            |e| Subscriber {
+                source: "import".into(),
+                ..sub(Status::Active, e)
+            },
+            "actif importé",
         );
+        // essai prolongé par l'admin après sa fin : redevenu « actif », décision de l'admin
+        assert_hand_managed(|e| trial(Status::Active, e), "essai prolongé");
+    }
+
+    #[test]
+    fn offered_with_expiry_is_never_reminded_nor_suspended() {
+        assert_hand_managed(|e| sub(Status::Offered, e), "offert pour N jours");
+    }
+
+    #[test]
+    fn manual_fiche_left_in_grace_by_the_old_cycle_is_never_suspended() {
+        // passée en grâce avant le 2026-10-08 : elle reste active, l'admin est prévenu une fois
+        assert_hand_managed(|e| sub(Status::Grace, e), "grâce manuelle");
+    }
+
+    #[test]
+    fn trials_keep_reminders_grace_and_suspension() {
+        let c = cfg();
+        assert!(is_trial(&trial(Status::Trial, Some(3.0))));
+        assert!(!managed_by_hand(&trial(Status::Trial, Some(3.0))));
         assert_eq!(
-            decide(&sub(Status::Offered, Some(0.5)), NOW, &c),
+            decide(&trial(Status::Trial, Some(0.5)), NOW, &c),
             vec![Action::Remind(1)]
         );
+        assert_eq!(
+            decide(&trial(Status::Trial, Some(-0.1)), NOW, &c),
+            vec![Action::ToGrace]
+        );
+        // la grâce d'un essai garde sa source : toujours un essai, suspendu à la fin de la grâce
+        let grace = trial(Status::Grace, Some(-1.0));
+        assert!(is_trial(&grace) && !managed_by_hand(&grace));
+        assert_eq!(decide(&grace, NOW, &c), vec![]);
+        assert_eq!(
+            decide(&trial(Status::Grace, Some(-3.0)), NOW, &c),
+            vec![Action::Suspend]
+        );
+        assert!(!hand_due(&trial(Status::Grace, Some(-3.0)), NOW));
+        // essai posé par l'admin (`subs set --status trial`, source manuelle) : décision de l'admin,
+        // gérée à la main (2026-10-08) — ni rappel « t'abonner », ni grâce, ni suspension
+        let by_admin = |e| Subscriber {
+            starts_at: NOW - 60 * DAY,
+            ..sub(Status::Trial, e)
+        };
+        assert!(!is_trial(&by_admin(Some(0.5))));
+        assert_hand_managed(by_admin, "essai posé par l'admin");
+        // une grâce sans la source `trial` n'est pas celle d'un essai (fiche passée en grâce par l'ancien
+        // cycle) : gérée à la main
+        assert!(!is_trial(&sub(Status::Grace, Some(-1.0))));
+    }
+
+    /// Rejoue le cycle horaire sur une fiche du magasin, en appliquant chaque action comme `run_cycle`
+    /// (rappel noté, passage en grâce sans changer la source, suspension, information notée), de
+    /// `from` à `to`. Renvoie les actions et leur heure.
+    fn replay(st: &SubStore, uid: &str, from: i64, to: i64) -> Vec<(i64, Action)> {
+        let c = cfg();
+        let mut seen = Vec::new();
+        let mut t = from;
+        while t <= to {
+            let s = st.get(uid).unwrap().unwrap();
+            for a in decide(&s, t, &c) {
+                match a {
+                    Action::Remind(d) | Action::RenewalNotice(d) => {
+                        st.set_reminded(uid, d, t).unwrap()
+                    }
+                    Action::ToGrace => st
+                        .set_status(uid, Status::Grace, None, None, "cycle", "grâce", t)
+                        .unwrap(),
+                    Action::Suspend => st
+                        .set_status(uid, Status::Suspended, Some(None), None, "cycle", "fin", t)
+                        .unwrap(),
+                    Action::ManualDue => st
+                        .note_due(uid, s.expires_at.unwrap(), "échéance", t)
+                        .unwrap(),
+                }
+                seen.push((t, a));
+            }
+            t += 3600;
+        }
+        seen
+    }
+
+    #[test]
+    fn trial_paths_hour_by_hour() {
+        let c = cfg();
+        let grace = c.grace_days as i64 * DAY;
+        // essai de l'inscription publique (comme `start_trial`) : J-1, grâce à l'échéance, suspension à
+        // la fin de la grâce — le comportement d'avant le 2026-10-08, inchangé
+        let st = SubStore::open_in_memory().unwrap();
+        let exp = NOW + 7 * DAY;
+        st.ensure("pub", "membre", Status::Trial, Some(exp), "trial", NOW)
+            .unwrap();
+        let seen = replay(&st, "pub", NOW, exp + grace + 30 * DAY);
+        let kinds: Vec<&Action> = seen.iter().map(|(_, a)| a).collect();
+        assert_eq!(
+            kinds,
+            vec![&Action::Remind(1), &Action::ToGrace, &Action::Suspend]
+        );
+        assert!(
+            seen[1].0 >= exp && seen[1].0 < exp + 3600,
+            "grâce à l'échéance"
+        );
+        assert!(
+            seen[2].0 >= exp + grace && seen[2].0 < exp + grace + 3600,
+            "suspension à la fin de la grâce"
+        );
+        let s = st.get("pub").unwrap().unwrap();
+        assert_eq!((s.status, s.source.as_str()), (Status::Suspended, "trial"));
+
+        // essai posé par l'admin (comme `admin_set(Status::Trial)` : source `manual`) : aucun rappel,
+        // aucune grâce, aucune suspension ; une information à l'admin à l'échéance, une seule
+        let st = SubStore::open_in_memory().unwrap();
+        st.ensure("adm", "membre", Status::Unknown, None, "import", NOW)
+            .unwrap();
+        st.set_status(
+            "adm",
+            Status::Trial,
+            Some(Some(exp)),
+            Some("manual"),
+            "admin",
+            "décision admin",
+            NOW,
+        )
+        .unwrap();
+        let seen = replay(&st, "adm", NOW, exp + grace + 30 * DAY);
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].1, Action::ManualDue);
+        assert!(seen[0].0 >= exp && seen[0].0 < exp + 3600);
+        let s = st.get("adm").unwrap().unwrap();
+        assert_eq!((s.status, s.due_noted), (Status::Trial, Some(exp)));
+        assert!(hand_due(&s, exp + grace + 30 * DAY), "affichée « à gérer »");
+    }
+
+    #[test]
+    fn manual_active_hour_by_hour_is_never_reminded_nor_suspended() {
+        // « Actif pour 30 jours » posé par l'admin (`admin_set`) : rejoué heure par heure jusqu'à deux
+        // mois après l'échéance, une seule action en tout (l'information à l'admin)
+        let st = SubStore::open_in_memory().unwrap();
+        let exp = NOW + 30 * DAY;
+        st.ensure("m", "membre", Status::Unknown, None, "import", NOW)
+            .unwrap();
+        st.set_status(
+            "m",
+            Status::Active,
+            Some(Some(exp)),
+            Some("manual"),
+            "admin",
+            "décision admin",
+            NOW,
+        )
+        .unwrap();
+        let seen = replay(&st, "m", NOW, exp + 60 * DAY);
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].1, Action::ManualDue);
+        let s = st.get("m").unwrap().unwrap();
+        assert_eq!((s.status, s.reminded), (Status::Active, 0));
+    }
+
+    #[test]
+    fn paypal_linked_fiches_keep_their_cycle() {
+        let c = cfg();
+        // abonnement actif : information sans lien, marge, grâce, suspension
+        let active = paypal(Status::Active, Some(6.5));
+        assert!(!managed_by_hand(&active));
+        assert_eq!(decide(&active, NOW, &c), vec![Action::RenewalNotice(7)]);
+        assert_eq!(
+            decide(&paypal(Status::Active, Some(-10.0)), NOW, &c),
+            vec![Action::Suspend]
+        );
+        assert!(!hand_due(&paypal(Status::Active, Some(-10.0)), NOW));
+        // abonnement arrêté chez PayPal (annulé, suspendu, expiré, introuvable) : rappels avec lien
+        for st in ["CANCELLED", "SUSPENDED", "EXPIRED", PAYPAL_NOT_FOUND] {
+            let s = Subscriber {
+                paypal_status: Some(st.into()),
+                ..paypal(Status::Active, Some(0.5))
+            };
+            assert!(!managed_by_hand(&s), "{st}");
+            assert_eq!(decide(&s, NOW, &c), vec![Action::Remind(1)], "{st}");
+            let s = Subscriber {
+                expires_at: Some(NOW - 4 * DAY),
+                ..s
+            };
+            assert_eq!(decide(&s, NOW, &c), vec![Action::Suspend], "{st}");
+            assert!(!hand_due(&s, NOW), "{st}");
+        }
+        // décision de l'admin sur une fiche liée (offert pour N jours, source manuelle) : le lien PayPal
+        // décide, comme avant
+        let offered = Subscriber {
+            source: "manual".into(),
+            ..stopped(Status::Offered, Some(-10.0))
+        };
+        assert!(!managed_by_hand(&offered));
+        assert_eq!(decide(&offered, NOW, &c), vec![Action::Suspend]);
     }
 
     #[test]
@@ -1316,16 +1661,20 @@ mod tests {
             s.expires_at = Some(NOW - 3600);
             assert_eq!(decide(&s, NOW, &c), vec![Action::ToGrace], "{st}");
         }
-        // sans abonnement lié : rappels avec lien, comme avant
+        // sans abonnement lié : jamais de renouvellement automatique (et, depuis le 2026-10-08, géré à
+        // la main : aucun rappel)
         assert!(!auto_renews(&sub(Status::Active, Some(6.5))));
+        assert_eq!(decide(&sub(Status::Active, Some(6.5)), NOW, &c), vec![]);
     }
 
     #[test]
     fn trial_reminder_never_right_after_signup() {
         let c = cfg();
+        // essai de l'inscription publique (source `trial`, comme `start_trial`)
         let trial = |starts: i64, days: i64| Subscriber {
             starts_at: starts,
             expires_at: Some(starts + days * DAY),
+            source: "trial".into(),
             ..sub(Status::Trial, None)
         };
         // inscription il y a une heure, essai de 7 jours : pas de J-7
@@ -1341,10 +1690,10 @@ mod tests {
             decide(&trial(NOW - 15 * DAY - 3600, 22), NOW, &c),
             vec![Action::Remind(7)]
         );
-        // un abonnement n'est pas concerné
+        // un abonnement (ici PayPal arrêté, qui garde les rappels) n'est pas concerné
         let active = Subscriber {
             starts_at: NOW - 3600,
-            ..sub(Status::Active, Some(6.5))
+            ..stopped(Status::Active, Some(6.5))
         };
         assert_eq!(decide(&active, NOW, &c), vec![Action::Remind(7)]);
     }
@@ -1631,9 +1980,64 @@ mod tests {
             (Some("I-AAAAAAAAAA11"), None, None)
         );
         assert!(auto_renews(&s));
+        assert_eq!(s.due_noted, None);
         st.set_paypal_state("id1", Some(PAYPAL_ACTIVE), Some(7), 2)
             .unwrap();
         assert_eq!(st.get("id1").unwrap().unwrap().paypal_paid_at, Some(7));
+    }
+
+    #[test]
+    fn a_database_of_2026_10_07_gets_due_noted() {
+        // colonnes PayPal déjà là, `due_noted` absente : posée à l'ouverture, les fiches sont relues
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE subscribers (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, status TEXT NOT NULL, starts_at INTEGER NOT NULL, expires_at INTEGER, source TEXT NOT NULL DEFAULT 'manual', paypal_sub_id TEXT, paypal_email TEXT, referral_code TEXT NOT NULL UNIQUE, referred_by TEXT, referral_credited INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '', reminded INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, paypal_status TEXT, paypal_paid_at INTEGER);
+             INSERT INTO subscribers (user_id, username, status, starts_at, expires_at, source, referral_code, updated_at) VALUES ('id1', 'Alice', 'active', 1, 99, 'manual', 'ABCDEFGH', 1);",
+        )
+        .unwrap();
+        let st = SubStore::init(conn).unwrap();
+        let s = st.get("id1").unwrap().unwrap();
+        assert_eq!(
+            (s.status, s.expires_at, s.due_noted),
+            (Status::Active, Some(99), None)
+        );
+        assert_eq!(decide(&s, 100, &cfg()), vec![Action::ManualDue]);
+    }
+
+    #[test]
+    fn due_noted_is_kept_once_per_expiry() {
+        let c = cfg();
+        let st = SubStore::open_in_memory().unwrap();
+        st.ensure("id1", "Alice", Status::Unknown, None, "import", NOW)
+            .unwrap();
+        st.set_status(
+            "id1",
+            Status::Active,
+            Some(Some(NOW - DAY)),
+            Some("manual"),
+            "admin",
+            "décision admin",
+            NOW - 31 * DAY,
+        )
+        .unwrap();
+        let s = st.get("id1").unwrap().unwrap();
+        assert_eq!(decide(&s, NOW, &c), vec![Action::ManualDue]);
+        st.note_due("id1", NOW - DAY, "échéance atteinte", NOW)
+            .unwrap();
+        let s = st.get("id1").unwrap().unwrap();
+        assert_eq!(s.due_noted, Some(NOW - DAY));
+        assert_eq!(decide(&s, NOW + 10 * DAY, &c), vec![], "une seule fois");
+        let last = &st.history("id1", 1).unwrap()[0];
+        assert_eq!(last.kind, "due_noted");
+        // note pour l'admin : jamais montrée au membre dans « Mon compte »
+        assert!(!member_visible(&last.kind));
+        assert!(!member_visible("paypal_event"));
+        assert!(member_visible("status") && member_visible("extended"));
+        // prolongation par l'admin : nouvelle échéance, nouvelle information quand elle passe
+        let new = st.extend("id1", 30, "admin", "test", NOW).unwrap();
+        let s = st.get("id1").unwrap().unwrap();
+        assert_eq!(decide(&s, NOW, &c), vec![]);
+        assert_eq!(decide(&s, new, &c), vec![Action::ManualDue]);
     }
 
     #[test]

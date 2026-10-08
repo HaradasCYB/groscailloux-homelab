@@ -653,6 +653,8 @@ async fn accounts_html(
                 accounts_page::SubInfo {
                     status: s.status.as_str().to_string(),
                     label: s.status.label().to_string(),
+                    // hors essai et hors PayPal, échéance passée : l'admin gère à la main (2026-10-08)
+                    hand_due: subscriptions::hand_due(&s, now),
                     expires: s
                         .expires_at
                         .map(subscription_ops::date_text)
@@ -1777,6 +1779,7 @@ mod tests {
             updated_at: 0,
             paypal_status: Some(subscriptions::PAYPAL_ACTIVE.into()),
             paypal_paid_at: None,
+            due_noted: None,
         };
         let k = subscriptions::premium_link_key("secret", "john");
         assert!(premium_deja(Some("secret"), "john", Some(&k), |_| Some(
