@@ -29,10 +29,20 @@ journalctl -u homelabd -f
 
 - **Secrets** : uniquement dans `.env`. Ne jamais mettre une valeur en dur dans compose, TOML,
   code, scripts ou docs ; ne jamais coller `.env`, `backups/` ou une config de service dans un
-  outil externe. Les scripts `scripts/*.sh` restants sourcent `.env`.
+  outil externe. Les scripts `scripts/*.sh` restants sourcent `.env`. `backups/` : rien de lisible par
+  « autres » (07/10, 48 480 entrées corrigées) ; root y crée en 644, donc après un lot :
+  `sudo find /opt/homelab/backups -perm -o+r ! -type l -exec chmod o-rwx {} +`. `npm/data/database.sqlite.bak-*`
+  (mots de passe des listes d'accès en clair) est en 600 root ; `npm/data` reste en 755 (homelabd lit ses
+  journaux). Une seule clé API Jellyfin (« Jellyseerr » = `JELLYFIN_API_KEY`) : « claude-setup » révoquée le 07/10.
 - **Images** : pinnées `tag@sha256`. Pour mettre à jour : nouveau tag + digest (`docker pull`
   puis `docker image inspect --format '{{index .RepoDigests 0}}'`), `up -d <svc>`, mettre
-  `diun/images.yml` en cohérence. Pas de `:latest` nu.
+  `diun/images.yml` en cohérence. Pas de `:latest` nu. **diun/images.yml** : un bloc par image, jamais de clé
+  sans `- name:` (les clés orphelines de Jackett/FlareSolverr ont rendu diun aveugle du 18/09 au 07/10) ;
+  `homelabctl check` et la tâche `diun_watch` (24 h, alerte) refusent clés en double et image du compose sans
+  entrée `repo:tag`. `sort_tags: semver` sur les tags semver purs (le tri par défaut est alphabétique : 9.5.9 passe
+  devant 13.2.3), pas sur les tags linuxserver. Formats amont (07/10) : Jellyfin 12 en `x.y`, qBittorrent
+  `5.2.4_v2.0.15-lsN`, Glances sans `v` (`4.5.4`, le digest d'un tag est celui de son index, pas celui de
+  `latest`). Un nouveau motif se teste avec un diun jetable (`DIUN_WATCH_RUNONSTARTUP=true`, sans notification).
 - **Pas de `chown -R /opt/homelab`** : npm/, homarr/ (root), grafana/ (472), guacamole/mysql (999).
 - **qBittorrent.conf** : arrêter le conteneur avant d'éditer, sinon il écrase le fichier.
 - **Jamais de purge globale** de queue ou de torrents : toute suppression est ciblée et
@@ -40,7 +50,10 @@ journalctl -u homelabd -f
 - **Une saison entière en une requête** : sans pack, `series_search` prend **une release par épisode manquant**
   dans le même lot de résultats (`choose_episodes`, plafond `max_grabs_per_season` 20), puis reprend 15 min
   après. Avant, c'était un épisode toutes les 2 h : 22 h pour une saison de 11 épisodes (BLACK TORCH, le
-  2026-09-17).
+  2026-09-17). **Jamais de pack de saison** tant qu'un épisode suivi a une date de diffusion à venir
+  (`future_episodes` : l'Arr ne voit pas les packs envoyés à qBittorrent) ; le plafond de taille d'un pack est
+  jaugé sur les manquants **datés** (`choose_sized`) : saison toute sans date ⇒ pack > `max_gb_per_episode` refusé,
+  épisodes un à un. Black Clover S02, 03/10 : pack de 51 fichiers pris pour 1 épisode diffusé.
 - **Deux clés C411, deux compteurs** (`homelab_core::indexer`) : indexers Prowlarr « C411 » et « C411 (2) »,
   `[indexers] c411_max_per_hour` = 40 **par clé** (80/h au total), `manual_reserve` 10 pour `/recherche`. Une
   clé qui répond 429 est mise de côté `cooldown_after_429_mins` (15) et la requête repart **aussitôt sur
@@ -61,7 +74,9 @@ journalctl -u homelabd -f
   VPS (sauvegarde `backups/vps-rss-off-20260918-093803/`). Le VPS garde ses fiches, ses fichiers, `torrent_import` et
   `deletion_cleanup` ; il ne prend simplement plus aucune release. Remettre `"vps"` dans `auto_sides` **ne suffit
   pas** : il faut aussi rallumer le RSS côté Arr. Jellyseerr envoie déjà tout sur la seedbox (`isDefault` sur les
-  serveurs id 1).
+  serveurs id 1). Depuis le 07/10, Sonarr et Radarr du VPS ont aussi `rssSyncInterval = 0` (96 avertissements « No
+  available indexers » par jour) : remettre le VPS en service = remettre 15 (`config/indexer`, GET puis PUT de ce seul
+  champ) **en plus** ; l'état de santé `IndexerRssCheck` en erreur est normal. Sauvegarde `backups/lot1-20261007/arrs/`.
 - **Les numéros de profil diffèrent d'une machine à l'autre** : VPS `6` = FR-friendly H.264, `7` = Anime - JAP/VOSTFR ;
   seedbox `7` = FR-friendly H.264, `8` = Anime - JAP/VOSTFR. Le 2026-09-18, les 24 séries et 46 films du VPS avaient
   été basculés sur le `7` du VPS en croyant viser FR-friendly : ils se sont retrouvés sur le profil japonais (VOSTFR
@@ -197,14 +212,41 @@ journalctl -u homelabd -f
   2026-09-19 avec l'ancien délai de 24 h). Filet : C411 limité à 25 requêtes/heure
   dans Prowlarr ; homelabd en envoie au plus 12/h pour les séries et 1/h pour les films : la clé est
   partagée avec les 4 Arrs et le 429 est tombé vers 50 requêtes/heure le 2026-09-17. Éviter les recherches interactives en rafale sur un animé.
-- **Indexeur en pause** : `indexer_unblock` lève la pause (table `IndexerStatus`, application arrêtée ~20 s,
-  base sauvegardée) une heure après le dernier échec ; au-delà de 3 fois en 24 h, mail seulement.
+- **Indexeur en pause** : `indexer_unblock` (5 min) lève la pause (table `IndexerStatus`, application arrêtée ~20 s,
+  base sauvegardée) `quiet_mins` (15) après le dernier échec ; au-delà de `max_unblocks_per_day` (10) en 24 h, alerte
+  seulement. **C411 en panne** (07/10) : avant de lever une pause C411, sonde du site (`indexer::c411_reachable`, caps
+  sans clé ni quota ; pas `c411_up`, qui lit l'état de la clé de recherche). Site en panne (503, page de maintenance
+  en 200) ⇒ rien n'est arrêté, résumé « C411 en panne : pause laissée », une alerte par incident (marqueur
+  `c411_outage` dans `state.indexer_alerts`, retiré au retour du site). Du 30/09 au 02/10 : 34 arrêts inutiles des
+  Arrs seedbox. Copies `*.homelab-*` de la seedbox purgées une fois par jour (marqueur `purge:seedbox`).
 - **Import d'un téléchargement que l'Arr n'a pas demandé** : `ManualImport` en `importMode: copy`
   (hardlink), jamais `auto` (= déplacement, le torrent perd ses fichiers) ; `GET manualimport` sans
   `downloadId` (liste vide sinon). C'est ce que fait `torrent_import`.
 - **Arrêter un service volontairement** : l'ajouter à `tasks.stack_health.ignore` dans
   `homelab.toml` (+ restart homelabd) ou désactiver la tâche, sinon `stack_health` le relance
   dans les 5 min. `guacamole` est en `restart: "no"` exprès (course au boot avec guacdb).
+- **Alertes admin (07/10, v1.20.0)** : tout passe par `alerts::admin` (mail + Discord admin), qui journalise chaque
+  envoi (« alerte envoyée », objet et canaux seulement) et le note dans `state.alerts` (`/status.html`, `homelabctl
+  status`). **Règle** : un appelant qui note « déjà signalé » ne le fait que si l'alerte est partie
+  (`alerts::delivered`), ou s'il n'existe aucun canal (`alerts::retry_later(sent, configured)`). Ce que ça couvre :
+  - tâche en échec `[alerts] fail_streak` (6) fois de suite **et** depuis `fail_minutes` (30) : une alerte, puis un
+    message à son retour ; au plus `fail_alerts_max` (3) par `fail_alerts_window_mins` (10). `RunInfo` garde
+    `last_error` (300 car.), `last_error_at`, `errors_by_day` (14 j), `fail_streak` ; `errors` est un total depuis
+    l'origine (lire la ligne ↳ de `homelabctl status`) ;
+  - capacité : `disk_pressure.alert_pct` et `seedbox_health.quota_alert_pct` (85), une alerte par franchissement
+    (`capacity_rearm_pts`) ; `stack_health` : relance **ratée**, une par service et par `alert_every_secs` ;
+  - tâches quotidiennes `cert_watch` (certificat < 21 j ou chaîne NPM → Jellyfin cassée, sondée sur 127.0.0.1:443
+    avec le nom de `JELLYFIN_PUBLIC_URL`, 3 essais à 30 s), `backup_watch` (archive > 8 j), `diun_watch` ; elles
+    passent aussi à chaque démarrage de homelabd et réalertent tant que le défaut dure ;
+  - unités root `OnFailure=homelab-alert@%n.service` (homelab-backup, homelabd-watchdog, seedbox-mount-watch,
+    jellyfin-transcodes-purge ; `scripts/homelab-alert.sh`, un message par unité et par heure). Ces minuteurs sont
+    en `LogLevelMax=notice` : seules les lignes préfixées `<5>`/`<4>` par leurs scripts restent au journal ;
+  - `/health` = battement de l'ordonnanceur : 503 `scheduler_stale` après 20 min sans aucun tour de boucle
+    (chien de garde : relance vers 26 min). Jamais de seuil par tâche (un passage lent mais légitime ferait
+    redémarrer en boucle). Version = `git describe` (build.rs).
+  Journal système versionné : `systemd/journald-homelab.conf` (2 Go, rotation quotidienne, 45 j), posé par
+  `homelabctl install`, puis `systemctl restart systemd-journald` (ne coupe aucun service). `SplitMode=uid` gardé :
+  `journalctl -u homelabd` sans sudo.
 - **Audit lecture du 2026-09-18** (v1.14.0) — les trois causes mesurées et ce qui a été fait :
   1. **Trickplay tournait 6 h chaque matin sans jamais finir** (« Cancelled after 360 minutes » à 11:30, 256 items
      sur ~1 840) et Intro Skipper jusqu'à 3 h : **506–521 Mbit/s entrants de 05 h à 08 h**, ~1,2 To/matin à
@@ -326,16 +368,34 @@ journalctl -u homelabd -f
   relancer `apply`.
 - **Abonnés (v1.18, 2026-09-20)** : `homelab_core::subscriptions` (fiches SQLite `state/subscriptions.db`, décisions pures
   `decide` testées) + `subscription_ops` (tout passage par `accounts::set_premium`) ; tâches `subscription_cycle` (1 h,
-  `cycle_dry_run = true` la première semaine) et `subscription_reconcile` (24 h) ; `[subscriptions]` dans le TOML.
-  PayPal : `PAYPAL_ENV` + `PAYPAL_*` (live) ou `PAYPAL_SANDBOX_*` dans `.env` — les identifiants fournis le 2026-09-20
-  sont ceux du **sandbox** (application « APP-9R85… ») et ont été collés dans une conversation : à régénérer, et les
-  identifiants **Live** restent à fournir ; tant que l'application est en sandbox, la page publique `/premium` garde le
-  bouton Live historique (`DONATION_*`, activation manuelle) et `/premium?test=1` montre le bouton sandbox. Webhook
+  réel depuis le 27/09) et `subscription_reconcile` (au démarrage de homelabd puis toutes les 24 h : l'heure du
+  contrôle est celle du dernier redémarrage) ; `[subscriptions]` dans le TOML.
+  PayPal : **en live** (`PAYPAL_ENV=live` + `PAYPAL_*` dans `.env` ; `PAYPAL_SANDBOX_*` pour les essais) : `/premium`
+  montre le bouton d'abonnement de l'application REST ; `DONATION_*` n'y sert plus qu'en repli si l'application
+  repasse en sandbox (`/premium?test=1` montre alors le bouton sandbox). Webhook
   `/paypal/webhook` sur l'hôte public de `/premium` (hôte NPM 20, sans liste d'accès), signature vérifiée chez PayPal,
   id dans `PAYPAL_WEBHOOK_ID` (`homelabctl subs paypal --webhook <url>` le crée). « Mon compte » = script Injector
   « Groscailloux Mon compte » → `/gc-compte/` (NPM hôte 1, base **et** `1.conf`, sauvegarde `backups/npm-20260920-gc-compte/`)
   → homelabd `/compte/`. Statut « à qualifier » = compte actif sans abonnement connu : **jamais suspendu par le cycle**,
   l'admin tranche sur `/accounts`. Aucun secret ni identifiant PayPal dans le dépôt, les journaux ou les pages.
+  **Revue du 07/10** :
+  - abonnement PayPal lié et non arrêté (`auto_renews`) : **jamais de rappel avec lien de paiement** (un clic = second
+    abonnement = deux prélèvements) ; une information J-7 sans lien ; grâce à échéance + `paypal_margin_hours` (36) ;
+    prélèvement raté ⇒ mail de suspension sans lien (mettre à jour le moyen de paiement chez PayPal) ;
+  - second abonnement d'un compte dont l'abonnement lié est ACTIVE chez PayPal : ni rattaché ni compté
+    (`Payment::Duplicate`), alerte admin une fois par jour, `/premium/activate?err=deja` ; le rembourser ou le résilier
+    **à la main** dans PayPal. La fiche garde `paypal_status` et `paypal_paid_at` ;
+  - `subscription_reconcile` n'applique qu'un paiement constaté (`last_payment` > `paypal_paid_at` + 12 h). Facturation
+    due depuis plus de 36 h sans paiement : alerte « Prélèvement PayPal en attente » (une par abonnement et par jour),
+    rien n'est prolongé. Arrêt chez PayPal : noté, accès jusqu'à l'échéance payée ;
+  - `/premium?compte=X` ne dit « déjà abonné » que pour un lien signé `&k=` (HMAC de `HOMELABD_ONBOARD_TOKEN` et du
+    compte, 16 hexa, porté par les mails) : la page publique ne révèle plus qui paie. Renouveler le jeton rend les
+    anciennes clés caduques, sans risque ;
+  - compte Jellyfin disparu : les fiches sans rien à perdre (à qualifier, suspendu ou exempté, sans échéance ni
+    PayPal) partent ; les autres, `max_orphan_removals_per_run` (3) au plus d'un coup. Au-delà, ou si Jellyfin renvoie
+    une liste vide ou illisible, **rien n'est retiré**, le cycle ne touche plus ces fiches et l'admin est prévenu
+    (événement `orphan_held`) : pour une suppression en masse voulue, relever la clé le temps d'un passage ;
+  - essai : pas de rappel J-7 dès l'inscription ; un parrainage ne date jamais un accès offert sans échéance.
 - **Lot « lecture et suivi » (v1.19, 2026-09-21)** : `playback_canary` (15 min, transcodage réel de 2 segments, alerte
   admin au premier échec, `state.canary`) ; **langue par compte** posée à l'onboarding (`[accounts] audio_language
   = "fre"`, `subtitle_language = "fre"`, `subtitle_mode = "Smart"`, `PlayDefaultAudioTrack = false`) et rattrapée le
@@ -379,7 +439,9 @@ journalctl -u homelabd -f
   la création et à l'activation, et `defaultPermissions = 160` dans Jellyseerr). Garde-fou : quota par défaut
   Jellyseerr 10 films + 10 saisons / 7 j (`defaultQuotas`, admins et gestionnaires de demandes exemptés).
   Sauvegarde d'avant : `backups/jellyseerr-settings-main-20260915-094557.json`. Une réponse de `settings/main`
-  contient la clé API : ne jamais l'afficher (filtrer les champs).
+  contient la clé API : ne jamais l'afficher (filtrer les champs). Job « Download Sync » toutes les 5 min
+  (`0 */5 * * * *`, 07/10) au lieu de chaque minute : `POST /api/v1/settings/jobs/<id>/schedule` avec
+  `{"schedule": "…"}` (`cronSchedule` → 400). Les barres d'avancement des membres viennent de homelabd, pas de ce job.
 - **Tchat des membres** (`homelab_core::chat`, API `crates/homelabd/src/chat_api.rs`, client
   `crates/homelabd/assets/chat/app.js`) : servi sous `/gc-chat/` **sur l'adresse de Jellyfin** (NPM hôte 1,
   `location ^~ /gc-chat/` → `172.18.0.1:8766/chat/` ; le `^~` est obligatoire, sinon la règle de cache
@@ -506,6 +568,11 @@ journalctl -u homelabd -f
   variable »). **Puis 720p / 4 Mbit/s** (même soir, choix de l'utilisateur) : en 1080p la conversion tournait à ~1,3× et
   chaque avance coûtait 10 à 15 s de chargement ; `MaxWidth=1280`, `MaxHeight=720`, `VideoBitrate` ≤ 4 000 000.
   Contrôle : `curl -A '…CrKey…'` avec `MaxWidth=1920` → `RESOLUTION=…x720`, `CODECS="avc1.640029,…"`, `BANDWIDTH` ≈ 4,3 M.
+  **Profil `high10` → `high`** (07/10, même bloc, après la règle du niveau, `$gc_pf` à captures `gcpp`/`gcps`, tous les
+  `CrKey`, 4K compris) : depuis le 27/09 le récepteur demande `high10` en premier, et Jellyfin annonçait alors
+  `avc1.4240xx` (Baseline) alors que ffmpeg encode en High ; le contrôle du 29/09 utilisait `h264-profile=high` et ne
+  reproduisait pas la vraie requête. Contrôle : `h264-profile=high10&h264-level=42&MaxWidth=1920` →
+  `CODECS="avc1.640029,mp4a.40.2"`. Rien ne prouve encore que ce soit la cause des gels : à valider en séance réelle.
   Plusieurs appuis rapprochés sur l'avance = autant de relances de ffmpeg (4 en 17 s vues le 29/09) : avancer d'un geste.
   « Transcode Nag » : `ExcludedClientPatterns = ["Chromecast"]` (29/09, sauvegarde `backups/transcode-nag-20260929/`) —
   ce n'était PAS la cause du blocage (vérifié : le Chromecast s'est figé pareil sans le message), gardé car le message
@@ -816,7 +883,9 @@ journalctl -u homelabd -f
 - **Animés** : bibliothèques Jellyfin « Anime » (séries) et « Films d'animation » (films), dossiers `/anime` et
   `/anime-films` (VPS), `Anime` et `Anime Movies` (seedbox), rangés par `anime_library` d'après **TMDB** (genre
   Animation + origine japonaise), jamais d'après le type « anime » de Sonarr. Forcer : tag `anime` ou `pas-anime`
-  dans l'Arr. Tout déplacement en masse hors de cette tâche : `deletion_cleanup` dans `tasks.disabled` pendant ce
+  dans l'Arr (`pas-anime`, id 4 sur le Sonarr seedbox, posé le 07/10 sur 2 fiches sans TMDB : avant, « unknown: left in
+  place » toutes les 5 min ; journaliser un inconnu une fois par jour reste à faire dans le code). Tout déplacement
+  en masse hors de cette tâche : `deletion_cleanup` dans `tasks.disabled` pendant ce
   temps. Ids Jellyfin : Anime `0c41907140d802bb58430fed7e2cd79e`, Films d'animation `bebdce85c5b682ddbce0412f41cff060`
   (dans `JELLYFIN_LIB_EXTRA` et les `EnabledFolders` des comptes ; ordre du menu `OrderedViews` : Films, Séries, Anime, Films
   d'animation, Collections, posé à la création du compte) ; Jellyseerr : les 4 bibliothèques activées,
@@ -955,11 +1024,26 @@ journalctl -u homelabd -f
   sessions**) ; un vieux lien `?token=` ouvre la session puis redirige sans jeton. La couche réinjecte le jeton **en
   interne** (requête, ou `X-Onboard-Token` pour `POST /onboard`) : les pages n'ont pas bougé. **Jamais de `token=`
   dans un lien, une redirection ou un mail** (il finissait en clair dans les journaux NPM, ~5 000 fois ; purgés le
-  2026-09-23, jetons renouvelés). La CLI garde l'en-tête. 10 échecs / 15 min par IP (dernier `X-Forwarded-For`),
-  100 au total. **IP de la maison** (`HOMELABD_ADMIN_TRUSTED_IPS` dans `.env`, dernier `X-Forwarded-For`) : session
-  admin d'office, sans formulaire, cookie posé au passage — demandé par l'admin, la connexion gênait la gestion depuis
-  Homarr. `/accounts` et `/recherche` gardent **en plus** l'auth HTTP NPM « admin-outils ». Les journaux NPM des
-  Arrs contiennent leur clé API (`access_token=` des websockets de leur interface) : normal, journaux en 750.
+  2026-09-23, jetons renouvelés). La CLI garde l'en-tête. 10 échecs / 15 min par IP (POST sans session compris),
+  100 au total (jamais pour un appel local : la CLI reste ouverte). `/accounts` et `/recherche` gardent **en plus**
+  l'auth HTTP NPM « admin-outils ». Les journaux NPM des Arrs contiennent leur clé API (`access_token=` des websockets
+  de leur interface) : normal, journaux en 750. **Portes (07/10, `client_addr.rs`)** :
+  - `X-Forwarded-For` (dernier saut) n'est cru que d'un pair TCP de `[web] trusted_proxies` (172.18.0.0/16), jamais
+    d'une adresse de l'hôte (127.0.0.1, 172.18.0.1 : testé par `bind`). Avant, `curl -H 'X-Forwarded-For: <IP
+    maison>' 127.0.0.1:8766` donnait une session admin d'un an. Les limites des pages publiques (`/inscription`,
+    `/premium/*`, `/bienvenue/renouveler`) lisaient le PREMIER élément, falsifiable : c'est maintenant le saut de NPM ;
+  - **IP de la maison** (`HOMELABD_ADMIN_TRUSTED_IPS`) : session d'office **seulement vue par NPM confirmé par
+    Docker** (`trusted_proxy_container = "npm"`, adresse relue en tâche de fond par `docker inspect --type container`
+    toutes les 60 s, et 10 s après un pair inconnu du réseau : NPM recréé). Docker muet : `X-Forwarded-For` reste la
+    clé des limites, sans session automatique (passer par `/connexion`) ; une ligne « docker inspect en échec » par
+    panne. Conteneur NPM renommé = changer la clé ;
+  - chemins d'admin (`/`, `/accounts*`, `/recherche*`, `/status*`, `/onboard`, `/connexion`, `/admin*`) : 404 si
+    `Host` n'est ni l'hôte de `ONBOARD_PUBLIC_URL` ni une adresse locale (l'hôte premium envoyait tout à homelabd sans
+    « admin-outils ») ; changer de domaine d'onboarding = changer `ONBOARD_PUBLIC_URL` ;
+  - `/admin/*` (homelabctl) : appel local sans `X-Forwarded-For` seulement, 404 sinon ; une ligne `warn` par adresse
+    et par 15 min. `POST /onboard` est fermé sans jeton configuré ;
+  - le jeton n'est jamais dans le HTML : la couche le remplace par un jeton de formulaire (HMAC) dans les pages et fait
+    l'inverse dans un POST avec session.
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par
   `homelabctl vpn`. `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
 - **Journal des versions** : tout changement visible pour les membres ou l'admin ajoute une ligne dans
@@ -990,7 +1074,17 @@ journalctl -u homelabd -f
   **0 effacerait tout**). Il gardait 3 mois et effaçait chaque nuit un jour de plus (base au 07/07 le 05/10).
 - **Compression NPM (05/10)** : l'hôte 1 a `gzip_types` js/css/json/svg (+ `gzip_proxied any`, `gzip_vary on`) dans sa
   configuration avancée (base et `1.conf`, sauvegarde `backups/npm-20261005-gzip/`) : `gzip on` de NPM ne visait que le
-  HTML, et Jellyfin ne compresse plus derrière `X-Forwarded-Proto: https` (InPlayerPreview 393 → 116 Ko).
+  HTML, et Jellyfin ne compresse plus derrière `X-Forwarded-Proto: https` (InPlayerPreview 393 → 116 Ko). Plus les listes
+  HLS (`application/vnd.apple.mpegurl`, `application/x-mpegurl`, 07/10) : un `main.m3u8` de 1,4 Mo → 44 Ko, seulement si
+  le client envoie `Accept-Encoding: gzip`, segments jamais compressés. À valider en lecture réelle (iPhone,
+  Chromecast, Tizen/webOS, AirPlay d'une télé LG).
+- **Site par défaut de NPM = « 404 Page »** (07/10) : setting `default-site` = `404` et
+  `/data/nginx/default_host/site.conf` rendu par le moteur de NPM (gabarit `/app/templates/default.conf`). L'ancien
+  serveur « Congratulations » incluait `assets.conf` (`proxy_pass` vers 127.0.0.1:80) : chaque `.js/.css/.ico` demandé
+  par l'IP nue bouclait jusqu'à « 512 worker_connections are not enough » (13 épisodes du 27/09 au 05/10, des
+  robots). Ne jamais le remettre. Retour : `backups/lot1-20261007/npm/LISEZMOI.txt`. Pour imiter NPM, rendre son
+  gabarit avec son moteur (`docker exec -w /app npm node --input-type=module`, `./lib/utils.js`,
+  `./internal/nginx.js`) plutôt que l'écrire à la main ; outil `backups/lot1-20261007/npm/apply_lot1_npm.py`.
 - **Sauvegarde d'état (`homelabctl backup`, tâche `backup`)** : tout dossier volumineux sous `/opt/homelab` doit être
   dans `[backup] excludes` — le 2026-09-20, `cache/rclone` (fichiers **creux** de plusieurs centaines de Go) a produit
   une archive de **149 Go** (au lieu de 3) et poussé le disque à 92 %. Après un nouveau dossier de cache ou de données
@@ -1062,7 +1156,16 @@ journalctl -u homelabd -f
   `scripts/seedbox/homelab-apps-watch.sh`, `@reboot` + toutes les 5 min, crontab d'avant dans
   `~/.local/state/crontab-avant-20261002.txt`) ; tâche homelabd `seedbox_health` = alerte admin après 10 min. Ports
   locaux sur la seedbox : Sonarr 16126, Radarr 16127, Bazarr 16131, Jackett 16129, FlareSolverr **172.17.0.1**:16111,
-  autobrr 16123, qBittorrent 16141.
+  autobrr 16123, qBittorrent 16141. Depuis le 07/10, `seedbox_refresh`, `monitor_sync` et `russian_search` **sautent**
+  le côté injoignable (« arr unreachable: side skipped this run », passage réussi) comme `deletion_cleanup` et
+  `torrent_import`, au lieu de ~400 erreurs pour la panne du 30/09-02/10 : `seedbox_health` reste la seule alerte.
+  `monitor_sync` : tant qu'un Sonarr est muet, l'autre ne suit aucune nouvelle saison (il peut en retirer).
+- **Arrs et Bazarr de la seedbox (07/10)** : Sonarr et Radarr journalisent en Info (debug : 25 h d'historique) ;
+  versions 4.0.20 et 6.4.4 à installer hors pic. Bazarr : fournisseur tvsubtitles retiré (403 permanents depuis
+  l'IP de l'hébergeur), `Excluded Tags` = `russe` sur Sonarr et Radarr (une fiche russe ne reçoit plus de sous-titres
+  automatiques). API Bazarr : `POST /api/system/settings` en formulaire, une clé `settings-<section>-<clé>` par valeur
+  (répétée pour une liste), sans `languages-enabled`/`languages-profiles`. `config/host` d'un Arr contient le hash
+  du mot de passe et la clé : sauvegarde en 600. Retour : `backups/lot1-20261007/arrs/ROLLBACK.sh`.
 - **Résilience (audit du 2026-10-02)** : redémarrage du VPS (propre ou forcé) → tout repart (Docker activé, 20/21
   conteneurs `unless-stopped`, Guacamole relancé par `stack_health`, montage, homelabd et minuteurs activés) ; panique
   noyau → redémarrage en 10 s (`kernel.panic = 10`). **Montage seedbox absent ou vide** : testé sur une instance
@@ -1128,7 +1231,10 @@ journalctl -u homelabd -f
   le navigateur de test qui redirige `/gc-chat/*` vers elle ; voir `backups/chat-tests-20260915/`. Comptes ordinaires temporaires (supprimés avec
   `homelabctl accounts delete`), et pour les captures, réponses d'API simulées **dans le navigateur de test**
   (interception, voir `backups/chat-tests-20260915/chatshots.js`). Une session ouverte par l'API compte dans
-  la limite de 2 appareils : supprimer puis recréer le compte de test plutôt que toucher aux appareils.
+  la limite de 2 appareils : supprimer puis recréer le compte de test plutôt que toucher aux appareils. Une instance
+  d'essai (Jellyfin…) ne reste **jamais** en marche après son banc, et sa copie de base part avec elle (`docker rm -f
+  <nom> && sudo rm -rf /var/tmp/<nom>`, ou 700 si elle doit rester) : `jellyfin12-test` a gardé jusqu'au 07/10 une
+  copie de la base de prod (49 jetons d'appareil valides) en 0644 ; elle se recrée par `prepare.sh`.
 - **Fichier fantôme dans rclone = Jellyfin bloqué** (2026-09-27) : un fichier supprimé sur la seedbox (ici l'ancien
   BLACK TORCH S01E01, remplacé par le x265) resté dans le cache de répertoires de rclone ; le `ffprobe` de Jellyfin
   qui l'ouvre ne rend **jamais** la main (ouverture SFTP bloquée, état D, `kill -9` sans effet) et garde le fichier
@@ -1219,13 +1325,34 @@ journalctl -u homelabd -f
   d'onboarding en en-tête, réponse à la fin du passage, 409 si la tâche tourne déjà) ; `--dry-run` reste local et
   n'écrit rien ; `accounts on|off|delete` passent par `POST /admin/accounts` (les droits Jellyseerr à restaurer sont
   dans l'état). Avant, la CLI écrasait l'état du daemon et inversement. Écriture d'état : `fsync` avant le renommage.
-  Une tâche ne tourne jamais deux fois en même temps (verrou dans `scheduler::run_once`).
+  Une tâche ne tourne jamais deux fois en même temps (verrou dans `scheduler::run_once`). **Écriture (07/10)** : état
+  sérialisé en mémoire puis écrit en UN appel par un écrivain unique numéroté (jamais un état plus ancien après un plus
+  récent ; avant : ~38 000 `write` de 4 octets par sauvegarde, 4,2 Go/j). `state.update` = durable (rend la main une
+  fois écrit) ; `state.update_lazy` = simple tenue (début d'un passage, fin d'un passage « calme ») écrite avec la
+  sauvegarde suivante, au plus tard à la première mutation après 60 s ou à l'arrêt (`flush`) : jamais de donnée qui
+  compte en lazy. Le fichier peut donc retarder sur la mémoire, et `homelabctl status` montrer « running » pour une
+  tâche déjà finie ; `/status.html` lit la mémoire. Passage calme = réussi, sans action, résumé identique au précédent :
+  `run_done` en `debug` (`RUST_LOG=debug` pour tout voir) ; journal de homelabd passé de 4 344 à 312 lignes sur la même
+  fenêtre de 9 h (08/10).
 - **Deux sessions dans le dépôt** : le binaire installé doit être construit depuis **l'arbre de travail tel quel**
   (`cargo build … -j4` dans `/opt/homelab`), jamais depuis un arbre indexé/worktree qui exclut les fichiers non
   validés d'une autre session — le 2026-09-19, cinq installs ainsi construits ont retiré les routes `/premium`
   (pages non validées d'une autre session) du binaire en service, 404 sur le lien public jusqu'à ce que
   l'utilisateur le remarque. Le worktree ne sert qu'à `fmt/clippy/test` de ce qu'on committe. Après un restart,
-  `git status --short` puis `curl 127.0.0.1:8766/<route de l'autre session>`.
+  `git status --short` puis `curl 127.0.0.1:8766/<route de l'autre session>`. Une cible cargo (`CARGO_TARGET_DIR`)
+  **par worktree** : partagée, cargo juge les crates « à jour » par date avec un hachage indépendant du chemin et
+  reprend les artefacts d'un autre arbre (tests d'un autre agent, symboles absents) ; copier une cible existante
+  (`cp -a`) pour garder les dépendances.
+- **Journaliser une erreur = `error = format!("{e:#}")`**, jamais `%e`, qui n'en donne que le premier niveau (depuis le
+  08/10, `e8a5d3f`). Une erreur reqwest dont l'URL porte un secret (webhook Discord, `apikey=`, `ApiKey=`, lien
+  d'indexer) passe d'abord par `.map_err(reqwest::Error::without_url)`, sinon `{e:#}` l'écrit en clair dans le journal,
+  dans `last_error` de l'état et dans les alertes. Les clients qui passent leur clé en en-tête gardent l'URL.
+- **Clients HTTP : un GET coupé est rejoué une fois** (`SendRetry::send_retry`, 07/10) : seulement sur une coupure de
+  transport (`is_request`/`is_connect`, jamais un délai dépassé, jamais un POST/PUT/DELETE), journal « GET coupé :
+  nouvelle tentative (une seule) » avec la cause. Les GET à effet (recherche ou téléchargement Prowlarr, `release` d'un
+  Arr, `get_bytes` du canari) restent en `.send()` : tout nouveau GET à effet aussi. Jellyseerr (Node, keep-alive 5 s)
+  a son client avec `pool_idle_timeout` 4 s. Cause vue le 08/10 sur la seedbox : « connection closed before message
+  completed » (course au keep-alive), à traiter par client si elle revient souvent.
 - **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans
   `ReadWritePaths` de `systemd/homelabd.service` (sinon « Read-only file system », vu le 2026-09-17).
 - Jellyfin 10.11 : une bibliothèque supprimée (API ou UI) reste dans les vues des utilisateurs,
@@ -1252,11 +1379,18 @@ journalctl -u homelabd -f
   est : qBit serait public sans mot de passe) ; seulement `127.0.0.0/8` et `172.18.0.1/32`.
   Garder `web_ui_reverse_proxy_enabled` (proxies de confiance `172.18.0.0/16`) : sans ça, qBit voit
   toutes les connexions venir de NPM et un ban (5 échecs, 1 h) bloque l'accès web pour tout le monde
-  (arrivé le 2026-09-14). Lever un ban : redémarrer qbittorrent (bans en mémoire).
+  (arrivé le 2026-09-14). Lever un ban : redémarrer qbittorrent (bans en mémoire). File d'attente coupée sur le VPS
+  **et** la seedbox (`queueing_enabled = false`, VPS le 07/10 par `setPreferences`) : avec `max_active_uploads` 10,
+  10 torrents `stalledUP` gardaient les places et 12 torrents C411 restaient `queuedUP` sans partager. **qBittorrent
+  5.2** nomme son cookie `QBT_SID_<port>` : le client de homelabd l'accepte comme `SID` ; avant de monter un
+  qBittorrent en 5.2, Sonarr ≥ 4.0.18 et Radarr ≥ 6.2.1 (ceux du VPS d'abord ; la seedbox est compatible).
 - **NPM** : pas d'identifiants admin NPM ici ; la liste d'accès « admin-outils » (id 2) a été écrite en
   imitant NPM (base + `npm/data/access/2` + bloc dans `location /` de chaque site), sauvegarde
   `backups/npm-20260912-212419/`. Tout nouvel outil d'admin exposé : même liste. Ne jamais afficher
-  les colonnes `password` des tables NPM ou Homarr.
+  les colonnes `password` des tables NPM ou Homarr. Juste après un `nginx -s reload`, la 1re requête peut encore être
+  servie par un ancien worker : contrôler une seconde après, jamais sur la seule première requête.
+- **Compter les ffmpeg** : `pgrep -fc '[j]ellyfin-ffmpeg/ffmpeg'` (avec crochets) ; sans eux, `pgrep -f` compte aussi
+  le shell qui porte le motif (faux « 2 ffmpeg » vu le 07/10).
 - **Homarr** : modifier la base Homarr **arrêté** et après sauvegarde ; titres de section ≤ 20 caractères
   (sinon le tableau ne se charge plus) ; secrets d'intégration chiffrés AES-256-CBC avec
   `SECRET_ENCRYPTION_KEY` ; pings des outils protégés par NPM en URL interne (`http://sonarr:8989/ping`…).
@@ -1264,4 +1398,13 @@ journalctl -u homelabd -f
   les terminés » du client — avec 10 et 315 torrents finis sur la seedbox, les 10 envoyés étaient tous terminés
   et le widget restait vide malgré des téléchargements en cours (2026-09-19). Passé à 500 (options de l'item
   `83gkiwxp5m1hwbu9iymgj53g`, sauvegarde `backups/homarr-db-20260919-165303-downloads-limit.sqlite`).
+  **Tableau public** (`isPublic`) : Homarr sert aux anonymes les données de TOUT widget lié à une intégration (tRPC,
+  sans cookie). « Demandes récentes » y exposait les 20 dernières demandes avec le pseudo des demandeurs : déplacé le
+  07/10 sur le tableau privé « Operations ». Aucun widget de demandes, d'utilisateurs ou de sessions sur le tableau
+  public (contrôle : GET anonyme de `widget.mediaRequests.getLatestRequests` → 403) ; calendriers et Nouveautés y
+  restent, contenu non vérifié. Cadence des tâches de fond : table `cron_job_configuration`, lue au démarrage ;
+  « downloads » passée de 5 s à `* * * * *` (une session WebAPI qBittorrent par passage, ~17 000 par jour) ; retour =
+  supprimer la ligne et redémarrer Homarr. Base : `homarr/db` est à root, d'où `sudo` ; enchaîner arrêt, sauvegarde,
+  modification et démarrage en une commande (`stack_health` relance sous 5 min). Session de test :
+  `HOMARR_ADMIN_PASSWORD` (compte « groscailloux ») par `/api/auth/callback/credentials`, puis `/api/auth/signout`.
 - L'UI d'onboarding est sur l'hôte (8766) ; NPM doit cibler `172.18.0.1:8766`, pas un conteneur.

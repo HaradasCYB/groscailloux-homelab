@@ -6,8 +6,20 @@ timeout de 10 min par passage. Un mutex sérialise toute mutation de qBittorrent
 onboardings. `HOMELABD_DRY_RUN=1` (ou `--dry-run`) : aucune écriture, les tâches loggent ce
 qu'elles feraient. Les logs vont dans le journal : `journalctl -u homelabd -f`.
 
+**Journal et état (2026-10-07)** : `run_done`, `run_failed` et `run_timeout` donnent la durée (`ms`). Un passage
+**calme** (réussi, sans action, résumé identique au passage réussi précédent) écrit son `run_done` en `debug` :
+c'étaient 88 % des lignes (4 344 lignes entre 01:15 et 10:25 le 07/10, 312 le 08/10) ; `RUST_LOG=debug` pour tout
+voir. L'état est sérialisé en mémoire puis écrit en un appel par un écrivain unique ; la simple tenue (début d'un
+passage, fin d'un passage calme) part avec la sauvegarde suivante (`update_lazy`, au plus tard à la première mutation
+après 60 s, ou à l'arrêt). `/health` répond 503 `scheduler_stale` quand plus aucune boucle de tâche n'a tourné depuis
+20 min (max(2 × 600 s, plus petit intervalle + 600 s)) et donne la version (`git describe`, voir `build.rs`).
+
 `homelabctl run <tâche> [--dry-run]` exécute la même implémentation une fois ;
-`homelabctl status` lit `state/homelabd.json` (dernier passage, erreurs, items suivis).
+`homelabctl status` lit `state/homelabd.json` (dernier passage, erreurs, items suivis) : la tenue d'un passage sans
+rien de neuf y arrive dans la minute, une tâche finie peut donc y apparaître « running » ; `/status.html` lit la
+mémoire du démon. Sous chaque tâche, une ligne ↳ donne les erreurs récentes (« 2 aujourd'hui, 5 sur 7 j · dernière le
+JJ/MM HH:MM : message »), seulement si la dernière date de moins de 7 jours ou si la tâche échoue en ce moment :
+`errors` est un total depuis l'origine.
 
 Configuration : `homelab.toml` (toute clé inconnue est refusée ; `paths.downloads` doit
 exister sinon le daemon refuse de démarrer — plus jamais un watcher mort en silence).
@@ -38,6 +50,9 @@ côté Guacamole : garder l'intervalle ≥ 5 min (extension `ban` : 5 échecs / 
 `429` (throttling) est considérée non concluante : ni échec ni redémarrage.
 Pour arrêter un service volontairement : l'ajouter à `ignore` avant, sinon il sera relancé.
 Résumé : `expected=21 running=21 healthy=16 started=[] restarted=[] waiting=[] failed=[]`.
+Relance **ratée** (`up`/`restart`/`recreate` en échec, ou `post_exec` raté après la relance) : message Discord admin
+« Relance en échec », au plus un par service et par `alert_every_secs` (3600 ; mémoire `state.stack_failures`).
+Avant le 2026-10-07, seule une relance réussie prévenait.
 
 **Sonde qBittorrent vue de l'hôte** (2026-10-02) : `http://localhost:8080/api/v2/app/version`. qBittorrent partage le
 réseau de gluetun ; quand gluetun est recréé, il reste « healthy » (sa sonde interne passe) mais injoignable. Sonde en
@@ -56,13 +71,50 @@ répond pas deux fois de suite → `app-<x> start`, sans effet si elle tourne d�
 `~/.local/state/homelab-apps-watch/watch.log`, `--dry-run` pour voir. Origine : le 01/10, l'hôte de la seedbox a
 redémarré et Sonarr, Radarr, Bazarr, Jackett, FlareSolverr, autobrr et unpackerr sont restés arrêtés 16 h sans alerte.
 
+**Quota** (2026-10-07) : le quota du compte seedbox (`quota.json`, écrit par la seedbox toutes les 15 min, lu par le
+montage après un `vfs/refresh`, module `quota.rs` partagé avec `/status.html`) est dans le résumé (« quota 57 % ») ;
+alerte admin à `quota_alert_pct` (85), une par franchissement (voir « Alertes admin »). Une panne n'est notée
+« signalée » que si l'alerte est partie : sinon nouvel essai au passage suivant (l'état est écrit après l'envoi).
+
 ### Chien de garde de homelabd (hors homelabd)
 
 `systemd/homelabd-watchdog.timer` (toutes les 2 min, 5 min après le démarrage) lance en root
 `scripts/homelabd-watchdog.sh` : `/health` sans réponse 3 fois de suite (≈ 6 min) → `systemctl restart homelabd` et
 message Discord admin (webhook lu dans `.env`) ; un second message quand il répond de nouveau ; `--check` pour voir.
 homelabd est en `Restart=always` (relancé même après un arrêt « propre » imprévu) ; le chien de garde couvre le cas
-d'un homelabd vivant mais figé.
+d'un homelabd vivant mais figé : depuis le 2026-10-07, `/health` répond 503 quand l'ordonnanceur ne tourne plus
+(20 min sans tour de boucle), d'où une relance au bout d'environ 26 min. Le script écrit par `logger -p
+user.warning|notice` ; l'unité est en `LogLevelMax=notice` et sous `OnFailure=homelab-alert@%n.service`.
+
+### cert_watch — 24 h (2026-10-07)
+
+Un seul certificat Let's Encrypt (joker, défi DNS-01) sert tous les hôtes de NPM ; NPM le renouvelle seul dès J-30
+mais ne remonte rien en cas d'échec, et le canari passe par `localhost:8096` (ni NPM ni TLS). Depuis l'hôte, vers
+`connect` (`127.0.0.1:443`) avec le nom de l'hôte public de Jellyfin (`JELLYFIN_PUBLIC_URL`, jamais en dur) :
+date d'expiration du certificat présenté (connexion sans vérification, pour la lire même expiré ; décodage DER
+minimal de `notAfter`), `GET <hôte public><health_path>` (chaîne NPM → Jellyfin), puis la même requête avec
+vérification complète (certificat reconnu pour ce nom). 3 tentatives espacées de 30 s, nouvel essai sur erreur de
+connexion et sur HTTP ≥ 500 (`should_retry`), seule la dernière compte. Défaut (certificat à moins de `warn_days` = 21
+jours, chaîne cassée, NPM injoignable) : un message mail + Discord qui les regroupe, répété à chaque passage tant
+que ça dure. Résumé : « certificat valide encore 49 j, /health 200 ».
+
+### backup_watch — 24 h (2026-10-07)
+
+Âge de la dernière archive `backups/homelab-state-*.tar.zst` : plus de `max_age_days` (8) jours, ou aucune archive ⇒
+alerte admin. Couvre le minuteur `homelab-backup.timer` (dimanche) qui ne tourne plus du tout ; un échec franc de
+l'unité prévient déjà par `OnFailure=homelab-alert@`. `homelabctl backup` poste lui-même, en fin de sauvegarde, les
+avertissements de copie SQLite à l'admin.
+
+### diun_watch — 24 h (2026-10-07)
+
+Relit `diun/images.yml` avec le contrôle strict de `homelabctl check` (`homelab_core::diun`) : clé en double, clé
+orpheline, entrée sans `name`, nom en double, tabulation ; chaque image du compose doit avoir son entrée `repo:tag`
+(digest ignoré) ; une entrée inutilisée n'est qu'un avertissement. Listes YAML en bloc acceptées sous une clé sans
+valeur en ligne. Fichier invalide ⇒ alerte admin à chaque passage. Du 18/09 au 07/10, deux groupes de clés
+orphelines (retrait de Jackett/FlareSolverr) ont rendu diun aveugle sans que rien ne le signale.
+
+Ces trois tâches passent aussi ~30 s après chaque démarrage de homelabd : l'heure du contrôle quotidien est celle du
+dernier redémarrage.
 
 ### id_match_import — 5 min
 Radarr/Sonarr bloquent l'import quand le nom de la release ne correspond pas au titre de la fiche,
@@ -74,7 +126,7 @@ puis `ManualImport` (importMode auto → hardlink) des seuls fichiers **sans rej
 uniquement les fichiers dont l'épisode est identifié, les autres restent en manuel (avertissement
 dans les logs). Au plus 10 téléchargements par passage.
 
-### torrent_import — 10 min
+### torrent_import — 2 min
 Torrents ajoutés **à la main** dans qBittorrent (VPS, et seedbox si `[seedbox] qbit_url` est défini), ou par
 `series_search` / `movie_search` quand l'Arr refuse la release : ils arrivent dans Jellyfin sans passer par
 Jellyseerr. Pour chaque torrent terminé pas encore jugé (`state.torrent_import`, clé `vps:<hash>` /
@@ -126,7 +178,12 @@ segment — télé Samsung, 116 remux en une heure le 30/09 ; Chromecast, 42 lan
 des segments ne le voit pas. Chaque lancement laisse un `FFmpeg.<Transcode|Remux|DirectStream>-<date>_<heure>_<id>_<n>.log`
 (heure locale) dans `cleanup.jellyfin_log_dir` : la tâche compte les lancements des 60 dernières minutes par titre, sans
 les titres du canari (`state.canary.items`), et alerte au-delà de `max_jobs_per_item_hour` (30 ; lecture normale :
-17 au plus), une fois par titre et par jour (mémoire du daemon : un redémarrage peut renvoyer un mail). L'ancien
+17 au plus). Depuis le 2026-10-07, **une alerte par rafale**, mémorisée dans `state.burst_alerts` (id compact → date)
+et réarmée quand le compteur horaire du titre retombe sous le seuil : un redémarrage ne répète plus l'alerte, une
+seconde rafale le même jour alerte. Une rafale n'est notée signalée que si l'alerte est partie (ou sans canal).
+Les alertes (rafales et boucles de segments) donnent le **titre** Jellyfin (« Série S17E03 — Titre », « Film
+(année) »), l'identifiant restant pour le journal ; repli sur « média <id> » si Jellyfin ne répond pas. Le
+dédoublonnage des boucles de segments (client, média) reste en mémoire : il contient l'adresse d'un membre. L'ancien
 repère « non-keyframe breaks » a disparu en 12.x (et ne comptait que le canari, qui demandait `BreakOnNonKeyFrames`).
 Le résumé porte le plus grand nombre de lancements d'un titre dans l'heure et les 5xx sur segments. Rien n'est modifié.
 
@@ -146,7 +203,16 @@ cherchées récemment (`state.unknown_series` : sans candidat → `retry_after_h
 → releases dont l'attribut **`tmdbId` est celui de la fiche** (le nom ne compte pas) → `GET parse` de Sonarr
 (saison, pack, épisodes, qualité) → garde-fous : marqueur FR (VFF > MULTi > FRENCH > VOSTFR), qualité autorisée
 par le profil et ≤ 1080p, au moins une source, épisodes manquants. Pack si la moitié de la saison manque,
-sinon épisodes ; tri langue, résolution, H.264, sources. Rien par identifiant (série sans `tmdbId`, releases
+sinon épisodes ; tri langue, résolution, H.264, sources. **Pas de pack avant la fin de la diffusion** (2026-10-07) :
+quand un pack serait pris, les épisodes de la fiche sont relus (un GET) ; s'il reste un épisode **suivi** dont la date
+de diffusion est connue et à venir (`future_episodes`), le pack est écarté (« pack écarté (épisodes à venir : 2,
+3) ») et les épisodes sortis sont pris un à un (`choose_episodes`). C'est la `FullSeasonSpecification` de Sonarr, qui
+ne joue pas côté seedbox (la release part directement dans qBittorrent). Un épisode sans date ne bloque jamais. Le
+plafond de taille d'un pack est jaugé sur les manquants **datés** (`SeasonTodo.dated_missing`, `choose_sized`), plus
+sur les épisodes sans date de `undated_missing` : une saison toute sans date refuse donc tout pack de plus de
+`max_gb_per_episode` et part épisode par épisode ; seule une lecture du `.torrent` des packs permettrait mieux.
+Black Clover S02 (03/10) : pack de 51 fichiers (S02E52-102, 14,2 Go) pris pour une saison de 13 épisodes dont 1
+diffusé. Rien par identifiant (série sans `tmdbId`, releases
 sans attribut) : `text_queries` noms essayés en texte libre (Jellyseerr FR et original, Sonarr, alternatifs),
 titre parsé identique exigé, release d'un autre identifiant écartée.
 
@@ -222,18 +288,30 @@ moins de `min_days_after_cinema` (110) jours n'est pas cherché (résumé : « N
 Demandes affiche « Au cinéma depuis le … : la VOD arrive environ 4 mois après (vers le …) ». Le RSS reste actif.
 Les films étrangers (date numérique américaine connue) sont déjà gérés par Radarr (`isAvailable`).
 
-### indexer_unblock — 10 min
+### indexer_unblock — 5 min
 Après des échecs (429, délais), Sonarr et Radarr mettent un indexeur en pause, jusqu'à 24 h ; aucune API ne
 lève la pause (`indexerstatus` → 404). Lecture seule de la table `IndexerStatus` des 4 Arrs (VPS : `rusqlite`
 sur `sonarr|radarr/config/*.db` ; seedbox : `ssh seedbox` + `sqlite3 -readonly` sur
 `<seedbox_apps_dir>/<app>/<app>.db`). Un indexeur en pause dont le **dernier échec date d'au moins
-`quiet_mins`** (60 : fenêtre de limite de C411 ; plus tôt il se rebloquerait) est remis en service :
+`quiet_mins`** (15 : fenêtre de limite de C411 ; plus tôt il se rebloquerait) est remis en service :
 application arrêtée (`docker compose stop` / `app-<app> stop`), base copiée (`backups/arr-db-<app>-<date>.db`
 ou `<app>.db.homelab-<date>` sur la seedbox, mode 600, gardées 7 jours), `UPDATE IndexerStatus SET
 DisabledTill = NULL, EscalationLevel = 0, …`, application relancée et vérifiée (`system/status`). Au plus un
 arrêt par application par `app_cooldown_mins` (60), même après un échec. Un indexeur débloqué
-`max_unblocks_per_day` fois (3) en 24 h n'est plus touché : mail à l'admin (site mort, Cloudflare…). Chaque
-déblocage est signalé par mail (`CHAT_ADMIN_EMAIL`). homelabd est cloisonné (`ProtectSystem=strict`) :
+`max_unblocks_per_day` fois (10) en 24 h n'est plus touché : alerte admin (site mort, Cloudflare…), notée
+« déjà signalée » (24 h) seulement si elle est partie. Chaque déblocage est signalé (mail + Discord admin).
+
+**Site de C411 en panne** (2026-10-07) : avant de lever la pause d'un indexeur C411 (nom commençant par
+`[manual_search] c411_indexer`), le site est sondé (`indexer::c411_reachable` : `caps` par Prowlarr, sans clé ni
+quota ; pas `c411_up`, dont la branche `indexerstatus` reflète la clé de recherche et bloquerait la levée de la clé RSS
+sur un 429). Site en panne (503, page HTML en 200, injoignable) ⇒ `Decision::Outage` : aucun arrêt d'Arr, aucune
+copie de base, résumé « C411 en panne : pause laissée (n) ». Une alerte au début de l'incident (marqueur `c411_outage`
+dans `state.indexer_alerts`) ; tant qu'il existe, le site est sondé à chaque passage, et il est retiré quand le site
+répond (la panne suivante sera signalée). Prowlarr absent ou injoignable = inconnu : comportement d'avant. Les autres
+indexeurs ne sont pas concernés. Du 30/09 au 02/10 : 34 arrêts inutiles des Arrs seedbox. **Purge** des copies
+`*.homelab-*` de plus de 7 jours de la seedbox : une fois par 24 h (un seul ssh, marqueur `purge:seedbox`, antidaté de
+23 h en cas d'échec pour réessayer dans l'heure), plus seulement après un déblocage. `indexer_alerts` porte donc trois
+sortes de clés : `application:id`, `c411_outage`, `purge:seedbox`. homelabd est cloisonné (`ProtectSystem=strict`) :
 `backups/`, `sonarr/config` et `radarr/config` sont dans `ReadWritePaths` de `systemd/homelabd.service`.
 Premier passage le 2026-09-17 : C411 (Sonarr seedbox, niveau 9, bloqué jusqu'à 21 h 33) et U2P, WorldTorrent,
 JK-nortorrent (Sonarr VPS) remis en service.
@@ -263,7 +341,8 @@ fiche de la voie russe à qui il manque des fichiers : titre original TMDB (Jell
 plus d'épisodes manquants → `.torrent` ajouté au qBittorrent de la seedbox (`homelab:russe`), fichiers inutiles
 désélectionnés → une fois complet, `ManualImport` copy (épisode par `SxxEyy` ou numéro absolu) et analyse complète de
 Jellyfin. `max_per_run` 2, `retry_hours` 24 (1 h après une erreur), état `russian_title`. Un torrent déjà présent
-(même release) est repris tel quel.
+(même release) est repris tel quel. Seedbox injoignable (qBittorrent, liste ou épisodes d'un Arr) : le côté est sauté,
+passage réussi (« seedbox injoignable »), au lieu d'une erreur à chaque passage (2026-10-07).
 
 ### anime_library — 5 min
 **Voie russe** (2026-09-26) : une fiche de la seedbox rangée dans `seedbox_ru_series_root` / `seedbox_ru_movies_root`
@@ -334,7 +413,8 @@ dernier id traité (`state.seedbox_history` ; la première passe initialise le c
 Pour chaque nouvel import : chemin `media_root/…` → dossier relatif, `POST <rclone_rc>/vfs/refresh`
 sur ce dossier et ses parents, puis `POST /Library/Media/Updated` à Jellyfin avec le chemin
 `jellyfin_root/…` (Jellyfin ne scanne que ces dossiers). Montage absent → avertissement, le
-curseur n'avance pas.
+curseur n'avance pas. Arr de la seedbox injoignable (2026-10-07) : sauté (« arr unreachable: side skipped this run »,
+curseur inchangé), l'autre est traité, résumé « seedbox injoignable » / « <arr> injoignable ».
 
 ### Arrs multi-instances
 Avec la seedbox activée, `stuck_handler` traite aussi les queues des Arrs seedbox,
@@ -355,7 +435,8 @@ Ne touche un torrent que si sa limite actuelle diffère (ratio comparé à 2 dé
 recherche. Max 5 par passage. Les items disparus de la queue sont oubliés.
 
 ### disk_pressure — 15 min
-`statvfs` sur `paths.base`, arrondi comme `df`. < 95 % : rien. 95–98 % : supprime avec
+`statvfs` sur `paths.base`, arrondi comme `df`. À `alert_pct` (85, 2026-10-07) : alerte admin, une par franchissement
+(réarmée `capacity_rearm_pts` sous le seuil), bien avant `hard_pct` qui supprime sans prévenir. < 95 % : rien. 95–98 % : supprime avec
 fichiers (`POST /api/v2/torrents/delete`, `deleteFiles=true`) jusqu'à 5 torrents en état
 `stoppedUP`, les plus anciens d'abord — les hardlinks de `library/media` survivent.
 ≥ 98 % : log d'erreur, aucune action automatique.
@@ -394,6 +475,12 @@ côté seedbox, montage vérifié et cache rclone rafraîchi (`vfs/refresh`) ava
   `downloadId` qui a encore son fichier). C411 ou tracker inconnu : retiré avec ses fichiers seulement à
   ratio `c411_min_ratio` ou `c411_min_seed_days` de seed (en attente dans `deletions.pending_torrents`,
   revu à chaque passage) ; autres trackers : tout de suite.
+- **Fichiers des séries de la seedbox en cache** (2026-10-07) : la liste `episodefile` d'une série est gardée en
+  mémoire tant que sa signature (`episodeFileCount`, `sizeOnDisk`, dossier) ne change pas, au plus
+  `episode_files_cache_mins` (60 ; 0 = sans cache). Une série dont un fichier semble absent est toujours relue fraîche
+  et re-sondée avant toute conclusion : rien n'est décidé sur une liste en cache (des fichiers renommés gardent même
+  nombre et même taille). Avant : 83 requêtes par le proxy de la seedbox à chaque passage ; maintenant une fois par
+  heure. Le VPS n'est pas concerné.
 
 Testé le 2026-09-14 de bout en bout sur un film jetable du VPS (import Radarr, scan, `DELETE /Items`,
 fiche Radarr supprimée, aucun torrent touché).
@@ -415,7 +502,10 @@ Jellyseerr ajoute les séries sans `addOptions.monitor` ⇒ Sonarr monitore tout
 `GET /api/v1/request?filter=all` (paginé), construit `sonarrSeriesId → saisons demandées`
 (statuts DECLINED/FAILED exclus), puis pour chaque série Sonarr concernée :
 `monitored = demandée OR a des fichiers`, S00 jamais modifiée, `PUT /api/v3/series/{id}`.
-Les séries inconnues de Jellyseerr ne sont pas touchées.
+Les séries inconnues de Jellyseerr ne sont pas touchées. Un Sonarr injoignable est sauté, l'autre traité
+(2026-10-07) ; tant qu'un côté est muet, l'autre ne connaît pas ses saisons déjà présentes : il n'ajoute **aucun**
+nouveau suivi (risque de doublon Jellyfin) mais peut en retirer, rattrapé au passage suivant. Jellyseerr injoignable
+reste une erreur.
 
 ### user_poller — 60 s
 `GET /api/v1/user?take=200` : users `userType == 2` (locaux), non admin, email valide, créés
@@ -462,6 +552,69 @@ Jellyseerr : un changement de droits met ce temps à se voir.
 ## Page /status : « Rien ne bouge »
 Les torrents terminés qu'aucune fiche n'a voulus (`no_match` de `torrent_import`, 15 au plus, les plus récents
 d'abord) sont listés sous le tableau des tâches : sans ça, un téléchargement fini restait invisible.
+Depuis le 2026-10-07 : « Dernière erreur » sous chaque tâche (même règle que la ligne ↳ de `homelabctl status`),
+section « Alertes admin · N livrée(s), M non livrée(s) » (dernières alertes, canaux), et tout texte venu d'ailleurs
+(nom de torrent, côté, titre de série, objet d'alerte) échappé au rendu.
+
+## Alertes admin (2026-10-07)
+
+Un seul point d'entrée, `alerts::admin` : mail (`CHAT_ADMIN_EMAIL`, repli `GUIDE_CONTACT_EMAIL`) **et** salon Discord
+admin (`[discord] admin_alerts`). Chaque envoi laisse une ligne « alerte envoyée » (objet et canaux seulement, jamais
+l'adresse, l'URL du webhook ni le corps), ou « alerte NON livrée » / « alerte sans canal », et une entrée dans
+`state.alerts` (compteurs livrées/non livrées, 20 dernières). Rien en dry-run. Une alerte envoyée par `homelabctl`
+(sauvegarde) n'y figure pas : la CLI n'écrit pas l'état.
+
+- **Règle de réessai** : un appelant qui note « déjà signalé » ne le fait que si au moins un canal a pris l'alerte
+  (`alerts::delivered`) ; sans aucun canal configuré (`alerts::configured`), on ne réessaie pas à chaque passage
+  (`alerts::retry_later`).
+- **Tâche en échec répété** (`[alerts]`) : une alerte quand une tâche échoue `fail_streak` (6) fois de suite **et**
+  depuis au moins `fail_minutes` (30) minutes (une tâche toutes les 20 s échoue 6 fois en 2 min sans que ce soit une
+  panne), puis un message « Tâche rétablie » à son retour. Les erreurs isolées ne préviennent pas. Au plus
+  `fail_alerts_max` (3) alertes de ce type par `fail_alerts_window_mins` (10) : au-delà, la série n'est pas marquée
+  signalée et repart au prochain échec. Mémoire dans `RunInfo` (`fail_streak`, `fail_since`, `streak_alerted`,
+  `last_error`, `last_error_at`, `errors_by_day` sur 14 jours).
+- **Capacité** : `alerts::crossing` (pure) + `alerts::capacity` : une alerte par franchissement de
+  `tasks.disk_pressure.alert_pct` ou `tasks.seedbox_health.quota_alert_pct` (85 ; 0 = désactivé), réarmée
+  `capacity_rearm_pts` (3) points sous le seuil, mémoire `state.capacity_alerts`.
+- **Unités systemd** : `systemd/homelab-alert@.service` + `scripts/homelab-alert.sh` (webhook lu dans `.env`, jamais
+  affiché ; titre « <unité> en échec », résultat et 20 dernières lignes du journal ; au plus un message par unité et
+  par heure, le suivant dit combien d'échecs ont été tus ; `--dry-run`). `OnFailure=homelab-alert@%n.service` sur
+  `homelab-backup`, `homelabd-watchdog`, `seedbox-mount-watch` et `jellyfin-transcodes-purge`. Les minuteurs à la
+  minute sont en `LogLevelMax=notice` : seules les lignes préfixées `<5>`/`<4>` par leurs scripts restent au journal
+  (purge silencieuse quand il n'y a rien à faire, `find -ignore_readdir_race`, conteneur arrêté = sortie propre,
+  `SuccessExitStatus=2` pour « saturé après purge », déjà signalé par le script). `homelab-seedbox-mount.service` :
+  `SuccessExitStatus=143` (un arrêt voulu n'est plus un échec ; un SIGTERM externe ne relance plus rclone).
+- **Journal système** : `systemd/journald-homelab.conf` (`SystemMaxUse=2G`, `MaxFileSec=1day`, `MaxRetentionSec=45day`)
+  posé par `homelabctl install` dans `/etc/systemd/journald.conf.d/homelab.conf` (réécrit seulement s'il diffère),
+  puis `sudo systemctl restart systemd-journald` (à lancer soi-même, ne coupe aucun service). Avant : 500 Mo, et le
+  fichier `user-1000` (homelabd, rclone) ne tournait presque jamais, d'où 1 à 10 jours d'historique en dents de scie.
+
+## Pages d'administration (2026-09-23, portes du 2026-10-07)
+
+`crates/homelabd/src/admin_auth.rs` + `client_addr.rs`. Session par cookie (`/connexion`, voir CLAUDE.md) ; en plus :
+
+- **Adresse du client** : dernier saut de `X-Forwarded-For`, seulement si le pair TCP est dans `[web] trusted_proxies`
+  (172.18.0.0/16) et n'est pas une adresse de l'hôte (127.0.0.1, 172.18.0.1 : `bind` UDP d'essai, en cache). Avec
+  `[web] trusted_proxy_container = "npm"`, seul le pair à l'adresse actuelle de ce conteneur est « confirmé » :
+  adresse relue en tâche de fond (`docker inspect --type container`, toutes les 60 s, et 10 s après un pair inconnu du
+  réseau, par exemple NPM recréé) ; les requêtes lisent un instantané et n'attendent jamais Docker (sauf la toute
+  première, 4 s au plus). Docker muet ou conteneur vide : le réseau seul décide, pour les limites par adresse.
+- **IP de la maison** (`HOMELABD_ADMIN_TRUSTED_IPS`) : session d'office seulement depuis un NPM **confirmé** ; Docker
+  muet ⇒ formulaire `/connexion` (le cookie d'un an couvre l'entre-deux), une seule ligne « docker inspect en échec »
+  par panne.
+- **Hôte** : les chemins d'administration (`/`, `/accounts*`, `/recherche*`, `/status`, `/status.html`, `/onboard`,
+  `/connexion`, `/admin`, `/admin/*`) répondent 404 si `Host` n'est ni l'hôte de `ONBOARD_PUBLIC_URL` ni `localhost`
+  ou une adresse locale ou privée ; sans `ONBOARD_PUBLIC_URL`, aucun filtre (avertissement au démarrage). Les pages
+  publiques (`/premium*`, `/inscription`, `/bienvenue`, `/premiers-pas`, `/guide`, `/paypal/webhook`, `/don`, `/chat`,
+  `/compte`, `/health`) restent servies partout.
+- **API de la CLI** (`/admin/*`) : pair local (127.0.0.1, ::1) sans `X-Forwarded-For` seulement, sinon 404 ; un refus
+  = une ligne `warn` par adresse et par 15 min (100 adresses au plus), les suivants en `debug` ; jeton incorrect =
+  `warn`. `homelabctl` appelle `http://127.0.0.1:<port de listen>` avec `x-onboard-token`.
+- **Échecs** : jetons comparés à temps constant partout (`admin_auth::token_matches`) ; un POST sans session sur un
+  chemin d'administration compte ses 401 comme `/connexion` (10 par IP et par 15 min, puis 429) ; le plafond global
+  (100) ne bloque jamais un appel local. `POST /onboard` est fermé si aucun jeton n'est configuré.
+- **Jeton absent du HTML** : la couche remplace le jeton par un jeton de formulaire (HMAC du jeton) dans les pages, et
+  fait l'inverse dans un POST qui a une session. Contrôle : le code source de `/accounts` ne contient plus le jeton.
 
 ## Watcher auto_import (continu)
 
@@ -483,7 +636,7 @@ première vidéo.
 ## Onboarding
 
 Trois entrées, un seul flux (`onboard::run`) : `homelabctl onboard <user> <email> [--password]` (passe par l'API
-du daemon), le formulaire admin `/` (jeton `HOMELABD_ONBOARD_TOKEN`, la page lit `?token=`), et la **page publique
+du daemon), le formulaire admin `/` (session d'administration, voir « Pages d'administration »), et la **page publique
 `/inscription`** (`[onboard] public_signup`) ; `user_poller` reprend aussi les « Add User » de Jellyseerr.
 Le compte Jellyfin est créé avec un mot de passe aléatoire **jamais communiqué**, importé dans Jellyseerr
 (e-mail, droits), puis suspendu sauf `accounts.new_accounts_premium`.
@@ -519,7 +672,8 @@ Arrs, « Discord membres » (imports : Radarr `onDownload`/`onUpgrade`, Sonarr `
 « Discord admin » (`onHealthIssue`/`onHealthRestored`/`onManualInteractionRequired`), et active l'agent Discord de
 Jellyseerr (demande, validée d'office, refusée, disponible) ; `test` poste un message d'essai sur chaque salon et
 déclenche le test Jellyseerr ; `remove` retire tout. Ce que homelabd poste lui-même : annonces du tchat (membres),
-alertes admin via `alerts::admin` (mail + Discord), relances de `stack_health`.
+alertes admin via `alerts::admin` (mail + Discord, voir « Alertes admin »), relances de `stack_health`. L'URL d'un
+webhook est un secret : retirée des erreurs (`without_url`) et masquée dans les journaux.
 
 ## Guide des nouveaux membres
 
@@ -636,6 +790,17 @@ rendu par libass **exactement comme l'incrusté**, sans attente ; en VO Jellyfin
 la piste forcée incrustée reste le choix (mode Smart). Nouveaux imports : l'item apparaît par `seedbox_refresh`, le
 passage suivant extrait (≤ 5 min).
 
+**Lecture de la médiathèque** (2026-10-07) : balayage complet une fois par jour, au premier passage qui suit
+`full_scan_hour` (5, heure locale) et au premier passage après un démarrage ; c'est le seul qui élague
+`subtitle_tries`. Les autres passages relisent ce que Jellyfin a sauvé depuis le début du passage précédent moins
+1 h (`MinDateLastSaved`, compte admin, vérifié sur 12.1), le reliquat du passage précédent (au-delà de `max_per_run`,
+en lecture, budget atteint, échec passager) et les essais dont la relance est due (`Ids=`, par 80). Mémoire en
+processus, mise à jour seulement après un passage abouti (un échec élargit la fenêtre suivante). Avant : 9 pages de
+1,8 Mo et ~14 s de CPU Jellyfin toutes les 5 min pour « rien à extraire » 98 fois sur 100 ; maintenant ~0,4 s. Le
+balayage complet ajoute « ; balayage complet » au résumé ; après extraction : « X à reprendre, W en relance
+différée ». Limite connue : sur un passage court, « N en attente de relance » compte aussi les éléments extraits
+depuis le dernier balayage complet (16 au lieu de 3 le 08/10 après 13 extractions) jusqu'au balayage suivant.
+
 Bazarr (seedbox, `https://kakaouette.tofino.usbx.me/bazarr`) garde son rôle d'origine : profil « Français (+anglais) »,
 `use_embedded_subs = true` (une piste incrustée compte), `audio_exclude = True` sur le français, six fournisseurs dont
 OpenSubtitles.com (compte saisi dans son interface) — il ne télécharge que ce qui manque vraiment. Sonarr/Radarr seedbox
@@ -660,25 +825,63 @@ testées) + `subscription_ops` (ce qui touche Jellyfin/PayPal/mails, toujours vi
   `period_days`) ; `CANCELLED`/`SUSPENDED`/`EXPIRED`/`PAYMENT.FAILED` → note dans l'historique, le compte va au bout
   de sa période ; remboursement → alerte admin. 5xx = PayPal réessaie.
 - **`subscription_cycle` — 1 h** : fiches créées pour les comptes qui n'en ont pas (actifs → « à qualifier », jamais
-  suspendus tant que l'admin n'a pas tranché), rappels J-7 et J-1 (mail au membre), grâce `grace_days` après
-  l'échéance, puis suspension (`set_premium(false)`, mail « accès en pause », rien de supprimé). Récapitulatif
-  Discord admin à chaque passage qui a agi. `cycle_dry_run = true` : tout est annoncé, rien n'est appliqué.
-- **`subscription_reconcile` — 24 h** : relit chaque abonnement PayPal lié et rejoue un paiement manqué
-  (idempotent par date de dernier règlement).
+  suspendus tant que l'admin n'a pas tranché), rappels J-7 et J-1 (mail au membre, avec lien de paiement) pour
+  l'essai, l'abonnement manuel et l'offert à durée limitée, grâce `grace_days` après l'échéance, puis suspension
+  (`set_premium(false)`, mail « accès en pause », rien de supprimé). Récapitulatif Discord admin à chaque passage qui
+  a agi. `cycle_dry_run = true` : tout est annoncé, rien n'est appliqué. Depuis le 2026-10-07 :
+  - un essai ne reçoit pas un palier au moins égal à sa durée (pas de J-7 pour un essai de 7 jours ; le J-1 part) ;
+  - **abonnement PayPal automatique** (lié et pas arrêté chez PayPal, `auto_renews` ; statut inconnu = actif) : une
+    seule information J-7 **sans lien** (« ton abonnement se renouvelle le JJ/MM », `Action::RenewalNotice`), grâce
+    seulement `paypal_margin_hours` (36) après la date de facturation ; à la suspension, mail « prélèvement non
+    passé, mets à jour ton moyen de paiement dans PayPal » sans lien (un lien = second abonnement) ;
+  - **fiches orphelines** (compte Jellyfin disparu) : celles sans rien à perdre (à qualifier, suspendu ou exempté,
+    sans échéance ni PayPal : comptes de banc) sont retirées ; les autres, `max_orphan_removals_per_run` (3) au plus
+    par passage. Au-delà, ou si Jellyfin renvoie une liste vide ou autre chose qu'une liste (`users()` échoue), aucune
+    n'est retirée, le cycle les ignore (ni mail ni suspension), l'admin reçoit une alerte par fiche (événement
+    `orphan_held`) et doit relever la clé le temps d'un passage ;
+  - un parrainage ne prolonge jamais une fiche offerte, exemptée ou à qualifier sans échéance (ligne d'historique,
+    rien compté dans le plafond annuel).
+- **`subscription_reconcile` — au démarrage puis 24 h** (l'heure du contrôle est celle du dernier redémarrage de
+  homelabd) : relit chaque abonnement PayPal lié ; décision pure `reconcile_decision` :
+  - `Apply` : paiement constaté (`last_payment.time` > `paypal_paid_at` + 12 h), jamais déduit de `next_billing_time` ;
+    fiche en retard ou importée par CSV : appliqué comme avant ;
+  - `Baseline` : fiche d'avant ce suivi (sans `paypal_paid_at`) déjà alignée sur la date PayPal : le dernier paiement
+    devient la référence, sans ligne d'historique ;
+  - `PendingCharge` : prochaine facturation absente, facturation passée depuis plus de `paypal_margin_hours`, échéance
+    de la fiche + marge dépassée sans paiement, ou fiche sans référence dont la facturation a été repoussée de plus de
+    `period_days` + 3 j ⇒ alerte « Prélèvement PayPal en attente », une par abonnement et par jour UTC
+    (`paypal_events` `pending:<id>:<jour>`), rien n'est prolongé ;
+  - `Stopped` : CANCELLED, SUSPENDED, EXPIRED ou inconnu de PayPal (404) noté sur la fiche (`paypal_status`), ligne
+    d'historique « abonnement annulé chez PayPal — accès jusqu'au JJ/MM » et information à l'admin au changement ;
+    rien n'est suspendu avant l'échéance payée (le cycle suit, sans marge).
+  Résumé : « vérifiés=3 corrigés=0 en attente=0 arrêtés=0 ». Un échec de `on_payment` ne bloque plus le passage.
+- **Second abonnement** : si le compte trouvé (par `custom_id` ou adresse) a déjà un AUTRE abonnement ACTIVE chez
+  PayPal (relu par `find_subscription` ; 404 ne bloque pas), rien n'est rattaché ni prolongé (`Payment::Duplicate`),
+  l'admin est alerté une fois par jour et par abonnement, `/premium/lier` renvoie vers `/premium/activate?err=deja`.
+  Le remboursement ou la résiliation se font à la main dans PayPal (argent réel). Changer d'abonnement remet
+  `paypal_status`/`paypal_paid_at` à zéro ; les webhooks les tiennent à jour.
 - **Essai et parrainage** : `/inscription` active le compte en « essai » `trial_days` jours (mail de fin d'essai par
   le cycle) ; code de parrainage facultatif à l'inscription ; au premier paiement du filleul, `referral_days` offerts
   aux deux, plafond `referral_cap_days_per_year`.
 - **« Mon compte » dans Jellyfin** : script JavaScript Injector « Groscailloux Mon compte »
   (`branding/jellyfin/gc-account-loader.js`) → `/gc-compte/app.js` (NPM hôte 1 → homelabd `/compte/`) : statut,
-  échéance, bouton d'abonnement pré-rempli, appareils connectés (déconnexion vérifiée sur `LastUserId`), lien de
+  échéance, bouton d'abonnement pré-rempli (masqué tant que l'abonnement PayPal se renouvelle seul ; lien court sans
+  clé), appareils connectés (déconnexion vérifiée sur `LastUserId`), lien de
   changement de mot de passe (page `/bienvenue`), code de parrainage, historique. Identité = jeton Jellyfin
   (`/Users/Me`, cache 5 min). Téléviseurs : lecture seule, Retour ferme.
+- **Lien signé** : les mails (rappels, suspension) mènent à `/premium?compte=X&k=…`, `k` = HMAC-SHA256 de
+  `HOMELABD_ONBOARD_TOKEN` sur `gc-premium-v1|<compte en minuscules>`, 16 hexa, comparé à temps constant. Seul un lien
+  signé affiche « déjà un abonnement PayPal actif » à la place du bouton (fiche locale, aucun appel PayPal) : sans
+  `k` ou avec une clé fausse, page normale, et la page publique ne dit plus qui paie. Renouveler le jeton rend les
+  clés des anciens mails caduques, sans risque (le serveur refuse toujours un second abonnement).
 - **Admin** : colonne « Abonnement » sur `/accounts` (statut, échéance, source) et décision par compte (prolonger de
   N jours, actif, offert, exempté, à qualifier, suspendu) ; `homelabctl subs list | set <compte> --status … [--days N]
   | extend <compte> --days N | link <compte> --sub I-… | import <csv PayPal> | paypal [--webhook <url>]`.
 - **Secrets** : `PAYPAL_ENV` (sandbox|live), `PAYPAL_CLIENT_ID`/`PAYPAL_SECRET`/`PAYPAL_PLAN_ID`/`PAYPAL_WEBHOOK_ID`
-  (ou `PAYPAL_SANDBOX_*`), `PREMIUM_PUBLIC_URL`. En sandbox, la page publique garde le bouton Live historique
-  (`DONATION_*`) ; `/premium?test=1` montre le bouton sandbox.
+  (ou `PAYPAL_SANDBOX_*`), `PREMIUM_PUBLIC_URL`. En service : **live** ; `/premium` montre le bouton de l'application
+  REST. Si l'application repassait en sandbox, la page publique reprendrait le bouton Live historique (`DONATION_*`)
+  et `/premium?test=1` montrerait le bouton sandbox.
+- **Admin** (`/accounts`) : la source indique aussi « paypal · PayPal annulé/suspendu/expiré/introuvable ».
 
 ## Page de don
 
@@ -719,8 +922,26 @@ la seule source de vérité ; les comptes admin ne sont jamais listés ni modifi
 - `homelabctl vpn status|on|off` : voir [DEPLOY.md](DEPLOY.md) (profils compose).
 - `sudo homelabctl backup` : voir [DEPLOY.md](DEPLOY.md) ; aussi `homelab-backup.timer`.
 - `homelabctl check` : ping Sonarr, Radarr, qBittorrent, Jellyfin, Jellyseerr ; présence SMTP,
-  token, dossier surveillé.
-- `sudo homelabctl install` : copie `systemd/*` dans `/etc/systemd/system`, enable.
+  token, dossier surveillé ; Arrs et qBittorrent de la seedbox, montage ; `diun/images.yml` en contrôle strict (✗ et
+  code de sortie ≠ 0 si invalide).
+- `sudo homelabctl install` : copie `systemd/*` dans `/etc/systemd/system`, enable ; pose aussi
+  `systemd/journald-homelab.conf` (puis `sudo systemctl restart systemd-journald`, à lancer soi-même).
+
+## Clients HTTP (2026-10-07)
+
+- **GET coupé rejoué une fois** (`clients::SendRetry::send_retry`) : seulement un GET, seulement sur une coupure de
+  transport (`is_request() || is_connect()`, jamais un délai dépassé), une seule fois ; ligne `info` « GET coupé :
+  nouvelle tentative (une seule) » avec le chemin (sans requête) et la chaîne de causes, sans l'URL. Appliqué aux
+  clients Arr, Bazarr, Jellyfin, Jellyseerr, Prowlarr et qBittorrent, **sauf** les GET à effet : recherches,
+  téléchargements et magnets Prowlarr (quota C411), `release` des Arrs, `get_bytes` de Jellyfin (la playlist du canari
+  démarre une conversion). PayPal n'est pas concerné. Vu le 08/10 : un GET de Radarr seedbox rejoué après
+  « connection closed before message completed ».
+- **Jellyseerr** (Node, keep-alive 5 s) a son propre client avec `pool_idle_timeout` 4 s ; pas de délai global (4 s
+  imposerait une poignée de main TLS vers la seedbox à presque chaque requête).
+- **qBittorrent 5.2** : le cookie de session `QBT_SID_<port>` est accepté comme `SID` (nom renvoyé tel quel).
+- **Erreurs** : journalisées avec toute leur chaîne (`format!("{e:#}")`) ; une URL qui porte un secret (webhook
+  Discord, Jackett `apikey=`, liens Prowlarr, playlists de conversion Jellyfin `ApiKey=`) est retirée avant le contexte
+  (`reqwest::Error::without_url`).
 
 ## Hook gluetun (reste en shell)
 

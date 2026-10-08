@@ -12,7 +12,8 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.19.1](#1191--23092026--audit--fiabilité-et-sécurité)** | 23/09/2026 | **Audit : fiabilité et sécurité** |
+| **[1.20.0](#1200--07--08102026--revue-kaizen--alertes-sobriété-et-portes-dadministration)** | 07 → 08/10/2026 | **Revue Kaizen : alertes, sobriété et portes d'administration** |
+| [1.19.1](#1191--23092026--audit--fiabilité-et-sécurité) | 23/09/2026 | Audit : fiabilité et sécurité |
 | [1.19.0](#1190--21092026--suivi-des-demandes-langue-et-canari) | 21/09/2026 | Suivi des demandes, langue et canari |
 | [1.18.0](#1180--20092026--abonnement-automatique--mon-compte--discord-et-bienvenue) | 20/09/2026 | Abonnement automatique, « Mon compte », Discord et bienvenue |
 | [1.15.1](#1151--19092026--télé-français-partout-airplay-et--lire-sur-) | 19/09/2026 | Télé, français partout, AirPlay et « Lire sur » |
@@ -26,6 +27,98 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.20.0 — 07 → 08/10/2026 — Revue Kaizen : alertes, sobriété et portes d'administration
+
+Revue complète de la plateforme le 07/10. Lot 1 : réglages appliqués le jour même, sans code (sauf la veille des
+images). Lot 2 : le moteur d'automatisation (homelabd), installé dans la nuit du 08/10 ; au lendemain, aucune erreur
+de tâche ni alerte.
+
+### Pour les membres
+
+- **Abonnement PayPal sans risque de double prélèvement** : un abonnement qui se renouvelle tout seul ne reçoit plus
+  « ton abonnement se termine, renouvelle ici » avec un lien de paiement (un clic créait un second abonnement). À la
+  place, une seule information sans lien (« ton abonnement se renouvelle le JJ/MM »), et le délai de grâce ne commence
+  que 36 h après la date de facturation (PayPal encaisse parfois plus tard). Un prélèvement raté donne un mail qui
+  explique comment mettre à jour son moyen de paiement chez PayPal ; l'accès revient tout seul. Un second abonnement
+  sur un compte déjà abonné est refusé (message clair, l'admin est prévenu). L'essai de 7 jours n'envoie plus de
+  rappel « J-7 » dès l'inscription, et un parrainage ne met plus de date de fin à un accès offert sans limite.
+- **Chromecast** : le serveur lui annonce le bon profil vidéo (High au lieu de Baseline) ; à confirmer en séance réelle
+  sur les gels.
+- **Démarrage et sauts plus rapides sur une connexion lente** : les listes de lecture des flux convertis sont
+  compressées (1,4 Mo → 44 Ko pour un film).
+- **Séries en cours de diffusion** : un pack de saison n'est plus pris tant que des épisodes suivis restent à
+  diffuser (un pack de 51 épisodes avait été pris pour une saison dont un seul était sorti) ; les épisodes sortis
+  arrivent un à un.
+
+### Sécurité
+
+- **Pages d'administration** : l'IP de la maison n'ouvre plus de session que vue par le proxy (avant, une requête
+  locale avec un en-tête forgé ouvrait une session d'un an) ; pages d'administration invisibles par l'adresse publique
+  de la page Premium ; commandes de la ligne de commande fermées depuis Internet ; jeton d'administration absent des
+  pages ; noms de torrents et titres échappés sur la page d'état.
+- **Page Premium** : elle n'indique plus « déjà abonné » qu'à partir d'un lien reçu par mail ; elle ne permet plus de
+  savoir qui paie.
+- **Tableau de bord public** : le widget « Demandes récentes », qui montrait les pseudos des demandeurs sans connexion,
+  passe sur le tableau d'administration.
+- **Proxy** : une adresse inconnue répond 404 tout de suite (fin d'une boucle interne déclenchée par les robots qui
+  sondent le serveur, 13 épisodes en dix jours).
+- **Ménage** : instance d'essai de Jellyfin supprimée (elle gardait une copie de la base), sauvegardes fermées aux
+  autres comptes de la machine, clé d'API Jellyfin inutilisée révoquée ; les adresses qui portent un secret ne vont
+  plus dans le journal.
+
+### Alertes et surveillance
+
+- **Une tâche en panne prévient l'admin** (6 échecs de suite et 30 min), une seule fois, puis à son retour ; trois
+  alertes de ce type au plus par 10 min quand tout tombe ensemble. La dernière erreur, son heure et le nombre
+  d'erreurs par jour restent visibles (`homelabctl status`, page d'état).
+- **Preuve de livraison** : chaque alerte laisse une trace (journal et page d'état : livrée par mail, Discord, ou non) ;
+  une alerte qui n'est pas partie est retentée au lieu d'être tenue pour signalée.
+- **Seuils** : disque du serveur et quota de la seedbox à 85 % (une alerte par franchissement) ; relance de service
+  ratée ; certificat TLS (à moins de 21 jours) et chaîne publique vers Jellyfin contrôlés chaque jour ; sauvegarde de
+  plus de 8 jours ; veille des images.
+- **Veille des images réparée** : elle était aveugle depuis le 18/09 (fichier abîmé lors d'un retrait de service) ;
+  nouvelles versions de Jellyfin 12 et qBittorrent 5.2 reconnues, tri des versions corrigé, Glances déclaré sur son
+  vrai tag.
+  Le fichier est maintenant contrôlé chaque jour.
+- **Minuteurs** : la sauvegarde et les trois chiens de garde préviennent l'admin s'ils échouent ; le moteur est relancé
+  s'il ne fait plus tourner ses tâches (et plus seulement s'il ne répond plus) ; sa version exacte est affichée.
+- **Lectures relancées en boucle** : l'alerte donne le titre au lieu d'un identifiant, une par rafale, sans répétition
+  après un redémarrage.
+- **Journal système** : 2 Go et 45 jours, rotation quotidienne (l'historique du moteur tombait à 1 à 3 jours).
+
+### Sobriété
+
+- **Moteur d'automatisation** : fichier d'état écrit en un appel au lieu d'environ 38 000 (4,2 Go écrits par jour) ;
+  les passages sans rien de neuf ne remplissent plus le journal (4 344 lignes → 312 sur la même nuit) ; les
+  sous-titres ne relisent plus toute la médiathèque toutes les 5 minutes (une fois par jour, à 5 h) ; le ménage des
+  suppressions ne redemande plus les fichiers des 83 séries de la seedbox à chaque passage.
+- **Services** : le tableau de bord ouvre une session qBittorrent par minute au lieu de toutes les 5 s ; synchronisation
+  des téléchargements de Jellyseerr toutes les 5 min ; file d'attente de qBittorrent coupée sur le serveur (12
+  torrents attendaient sans partager) ; synchronisation RSS du serveur arrêtée (il ne télécharge plus depuis le 18/09) ;
+  Sonarr et Radarr de la seedbox en journal normal ; sous-titres automatiques sans le fournisseur qui refusait tout ni
+  les séries russes.
+
+### Robustesse
+
+- **Panne du site de téléchargement** : la pause de son indexeur n'est plus levée pendant la panne (34 arrêts inutiles
+  des applis de la seedbox du 30/09 au 02/10), une seule alerte par incident ; copies de base de la seedbox purgées
+  chaque jour.
+- **Seedbox injoignable** : trois tâches sautent la seedbox au lieu d'échouer (~400 erreurs pour la panne de début
+  octobre) ; l'alerte de santé de la seedbox reste la seule.
+- **Coupures réseau** : une requête de lecture coupée par le serveur d'en face est rejouée une fois.
+- **Abonnés** : le contrôle PayPal quotidien n'applique plus qu'un paiement réellement constaté, signale un
+  prélèvement en attente (une fois par jour) et suit les résiliations ; les fiches d'abonné dont le compte disparaît
+  ne sont plus retirées en masse (au-delà de 3 d'un coup, rien n'est retiré et l'admin est prévenu).
+- **qBittorrent 5.2** : nouveau cookie de session accepté, en prévision de la mise à jour.
+
+- Commits : [`9f62bb9`][9f62bb9] (veille des images), [`6cfa550`][6cfa550] [`cd3c901`][cd3c901]
+  [`9d2a44e`][9d2a44e] [`f159451`][f159451] (portes d'administration), [`110ee1b`][110ee1b] [`d8cc62a`][d8cc62a]
+  (abonnés), [`e9081bb`][e9081bb] [`4400b8b`][4400b8b] [`b582c2a`][b582c2a] (alertes), [`e08f59d`][e08f59d]
+  [`e5605f3`][e5605f3] [`68a2a08`][68a2a08] [`37b3a2c`][37b3a2c] (sobriété), [`b6e7a4d`][b6e7a4d] [`b0812d1`][b0812d1]
+  [`ae0df9d`][ae0df9d] [`9e76693`][9e76693] [`0c8c619`][0c8c619] (robustesse), [`e8a5d3f`][e8a5d3f] (chaîne des
+  erreurs) ; fusions [`39bd51c`][39bd51c] [`1ddf77f`][1ddf77f] [`2febb34`][2febb34] [`7d91fc2`][7d91fc2]
+  [`33f720b`][33f720b].
 
 ## 1.19.1 — 23/09/2026 — Audit : fiabilité et sécurité
 
@@ -733,3 +826,28 @@ Chaque version ajoute sa section en haut de ce fichier, avec ses commits.
 [f9982de]: https://github.com/HaradasCYB/groscailloux-homelab/commit/f9982de
 [3eb05e9]: https://github.com/HaradasCYB/groscailloux-homelab/commit/3eb05e9
 [5208a40]: https://github.com/HaradasCYB/groscailloux-homelab/commit/5208a40
+[9f62bb9]: https://github.com/HaradasCYB/groscailloux-homelab/commit/9f62bb9
+[6cfa550]: https://github.com/HaradasCYB/groscailloux-homelab/commit/6cfa550
+[cd3c901]: https://github.com/HaradasCYB/groscailloux-homelab/commit/cd3c901
+[9d2a44e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/9d2a44e
+[f159451]: https://github.com/HaradasCYB/groscailloux-homelab/commit/f159451
+[110ee1b]: https://github.com/HaradasCYB/groscailloux-homelab/commit/110ee1b
+[d8cc62a]: https://github.com/HaradasCYB/groscailloux-homelab/commit/d8cc62a
+[e9081bb]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e9081bb
+[4400b8b]: https://github.com/HaradasCYB/groscailloux-homelab/commit/4400b8b
+[b582c2a]: https://github.com/HaradasCYB/groscailloux-homelab/commit/b582c2a
+[e08f59d]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e08f59d
+[e5605f3]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e5605f3
+[68a2a08]: https://github.com/HaradasCYB/groscailloux-homelab/commit/68a2a08
+[37b3a2c]: https://github.com/HaradasCYB/groscailloux-homelab/commit/37b3a2c
+[b6e7a4d]: https://github.com/HaradasCYB/groscailloux-homelab/commit/b6e7a4d
+[b0812d1]: https://github.com/HaradasCYB/groscailloux-homelab/commit/b0812d1
+[ae0df9d]: https://github.com/HaradasCYB/groscailloux-homelab/commit/ae0df9d
+[9e76693]: https://github.com/HaradasCYB/groscailloux-homelab/commit/9e76693
+[0c8c619]: https://github.com/HaradasCYB/groscailloux-homelab/commit/0c8c619
+[e8a5d3f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e8a5d3f
+[39bd51c]: https://github.com/HaradasCYB/groscailloux-homelab/commit/39bd51c
+[1ddf77f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/1ddf77f
+[2febb34]: https://github.com/HaradasCYB/groscailloux-homelab/commit/2febb34
+[7d91fc2]: https://github.com/HaradasCYB/groscailloux-homelab/commit/7d91fc2
+[33f720b]: https://github.com/HaradasCYB/groscailloux-homelab/commit/33f720b

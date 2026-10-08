@@ -51,6 +51,12 @@ docker compose config --quiet && docker compose up -d      # ne recrée que ce q
 sudo ./setup.sh            # si homelabd/homelabctl ou les unités systemd ont changé
 ```
 
+`homelab.toml` refuse toute clé inconnue : quand il en gagne une, installer homelabd **et** homelabctl dans la foulée
+(l'ancien homelabctl échoue, l'ancien homelabd ne redémarrerait plus). `homelabctl install` (appelé par `setup.sh`) pose
+aussi `systemd/journald-homelab.conf` ; s'il a changé, `sudo systemctl restart systemd-journald` (ne coupe aucun
+service). Après le redémarrage de homelabd : `curl -s 127.0.0.1:8766/health` (version `git describe`), `homelabctl
+check` (diun compris), et aucune ligne « docker inspect en échec » dans `journalctl -u homelabd`.
+
 ## Profils VPN
 
 `COMPOSE_PROFILES=vpn` (défaut) lance `gluetun` + `qbittorrent` (netns partagé, port

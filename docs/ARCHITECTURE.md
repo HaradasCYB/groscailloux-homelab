@@ -109,8 +109,13 @@ gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-updat
   ouvert à Internet sans mot de passe jusqu'au 2026-09-12.
 - homelabd : les pages d'administration (`/`, `/accounts*`, `/recherche*`, `/status*`) passent par une couche
   commune (`crates/homelabd/src/admin_auth.rs`) : session par cookie signé (HMAC du jeton, un an), ouverte par
-  `/connexion` ou d'office depuis `HOMELABD_ADMIN_TRUSTED_IPS` ; le jeton ne passe jamais dans une adresse. Les
-  routes `/admin/*` (CLI) exigent le jeton en en-tête. Le sous-domaine d'onboarding est public.
+  `/connexion` ou d'office depuis `HOMELABD_ADMIN_TRUSTED_IPS` (vue par NPM confirmé par Docker seulement) ; le jeton
+  ne passe jamais dans une adresse ni dans une page (jeton de formulaire dérivé). Les routes `/admin/*` (CLI) ne
+  répondent qu'à un appel local (127.0.0.1, sans `X-Forwarded-For`) avec le jeton en en-tête. Les chemins
+  d'administration ne sont servis que sur l'hôte de `ONBOARD_PUBLIC_URL` (404 ailleurs, dont l'hôte premium).
+  L'adresse du client (`client_addr.rs`) n'est lue dans `X-Forwarded-For` que si le pair TCP est NPM
+  (`[web] trusted_proxies` + `trusted_proxy_container`) : confiance à trois niveaux (ignoré / réseau / confirmé par
+  Docker), instantané de l'adresse de NPM tenu par une tâche de fond.
 - Page de don : sous-domaine `don.` → homelabd ; la config avancée NPM ne laisse passer que `/don`
   (`/` redirige, tout le reste renvoie 404). Sans lien avec le service (ni Jellyfin, ni Homarr, ni mail).
 - Page « Comptes » (`/accounts` de l'hôte onboarding) : liste « admin-outils » dans la config avancée
@@ -122,8 +127,15 @@ gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-updat
   tchat, `html::esc`), testée par des fonctions pures ; `homelabd` : le démon (planificateur, pages web, API
   « Mon compte » `/compte/api/*`, tchat `/chat/*`, webhook PayPal) ; `homelabctl` : la CLI.
 - Planificateur : une boucle par tâche, jamais deux passages simultanés d'une même tâche, une panique n'arrête
-  qu'un passage. L'état (`state/homelabd.json`) n'est écrit que par le démon (fichier temporaire, `fsync`,
-  renommage) ; `homelabctl` l'ouvre en lecture seule et passe par `POST /admin/run` et `/admin/accounts`.
+  qu'un passage ; battement de cœur lu par `/health` (503 après 20 min sans tour de boucle). L'état
+  (`state/homelabd.json`) n'est écrit que par le démon : sérialisé en mémoire sous le verrou, puis écrit en UN appel
+  hors du verrou par un écrivain unique numéroté (jamais un état plus ancien après un plus récent ; fichier
+  temporaire, `fsync`, renommage, `fsync` du dossier ; une sérialisation identique n'est pas réécrite). `update` rend
+  la main une fois sur disque ; `update_lazy` (tenue des passages) part avec la sauvegarde suivante, `flush` à l'arrêt.
+  Jusqu'au 07/10, serde_json écrivait directement dans le fichier : ~38 000 `write` de 4 octets par sauvegarde, 66 % du
+  CPU du démon dans le noyau. `homelabctl` l'ouvre en lecture seule et passe par `POST /admin/run` et `/admin/accounts`.
+- Alertes : `alerts::admin` (mail + Discord admin), trace de livraison dans l'état, règles dans
+  [AUTOMATION.md](AUTOMATION.md#alertes-admin-2026-10-07).
 - Configuration : `homelab.toml` refuse les clés inconnues ; un test vérifie que les défauts du code sont ceux du
   fichier.
 

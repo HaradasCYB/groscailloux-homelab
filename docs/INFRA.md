@@ -12,7 +12,7 @@ fait quoi, par où passent les fichiers et ce qui se passe quand un élément to
 | Rôle | diffusion, recherche, automatisation, bibliothèque historique | tous les téléchargements, stockage des nouveautés |
 | Machine | VPS dédié · Ubuntu 26.04 · 6 vCPU · 17 Go + swap 4 Go · pas de GPU | seedbox partagée (plateforme Ultra.cc) · pas de root |
 | Stockage | 969 Go ext4 (médias historiques, état des services) | quota de 3,7 To (l'espace libre est celui du quota, pas du disque partagé) |
-| Services | 21 conteneurs Docker + `homelabd` (Rust, 24 tâches) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Bazarr, Unpackerr (conteneurs) |
+| Services | 21 conteneurs Docker + `homelabd` (Rust, 29 tâches) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Bazarr, Unpackerr (conteneurs) |
 
 Lien entre les deux : latence ~97 ms, 8 à 10 Mo/s par connexion (~30 Mo/s à quatre) ; API en HTTPS, fichiers en
 SFTP (lecture + suppression, aucune écriture).
@@ -191,7 +191,7 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 | `id_match_import` | 5 min | imports « matched by ID » | fichiers sans autre rejet |
 | `seedbox_refresh` | 5 min | imports seedbox → rclone + Jellyfin | curseur persistant |
 | `stuck_handler` | 5 min | téléchargements bloqués > 8 h | 5 max, ciblé |
-| `indexer_unblock` | 5 min | lève la pause d'un Arr sur C411 | 1 h après le dernier échec ; 3 fois/24 h au plus |
+| `indexer_unblock` | 5 min | lève la pause d'un Arr sur C411 | 15 min après le dernier échec ; 10 fois/24 h au plus ; jamais pendant une panne du site (une alerte par incident) |
 | `monitor_sync` | 10 min | saisons suivies = saisons demandées | par serveur Jellyseerr |
 | `anime_library` | 30 min | range l'animation japonaise (TMDB), type « anime » | tags anime / pas-anime |
 | `identity_check` | 30 min | corrige les fiches Jellyfin mal identifiées | 3 par passage, jamais pendant une lecture |
@@ -201,8 +201,12 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 | `playback_canary` | 15 min | transcodage réel de deux segments | alerte au premier échec |
 | `playback_limit` | 20 s | arrête la 3ᵉ lecture simultanée | comptes protégés exemptés |
 | `hls_loop_watch` | 5 min | client qui boucle sur un segment | alerte admin |
-| `stack_health` | 5 min | relance les conteneurs arrêtés ou unhealthy | 10 min entre deux relances |
-| `disk_pressure` | 15 min | disque VPS ≥ 95 % : vieux torrents arrêtés | hardlinks préservés ; ≥ 98 % alerte |
+| `stack_health` | 5 min | relance les conteneurs arrêtés ou unhealthy | 10 min entre deux relances ; relance ratée = alerte (1/h/service) |
+| `seedbox_health` | 5 min | applis et montage de la seedbox, quota | alerte après 10 min ; quota ≥ 85 % |
+| `cert_watch` | 24 h | certificat TLS de NPM + `GET /health` par le nom public | alerte sous 21 jours ou chaîne cassée, chaque jour tant que ça dure |
+| `backup_watch` | 24 h | âge de la dernière archive d'état | alerte au-delà de 8 jours |
+| `diun_watch` | 24 h | `diun/images.yml` en contrôle strict | alerte tant qu'il est invalide |
+| `disk_pressure` | 15 min | disque VPS ≥ 95 % : vieux torrents arrêtés | alerte à 85 % ; hardlinks préservés ; ≥ 98 % journal seulement |
 | `tracker_ratio` | 30 min | limites de partage par tracker | C411 (deux domaines) illimité |
 | `cleanup` | 24 h | dossiers vides, corbeilles (14 j), vieux journaux | chemins existants seulement |
 | `user_poller` | 60 s | comptes créés dans Jellyseerr → onboarding | une fois par adresse |
@@ -230,7 +234,7 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 | Redémarrage du VPS | Docker relance les conteneurs ; Guacamole après guacdb ; une seule session de bureau VNC. | automatique |
 | Seedbox injoignable | Titres seedbox affichés mais illisibles, sans purge ; demandes en attente ; le test de lecture alerte. | automatique au retour |
 | Service unhealthy | `stack_health` le relance. | automatique |
-| Tâche qui plante | passage noté en échec, la tâche repasse à l'intervalle suivant. | automatique |
+| Tâche qui plante | passage noté en échec, la tâche repasse à l'intervalle suivant ; 6 échecs de suite sur 30 min = alerte admin, puis message au retour. | automatique |
 | C411 en 429 | la clé est mise de côté 15 min, la requête repart sur l'autre. | automatique |
 | Coupure du VPN | kill-switch : qBittorrent (VPS) sans réseau. | automatique |
 | Disque VPS ≥ 95 % | `disk_pressure` libère de la place. | manuel à ≥ 98 % |

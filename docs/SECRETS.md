@@ -48,8 +48,12 @@ seedbox, pas dans `.env`.
   changer via `ALTER USER` puis `.env`).
 - `HOMELABD_ONBOARD_TOKEN` / `HOMELABD_STATUS_TOKEN` : `.env`, restart homelabd — toutes les sessions `/connexion`
   tombent (cookie signé avec le jeton) ; se reconnecter avec le nouveau. Aucun lien à changer (plus de `?token=`).
-- `HOMELABD_ADMIN_TRUSTED_IPS` (une IP, donc hors dépôt) : IP de la maison, pages d'admin sans connexion. Si la box
-  change d'IP : mettre la nouvelle, restart homelabd (le cookie d'un an couvre l'entre-deux).
+  Le jeton d'onboarding n'apparaît plus dans les pages (jeton de formulaire HMAC) ; sans lui, `POST /onboard` est
+  fermé. Il signe aussi la clé `k` des liens `/premium` des mails : le renouveler rend ces clés caduques, sans risque.
+- `HOMELABD_ADMIN_TRUSTED_IPS` (une IP, donc hors dépôt) : IP de la maison, pages d'admin sans connexion, lue
+  seulement dans un `X-Forwarded-For` posé par NPM confirmé par Docker (jamais une connexion locale ni un autre
+  conteneur). Si la box change d'IP : mettre la nouvelle, restart homelabd (le cookie d'un an couvre l'entre-deux).
+- `ONBOARD_PUBLIC_URL` : son hôte est le seul qui sert les pages d'administration de homelabd (404 ailleurs).
 
 ## Où sont les autres secrets
 
