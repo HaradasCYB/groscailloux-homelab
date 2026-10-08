@@ -11,7 +11,7 @@
 use crate::context::TaskContext;
 use crate::discord::{self, Channel, Embed};
 use crate::mail;
-use crate::state::now;
+use crate::state::{now, WatchAlert};
 
 /// Début de l'objet des alertes « tâche en échec répété » (scheduler) : sert aussi à les compter dans
 /// `state.alerts.recent` pour le plafond `[alerts] fail_alerts_max`.
@@ -76,6 +76,85 @@ pub fn delivered(sent: (bool, bool)) -> bool {
 /// avertissement et une ligne « non livrée » de plus à chaque fois.
 pub fn retry_later(sent: (bool, bool), configured: bool) -> bool {
     !delivered(sent) && configured
+}
+
+/// Délai avant de répéter l'alerte d'une surveillance quotidienne pour le **même** défaut (2026-10-08). Un peu
+/// moins de 24 h : le passage planifié du lendemain (intervalle de 24 h) passe toujours, un redémarrage de homelabd
+/// dans la journée jamais.
+pub const WATCH_REPEAT_SECS: i64 = 20 * 3600;
+
+/// Faut-il envoyer l'alerte d'une surveillance quotidienne ? `last` : dernière alerte partie pour cette tâche.
+/// Oui s'il n'y en a pas, si le défaut n'est plus le même (`key` différente), ou si elle date d'au moins
+/// [`WATCH_REPEAT_SECS`]. Une date dans le futur (horloge reculée) ne retient pas l'alerte.
+pub fn watch_due(last: Option<&WatchAlert>, key: &str, ts: i64) -> bool {
+    !last.is_some_and(|w| w.key == key && (0..WATCH_REPEAT_SECS).contains(&(ts - w.at)))
+}
+
+/// Empreinte courte et stable d'un défaut décrit par plusieurs lignes (SHA-256, 16 premiers caractères hex) : deux
+/// passages qui relèvent les mêmes lignes ont la même, un défaut différent une autre.
+pub fn fingerprint(parts: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for p in parts {
+        h.update(p.as_bytes());
+        h.update([0u8]); // « ab|c » ≠ « a|bc »
+    }
+    h.finalize()
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Alerte d'une surveillance quotidienne (`cert_watch`, `backup_watch`, `diun_watch`) **avec mémoire** : ces tâches
+/// tournent à chaque démarrage de homelabd et réalertaient le même défaut à chaque redémarrage. `task` : nom de la
+/// tâche ; `key` : identité du défaut (voir [`watch_due`]). Rend `false` si l'alerte a été retenue (même défaut déjà
+/// signalé il y a moins de [`WATCH_REPEAT_SECS`]), `true` si elle a été envoyée — ou tentée : rien n'est noté quand un
+/// canal configuré n'a pas abouti (`retry_later`), la tâche réessaiera à son passage suivant.
+pub async fn watch(
+    ctx: &TaskContext,
+    task: &str,
+    key: &str,
+    level: Level,
+    subject: &str,
+    body: &str,
+) -> bool {
+    let ts = now();
+    let last = ctx.state.read(|s| s.watch_alerts.get(task).cloned()).await;
+    if !watch_due(last.as_ref(), key, ts) {
+        tracing::info!(
+            task,
+            "défaut déjà signalé il y a moins de 20 h : pas de nouvelle alerte"
+        );
+        return false;
+    }
+    let sent = admin(ctx, level, subject, body).await;
+    if !retry_later(sent, configured(ctx)) && !ctx.dry_run {
+        let (task, key) = (task.to_string(), key.to_string());
+        if let Err(e) = ctx
+            .state
+            .update(|s| {
+                s.watch_alerts.insert(task, WatchAlert { at: ts, key });
+            })
+            .await
+        {
+            tracing::warn!(
+                task = "alerts",
+                error = format!("{e:#}"),
+                "mémoire de l'alerte non enregistrée"
+            );
+        }
+    }
+    true
+}
+
+/// La surveillance `task` ne relève plus rien : oublie sa dernière alerte, pour qu'une rechute alerte normalement.
+/// N'écrit rien quand il n'y avait rien à oublier.
+pub async fn watch_clear(ctx: &TaskContext, task: &str) {
+    if ctx.dry_run || !ctx.state.read(|s| s.watch_alerts.contains_key(task)).await {
+        return;
+    }
+    let _ = ctx.state.update(|s| s.watch_alerts.remove(task)).await;
 }
 
 /// Journal et état d'un envoi. Rien en dry-run (rien n'est parti) ; l'objet seul est écrit, jamais le corps
@@ -177,8 +256,10 @@ pub async fn capacity(
                 threshold.saturating_sub(margin)
             );
             let sent = admin(ctx, Level::Warn, &subject, &body).await;
-            // rien n'est parti : on réessaiera au passage suivant plutôt que de croire l'admin prévenu
-            if delivered(sent) && !ctx.dry_run {
+            // rien n'est parti alors qu'un canal existe : on réessaiera au passage suivant plutôt que de croire
+            // l'admin prévenu. Sans canal configuré (2026-10-08) on marque quand même : rien ne changera au passage
+            // suivant, et une écriture d'état + un avertissement à chaque passage n'avanceraient à rien.
+            if !retry_later(sent, configured(ctx)) && !ctx.dry_run {
                 let at = now();
                 let _ = ctx
                     .state
@@ -231,6 +312,63 @@ mod tests {
         // partie par au moins un canal : terminé
         assert!(!retry_later((true, false), true));
         assert!(!retry_later((false, true), true));
+    }
+
+    fn watch_at(at: i64, key: &str) -> WatchAlert {
+        WatchAlert {
+            at,
+            key: key.into(),
+        }
+    }
+
+    #[test]
+    fn a_daily_watch_does_not_repeat_the_same_defect_after_a_restart() {
+        let h = 3600;
+        let last = watch_at(1_000_000, "stale");
+        // aucune alerte connue : on alerte
+        assert!(watch_due(None, "stale", 1_000_000));
+        // redémarrage de homelabd 5 min, 2 h, 19 h 59 après l'alerte : silence
+        assert!(!watch_due(Some(&last), "stale", 1_000_000 + 300));
+        assert!(!watch_due(Some(&last), "stale", 1_000_000 + 2 * h));
+        assert!(!watch_due(Some(&last), "stale", 1_000_000 + 20 * h - 1));
+        // 20 h écoulées (passage planifié du lendemain, intervalle de 24 h) : on reprévient
+        assert!(watch_due(Some(&last), "stale", 1_000_000 + 20 * h));
+        assert!(watch_due(Some(&last), "stale", 1_000_000 + 24 * h));
+    }
+
+    #[test]
+    fn a_different_defect_alerts_at_once() {
+        let last = watch_at(1_000_000, "stale");
+        assert!(watch_due(Some(&last), "missing", 1_000_060));
+        // même défaut mais dont l'empreinte a changé (autres lignes en erreur)
+        assert!(watch_due(
+            Some(&watch_at(1_000_000, &fingerprint(&["a".into()]))),
+            &fingerprint(&["a".into(), "b".into()]),
+            1_000_060
+        ));
+    }
+
+    #[test]
+    fn a_clock_set_back_does_not_mute_the_watch_for_ever() {
+        // dernière alerte « dans le futur » : elle ne retient pas l'alerte
+        let last = watch_at(2_000_000, "stale");
+        assert!(watch_due(Some(&last), "stale", 1_000_000));
+    }
+
+    #[test]
+    fn fingerprints_are_stable_and_distinguish_the_lines() {
+        let a = fingerprint(&["ligne 4 : clé en double".into(), "ligne 9 : x".into()]);
+        assert_eq!(a.len(), 16);
+        assert_eq!(
+            a,
+            fingerprint(&["ligne 4 : clé en double".into(), "ligne 9 : x".into()])
+        );
+        assert_ne!(a, fingerprint(&["ligne 4 : clé en double".into()]));
+        // la frontière entre deux lignes compte
+        assert_ne!(
+            fingerprint(&["ab".into(), "c".into()]),
+            fingerprint(&["a".into(), "bc".into()])
+        );
     }
 
     #[test]

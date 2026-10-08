@@ -86,6 +86,12 @@ de tâche ni alerte.
 - **Lectures relancées en boucle** : l'alerte donne le titre au lieu d'un identifiant, une par rafale, sans répétition
   après un redémarrage.
 - **Journal système** : 2 Go et 45 jours, rotation quotidienne (l'historique du moteur tombait à 1 à 3 jours).
+- **Alertes sans répétition inutile** (08/10, suite de la revue) : certificat, sauvegarde et veille des images ne
+  réalertent plus le même défaut à chaque redémarrage du moteur (au plus une fois par 20 h, un défaut différent ou une
+  rechute alerte aussitôt) ; un site de téléchargement qui clignote ne refait plus une alerte « en panne » à chaque
+  aller-retour (incident clos après 6 h sans panne) ; l'alerte « en panne » n'est tenue pour envoyée que si elle est
+  partie ; le plafond de trois alertes d'échecs par 10 min tient aussi quand deux tâches tombent à quelques secondes
+  d'écart.
 
 ### Sobriété
 

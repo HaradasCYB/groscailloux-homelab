@@ -95,22 +95,26 @@ date d'expiration du certificat présenté (connexion sans vérification, pour l
 minimal de `notAfter`), `GET <hôte public><health_path>` (chaîne NPM → Jellyfin), puis la même requête avec
 vérification complète (certificat reconnu pour ce nom). 3 tentatives espacées de 30 s, nouvel essai sur erreur de
 connexion et sur HTTP ≥ 500 (`should_retry`), seule la dernière compte. Défaut (certificat à moins de `warn_days` = 21
-jours, chaîne cassée, NPM injoignable) : un message mail + Discord qui les regroupe, répété à chaque passage tant
-que ça dure. Résumé : « certificat valide encore 49 j, /health 200 ».
+jours, chaîne cassée, NPM injoignable) : un message mail + Discord qui les regroupe, répété chaque jour tant que ça
+dure, **mais jamais deux fois en moins de 20 h pour le même défaut** (2026-10-08 : la tâche tourne aussi à chaque
+démarrage de homelabd, et chaque redémarrage réalertait ; voir « Mémoire des surveillances quotidiennes » plus bas).
+Résumé : « certificat valide encore 49 j, /health 200 ».
 
 ### backup_watch — 24 h (2026-10-07)
 
 Âge de la dernière archive `backups/homelab-state-*.tar.zst` : plus de `max_age_days` (8) jours, ou aucune archive ⇒
 alerte admin. Couvre le minuteur `homelab-backup.timer` (dimanche) qui ne tourne plus du tout ; un échec franc de
 l'unité prévient déjà par `OnFailure=homelab-alert@`. `homelabctl backup` poste lui-même, en fin de sauvegarde, les
-avertissements de copie SQLite à l'admin.
+avertissements de copie SQLite à l'admin. Même mémoire que `cert_watch` : « trop ancienne » puis « aucune archive »
+sont deux défauts différents, l'âge qui grandit n'en fait pas un nouveau.
 
 ### diun_watch — 24 h (2026-10-07)
 
 Relit `diun/images.yml` avec le contrôle strict de `homelabctl check` (`homelab_core::diun`) : clé en double, clé
 orpheline, entrée sans `name`, nom en double, tabulation ; chaque image du compose doit avoir son entrée `repo:tag`
 (digest ignoré) ; une entrée inutilisée n'est qu'un avertissement. Listes YAML en bloc acceptées sous une clé sans
-valeur en ligne. Fichier invalide ⇒ alerte admin à chaque passage. Du 18/09 au 07/10, deux groupes de clés
+valeur en ligne. Fichier invalide ⇒ alerte admin à chaque passage, sauf si les **mêmes** erreurs (empreinte
+`alerts::fingerprint`) ont déjà été signalées il y a moins de 20 h. Du 18/09 au 07/10, deux groupes de clés
 orphelines (retrait de Jackett/FlareSolverr) ont rendu diun aveugle sans que rien ne le signale.
 
 Ces trois tâches passent aussi ~30 s après chaque démarrage de homelabd : l'heure du contrôle quotidien est celle du
@@ -306,8 +310,12 @@ arrêt par application par `app_cooldown_mins` (60), même après un échec. Un 
 quota ; pas `c411_up`, dont la branche `indexerstatus` reflète la clé de recherche et bloquerait la levée de la clé RSS
 sur un 429). Site en panne (503, page HTML en 200, injoignable) ⇒ `Decision::Outage` : aucun arrêt d'Arr, aucune
 copie de base, résumé « C411 en panne : pause laissée (n) ». Une alerte au début de l'incident (marqueur `c411_outage`
-dans `state.indexer_alerts`) ; tant qu'il existe, le site est sondé à chaque passage, et il est retiré quand le site
-répond (la panne suivante sera signalée). Prowlarr absent ou injoignable = inconnu : comportement d'avant. Les autres
+dans `state.indexer_alerts`, posé **seulement si l'alerte est partie** — ou si aucun canal n'est configuré —, sinon le
+passage suivant la retente) ; tant qu'il existe, le site est sondé à chaque passage. Il n'est retiré qu'après
+**6 h sans panne constatée** (2026-10-08, `OUTAGE_HOLD_SECS`) : chaque passage en panne rafraîchit la date du marqueur
+(`OutageStep::Hold`, mutation différée), et une sonde réussie sur un marqueur plus récent ne fait rien (`Quiet`). Un C411 qui
+clignote (503, 200, 503…) ne réalerte donc pas à chaque aller-retour ; la panne suivante, 6 h après le retour, est
+signalée. Prowlarr absent ou injoignable = inconnu : comportement d'avant. Les autres
 indexeurs ne sont pas concernés. Du 30/09 au 02/10 : 34 arrêts inutiles des Arrs seedbox. **Purge** des copies
 `*.homelab-*` de plus de 7 jours de la seedbox : une fois par 24 h (un seul ssh, marqueur `purge:seedbox`, antidaté de
 23 h en cas d'échec pour réessayer dans l'heure), plus seulement après un déblocage. `indexer_alerts` porte donc trois
@@ -565,13 +573,28 @@ l'adresse, l'URL du webhook ni le corps), ou « alerte NON livrée » / « alert
 (sauvegarde) n'y figure pas : la CLI n'écrit pas l'état.
 
 - **Règle de réessai** : un appelant qui note « déjà signalé » ne le fait que si au moins un canal a pris l'alerte
-  (`alerts::delivered`) ; sans aucun canal configuré (`alerts::configured`), on ne réessaie pas à chaque passage
-  (`alerts::retry_later`).
+  **ou si aucun n'est configuré** (`!alerts::retry_later(sent, alerts::configured(ctx))`) : sans canal, réessayer à chaque
+  passage ne ferait qu'écrire un avertissement de plus. Appliquée par `scheduler::settle`, `hls_loop_watch`,
+  `indexer_unblock` (alerte « toujours en panne » et « C411 en panne »), `seedbox_health` et `alerts::capacity`
+  (alignement du 2026-10-08 : les trois derniers ne regardaient que `delivered`, et l'alerte « C411 en panne » ignorait
+  le résultat de l'envoi).
+- **Mémoire des surveillances quotidiennes** (2026-10-08) : `cert_watch`, `backup_watch` et `diun_watch` passent aussi à
+  chaque démarrage de homelabd. `alerts::watch` garde dans `state.watch_alerts` (par tâche : date + clé du défaut,
+  `#[serde(default)]`, compatible avec l'état d'avant) la dernière alerte **partie** ; il retient la suivante tant que
+  c'est le même défaut (`watch_due`) et qu'il s'est écoulé moins de `WATCH_REPEAT_SECS` (20 h, donc le passage
+  planifié du lendemain passe toujours). Un défaut différent (autre clé : `cert_watch` = ses `Problem::kind` triés,
+  `backup_watch` = `stale`/`missing`, `diun_watch` = empreinte des erreurs) alerte aussitôt ; un passage sain
+  (`watch_clear`) efface la mémoire, une rechute alerte normalement. Une alerte non livrée alors qu'un canal existe
+  n'est pas notée : la tâche réessaie à son passage suivant.
 - **Tâche en échec répété** (`[alerts]`) : une alerte quand une tâche échoue `fail_streak` (6) fois de suite **et**
   depuis au moins `fail_minutes` (30) minutes (une tâche toutes les 20 s échoue 6 fois en 2 min sans que ce soit une
   panne), puis un message « Tâche rétablie » à son retour. Les erreurs isolées ne préviennent pas. Au plus
   `fail_alerts_max` (3) alertes de ce type par `fail_alerts_window_mins` (10) : au-delà, la série n'est pas marquée
-  signalée et repart au prochain échec. Mémoire dans `RunInfo` (`fail_streak`, `fail_since`, `streak_alerted`,
+  signalée et repart au prochain échec. La place est **réservée dans la même mise à jour d'état que la décision**
+  (`AlertStats::reserve_streak`, 2026-10-08) : `alerts::admin` n'enregistre l'alerte qu'après l'envoi (SMTP puis Discord),
+  et deux tâches au seuil à quelques secondes d'écart voyaient toutes deux de la place. La réservation (`reserved`, jamais
+  écrite sur disque) est rendue dès l'envoi fini (`release_streak`) : l'alerte enregistrée, livrée ou non, compte à sa place ;
+  une réservation orpheline (envoi interrompu) sort de la fenêtre d'elle-même. Mémoire dans `RunInfo` (`fail_streak`, `fail_since`, `streak_alerted`,
   `last_error`, `last_error_at`, `errors_by_day` sur 14 jours).
 - **Capacité** : `alerts::crossing` (pure) + `alerts::capacity` : une alerte par franchissement de
   `tasks.disk_pressure.alert_pct` ou `tasks.seedbox_health.quota_alert_pct` (85 ; 0 = désactivé), réarmée

@@ -16,8 +16,8 @@
 //! maintenance ; chaque pause levée se reposait aussitôt, et la tâche a arrêté 34 fois les Arrs de la seedbox
 //! (~20 s chacun, copie de leur base, une alerte à chaque fois). Avant de lever la pause d'un indexeur C411, on
 //! sonde donc le site (`indexer::c411_reachable` : `caps` sans clé, aucun quota) ; en panne, on ne touche à rien
-//! et l'admin reçoit **une seule** alerte pour l'incident (marqueur dans `indexer_alerts`, retiré au retour du
-//! site). Les copies de base de la seedbox sont purgées une fois par jour, indépendamment des déblocages.
+//! et l'admin reçoit **une seule** alerte pour l'incident (marqueur dans `indexer_alerts`, retiré quand le site
+//! répond depuis 6 h : un site qui clignote ne réalerte pas, 2026-10-08). Les copies de base de la seedbox sont purgées une fois par jour, indépendamment des déblocages.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -85,22 +85,35 @@ pub fn with_outage(d: Decision, is_c411: bool, c411_up: bool) -> Decision {
     }
 }
 
+/// Combien de temps C411 doit répondre sans interruption avant qu'un incident soit clos (2026-10-08). Avant, la
+/// première sonde réussie retirait le marqueur : un site qui clignote (503 puis 200 puis 503…) refaisait une alerte
+/// « C411 en panne » à chaque aller-retour.
+const OUTAGE_HOLD_SECS: i64 = 6 * 3600;
+
 /// Suite à donner à la sonde du site : une alerte au début d'un incident, rien tant qu'il dure, et le marqueur
-/// retiré quand C411 répond de nouveau (pour qu'une panne ultérieure soit de nouveau signalée).
+/// retiré quand C411 répond de nouveau **depuis au moins [`OUTAGE_HOLD_SECS`]** (pour qu'une panne ultérieure soit
+/// de nouveau signalée, mais pas un simple clignotement).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutageStep {
     Announce,
+    /// Le site est toujours en panne, incident déjà signalé : la date du marqueur devient celle de ce constat
+    /// (« dernière panne vue »), pour que le délai de clôture compte à partir de la fin réelle de la panne et non
+    /// de l'alerte initiale — sans quoi, après deux jours de panne, la première sonde réussie clôturerait aussitôt.
+    Hold,
+    /// Le site répond mais l'incident est trop récent pour être clos : on ne touche à rien.
     Quiet,
     Clear,
     Nothing,
 }
 
-/// `marker` : date de l'alerte déjà envoyée ; `down` : résultat de la sonde de ce passage (`None` = pas sondé).
-pub fn outage_step(marker: Option<i64>, down: Option<bool>) -> OutageStep {
+/// `marker` : date de l'alerte déjà envoyée (ou du dernier constat de panne, voir [`OutageStep::Hold`]) ; `down` :
+/// résultat de la sonde de ce passage (`None` = pas sondé) ; `now` : l'instant du passage.
+pub fn outage_step(marker: Option<i64>, down: Option<bool>, now: i64) -> OutageStep {
     match (down, marker) {
         (Some(true), None) => OutageStep::Announce,
-        (Some(true), Some(_)) => OutageStep::Quiet,
-        (Some(false), Some(_)) => OutageStep::Clear,
+        (Some(true), Some(_)) => OutageStep::Hold,
+        (Some(false), Some(m)) if now - m >= OUTAGE_HOLD_SECS => OutageStep::Clear,
+        (Some(false), Some(_)) => OutageStep::Quiet,
         _ => OutageStep::Nothing,
     }
 }
@@ -345,10 +358,13 @@ fn prune_backups(dir: &Path, key: &str, days: u64) {
     }
 }
 
-/// `true` si au moins un canal (mail, Discord) a pris l'alerte.
+/// `true` si l'alerte est réglée : un canal (mail, Discord) l'a prise, **ou** aucun n'est configuré (réessayer à
+/// chaque passage ne ferait qu'écrire un avertissement de plus). `false` seulement quand un canal existe mais n'a
+/// pas abouti (`alerts::retry_later`, 2026-10-08) : l'appelant ne note alors pas « déjà signalé » et réessaie au
+/// passage suivant.
 async fn notify(ctx: &TaskContext, subject: &str, body: &str) -> bool {
     let sent = crate::alerts::admin(ctx, crate::alerts::Level::Warn, subject, body).await;
-    crate::alerts::delivered(sent)
+    !crate::alerts::retry_later(sent, crate::alerts::configured(ctx))
 }
 
 fn fmt_time(secs: i64) -> String {
@@ -579,12 +595,13 @@ impl Task for IndexerUnblock {
                 }
             }
         }
-        // incident C411 : une alerte au début, rien ensuite, marqueur retiré quand le site répond de nouveau
-        match outage_step(outage_marker, site_up.map(|up| !up)) {
+        // incident C411 : une alerte au début, rien ensuite ; marqueur retiré seulement après `OUTAGE_HOLD_SECS` sans
+        // panne constatée (un site qui clignote ne réalerte pas à chaque aller-retour)
+        match outage_step(outage_marker, site_up.map(|up| !up), t) {
             OutageStep::Announce => {
                 warn!(task = "indexer_unblock", apps = ?outage_apps, "C411 en panne : pauses laissées");
                 if !ctx.dry_run {
-                    notify(
+                    let done = notify(
                         ctx,
                         "C411 en panne : pauses laissées",
                         &format!(
@@ -598,15 +615,33 @@ impl Task for IndexerUnblock {
                         ),
                     )
                     .await;
+                    // marqueur posé seulement si l'alerte est réglée (partie, ou aucun canal configuré) : sinon le
+                    // passage suivant la retente. Avant le 2026-10-08 le résultat était ignoré et une alerte perdue ne
+                    // revenait qu'à la panne suivante (règle de `scheduler::settle` et de `hls_loop_watch`).
+                    if done {
+                        ctx.state
+                            .update(|s| s.indexer_alerts.insert(OUTAGE_KEY.to_string(), t))
+                            .await?;
+                    } else {
+                        warn!(
+                            task = "indexer_unblock",
+                            "alerte « C411 en panne » non livrée : nouvel essai au prochain passage"
+                        );
+                    }
+                }
+            }
+            OutageStep::Hold => {
+                // simple tenue (écrite avec la sauvegarde suivante) : le délai de clôture part de la dernière panne vue
+                if !ctx.dry_run {
                     ctx.state
-                        .update(|s| s.indexer_alerts.insert(OUTAGE_KEY.to_string(), t))
+                        .update_lazy(|s| s.indexer_alerts.insert(OUTAGE_KEY.to_string(), t))
                         .await?;
                 }
             }
             OutageStep::Clear => {
                 info!(
                     task = "indexer_unblock",
-                    "C411 répond de nouveau : incident clos"
+                    "C411 répond de nouveau depuis plus de 6 h : incident clos"
                 );
                 if !ctx.dry_run {
                     ctx.state
@@ -772,15 +807,52 @@ mod tests {
 
     #[test]
     fn a_whole_outage_gives_a_single_alert() {
+        let h = OUTAGE_HOLD_SECS;
         // premier passage en panne : alerte
-        assert_eq!(outage_step(None, Some(true)), OutageStep::Announce);
-        // les passages suivants de la même panne : silence
-        assert_eq!(outage_step(Some(1_000), Some(true)), OutageStep::Quiet);
-        // retour de C411 : l'incident est clos, la panne suivante sera signalée de nouveau
-        assert_eq!(outage_step(Some(1_000), Some(false)), OutageStep::Clear);
-        assert_eq!(outage_step(None, Some(false)), OutageStep::Nothing);
+        assert_eq!(outage_step(None, Some(true), 1_000), OutageStep::Announce);
+        // les passages suivants de la même panne : silence (la date du marqueur est seulement tenue à jour)
+        assert_eq!(
+            outage_step(Some(1_000), Some(true), 1_600),
+            OutageStep::Hold
+        );
+        // retour de C411 après une vraie interruption : l'incident est clos, la panne suivante sera signalée de nouveau
+        assert_eq!(
+            outage_step(Some(1_000), Some(false), 1_000 + h),
+            OutageStep::Clear
+        );
+        assert_eq!(outage_step(None, Some(false), 1_000), OutageStep::Nothing);
         // pas de sonde ce passage (aucune pause C411 à lever, pas d'incident en cours)
-        assert_eq!(outage_step(None, None), OutageStep::Nothing);
+        assert_eq!(outage_step(None, None, 1_000), OutageStep::Nothing);
+    }
+
+    #[test]
+    fn a_flickering_site_does_not_clear_the_incident() {
+        let h = OUTAGE_HOLD_SECS;
+        // une seule sonde réussie 10 min après l'alerte (ou après le dernier constat de panne) : marqueur gardé,
+        // la panne qui revient ensuite reste dans le même incident (aucune nouvelle alerte)
+        assert_eq!(
+            outage_step(Some(5_000), Some(false), 5_000 + 600),
+            OutageStep::Quiet
+        );
+        assert_eq!(
+            outage_step(Some(5_000), Some(false), 5_000 + h - 1),
+            OutageStep::Quiet
+        );
+        assert_eq!(
+            outage_step(Some(5_000), Some(true), 5_000 + 1_200),
+            OutageStep::Hold
+        );
+        // le marqueur d'un incident long (alerte vieille de deux jours) ne clôt pas non plus à la première sonde
+        // réussie : `Hold` l'a rafraîchi à chaque passage en panne, il ne vieillit qu'une fois le site revenu
+        let last_down = 2 * 86_400;
+        assert_eq!(
+            outage_step(Some(last_down), Some(false), last_down + 600),
+            OutageStep::Quiet
+        );
+        assert_eq!(
+            outage_step(Some(last_down), Some(false), last_down + h),
+            OutageStep::Clear
+        );
     }
 
     #[test]

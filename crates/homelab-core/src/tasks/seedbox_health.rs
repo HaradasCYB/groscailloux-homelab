@@ -171,9 +171,11 @@ impl Task for SeedboxHealth {
             let sent = alerts::admin(ctx, Level::Warn, &subject, &body).await;
             if alerts::delivered(sent) {
                 info!(task = "seedbox_health", services = ?names, mailed = sent.0, posted = sent.1, "alerte envoyée");
-            } else {
-                // Rien n'est parti : la panne n'est pas « signalée », le passage suivant réessaiera. Avant le
-                // 2026-10-07 on écrivait « alerte envoyée » sans regarder le résultat.
+            }
+            // Rien n'est parti alors qu'un canal existe : la panne n'est pas « signalée », le passage suivant
+            // réessaiera. Avant le 2026-10-07 on écrivait « alerte envoyée » sans regarder le résultat ; sans canal
+            // configuré (2026-10-08) on ne réessaie plus, ce serait un avertissement de plus à chaque passage.
+            if alerts::retry_later(sent, alerts::configured(ctx)) {
                 warn!(task = "seedbox_health", services = ?names, "alerte NON livrée, nouvel essai au prochain passage");
                 for (n, _) in &alerts_to_send {
                     new_alerted.remove(n);

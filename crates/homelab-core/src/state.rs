@@ -120,6 +120,18 @@ pub struct State {
     /// l'alerte ; la clé disparaît quand leur compteur horaire retombe sous le seuil, la rafale suivante alertera.
     #[serde(default)]
     pub burst_alerts: BTreeMap<String, i64>,
+    /// Surveillances quotidiennes (`cert_watch`, `backup_watch`, `diun_watch`) : dernière alerte partie, par tâche.
+    /// Ces tâches tournent aussi à chaque démarrage de homelabd : sans cette mémoire, chaque redémarrage réalertait le
+    /// même défaut (voir `alerts::watch_due`). L'entrée disparaît au retour à la normale.
+    #[serde(default)]
+    pub watch_alerts: BTreeMap<String, WatchAlert>,
+}
+
+/// Dernière alerte d'une surveillance quotidienne : date et empreinte du défaut signalé (`alerts::fingerprint`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WatchAlert {
+    pub at: i64,
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -491,6 +503,10 @@ pub struct AlertStats {
     /// Les [`ALERTS_KEPT`] dernières, la plus récente en dernier.
     #[serde(default)]
     pub recent: Vec<AlertRecord>,
+    /// Places prises par des alertes d'échecs répétés **en cours d'envoi** (dates, secondes). Jamais écrites sur
+    /// disque : une réservation ne vit que le temps de l'envoi (voir [`AlertStats::reserve_streak`]).
+    #[serde(skip)]
+    pub reserved: Vec<i64>,
 }
 
 impl AlertStats {
@@ -501,6 +517,30 @@ impl AlertStats {
             .iter()
             .filter(|a| a.subject.starts_with(prefix) && ts - a.at < window_secs)
             .count()
+    }
+
+    /// Prend une place pour une alerte d'échecs répétés **dans la même mise à jour d'état que la décision**
+    /// (2026-10-08). Le plafond ne comptait que les alertes déjà enregistrées, or `alerts::admin` n'enregistre
+    /// qu'après l'envoi (SMTP puis Discord, plusieurs secondes) : deux tâches arrivées au seuil à quelques secondes
+    /// d'écart voyaient toutes deux de la place et partaient toutes deux. Ici les envois en cours comptent aussi.
+    /// `false` : plafond atteint, rien n'est réservé. Une réservation orpheline (envoi interrompu) sort de la
+    /// fenêtre d'elle-même.
+    pub fn reserve_streak(&mut self, prefix: &str, ts: i64, window_secs: i64, cap: usize) -> bool {
+        self.reserved.retain(|r| ts - *r < window_secs);
+        if self.count_recent(prefix, ts, window_secs) + self.reserved.len() >= cap {
+            return false;
+        }
+        self.reserved.push(ts);
+        true
+    }
+
+    /// Rend la place prise par [`reserve_streak`](Self::reserve_streak) une fois l'envoi terminé : `alerts::admin`
+    /// a alors enregistré l'alerte (livrée ou non), qui compte à sa place. Même quand rien n'a été enregistré
+    /// (dry-run), la place n'a plus de raison d'être retenue.
+    pub fn release_streak(&mut self, ts: i64) {
+        if let Some(i) = self.reserved.iter().position(|r| *r == ts) {
+            self.reserved.remove(i);
+        }
     }
 
     pub fn record(&mut self, at: i64, subject: &str, mailed: bool, posted: bool) {
@@ -992,6 +1032,26 @@ mod tests {
     }
 
     #[test]
+    fn a_state_without_watch_memory_still_loads() {
+        // état d'avant le 2026-10-08 : pas de `watch_alerts`
+        let s: State = serde_json::from_str(r#"{"alerts":{"delivered":2}}"#).unwrap();
+        assert!(s.watch_alerts.is_empty());
+        assert_eq!(s.alerts.delivered, 2);
+        // et l'aller-retour garde la date et l'empreinte de la dernière alerte
+        let mut s = State::default();
+        s.watch_alerts.insert(
+            "backup_watch".into(),
+            WatchAlert {
+                at: 1_000,
+                key: "stale".into(),
+            },
+        );
+        let back: State = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.watch_alerts["backup_watch"].key, "stale");
+        assert_eq!(back.watch_alerts["backup_watch"].at, 1_000);
+    }
+
+    #[test]
     fn error_line_reads_well() {
         let mut r = RunInfo::default();
         r.record_outcome(NOON, false, "error: jellyfin Items: operation timed out");
@@ -1043,6 +1103,66 @@ mod tests {
         // une alerte non livrée compte aussi : elle a bien été tentée
         assert_eq!(a.count_recent("Tâche rétablie", 1_400, 600), 1);
         assert_eq!(AlertStats::default().count_recent(p, 0, 600), 0);
+    }
+
+    #[test]
+    fn two_streak_alerts_at_the_cap_cannot_both_pass() {
+        let p = "Tâche en échec répété";
+        let (window, cap) = (600, 3);
+        let mut a = AlertStats::default();
+        a.record(1_000, &format!("{p} : A"), true, true);
+        a.record(1_100, &format!("{p} : B"), true, true);
+        // deux tâches au seuil à quelques secondes d'écart, la première n'a pas fini d'envoyer (rien d'enregistré)
+        assert!(
+            a.reserve_streak(p, 1_200, window, cap),
+            "il restait une place"
+        );
+        assert!(
+            !a.reserve_streak(p, 1_203, window, cap),
+            "la place est prise par l'envoi en cours"
+        );
+        // la première a fini : l'alerte enregistrée remplace la réservation, le compte reste à 3
+        a.record(1_207, &format!("{p} : C"), true, true);
+        a.release_streak(1_200);
+        assert!(a.reserved.is_empty());
+        assert!(!a.reserve_streak(p, 1_210, window, cap));
+        // la fenêtre passe : de la place de nouveau
+        assert!(a.reserve_streak(p, 1_000 + window + 1, window, cap));
+    }
+
+    #[test]
+    fn a_released_reservation_without_record_frees_its_place() {
+        let p = "Tâche en échec répété";
+        let mut a = AlertStats::default();
+        assert!(a.reserve_streak(p, 500, 600, 1));
+        assert!(!a.reserve_streak(p, 501, 600, 1));
+        // envoi sans trace (dry-run) : on rend la place
+        a.release_streak(500);
+        assert!(a.reserve_streak(p, 502, 600, 1));
+        // libérer une date inconnue ne touche à rien
+        a.release_streak(9_999);
+        assert_eq!(a.reserved, vec![502]);
+    }
+
+    #[test]
+    fn an_orphan_reservation_expires_with_the_window() {
+        let p = "Tâche en échec répété";
+        let mut a = AlertStats::default();
+        assert!(a.reserve_streak(p, 100, 600, 1));
+        // l'envoi a été interrompu (arrêt du daemon, annulation) : rien n'a été libéré, la fenêtre le fait
+        assert!(!a.reserve_streak(p, 699, 600, 1));
+        assert!(a.reserve_streak(p, 700, 600, 1));
+        assert_eq!(a.reserved, vec![700], "l'orpheline est purgée");
+    }
+
+    #[test]
+    fn reservations_are_never_written_to_disk() {
+        let mut a = AlertStats::default();
+        a.reserved.push(42);
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(!json.contains("reserved"), "{json}");
+        let back: AlertStats = serde_json::from_str(&json).unwrap();
+        assert!(back.reserved.is_empty());
     }
 
     #[tokio::test]

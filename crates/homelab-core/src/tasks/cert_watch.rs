@@ -135,6 +135,9 @@ pub struct Observed {
 pub struct Problem {
     /// Grave (certificat expiré ou chaîne cassée) ou simple avertissement (expiration proche).
     pub error: bool,
+    /// Identité du défaut, sans les chiffres qui bougent d'un jour à l'autre (« expire dans 12 jours » puis 11) :
+    /// sert à ne pas répéter l'alerte du même défaut à chaque redémarrage (voir [`defect_key`]).
+    pub kind: &'static str,
     pub title: String,
     pub detail: String,
 }
@@ -150,6 +153,7 @@ pub fn assess(o: &Observed, ts: i64, warn_days: i64, host: &str) -> Vec<Problem>
     if let Some(e) = &o.connect_error {
         out.push(Problem {
             error: true,
+            kind: "npm_injoignable",
             title: "NPM injoignable en TLS".into(),
             detail: format!(
                 "La connexion TLS vers NPM avec le nom {host} échoue, même après {PROBE_ATTEMPTS} tentatives espacées de {PROBE_PAUSE_SECS} s : {e}. \
@@ -166,6 +170,7 @@ pub fn assess(o: &Observed, ts: i64, warn_days: i64, host: &str) -> Vec<Problem>
             expired = true;
             out.push(Problem {
                 error: true,
+                kind: "expire",
                 title: "certificat expiré".into(),
                 detail: format!(
                     "Le certificat servi pour {host} a expiré il y a {} jour(s) : navigateurs et applis refusent \
@@ -177,6 +182,12 @@ pub fn assess(o: &Observed, ts: i64, warn_days: i64, host: &str) -> Vec<Problem>
             let days = days_left(na, ts);
             out.push(Problem {
                 error: days < 7,
+                // le passage sous 7 jours est un changement de gravité : défaut « différent », donc alerté aussitôt
+                kind: if days < 7 {
+                    "expire_bientot_grave"
+                } else {
+                    "expire_bientot"
+                },
                 title: format!("certificat : expire dans {days} jour(s)"),
                 detail: format!(
                     "Le certificat joker servi pour {host} expire dans {days} jour(s). NPM tente de le renouveler \
@@ -190,6 +201,7 @@ pub fn assess(o: &Observed, ts: i64, warn_days: i64, host: &str) -> Vec<Problem>
         Some(200) => {}
         Some(s) => out.push(Problem {
             error: true,
+            kind: "chaine_en_defaut",
             title: "chaîne NPM → Jellyfin en défaut".into(),
             detail: format!(
                 "GET https://{host}/health répond HTTP {s} par le chemin public : NPM, l'hôte Jellyfin ou \
@@ -201,6 +213,7 @@ pub fn assess(o: &Observed, ts: i64, warn_days: i64, host: &str) -> Vec<Problem>
     if let (Some(e), false) = (&o.strict_error, expired) {
         out.push(Problem {
             error: true,
+            kind: "certificat_non_reconnu",
             title: "certificat non reconnu pour ce nom".into(),
             detail: format!(
                 "La connexion est établie mais le certificat servi pour {host} ne passe pas la vérification \
@@ -210,6 +223,16 @@ pub fn assess(o: &Observed, ts: i64, warn_days: i64, host: &str) -> Vec<Problem>
     }
     out.sort_by_key(|p| !p.error);
     out
+}
+
+/// Identité de l'ensemble des défauts relevés (2026-10-08) : leurs [`Problem::kind`], triés. `alerts::watch` s'en sert
+/// pour ne pas réalerter le même défaut à chaque redémarrage de homelabd ; un défaut en plus, en moins ou plus grave
+/// change la clé et alerte aussitôt.
+pub fn defect_key(problems: &[Problem]) -> String {
+    let mut kinds: Vec<&str> = problems.iter().map(|p| p.kind).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    kinds.join(",")
 }
 
 /// Message unique pour tous les points relevés : (grave ?, objet, corps).
@@ -376,15 +399,31 @@ impl Task for CertWatch {
         match compose(&problems) {
             None => {
                 info!(task = "cert_watch", %state, "ok");
+                // retour à la normale : une rechute alertera normalement
+                alerts::watch_clear(ctx, self.name()).await;
                 Ok(Report::new(state, 0))
             }
             Some((error, subject, body)) => {
                 warn!(task = "cert_watch", %subject, "défaut relevé");
                 let level = if error { Level::Error } else { Level::Warn };
-                alerts::admin(ctx, level, &subject, &body).await;
+                // le passage a lieu aussi à chaque démarrage de homelabd : le même défaut n'est pas repris avant 20 h
+                let sent = alerts::watch(
+                    ctx,
+                    self.name(),
+                    &defect_key(&problems),
+                    level,
+                    &subject,
+                    &body,
+                )
+                .await;
+                let verb = if sent {
+                    "signalé(s)"
+                } else {
+                    "déjà signalé(s)"
+                };
                 Ok(Report::new(
-                    format!("{state} · {} défaut(s) signalé(s)", problems.len()),
-                    problems.len() as u32,
+                    format!("{state} · {} défaut(s) {verb}", problems.len()),
+                    if sent { problems.len() as u32 } else { 0 },
                 ))
             }
         }
@@ -579,6 +618,34 @@ mod tests {
         );
         assert!(body.contains("expire dans 10 jour"), "{body}");
         assert!(body.contains("chaque jour"), "{body}");
+    }
+
+    #[test]
+    fn the_defect_key_ignores_the_numbers_that_move_every_day() {
+        let now = 1_000_000;
+        // « expire dans 12 jours » puis « 11 jours » : même défaut, donc même clé (pas de nouvelle alerte au redémarrage)
+        let k12 = defect_key(&assess(&healthy(now + 12 * DAY + 5), now, 21, "h"));
+        let k11 = defect_key(&assess(&healthy(now + 11 * DAY + 5), now + DAY, 21, "h"));
+        assert_eq!(k12, k11);
+        assert_eq!(k12, "expire_bientot");
+        // passage sous 7 jours : plus grave, donc défaut différent
+        let k5 = defect_key(&assess(&healthy(now + 5 * DAY), now, 21, "h"));
+        assert_eq!(k5, "expire_bientot_grave");
+        assert_ne!(k12, k5);
+        // un défaut de plus change la clé, quel que soit l'ordre dans lequel ils sont relevés
+        let mut o = healthy(now + 12 * DAY + 5);
+        o.health_status = Some(502);
+        let both = defect_key(&assess(&o, now, 21, "h"));
+        assert_eq!(both, "chaine_en_defaut,expire_bientot");
+        assert_ne!(both, k12);
+        // le code HTTP exact n'est pas l'identité du défaut
+        o.health_status = Some(503);
+        assert_eq!(defect_key(&assess(&o, now, 21, "h")), both);
+        // tout va bien : pas de clé
+        assert_eq!(
+            defect_key(&assess(&healthy(now + 50 * DAY), now, 21, "h")),
+            ""
+        );
     }
 
     #[test]
