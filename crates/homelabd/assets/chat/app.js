@@ -39,6 +39,10 @@
      touché depuis 5 min, et tout de suite dès qu'il reprend la main. Panneau ouvert : les messages toutes les 5 s,
      et les non-lus reviennent avec eux (réponse de /messages et de /read) : /me ne sert plus qu'en filet. */
   var POLL_OPEN = TV ? 10000 : 5000, POLL_CLOSED = TV ? 180000 : 60000, ME_OPEN = 120000;
+  /* Panneau ouvert mais SANS salon ni fil à interroger (liste des fils d'un modérateur, rédaction d'un message) : plus aucun
+     /messages ne porte l'état des non-lus, /me reprend donc son rythme d'avant (badge de la bulle et de l'onglet Privé en
+     20 s, pas en 2 min). Revu le 2026-10-08 : le filet à 2 min ne valait que salon ou fil ouvert. */
+  var ME_BLIND = TV ? 30000 : 20000;
   var IDLE_MS = 300000, POLL_IDLE = Math.max(POLL_CLOSED, 180000);
   var INTRO = {
     annonces: "Les nouvelles de Groscailloux. Seul l'admin publie ici : pour poser une question ou répondre, va dans Entraide.",
@@ -489,11 +493,16 @@
       markRead(key, c.last);
     }).catch(showErr);
   }
-  function poll() {
+  /* Un salon ou un fil est-il ouvert, donc interrogé à chaque tour de `poll` ? Non pour la liste des fils d'un
+     modérateur et pour la rédaction d'un message (pas de salon), ni avant que la liste ne soit chargée. */
+  function watching() {
     var key = channelKey();
-    if (!key || (S.tab === 'prive' && S.me.user.moderator && !S.thread)) return Promise.resolve();
-    var c = S.cache[key];
-    if (!c) return Promise.resolve();
+    if (!key || (S.tab === 'prive' && S.me.user.moderator && !S.thread)) return false;
+    return !!S.cache[key];
+  }
+  function poll() {
+    if (!watching()) return Promise.resolve();
+    var key = channelKey(), c = S.cache[key];
     return snap('GET', '/messages?channel=' + encodeURIComponent(key) + '&after=' + c.last + '&limit=100').then(function (j) {
       if (channelKey() !== key || !j.messages.length) return;
       var list = S.el.list, stick = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
@@ -631,7 +640,7 @@
     if (S.open) {
       if (video) { toggle(false); return; }
       if (now - S.lastPoll >= POLL_OPEN) { S.lastPoll = now; poll(); }
-      if (now - S.lastMe >= ME_OPEN) { S.lastMe = now; refreshMe().catch(showErr); }
+      if (now - S.lastMe >= (watching() ? ME_OPEN : ME_BLIND)) { S.lastMe = now; refreshMe().catch(showErr); }
     } else if (!video && now - S.lastMe >= (now - S.lastActive > IDLE_MS ? POLL_IDLE : POLL_CLOSED)) {
       // `lastMe` avance dès l'envoi : un serveur qui répond mal ne reçoit pas une requête par seconde
       S.lastMe = now;

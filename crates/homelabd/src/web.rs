@@ -901,8 +901,9 @@ fn jellyfin_host(s: &homelab_core::config::Secrets) -> String {
         .to_string()
 }
 
-/// Premiers pas d'un membre (2026-09-25) : l'écran et l'appli à installer, la langue, la première demande, le
-/// tchat, le guide. Servi après le choix du mot de passe (`access_block`) et tel quel sur `/premiers-pas`.
+/// Premiers pas d'un membre (2026-09-25) : l'écran et l'appli à installer, la langue, la première demande, la
+/// bulle « Aide et annonces », le guide. Servi après le choix du mot de passe (`access_block`) et tel quel sur
+/// `/premiers-pas`.
 /// Blocs dépliables plutôt qu'onglets : aucun JavaScript nécessaire (téléviseurs, WebView).
 fn first_steps(s: &homelab_core::config::Secrets) -> String {
     let host = page_esc(&jellyfin_host(s));
@@ -933,7 +934,7 @@ fn first_steps(s: &homelab_core::config::Secrets) -> String {
 </div></div>
 <div class="step"><div class="n">2</div><div class="sc"><h2>Ta langue</h2><p>En haut de Groscailloux, bouton <b>Mon compte</b> → <b>Langue de lecture</b> : la VF quand elle existe, ou <b>toujours en VO</b> avec sous-titres français (les animés en japonais). Tu y règles aussi la taille des sous-titres.</p></div></div>
 <div class="step"><div class="n">3</div><div class="sc"><h2>Ta première demande</h2><p>Il manque un film ou une série ? Onglet <b>Découvrir</b> dans Groscailloux, ou le <a href="{js}">site des demandes</a>. Tu suis chaque demande dans l'onglet <b>Demandes</b>. Un film encore au cinéma arrive à sa sortie en VOD, environ 4 mois après la salle.</p></div></div>
-<div class="step"><div class="n">4</div><div class="sc"><h2>Une question ?</h2><p>Le tchat est dans Groscailloux, bulle en haut à droite (sur ordinateur et téléphone).{discord}</p></div></div>
+<div class="step"><div class="n">4</div><div class="sc"><h2>Une question ?</h2><p><b>Aide et annonces</b> est dans Groscailloux, bulle en haut à droite (sur ordinateur et téléphone) : les nouvelles du serveur, l'entraide entre membres et un message privé à l'admin.{discord}</p></div></div>
 <div class="step"><div class="n">5</div><div class="sc"><h2>Le guide complet</h2><p>Tout le reste, écran par écran : <a href="{guide}">le guide Groscailloux</a>.</p></div></div>
 </section>"#
     )

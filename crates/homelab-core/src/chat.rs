@@ -621,11 +621,11 @@ pub fn moderator_digest(msgs: &[Message], jellyfin_url: &str) -> (String, String
         parts.push(format!("{private} en prive"));
     }
     let subject = format!(
-        "Tchat Groscailloux : {} nouveau(x) message(s) ({})",
+        "Aide et annonces Groscailloux : {} nouveau(x) message(s) ({})",
         msgs.len(),
         parts.join(", ")
     );
-    let mut body = String::from("Nouveaux messages dans le tchat :\n\n");
+    let mut body = String::from("Nouveaux messages dans Aide et annonces :\n\n");
     for m in msgs.iter().take(30) {
         let place = if m.channel.starts_with("prive:") {
             "prive"
@@ -649,7 +649,7 @@ pub fn moderator_digest(msgs: &[Message], jellyfin_url: &str) -> (String, String
         body.push_str(&format!("… et {} autre(s).\n\n", msgs.len() - 30));
     }
     body.push_str(&format!(
-        "Repondre : {jellyfin_url} (bulle en haut a droite).\n"
+        "Repondre : {jellyfin_url} (bulle \"Aide et annonces\" en haut a droite).\n"
     ));
     (subject, body)
 }
@@ -659,8 +659,8 @@ pub fn announcement_mail(author: &str, text: &str, jellyfin_url: &str) -> (Strin
     let first: String = text.lines().next().unwrap_or("").chars().take(70).collect();
     let subject = format!("Groscailloux : {first}");
     let body = format!(
-        "{text}\n\n— {author}\n\nAnnonce publiee dans le tchat de Groscailloux : {jellyfin_url}\n\
-         (bulle en haut a droite, salon Annonces).\n"
+        "{text}\n\n— {author}\n\nAnnonce publiee dans \"Aide et annonces\" sur Groscailloux : {jellyfin_url}\n\
+         (bulle en haut a droite, onglet Annonces).\n"
     );
     (subject, body)
 }
@@ -669,7 +669,7 @@ pub fn announcement_mail(author: &str, text: &str, jellyfin_url: &str) -> (Strin
 pub fn direct_mail(author: &str, member: &str, text: &str, jellyfin_url: &str) -> (String, String) {
     let subject = "Groscailloux : un message de l'admin pour toi".to_string();
     let body = format!(
-        "Salut {member},\n\n{text}\n\n— {author}\n\nTu peux repondre dans le tchat de Groscailloux : {jellyfin_url}\n\
+        "Salut {member},\n\n{text}\n\n— {author}\n\nTu peux repondre dans \"Aide et annonces\" sur Groscailloux : {jellyfin_url}\n\
          (bulle en haut a droite, onglet \"Ecrire a l'admin\").\n"
     );
     (subject, body)
@@ -846,6 +846,35 @@ mod tests {
         );
         let (subject, body) = moderator_digest(&pending, "https://jf");
         assert!(subject.contains("1 en prive") && body.contains("j'ai un souci"));
+    }
+
+    /// 2026-10-08 : la bulle et le panneau s'appellent « Aide et annonces » ; les trois mails (récapitulatif de
+    /// l'admin, annonce, message privé) disent le même nom, plus « le tchat », et pointent le bon onglet.
+    #[test]
+    fn mails_use_the_panel_name() {
+        let a = user("a", false);
+        let msg = Message {
+            id: 1,
+            channel: "entraide".into(),
+            author_id: a.id.clone(),
+            author_name: a.name.clone(),
+            author_moderator: false,
+            body: "ca saccade".into(),
+            created_at: 100,
+            deleted: false,
+        };
+        let digest = moderator_digest(&[msg], "https://jf");
+        assert!(digest.0.contains("Aide et annonces") && digest.1.contains("Aide et annonces"));
+        let announce = announcement_mail("Admin", "Maintenance dimanche", "https://jf");
+        assert!(announce.0.starts_with("Groscailloux : Maintenance"));
+        assert!(announce.1.contains("Aide et annonces") && announce.1.contains("onglet Annonces"));
+        let direct = direct_mail("Admin", "Nina", "salut", "https://jf");
+        assert!(direct.1.contains("Aide et annonces") && direct.1.contains("Ecrire a l'admin"));
+        for (subject, body) in [&digest, &announce, &direct] {
+            for t in [subject, body] {
+                assert!(!t.to_lowercase().contains("tchat"), "ancien nom : {t}");
+            }
+        }
     }
 
     #[test]
