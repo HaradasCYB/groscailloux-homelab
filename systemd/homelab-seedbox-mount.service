@@ -9,9 +9,22 @@ After=network-online.target
 Type=notify
 User=deploy
 Group=deploy
+# Hôte SFTP et compte de la seedbox : hors du dépôt public (SEEDBOX_SFTP_HOST, SEEDBOX_USER dans .env). Le script
+# les écrit DANS la config effective /run/homelab-seedbox-mount/rclone.conf (600, refaite à chaque démarrage depuis le
+# modèle rclone/rclone.conf) ; variable absente, vide ou invalide : refus qui la nomme dans le journal.
+# CACHE VFS : rclone ajoute au nom interne du remote un suffixe tiré des options de backend données en ligne de
+# commande ou par variable RCLONE_* (« seedbox{9oylk} » pour --sftp-connections 32 seul), et ce nom est celui du
+# dossier du cache (cache/rclone/vfs/seedbox{9oylk}, 120 Go). Toute option --sftp-* ajoutée, retirée ou changée ici
+# change donc de dossier et abandonne le cache : tous les titres seedbox repassent par le lien, et l'ancien dossier reste
+# sur le disque sans que rclone le purge (déjà vu le 19/09 : cache/rclone/vfs/seedbox, ~20 Go). Un réglage SFTP
+# nouveau va dans le modèle rclone/rclone.conf, sans effet sur le nom. Pas d'EnvironmentFile : rclone ne reçoit rien
+# de .env (ni secret, ni RCLONE_*).
+RuntimeDirectory=homelab-seedbox-mount
+RuntimeDirectoryMode=0700
+ExecStartPre=/opt/homelab/scripts/seedbox-rclone-conf.sh /opt/homelab/rclone/rclone.conf /run/homelab-seedbox-mount/rclone.conf
 ExecStartPre=/bin/mkdir -p /opt/homelab/cache/rclone
 ExecStart=/usr/local/bin/rclone mount seedbox:media /mnt/seedbox/media \
-  --config /opt/homelab/rclone/rclone.conf \
+  --config /run/homelab-seedbox-mount/rclone.conf \
   --allow-other --umask 022 \
   --vfs-cache-mode full --vfs-cache-max-size 120G --vfs-cache-max-age 168h \
   --vfs-cache-min-free-space 80G \

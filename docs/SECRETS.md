@@ -4,6 +4,18 @@
 `homelabd`/`homelabctl` (`EnvironmentFile` + dotenv). Jamais commité. Modèle : `.env.example`.
 Une valeur avec espace se met entre guillemets doubles ; pas d'expression shell (`${X:-y}`).
 
+**Valeurs d'hôte citées par `homelab.toml`** (2026-10-08) : ce qui désigne la seedbox (adresse publique, compte, dossier
+personnel) n'est plus écrit dans le dépôt public. `homelab.toml` cite la variable (`"${SEEDBOX_HOME}/media/Anime"`),
+remplacée au chargement par homelabd et homelabctl (`.env` lu avant `homelab.toml`, y compris pour `homelabctl list`)
+et par les outils Python (`tools/lib/hlconf.py` : `tools/lib/hl.py`, `scripts/move-to-seedbox.py`,
+`scripts/seedbox-cleanup.py`). Variable absente ou vide = refus de démarrer, avec le nom de la variable et des clés
+qui la citent (jamais une valeur) ; `$${` = « ${ » littéral. Pour le montage, `scripts/seedbox-rclone-conf.sh`
+(lancé par `homelab-seedbox-mount.service` à chaque démarrage) lit l'hôte SFTP et le compte dans `.env` et les écrit
+dans la config effective `/run/homelab-seedbox-mount/rclone.conf` (600) : jamais en options `--sftp-*`, qui
+changeraient le dossier du cache VFS ; rclone ne reçoit rien d'autre de `.env`. Ces variables s'écrivent sans
+commentaire en fin de ligne (les lecteurs Python de `.env` le garderaient dans la valeur). Changer d'hôte de seedbox :
+`.env`, puis `sudo systemctl restart homelabd` et, hors pic (coupe les lectures seedbox), le montage.
+
 | Variable | Où l'obtenir | Utilisé par |
 |---|---|---|
 | `TZ` | `Europe/Paris` | tous les conteneurs |
@@ -28,6 +40,10 @@ Une valeur avec espace se met entre guillemets doubles ; pas d'expression shell 
 | `HOMELABD_ONBOARD_TOKEN` | `openssl rand -hex 32` | `POST /onboard` |
 | `COMPOSE_PROFILES` | `vpn` ou `novpn`, géré par `homelabctl vpn` | docker compose |
 | `JELLYFIN_LIB_EXTRA` | ids de bibliothèques supplémentaires (virgules), données à chaque nouveau compte avec Films et Séries : Anime, Films d'animation et Collections (jamais les bibliothèques russes) | onboarding (policy) |
+| `SEEDBOX_PUBLIC_URL` | adresse HTTPS des applis de la seedbox (proxy de l'hébergeur), sans `/` final | `homelab.toml` : `[seedbox] radarr_url`, `sonarr_url`, `qbit_url`, `bazarr_url`, `[tasks.russian_search] jackett_url` (`${SEEDBOX_PUBLIC_URL}/<appli>`) |
+| `SEEDBOX_HOME` | dossier personnel du compte sur la seedbox (`/home/<compte>`) | `homelab.toml` : `[seedbox] media_root`, `sonarr_downloads`, `radarr_root`, `sonarr_root`, dossiers `seedbox_*` de `[tasks.anime_library]`, `[tasks.indexer_unblock] seedbox_apps_dir` |
+| `SEEDBOX_USER` | nom du compte de la seedbox | `homelab.toml` `[seedbox] qbit_user` ; `user` de la config effective du montage (`scripts/seedbox-rclone-conf.sh`) |
+| `SEEDBOX_SFTP_HOST` | nom d'hôte SFTP de la seedbox (celui de `ssh seedbox`, sans le compte) | `host` de la config effective du montage (`scripts/seedbox-rclone-conf.sh`, lancé par `homelab-seedbox-mount.service`) |
 | `SEEDBOX_RADARR_API_KEY`, `SEEDBOX_SONARR_API_KEY` | `~/.apps/<app>/config.xml` sur la seedbox | homelabd, Jellyseerr |
 | `SEEDBOX_JACKETT_API_KEY` | `~/.apps/jackett/Jackett/ServerConfig.json` | indexeur RuTracker des Arrs seedbox, `russian_search` (voie russe) |
 | `SEEDBOX_QBIT_PASSWORD` | mot de passe WebUI qBittorrent seedbox (installeur hébergeur) | client des Arrs seedbox, `torrent_import` |

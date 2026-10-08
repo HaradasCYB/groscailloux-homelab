@@ -249,7 +249,7 @@ mod tests {
     fn sb() -> Seedbox {
         Seedbox {
             enabled: true,
-            media_root: "/home/kakaouette/media".into(),
+            media_root: "/home/seedbox/media".into(),
             jellyfin_root: "/seedbox/media".into(),
             ..Seedbox::default()
         }
@@ -259,7 +259,7 @@ mod tests {
     fn maps_seedbox_paths_to_rclone_and_jellyfin() {
         let (dir, jf) = map_path(
             &sb(),
-            "/home/kakaouette/media/Movies/Valmont (1989)/Valmont (1989).mkv",
+            "/home/seedbox/media/Movies/Valmont (1989)/Valmont (1989).mkv",
         )
         .unwrap();
         assert_eq!(dir, "Movies/Valmont (1989)");
@@ -268,7 +268,7 @@ mod tests {
             "/seedbox/media/Movies/Valmont (1989)/Valmont (1989).mkv"
         );
         assert!(map_path(&sb(), "/elsewhere/file.mkv").is_none());
-        assert!(map_path(&sb(), "/home/kakaouette/media").is_none());
+        assert!(map_path(&sb(), "/home/seedbox/media").is_none());
     }
 
     #[test]

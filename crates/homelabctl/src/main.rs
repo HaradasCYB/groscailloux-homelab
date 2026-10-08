@@ -122,6 +122,8 @@ async fn main() -> Result<()> {
         .without_time()
         .init();
 
+    // `.env` d'abord, même pour `list` : homelab.toml cite certaines de ses variables (`${SEEDBOX_HOME}`…)
+    homelab_core::config::load_env_file(&args.env_file).context("chargement de .env")?;
     let cfg = Config::load(&args.config)?;
     if let Cmd::List = args.cmd {
         for n in tasks::names() {
@@ -1009,5 +1011,57 @@ mod tests {
         assert!(SYSTEM_FILES
             .iter()
             .any(|(n, d)| *n == "journald-homelab.conf" && d.ends_with("/homelab.conf")));
+    }
+
+    /// Le dossier du cache VFS (120 Go) porte le nom interne du remote, auquel rclone ajoute un suffixe tiré des
+    /// options de backend passées en ligne de commande ou par variable : `seedbox{9oylk}` pour `--sftp-connections 32`
+    /// seul. L'hôte et le compte de la seedbox vont donc dans la config effective écrite au démarrage, jamais en
+    /// options (une option de plus = cache abandonné, ancien dossier jamais purgé).
+    #[test]
+    fn the_seedbox_mount_keeps_its_vfs_cache_name() {
+        let unit = include_str!("../../../systemd/homelab-seedbox-mount.service");
+        let directives: Vec<&str> = unit
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.starts_with('#'))
+            .collect();
+        let sftp_flags: Vec<&str> = directives
+            .iter()
+            .flat_map(|l| l.split_whitespace())
+            .filter(|w| w.starts_with("--sftp-"))
+            .collect();
+        assert_eq!(
+            sftp_flags,
+            ["--sftp-connections"],
+            "options --sftp-* de l'unité"
+        );
+        assert!(directives.contains(&"--sftp-connections 32 \\"));
+        assert!(
+            !directives
+                .iter()
+                .any(|l| l.starts_with("EnvironmentFile") || l.contains("RCLONE_")),
+            "rclone ne doit rien recevoir de .env"
+        );
+        let effective = "/run/homelab-seedbox-mount/rclone.conf";
+        assert!(directives.contains(&"RuntimeDirectory=homelab-seedbox-mount"));
+        assert!(directives.contains(&"RuntimeDirectoryMode=0700"));
+        assert!(directives.contains(
+            &format!(
+                "ExecStartPre=/opt/homelab/scripts/seedbox-rclone-conf.sh /opt/homelab/rclone/rclone.conf {effective}"
+            )
+            .as_str()
+        ));
+        assert!(directives.contains(&format!("--config {effective} \\").as_str()));
+        assert!(directives
+            .iter()
+            .any(|l| l.starts_with("ExecStart=/usr/local/bin/rclone mount seedbox:media ")));
+        // le modèle versionné : un hôte réservé qui ne se résout jamais, jamais une vraie adresse
+        let template = include_str!("../../../rclone/rclone.conf");
+        let keys: Vec<&str> = template
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("host") || l.starts_with("user"))
+            .collect();
+        assert_eq!(keys, ["host = seedbox.invalid", "user = seedbox"]);
     }
 }

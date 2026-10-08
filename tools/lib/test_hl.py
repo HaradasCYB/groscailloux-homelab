@@ -318,6 +318,83 @@ class CreationInterrompue(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.dir.name, 'acc.id')))  # rien à nettoyer pour le lanceur
 
 
+class VariablesDuToml(unittest.TestCase):
+    """hlconf : `${NOM}` dans homelab.toml, mêmes règles que homelabd (2026-10-08, seedbox hors du dépôt public)."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.toml = os.path.join(self.dir.name, 'homelab.toml')
+        self.env = os.path.join(self.dir.name, '.env')
+        with open(self.toml, 'w') as f:
+            f.write('[urls]\njellyfin = "http://localhost:8096"\n'
+                    '[tasks.anime_library]\ninterval_secs = 300\nseedbox_series_root = "${SEEDBOX_HOME}/media/Anime"\n'
+                    '[tasks.stack_health]\npost_exec = ["sh", "-c", "x \\"$(cat /tmp/p)\\""]\n'
+                    '[seedbox]\nradarr_url = "${SEEDBOX_PUBLIC_URL}/radarr"\nqbit_user = "${SEEDBOX_USER}"\n'
+                    'literal = "$${PAS_UNE_VARIABLE}"\n')
+        self.saved = {k: os.environ.pop(k) for k in ('SEEDBOX_HOME', 'SEEDBOX_PUBLIC_URL', 'SEEDBOX_USER')
+                      if k in os.environ}
+        self.old = (hl.TOML_FILE, hl.ENV_FILE)
+        hl.TOML_FILE, hl.ENV_FILE = self.toml, self.env
+
+    def tearDown(self):
+        hl.TOML_FILE, hl.ENV_FILE = self.old
+        for k in ('SEEDBOX_HOME', 'SEEDBOX_PUBLIC_URL', 'SEEDBOX_USER'):
+            os.environ.pop(k, None)
+        os.environ.update(self.saved)
+        self.dir.cleanup()
+
+    def write_env(self, text):
+        with open(self.env, 'w') as f:
+            f.write(text)
+
+    def test_les_variables_de_env_sont_remplacees(self):
+        self.write_env('# commentaire\nSEEDBOX_HOME=/home/seedbox/\nSEEDBOX_PUBLIC_URL="https://seedbox.example"\n'
+                       'SEEDBOX_USER=seedbox\n')
+        cfg = hl.toml()
+        self.assertEqual(cfg['tasks']['anime_library']['seedbox_series_root'], '/home/seedbox/media/Anime')
+        self.assertEqual(cfg['seedbox']['radarr_url'], 'https://seedbox.example/radarr')
+        self.assertEqual(cfg['seedbox']['qbit_user'], 'seedbox')
+        self.assertEqual(cfg['seedbox']['literal'], '${PAS_UNE_VARIABLE}')
+        self.assertEqual(cfg['tasks']['stack_health']['post_exec'][2], 'x "$(cat /tmp/p)"')
+        self.assertEqual(cfg['tasks']['anime_library']['interval_secs'], 300)
+
+    def test_l_environnement_passe_avant_env(self):
+        self.write_env('SEEDBOX_HOME=/home/a\nSEEDBOX_PUBLIC_URL=https://a.example\nSEEDBOX_USER=a\n')
+        os.environ['SEEDBOX_HOME'] = '/home/b'
+        self.assertEqual(hl.toml()['tasks']['anime_library']['seedbox_series_root'], '/home/b/media/Anime')
+
+    def test_une_variable_absente_est_nommee_sans_aucune_valeur(self):
+        self.write_env('SEEDBOX_HOME=/home/compte-secret\nSEEDBOX_USER=\n')
+        with self.assertRaises(hl.hlconf.ConfError) as ctx:
+            hl.toml()
+        msg = str(ctx.exception)
+        self.assertIn('SEEDBOX_PUBLIC_URL (seedbox.radarr_url)', msg)
+        self.assertIn('SEEDBOX_USER (seedbox.qbit_user)', msg)  # vide = absente
+        self.assertNotIn('compte-secret', msg)
+        self.assertNotIn('SEEDBOX_HOME', msg)
+        # les outils affichent ce message (sans valeur), pas seulement le type de l'erreur
+        self.assertIn('SEEDBOX_PUBLIC_URL', hl.reason(ctx.exception))
+
+    def test_env_illisible_compte_comme_vide_et_n_est_lu_qu_au_besoin(self):
+        with open(self.toml, 'w') as f:
+            f.write('[urls]\njellyfin = "http://localhost:8096"\n')
+        self.assertEqual(hl.toml()['urls']['jellyfin'], 'http://localhost:8096')  # pas de .env, pas besoin
+        with open(self.toml, 'a') as f:
+            f.write('[seedbox]\nmedia_root = "${SEEDBOX_HOME}/media"\n')
+        with self.assertRaises(hl.hlconf.ConfError):
+            hl.toml()
+
+    def test_syntaxe_mal_formee(self):
+        look = hl.hlconf.lookup_from({'A': 'x'})
+        for bad in ('${', '${A', '${}', '${1A}', '${A-B}'):
+            with self.assertRaises(ValueError, msg=bad):
+                hl.hlconf.expand(bad, look)
+        with self.assertRaises(hl.hlconf.ConfError) as ctx:
+            hl.hlconf.expand_tree({'seedbox': {'media_root': '${A'}}, look)
+        self.assertIn('seedbox.media_root', str(ctx.exception))
+        self.assertEqual(hl.hlconf.expand('${A}/${A}$1', look), 'x/x$1')
+
+
 class Dates(unittest.TestCase):
     def test_dates_jellyfin(self):
         self.assertEqual(hl.parse_date('2026-10-07T21:55:39.3762918Z'), 1791410139.376291)

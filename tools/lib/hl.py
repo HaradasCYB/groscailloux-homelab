@@ -28,11 +28,14 @@ import signal
 import subprocess
 import sys
 import time
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
+
+sys.dont_write_bytecode = True  # pas de __pycache__ dans le dépôt
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import hlconf  # noqa: E402
 
 HL = os.environ.get('HOMELAB_DIR', '/opt/homelab')
 ENV_FILE = os.environ.get('HOMELAB_ENV_FILE', os.path.join(HL, '.env'))
@@ -55,22 +58,22 @@ def die(msg, code=2):
 
 # ------------------------------------------------------------------------------------------------ configuration
 def env():
-    out = {}
     try:
-        with open(ENV_FILE, encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    k, v = line.split('=', 1)
-                    out[k.strip()] = v.strip().strip('"').strip("'")
+        return hlconf.read_env(ENV_FILE)
     except OSError as e:
         die('refus .env illisible (%s)' % type(e).__name__, 1)
-    return out
 
 
 def toml():
-    with open(TOML_FILE, 'rb') as f:
-        return tomllib.load(f)
+    """homelab.toml avec les `${NOM}` remplacés comme le fait homelabd (hlconf : environnement, puis .env) ; une
+    variable manquante lève hlconf.ConfError, dont le message nomme la variable (jamais une valeur). .env n'est lu
+    que si le fichier cite une variable absente de l'environnement ; illisible, il compte comme vide."""
+    return hlconf.load_toml(TOML_FILE, env_file=ENV_FILE)
+
+
+def reason(e):
+    """Motif affichable d'une erreur : le message d'une ConfError (sans valeur), sinon le seul type."""
+    return str(e) if isinstance(e, hlconf.ConfError) else type(e).__name__
 
 
 def jf_base():
@@ -78,7 +81,7 @@ def jf_base():
     try:
         return toml()['urls']['jellyfin'].rstrip('/')
     except Exception as e:  # noqa: BLE001
-        raise Unreachable('[urls] jellyfin illisible dans homelab.toml (%s)' % type(e).__name__) from None
+        raise Unreachable('[urls] jellyfin illisible dans homelab.toml (%s)' % reason(e)) from None
 
 
 class Unreachable(Exception):
@@ -194,7 +197,7 @@ def homelabd_window(conds, now=None):
             runs = json.load(f).get('task_runs', {})
         cfg = toml().get('tasks', {})
     except Exception as e:  # noqa: BLE001
-        return 30, ['état de homelabd illisible (%s)' % type(e).__name__], []
+        return 30, ['état de homelabd illisible (%s)' % reason(e)], []
     wait, why, info = 0, [], []
     for c in conds:
         parts = c.split(':')
@@ -362,6 +365,9 @@ def cmd_url(a):
     """Adresse locale d'un service ([urls] de homelab.toml) : jamais écrite en dur dans les outils."""
     try:
         print(toml()['urls'][a.service].rstrip('/'))
+    except hlconf.ConfError as e:
+        print('refus homelab.toml : %s' % e)
+        return 1
     except Exception:  # noqa: BLE001
         print('service inconnu dans [urls] : %s' % a.service)
         return 1

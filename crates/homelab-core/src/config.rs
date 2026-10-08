@@ -922,16 +922,16 @@ impl Default for AnimeLibrary {
             recheck_days: 30,
             vps_series_root: "/anime".into(),
             vps_movies_root: "/anime-films".into(),
-            seedbox_series_root: "/home/kakaouette/media/Anime".into(),
-            seedbox_movies_root: "/home/kakaouette/media/Anime Movies".into(),
+            seedbox_series_root: "/home/seedbox/media/Anime".into(),
+            seedbox_movies_root: "/home/seedbox/media/Anime Movies".into(),
             only_tmdb: Vec::new(),
             scan_after_move: true,
             scan_min_gap_mins: 20,
             russian: true,
-            seedbox_ru_series_root: "/home/kakaouette/media/Russian".into(),
-            seedbox_ru_movies_root: "/home/kakaouette/media/Russian Movies".into(),
-            seedbox_default_series_root: "/home/kakaouette/media/TV Shows".into(),
-            seedbox_default_movies_root: "/home/kakaouette/media/Movies".into(),
+            seedbox_ru_series_root: "/home/seedbox/media/Russian".into(),
+            seedbox_ru_movies_root: "/home/seedbox/media/Russian Movies".into(),
+            seedbox_default_series_root: "/home/seedbox/media/TV Shows".into(),
+            seedbox_default_movies_root: "/home/seedbox/media/Movies".into(),
             ru_search_retry_hours: 24,
         }
     }
@@ -958,7 +958,7 @@ impl Default for RussianSearch {
     fn default() -> Self {
         Self {
             interval_secs: 600,
-            jackett_url: "https://kakaouette.tofino.usbx.me/jackett".into(),
+            jackett_url: "https://seedbox.example/jackett".into(),
             indexer: "rutracker".into(),
             retry_hours: 24,
             max_per_run: 2,
@@ -1054,7 +1054,7 @@ impl Default for IndexerUnblock {
             app_cooldown_mins: 60,
             max_unblocks_per_day: 10,
             ssh_host: "seedbox".into(),
-            seedbox_apps_dir: "/home/kakaouette/.apps".into(),
+            seedbox_apps_dir: "/home/seedbox/.apps".into(),
         }
     }
 }
@@ -1551,14 +1551,162 @@ fn d_backups() -> PathBuf {
     "/opt/homelab/backups".into()
 }
 
+/// Charge `.env` dans l'environnement du processus, sans écraser une variable déjà définie (`EnvironmentFile` de
+/// systemd). Fichier absent : rien à faire, l'environnement suffit. À appeler AVANT [`Config::load`] : les valeurs de
+/// `homelab.toml` peuvent citer des variables de `.env` (`${SEEDBOX_HOME}`…).
+pub fn load_env_file(p: &Path) -> Result<()> {
+    if p.is_file() {
+        dotenvy::from_path(p).with_context(|| format!("lecture de {}", p.display()))?;
+    }
+    Ok(())
+}
+
+/// Variable d'environnement utilisable dans `homelab.toml` : définie et non vide (espaces retirés).
+pub fn env_lookup(name: &str) -> Option<String> {
+    opt(name)
+}
+
+/// Erreur d'expansion d'une valeur : jamais la valeur elle-même (elle peut contenir celle d'une autre variable).
+#[derive(Debug, PartialEq, Eq)]
+pub enum ExpandError {
+    /// Variable absente ou vide.
+    Missing(String),
+    /// `${` sans nom valide ni `}`.
+    Syntax,
+}
+
+/// `${NOM}` → valeur de la variable `NOM` (`lookup`) ; `$${` → `${` littéral ; tout autre `$` reste tel quel
+/// (`"$(cat …)"` d'une commande). Dépôt public (2026-10-08) : l'adresse de la seedbox et son compte vivent dans `.env`,
+/// `homelab.toml` les cite. Une valeur qui finit par `/` suivie de `/` dans le modèle n'en garde qu'un
+/// (`${SEEDBOX_HOME}/media` avec `SEEDBOX_HOME=/home/x/` donne `/home/x/media`).
+pub fn expand_vars(
+    s: &str,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> std::result::Result<String, ExpandError> {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('$') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        if let Some(tail) = after.strip_prefix("${") {
+            out.push_str("${");
+            rest = tail;
+        } else if let Some(tail) = after.strip_prefix('{') {
+            let end = tail.find('}').ok_or(ExpandError::Syntax)?;
+            let name = &tail[..end];
+            let valid = name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !valid {
+                return Err(ExpandError::Syntax);
+            }
+            let value = lookup(name).ok_or_else(|| ExpandError::Missing(name.to_string()))?;
+            rest = &tail[end + 1..];
+            if rest.starts_with('/') {
+                out.push_str(value.strip_suffix('/').unwrap_or(&value));
+            } else {
+                out.push_str(&value);
+            }
+        } else {
+            out.push('$');
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// Remplace `${NOM}` dans toutes les chaînes de l'arbre. Les variables manquantes sont toutes relevées avant
+/// l'erreur (une seule passe pour compléter `.env`) ; le message nomme clés et variables, jamais une valeur.
+pub fn expand_tree(v: &mut toml::Value, lookup: &dyn Fn(&str) -> Option<String>) -> Result<()> {
+    fn walk(
+        v: &mut toml::Value,
+        path: &str,
+        lookup: &dyn Fn(&str) -> Option<String>,
+        missing: &mut std::collections::BTreeMap<String, Vec<String>>,
+    ) -> Result<()> {
+        match v {
+            toml::Value::String(s) if s.contains('$') => match expand_vars(s, lookup) {
+                Ok(e) => *s = e,
+                Err(ExpandError::Missing(name)) => {
+                    missing.entry(name).or_default().push(path.to_string())
+                }
+                Err(ExpandError::Syntax) => {
+                    bail!("{path} : « ${{ » mal formé (attendu ${{NOM}}, ou $${{ pour un « ${{ » littéral)")
+                }
+            },
+            toml::Value::Table(t) => {
+                for (k, x) in t.iter_mut() {
+                    let p = if path.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{path}.{k}")
+                    };
+                    walk(x, &p, lookup, missing)?;
+                }
+            }
+            toml::Value::Array(a) => {
+                for (i, x) in a.iter_mut().enumerate() {
+                    walk(x, &format!("{path}[{i}]"), lookup, missing)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    let mut missing = std::collections::BTreeMap::new();
+    walk(v, "", lookup, &mut missing)?;
+    if !missing.is_empty() {
+        let list: Vec<String> = missing
+            .iter()
+            .map(|(name, keys)| {
+                let more = if keys.len() > 3 { ", …" } else { "" };
+                let shown: Vec<&str> = keys.iter().take(3).map(String::as_str).collect();
+                format!("{name} ({}{more})", shown.join(", "))
+            })
+            .collect();
+        bail!(
+            "variable(s) d'environnement absente(s) ou vide(s), à définir dans .env : {}",
+            list.join(" ; ")
+        );
+    }
+    Ok(())
+}
+
+/// Valeurs d'exemple des variables citées par `homelab.toml` : celles des défauts du code et des tests (jamais les
+/// vraies, dépôt public ; `.example` est réservé, RFC 2606).
+#[cfg(test)]
+pub(crate) fn example_env(name: &str) -> Option<String> {
+    match name {
+        "SEEDBOX_PUBLIC_URL" => Some("https://seedbox.example".into()),
+        "SEEDBOX_HOME" => Some("/home/seedbox".into()),
+        "SEEDBOX_USER" => Some("seedbox".into()),
+        _ => None,
+    }
+}
+
 impl Config {
+    /// `homelab.toml` lu, variables `${NOM}` remplacées depuis l'environnement (`.env` chargé avant par
+    /// [`load_env_file`]), puis contrôlé.
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("lecture de {}", path.display()))?;
-        let cfg: Config =
-            toml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+        let cfg = Self::from_toml(&raw, &env_lookup)
+            .with_context(|| format!("parse {}", path.display()))?;
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Texte TOML → configuration, `${NOM}` remplacés par `lookup`. Une première lecture typée, sans expansion,
+    /// garde les messages précis de `toml` (ligne, clé inconnue) ; l'expansion se fait ensuite sur l'arbre lu,
+    /// chaîne par chaîne (jamais dans les commentaires, jamais à travers la syntaxe TOML).
+    pub fn from_toml(raw: &str, lookup: &dyn Fn(&str) -> Option<String>) -> Result<Self> {
+        toml::from_str::<Config>(raw)?;
+        let mut tree: toml::Value = toml::from_str(raw)?;
+        expand_tree(&mut tree, lookup)?;
+        Ok(tree.try_into()?)
     }
 
     /// Refuse de démarrer sur une config incohérente : mieux qu'un exit 0 silencieux.
@@ -1636,6 +1784,41 @@ impl Config {
             }
             if !sb.media_root.starts_with('/') || sb.sonarr_downloads.is_empty() {
                 bail!("[seedbox] media_root (absolu) et sonarr_downloads sont requis");
+            }
+            // Les défauts du code sont des exemples (`/home/seedbox/…`, dépôt public) : une clé retirée de
+            // homelab.toml ne doit pas envoyer un déplacement de fiche vers un dossier qui n'existe pas.
+            let al = &self.tasks.anime_library;
+            for (k, v) in [
+                (
+                    "tasks.anime_library.seedbox_series_root",
+                    &al.seedbox_series_root,
+                ),
+                (
+                    "tasks.anime_library.seedbox_movies_root",
+                    &al.seedbox_movies_root,
+                ),
+                (
+                    "tasks.anime_library.seedbox_ru_series_root",
+                    &al.seedbox_ru_series_root,
+                ),
+                (
+                    "tasks.anime_library.seedbox_ru_movies_root",
+                    &al.seedbox_ru_movies_root,
+                ),
+                (
+                    "tasks.anime_library.seedbox_default_series_root",
+                    &al.seedbox_default_series_root,
+                ),
+                (
+                    "tasks.anime_library.seedbox_default_movies_root",
+                    &al.seedbox_default_movies_root,
+                ),
+                ("seedbox.radarr_root", &sb.radarr_root),
+                ("seedbox.sonarr_root", &sb.sonarr_root),
+            ] {
+                if !v.is_empty() && !Path::new(v).starts_with(&sb.media_root) {
+                    bail!("{k} doit être sous [seedbox] media_root");
+                }
             }
             if !sb.qbit_url.is_empty() {
                 if !sb.qbit_url.starts_with("http://") && !sb.qbit_url.starts_with("https://") {
@@ -1801,9 +1984,7 @@ impl Secrets {
     /// exportées (EnvironmentFile systemd) ont priorité sur le fichier.
     pub fn load(env_file: Option<&Path>) -> Result<Self> {
         if let Some(p) = env_file {
-            if p.is_file() {
-                dotenvy::from_path(p).with_context(|| format!("lecture de {}", p.display()))?;
-            }
+            load_env_file(p)?;
         }
         Ok(Self {
             sonarr_api_key: req_secret("SONARR_API_KEY")?,
@@ -2049,10 +2230,201 @@ jellyseerr = "http://js"
     }
 }
 
+/// `${NOM}` dans les valeurs de `homelab.toml` (2026-10-08 : adresse et compte de la seedbox sortis du dépôt public).
+#[cfg(test)]
+mod env_expansion {
+    use super::*;
+
+    fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |k| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    const BASE: &str = r#"
+[paths]
+base = "/tmp"
+downloads = "/tmp"
+[urls]
+sonarr = "http://s"
+radarr = "http://r"
+prowlarr = "http://p"
+qbittorrent = "http://q"
+jellyfin = "http://j"
+jellyseerr = "http://js"
+"#;
+
+    #[test]
+    fn present_variable_is_replaced() {
+        let e = env(&[("SEEDBOX_HOME", "/home/x")]);
+        assert_eq!(
+            expand_vars("${SEEDBOX_HOME}/media/Anime", &e).unwrap(),
+            "/home/x/media/Anime"
+        );
+        // sans variable : inchangé, `$` isolé et `$(…)` d'une commande compris
+        assert_eq!(expand_vars("/anime", &e).unwrap(), "/anime");
+        assert_eq!(
+            expand_vars("sh \"$(cat /tmp/p)\" $1 a$", &e).unwrap(),
+            "sh \"$(cat /tmp/p)\" $1 a$"
+        );
+        // `$${` = « ${ » littéral, jamais remplacé
+        assert_eq!(
+            expand_vars("$${SEEDBOX_HOME}", &e).unwrap(),
+            "${SEEDBOX_HOME}"
+        );
+    }
+
+    #[test]
+    fn missing_or_empty_variable_is_an_error_naming_it() {
+        let e = env(&[("SEEDBOX_HOME", "/home/x"), ("VIDE", "")]);
+        assert_eq!(
+            expand_vars("${SEEDBOX_PUBLIC_URL}/radarr", &e),
+            Err(ExpandError::Missing("SEEDBOX_PUBLIC_URL".into()))
+        );
+        // `lookup` réel : une variable vide compte comme absente (comme `opt`)
+        assert_eq!(
+            expand_vars("${VIDE}", &|k| e(k).filter(|v| !v.is_empty())),
+            Err(ExpandError::Missing("VIDE".into()))
+        );
+        for bad in ["${", "${SEEDBOX_HOME", "${}", "${1A}", "${A-B}", "${A B}"] {
+            assert_eq!(expand_vars(bad, &e), Err(ExpandError::Syntax), "{bad}");
+        }
+    }
+
+    #[test]
+    fn values_with_slashes_and_several_variables() {
+        let e = env(&[
+            ("SEEDBOX_PUBLIC_URL", "https://seedbox.example/"),
+            ("SEEDBOX_HOME", "/home/seedbox/"),
+            ("SEEDBOX_USER", "seedbox"),
+        ]);
+        // `/` final de la valeur suivi d'un `/` du modèle : un seul gardé
+        assert_eq!(
+            expand_vars("${SEEDBOX_PUBLIC_URL}/radarr", &e).unwrap(),
+            "https://seedbox.example/radarr"
+        );
+        assert_eq!(
+            expand_vars("${SEEDBOX_HOME}/media/TV Shows", &e).unwrap(),
+            "/home/seedbox/media/TV Shows"
+        );
+        // ailleurs la valeur est gardée telle quelle
+        assert_eq!(
+            expand_vars("${SEEDBOX_HOME}", &e).unwrap(),
+            "/home/seedbox/"
+        );
+        assert_eq!(
+            expand_vars("${SEEDBOX_USER}@${SEEDBOX_HOME}x/${SEEDBOX_USER}", &e).unwrap(),
+            "seedbox@/home/seedbox/x/seedbox"
+        );
+    }
+
+    #[test]
+    fn whole_file_expansion_names_keys_and_variables_never_values() {
+        let raw = format!(
+            "{BASE}[seedbox]\nradarr_url = \"${{SEEDBOX_PUBLIC_URL}}/radarr\"\nqbit_url = \"${{SEEDBOX_PUBLIC_URL}}/qbittorrent\"\n\
+             media_root = \"${{SEEDBOX_HOME}}/media\"\nqbit_user = \"${{SEEDBOX_USER}}\"\n\
+             sonarr_root = \"${{SEEDBOX_HOME}}/media/TV Shows\"\n\
+             [tasks.russian_search]\njackett_url = \"${{SEEDBOX_PUBLIC_URL}}/jackett\"\n"
+        );
+        let all = env(&[
+            ("SEEDBOX_PUBLIC_URL", "https://seedbox.example"),
+            ("SEEDBOX_HOME", "/home/seedbox"),
+            ("SEEDBOX_USER", "seedbox"),
+        ]);
+        let cfg = Config::from_toml(&raw, &all).unwrap();
+        assert_eq!(cfg.seedbox.radarr_url, "https://seedbox.example/radarr");
+        assert_eq!(cfg.seedbox.media_root, "/home/seedbox/media");
+        assert_eq!(cfg.seedbox.sonarr_root, "/home/seedbox/media/TV Shows");
+        assert_eq!(cfg.seedbox.qbit_user, "seedbox");
+        assert_eq!(
+            cfg.tasks.russian_search.jackett_url,
+            "https://seedbox.example/jackett"
+        );
+        // défauts non cités : intacts
+        assert_eq!(cfg.seedbox.mount_point, PathBuf::from("/mnt/seedbox/media"));
+
+        // une variable présente, deux absentes : toutes nommées avec leurs clés, aucune valeur dans le message
+        let partial = env(&[("SEEDBOX_HOME", "/home/secret-account")]);
+        let msg = format!("{:#}", Config::from_toml(&raw, &partial).unwrap_err());
+        assert!(msg.contains("SEEDBOX_PUBLIC_URL"), "{msg}");
+        assert!(msg.contains("seedbox.radarr_url"), "{msg}");
+        assert!(msg.contains("tasks.russian_search.jackett_url"), "{msg}");
+        assert!(msg.contains("SEEDBOX_USER (seedbox.qbit_user)"), "{msg}");
+        assert!(!msg.contains("SEEDBOX_HOME"), "{msg}");
+        assert!(!msg.contains("secret-account"), "{msg}");
+
+        // syntaxe : la clé est nommée
+        let bad = format!("{BASE}[seedbox]\nmedia_root = \"${{SEEDBOX_HOME\"\n");
+        let msg = format!("{:#}", Config::from_toml(&bad, &all).unwrap_err());
+        assert!(msg.contains("seedbox.media_root"), "{msg}");
+
+        // les erreurs de lecture gardent leur précision (clé inconnue)
+        let typo = format!("{BASE}[seedbox]\nradar_url = \"x\"\n");
+        let msg = format!("{:#}", Config::from_toml(&typo, &all).unwrap_err());
+        assert!(msg.contains("radar_url"), "{msg}");
+    }
+
+    #[test]
+    fn the_real_homelab_toml_needs_its_variables() {
+        let raw =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../homelab.toml"))
+                .expect("homelab.toml");
+        let cfg = Config::from_toml(&raw, &example_env).unwrap();
+        assert!(cfg
+            .seedbox
+            .radarr_url
+            .starts_with("https://seedbox.example/"));
+        assert!(cfg.seedbox.media_root.starts_with("/home/seedbox/"));
+        let msg = format!("{:#}", Config::from_toml(&raw, &|_| None).unwrap_err());
+        for v in ["SEEDBOX_PUBLIC_URL", "SEEDBOX_HOME", "SEEDBOX_USER"] {
+            assert!(msg.contains(v), "{v} absent de : {msg}");
+        }
+    }
+
+    #[test]
+    fn seedbox_roots_must_sit_under_media_root() {
+        let raw = format!(
+            "{BASE}[seedbox]\nenabled = true\nradarr_url = \"https://seedbox.example/radarr\"\n\
+             sonarr_url = \"https://seedbox.example/sonarr\"\nsonarr_downloads = \"/home/real/downloads\"\n\
+             media_root = \"/home/real/media\"\n"
+        );
+        let with = |extra: &str| {
+            Config::from_toml(&format!("{raw}{extra}"), &|_| None)
+                .unwrap()
+                .validate()
+        };
+        // défauts d'exemple des dossiers d'anime (`/home/seedbox/…`) hors de la vraie racine : refusé
+        let err = format!("{:#}", with("").unwrap_err());
+        assert!(
+            err.contains("tasks.anime_library.seedbox_series_root"),
+            "{err}"
+        );
+        let roots = "[tasks.anime_library]\nseedbox_series_root = \"/home/real/media/Anime\"\n\
+             seedbox_movies_root = \"/home/real/media/Anime Movies\"\n\
+             seedbox_ru_series_root = \"/home/real/media/Russian\"\n\
+             seedbox_ru_movies_root = \"/home/real/media/Russian Movies\"\n\
+             seedbox_default_series_root = \"/home/real/media/TV Shows\"\n\
+             seedbox_default_movies_root = \"/home/real/media/Movies\"\n";
+        with(roots).unwrap();
+        // préfixe de chaîne sans être un sous-dossier : refusé
+        let err = format!(
+            "{:#}",
+            with(&roots.replace("/home/real/media/Anime\"", "/home/real/media2/Anime\""))
+                .unwrap_err()
+        );
+        assert!(err.contains("seedbox_series_root"), "{err}");
+    }
+}
+
 /// Règle du dépôt : les valeurs par défaut du code = celles de `homelab.toml`. Ce test charge le fichier, construit
 /// la configuration « tout par défaut » (seuls `paths` et `urls` sont obligatoires) et échoue au premier réglage
 /// qui diffère. Le 2026-09-25 il en a trouvé trois (`tracker_ratio.unlimited` sans `c411.tw`,
-/// `movie_search.query_gap_secs`, `web.listen`). Seuls les réglages propres à CETTE machine sont exemptés.
+/// `movie_search.query_gap_secs`, `web.listen`). Seuls les réglages propres à CETTE machine sont exemptés. Une valeur
+/// qui cite une variable de `.env` (`${SEEDBOX_HOME}/media/Anime`) est comparée après expansion par les valeurs
+/// d'exemple de [`example_env`], celles des défauts du code (`/home/seedbox/media/Anime`).
 #[cfg(test)]
 mod toml_matches_defaults {
     const MACHINE_SPECIFIC: &[&str] = &[".paths", ".urls", ".seedbox.", ".tasks.disabled"];
@@ -2080,7 +2452,9 @@ mod toml_matches_defaults {
         let raw =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../homelab.toml"))
                 .expect("homelab.toml");
-        let file: toml::Value = toml::from_str(&raw).unwrap();
+        let mut file: toml::Value = toml::from_str(&raw).unwrap();
+        // `${SEEDBOX_HOME}`… : comparés avec les valeurs d'exemple, celles des défauts du code (dépôt public)
+        super::expand_tree(&mut file, &super::example_env).unwrap();
         let mut min = toml::map::Map::new();
         min.insert("paths".into(), file["paths"].clone());
         min.insert("urls".into(), file["urls"].clone());
