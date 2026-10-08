@@ -314,7 +314,12 @@
      écoute sur la fenêtre avant nous, se ferme d'abord s'il est ouvert par-dessus. */
   function onEscape(e) {
     var k = e.keyCode;
-    if (!(e.key === 'Escape' || k === 27 || k === 461 || k === 10009 || e.key === 'GoBack')) return;
+    var back = e.key === 'Escape' || k === 27 || k === 461 || k === 10009 || e.key === 'GoBack';
+    // télécommande à flèches : Retour est parfois un Backspace (comme le bandeau et Mon compte), sauf pendant une saisie
+    if (!back && TV && (e.key === 'Backspace' || k === 8)) {
+      back = !(e.target && (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable));
+    }
+    if (!back) return;
     if (e.isComposing) return; // Échap d'un clavier à composition : il annule la saisie, pas le panneau
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
     toggle(false);
