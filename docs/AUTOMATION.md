@@ -210,8 +210,8 @@ demande crée la fiche et les saisons suivies, sans recherche. Sonarr garde le R
 
 Pour chaque Sonarr : `GET wanted/missing` → saisons avec épisodes diffusés manquants, hors file d'attente, pas
 cherchées récemment (`state.unknown_series` : sans candidat → `retry_after_hours` 24 h, pack pris → 7 j,
-épisode seul pris → 2 h, erreur → 1 h) et **absentes de l'autre machine** ; séries ajoutées le plus récemment d'abord. Par saison, via Prowlarr
-(indexer « C411 » déclaré dans Prowlarr, même clé) : `search?type=tvsearch&query={TmdbId:<tmdbId>}{Season:<n>}`
+épisodes pris → `episode_retry_mins` (5 min), erreur → 1 h) et **absentes de l'autre machine** ; séries ajoutées le plus récemment d'abord. Par saison, via Prowlarr
+(deux clés, indexeurs « C411 » et « C411 (2) » de Prowlarr, voir « Budget de l'indexer » plus bas) : `search?type=tvsearch&query={TmdbId:<tmdbId>}{Season:<n>}`
 → releases dont l'attribut **`tmdbId` est celui de la fiche** (le nom ne compte pas) → `GET parse` de Sonarr
 (saison, pack, épisodes, qualité) → garde-fous : marqueur FR (VFF > MULTi > FRENCH > VOSTFR), qualité autorisée
 par le profil et ≤ 1080p, au moins une source, épisodes manquants. Pack si la moitié de la saison manque,
