@@ -8,11 +8,14 @@
 //!
 //! Une fois par jour, une cinquantaine de requêtes API (aucun fichier n'est lu ni analysé) :
 //! - **catalogue** : fiches Radarr/Sonarr du VPS et de la seedbox qui ont des fichiers (taille et date `added` de
-//!   l'Arr — celle de Jellyfin n'est pas fiable, les déménagements recréent les éléments) ;
+//!   l'Arr — celle de Jellyfin n'est pas fiable, les déménagements recréent les éléments). Un film arrive avec son
+//!   fichier (`movieFile.dateAdded`), une série avec sa première diffusion (`firstAired`) si elle est postérieure à la
+//!   fiche : un titre demandé avant sa sortie ne doit pas paraître vieux ;
 //! - **vu** : pour chaque compte Jellyfin (désactivés compris), les films et épisodes `IsPlayed` et `IsResumable`, lus
 //!   **avec `UserId`** (`GET /Items` sans compte renvoie une liste incomplète), plus toute ligne de Playback Reporting
 //!   d'au moins 60 s si le plugin répond ;
-//! - **demandeur** : la sorte seulement (`membre`, `admin`, `aucune`), d'après Jellyseerr — jamais un pseudo.
+//! - **demandeur** : la sorte seulement (`membre`, `admin`, `aucune`), d'après Jellyseerr — jamais un pseudo. `inconnu`
+//!   si Jellyseerr est muet ou si la fiche n'a pas d'identifiant TMDB (la demande est introuvable : ce n'est pas « aucune »).
 //!
 //! Une fiche d'Arr est rapprochée de Jellyfin par le **dossier** (même correspondance que `identity_check`), à défaut
 //! par un identifiant TMDB/TVDB sans ambiguïté. Ce qui n'est pas rapproché n'est pas évalué (« je ne sais pas » n'est
@@ -182,8 +185,10 @@ pub fn movie_title(side: &str, v: &Value, roots: &Roots, jf_path: Option<String>
     })
 }
 
-/// Fiche Sonarr avec au moins un fichier. La date `added` est celle de la fiche : l'Arr n'en donne pas d'autre pour une
-/// série (un épisode ajouté plus tard ne remet pas la série à zéro).
+/// Fiche Sonarr avec au moins un fichier. Arrivée = la plus tardive de l'ajout de la fiche (`added`) et de la première
+/// diffusion (`firstAired`) : une série demandée avant sa diffusion a sa fiche depuis la demande, mais ses fichiers
+/// n'arrivent qu'avec les épisodes (même cas que le film demandé avant sa sortie). Sonarr ne donne pas de date d'import
+/// par épisode sur la fiche : un épisode ajouté plus tard ne remet pas la série à zéro (2026-10-08).
 pub fn series_title(
     side: &str,
     v: &Value,
@@ -201,7 +206,13 @@ pub fn series_title(
         side: side.to_string(),
         movie: false,
         bytes,
-        arrived: parse_date(text(v, "added")),
+        arrived: [
+            parse_date(text(v, "added")),
+            parse_date(text(v, "firstAired")),
+        ]
+        .into_iter()
+        .flatten()
+        .max(),
         tmdb: number(v, "/tmdbId"),
         tvdb: number(v, "/tvdbId"),
         episodes: number(v, "/statistics/episodeFileCount").max(0) as u32,
@@ -426,9 +437,11 @@ impl Requests {
     }
 
     /// `membre` si au moins un membre l'a demandé (c'est lui que la liste d'envies concerne), sinon `admin`, sinon
-    /// `aucune` ; `inconnu` si Jellyseerr n'a pas répondu.
+    /// `aucune` ; `inconnu` si Jellyseerr n'a pas répondu **ou** si la fiche n'a pas d'identifiant TMDB (0 ou absent) :
+    /// la demande ne peut alors pas être retrouvée, et « aucune demande » serait une affirmation que rien ne prouve
+    /// (2026-10-08).
     pub fn kind(&self, movie: bool, tmdb: i64) -> &'static str {
-        if !self.available {
+        if !self.available || tmdb <= 0 {
             return UNKNOWN;
         }
         match self.by.get(&(movie, tmdb)) {
@@ -984,6 +997,10 @@ mod tests {
         assert_eq!(reqs.kind(true, 99), NONE);
         // Jellyseerr muet : on ne prétend pas qu'il n'y a pas de demande
         assert_eq!(Requests::unavailable().kind(true, 1), UNKNOWN);
+        // fiche sans identifiant TMDB (0 ou négatif) : la demande est introuvable, donc « inconnu », jamais « aucune »
+        assert_eq!(reqs.kind(false, 0), UNKNOWN);
+        assert_eq!(reqs.kind(true, 0), UNKNOWN);
+        assert_eq!(reqs.kind(true, -1), UNKNOWN);
     }
 
     #[test]
@@ -1196,6 +1213,42 @@ mod tests {
         // date illisible des deux côtés : inconnue
         let bad = json!({"title": "X", "path": "/movies/X", "sizeOnDisk": 4, "added": "hier"});
         assert_eq!(movie_title("vps", &bad, &r, None).unwrap().arrived, None);
+    }
+
+    #[test]
+    fn a_series_arrives_with_its_first_episodes_not_with_its_card() {
+        let r = roots();
+        // fiche ajoutée en avril, série diffusée depuis septembre (demandée avant sa diffusion) : arrivée = septembre
+        let v = json!({"title": "Diffusée tard", "path": "/tv/Diffusee tard", "seriesType": "standard",
+            "added": "2026-04-30T21:49:26Z", "firstAired": "2026-09-10T00:00:00Z",
+            "statistics": {"sizeOnDisk": 4, "episodeFileCount": 2}});
+        let t = series_title("seedbox", &v, &r, None).unwrap();
+        assert_eq!(t.arrived, parse_date("2026-09-10T00:00:00Z"));
+        // série ancienne ajoutée récemment : la fiche fait foi
+        let old = json!({"title": "Ancienne", "path": "/tv/Ancienne", "added": "2026-09-01T10:00:00Z",
+            "firstAired": "2005-03-26T00:00:00Z", "statistics": {"sizeOnDisk": 4, "episodeFileCount": 2}});
+        assert_eq!(
+            series_title("vps", &old, &r, None).unwrap().arrived,
+            parse_date("2026-09-01T10:00:00Z")
+        );
+        // pas de première diffusion connue : la fiche seule
+        let none = json!({"title": "Sans date", "path": "/tv/X", "added": "2026-09-01T10:00:00Z",
+            "statistics": {"sizeOnDisk": 4, "episodeFileCount": 1}});
+        assert_eq!(
+            series_title("vps", &none, &r, None).unwrap().arrived,
+            parse_date("2026-09-01T10:00:00Z")
+        );
+        // première diffusion lisible mais `added` illisible : la diffusion seule (jamais « inconnue » à tort)
+        let half = json!({"title": "Y", "path": "/tv/Y", "added": "hier", "firstAired": "2026-09-10T00:00:00Z",
+            "statistics": {"sizeOnDisk": 4, "episodeFileCount": 1}});
+        assert_eq!(
+            series_title("vps", &half, &r, None).unwrap().arrived,
+            parse_date("2026-09-10T00:00:00Z")
+        );
+        // aucune des deux lisible : inconnue, le titre ne conclut jamais
+        let bad = json!({"title": "Z", "path": "/tv/Z", "added": "hier", "firstAired": "bientôt",
+            "statistics": {"sizeOnDisk": 4, "episodeFileCount": 1}});
+        assert_eq!(series_title("vps", &bad, &r, None).unwrap().arrived, None);
     }
 
     #[test]

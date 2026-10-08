@@ -211,7 +211,8 @@ skip_if_transcodes_at_least = 2
 [tasks.catalogue_report]
 # Rapport « catalogue jamais regardé » (2026-10-08, revue Kaizen mbr-catalogue-jamais-vu) : une fois par jour, LECTURE SEULE
 # (une cinquantaine de requêtes API, aucun fichier lu, rien de supprimé, rien d'écrit chez Jellyfin ni les Arrs). Titres
-# qu'aucun compte n'a commencés `min_age_days` jours après leur arrivée (date `added` de l'Arr : celle de Jellyfin bouge à
+# qu'aucun compte n'a commencés `min_age_days` jours après leur arrivée (date `added` de l'Arr, repoussée à l'import du
+# fichier pour un film et à la première diffusion pour une série demandée avant sa sortie ; celle de Jellyfin bouge à
 # chaque déménagement), par sorte, côté et sorte de demandeur (jamais de pseudo) ; séries en cours à part ; ligne voie
 # russe. Affiché sur /status.html ; l'admin tranche, comme pour le ménage du 25/09. Les fiches de la seedbox datent du
 # 12/09 (création des Arrs) : elles n'atteignent le seuil qu'à partir du 11/11.

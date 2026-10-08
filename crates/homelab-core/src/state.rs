@@ -295,7 +295,7 @@ pub struct CatalogueEntry {
     pub bytes: u64,
     /// Arrivée d'après l'Arr (secondes).
     pub added: i64,
-    /// `membre`, `admin`, `aucune` (aucune demande) ou `inconnu` (Jellyseerr injoignable).
+    /// `membre`, `admin`, `aucune` (aucune demande) ou `inconnu` (Jellyseerr injoignable, ou fiche sans identifiant TMDB).
     pub requester: String,
     /// Épisodes vus sur épisodes présents (0 et 0 pour un film).
     #[serde(default)]
