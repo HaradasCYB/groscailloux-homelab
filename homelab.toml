@@ -545,9 +545,10 @@ max_orphan_removals_per_run = 3  # compte Jellyfin disparu : fiches avec échéa
                                  # échéance ni PayPal : comptes de banc) partent toujours.
 
 [chat]
-# Tchat des membres dans Jellyfin (bulle en haut à droite) : salons Annonces (modérateurs), Entraide,
-# Discussion, et un fil privé membre ↔ modérateurs. API homelabd /chat/*, publiée par NPM sous
-# /gc-chat/ sur l'adresse de Jellyfin ; script chargé par le plugin JavaScript Injector.
+# « Aide et annonces » (bulle en haut à droite de Jellyfin) : salons Annonces (modérateurs) et Entraide
+# (l'ancien salon Discussion y a été fusionné le 2026-10-08), et un fil privé membre ↔ modérateurs. API
+# homelabd /chat/*, publiée par NPM sous /gc-chat/ sur l'adresse de Jellyfin ; script chargé par le plugin
+# JavaScript Injector.
 enabled = true
 moderators = ["Haradas", "LeGrosCailloux"]   # écrivent les annonces, lisent les fils privés
 beta_users = []      # [] = tchat ouvert à tous ; sinon visible de ces comptes seulement (phase de test)
@@ -558,6 +559,7 @@ burst_max = 30              # messages au plus par fenêtre et par membre
 burst_window_secs = 600
 delete_own_within_mins = 15
 moderator_mail_interval_mins = 15   # récapitulatif entraide + privé : au plus un mail par intervalle
+new_member_read_days = 14   # première visite d'un compte : annonces et entraide de plus de N jours comptent comme lues
 
 [seedbox]
 # Seedbox (tofino.usbx.me) : Radarr/Sonarr y rangent dans ~/media, monté en lecture seule sur

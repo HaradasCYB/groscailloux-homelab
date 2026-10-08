@@ -1,7 +1,10 @@
 //! Tchat des membres, affiché dans Jellyfin (script chargé par JavaScript Injector, API dans
-//! homelabd). Salons `annonces` (modérateurs seulement), `entraide`, `discussion`, et un fil privé
-//! par membre (`prive:<id Jellyfin>`) lisible par lui et par les modérateurs. Identité = compte
-//! Jellyfin (jeton vérifié par `/Users/Me`, jamais stocké). Stockage : SQLite (`[chat] db_file`).
+//! homelabd). Salons `annonces` (modérateurs seulement) et `entraide`, et un fil privé par membre
+//! (`prive:<id Jellyfin>`) lisible par lui et par les modérateurs. Identité = compte Jellyfin (jeton
+//! vérifié par `/Users/Me`, jamais stocké). Stockage : SQLite (`[chat] db_file`).
+//!
+//! 2026-10-08 : l'ancien salon `discussion` est fusionné dans `entraide` (voir `merge_discussion`) ; le
+//! mot « discussion » reste accepté comme synonyme d'`entraide` pour une page restée ouverte.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
@@ -17,7 +20,6 @@ use crate::config::Chat as ChatConfig;
 pub enum Channel {
     Annonces,
     Entraide,
-    Discussion,
     /// Fil privé d'un membre (id Jellyfin) avec les modérateurs.
     Private(String),
 }
@@ -26,8 +28,9 @@ impl Channel {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "annonces" => Some(Self::Annonces),
-            "entraide" => Some(Self::Entraide),
-            "discussion" => Some(Self::Discussion),
+            // « discussion » : ancien salon fusionné dans Entraide (2026-10-08) ; une page ouverte avant la
+            // mise à jour continue de le demander, elle lit et écrit dans Entraide sans erreur
+            "entraide" | "discussion" => Some(Self::Entraide),
             _ => {
                 let id = s.strip_prefix("prive:")?;
                 (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
@@ -40,12 +43,11 @@ impl Channel {
         match self {
             Self::Annonces => "annonces".into(),
             Self::Entraide => "entraide".into(),
-            Self::Discussion => "discussion".into(),
             Self::Private(id) => format!("prive:{id}"),
         }
     }
 
-    pub const PUBLIC: [Channel; 3] = [Self::Annonces, Self::Entraide, Self::Discussion];
+    pub const PUBLIC: [Channel; 2] = [Self::Annonces, Self::Entraide];
 }
 
 /// Membre authentifié (compte Jellyfin actif).
@@ -293,6 +295,35 @@ fn row_to_message(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
 const COLS: &str =
     "id, channel, author_id, author_name, author_moderator, body, created_at, deleted_at";
 
+/// 2026-10-08 : fusionne l'ancien salon `discussion` dans `entraide` (8 messages, aucun échange entre membres
+/// depuis le 15/09). Appelée à chaque ouverture de la base, sans effet quand il ne reste rien à fusionner :
+/// - aucun message n'est supprimé ni modifié, il change seulement de salon (mêmes identifiants, mêmes dates) ;
+/// - le repère de lecture de chaque membre devient le plus récent des deux (`MAX`) : un membre qui avait tout
+///   lu dans Discussion n'a pas d'Entraide « non lu » en plus (contrepartie : avec un seul repère par salon,
+///   un message d'Entraide plus ancien que son repère de Discussion passe pour lu) ;
+/// - une seule transaction : un arrêt en cours de route laisse la base telle qu'elle était.
+fn merge_discussion(conn: &Connection) -> Result<()> {
+    let todo: i64 = conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM messages WHERE channel = 'discussion')
+              + (SELECT COUNT(*) FROM reads WHERE channel = 'discussion')",
+        [],
+        |r| r.get(0),
+    )?;
+    if todo == 0 {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "BEGIN IMMEDIATE;
+         INSERT INTO reads (user_id, channel, last_read_id)
+           SELECT user_id, 'entraide', last_read_id FROM reads WHERE channel = 'discussion' AND true
+           ON CONFLICT(user_id, channel) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id);
+         DELETE FROM reads WHERE channel = 'discussion';
+         UPDATE messages SET channel = 'entraide' WHERE channel = 'discussion';
+         COMMIT;",
+    )?;
+    Ok(())
+}
+
 impl ChatStore {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(dir) = path.parent() {
@@ -311,6 +342,7 @@ impl ChatStore {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "busy_timeout", 5000)?;
         conn.execute_batch(SCHEMA)?;
+        merge_discussion(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -414,6 +446,46 @@ impl ChatStore {
              WHERE m.channel = ?2 AND m.deleted_at IS NULL AND m.author_id <> ?1
                AND m.id > COALESCE((SELECT last_read_id FROM reads WHERE user_id = ?1 AND channel = ?2), 0)",
             params![user_id, ch.key()],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Première visite d'un compte (2026-10-08) : dans chaque salon public où il n'a encore aucun repère de
+    /// lecture, tout ce qui a plus de `max_age_days` jours compte comme lu. Un compte neuf voyait « 9 non
+    /// lus » (toutes les annonces depuis la création du tchat). Le repère est écrit une fois pour toutes :
+    /// ce qui est publié ensuite reste non lu, quel que soit le temps passé avant d'ouvrir le tchat. Les
+    /// fils privés ne sont pas concernés (un message de l'admin est toujours pour le membre).
+    pub fn init_reads(&self, user_id: &str, now: i64, max_age_days: i64) -> Result<()> {
+        let db = self.db();
+        let known: i64 = db.query_row(
+            "SELECT COUNT(*) FROM reads WHERE user_id = ?1 AND channel IN ('annonces', 'entraide')",
+            [user_id],
+            |r| r.get(0),
+        )?;
+        if known >= Channel::PUBLIC.len() as i64 {
+            return Ok(()); // cas courant : aucune écriture
+        }
+        let cutoff = now - max_age_days.max(0) * 86_400;
+        for ch in Channel::PUBLIC {
+            db.execute(
+                "INSERT INTO reads (user_id, channel, last_read_id)
+                 SELECT ?1, ?2, COALESCE((SELECT MAX(id) FROM messages WHERE channel = ?2 AND created_at < ?3), 0)
+                 WHERE NOT EXISTS (SELECT 1 FROM reads WHERE user_id = ?1 AND channel = ?2)",
+                params![user_id, ch.key(), cutoff],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Messages privés non lus de TOUS les fils (somme de `PrivateThread::unread`), en une requête : le
+    /// compteur de la bulle d'un modérateur n'a pas besoin de la liste des fils. Réservé aux modérateurs :
+    /// un membre ne compte que son propre fil (`unread` sur son salon privé).
+    pub fn unread_private_total(&self, reader_id: &str) -> Result<i64> {
+        Ok(self.db().query_row(
+            "SELECT COUNT(*) FROM messages m
+             WHERE m.channel LIKE 'prive:%' AND m.deleted_at IS NULL AND m.author_id <> ?1
+               AND m.id > COALESCE((SELECT last_read_id FROM reads r WHERE r.user_id = ?1 AND r.channel = m.channel), 0)",
+            [reader_id],
             |r| r.get(0),
         )?)
     }
@@ -636,9 +708,12 @@ mod tests {
 
     #[test]
     fn channel_keys_round_trip_and_reject_junk() {
-        for k in ["annonces", "entraide", "discussion", "prive:abc123"] {
+        for k in ["annonces", "entraide", "prive:abc123"] {
             assert_eq!(Channel::parse(k).unwrap().key(), k);
         }
+        // ancien salon fusionné : une page restée ouverte le demande encore, elle arrive dans Entraide
+        assert_eq!(Channel::parse("discussion"), Some(Channel::Entraide));
+        assert_eq!(Channel::parse("discussion").unwrap().key(), "entraide");
         assert_eq!(
             Channel::parse("prive:4067B499-27a3").unwrap(),
             Channel::Private("4067b49927a3".into())
@@ -654,9 +729,12 @@ mod tests {
         let pa = Channel::Private("a".into());
         assert!(can_read(&a, &Channel::Annonces) && !can_post(&a, &Channel::Annonces));
         assert!(can_post(&m, &Channel::Annonces));
-        for ch in [Channel::Entraide, Channel::Discussion] {
-            assert!(can_read(&a, &ch) && can_post(&a, &ch));
-        }
+        assert!(can_read(&a, &Channel::Entraide) && can_post(&a, &Channel::Entraide));
+        // l'ancien nom donne les mêmes droits que le salon fusionné
+        let old = Channel::parse("discussion").unwrap();
+        assert!(can_read(&a, &old) && can_post(&a, &old));
+        // seuls les modérateurs écrivent dans Annonces, un membre n'y fait que lire
+        assert!(can_read(&b, &Channel::Annonces) && !can_post(&b, &Channel::Annonces));
         assert!(can_read(&a, &pa) && can_post(&a, &pa));
         assert!(
             !can_read(&b, &pa) && !can_post(&b, &pa),
@@ -807,21 +885,335 @@ mod tests {
         let s = ChatStore::open_in_memory().unwrap();
         let a = user("a", false);
         for i in 0..5 {
-            s.insert(&Channel::Discussion, &a, &format!("m{i}"), i)
+            s.insert(&Channel::Entraide, &a, &format!("m{i}"), i)
                 .unwrap();
         }
-        let last2 = s.list(&Channel::Discussion, None, None, 2).unwrap();
+        let last2 = s.list(&Channel::Entraide, None, None, 2).unwrap();
         assert_eq!(
             last2.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
             ["m3", "m4"]
         );
         let after = s
-            .list(&Channel::Discussion, Some(last2[0].id), None, 50)
+            .list(&Channel::Entraide, Some(last2[0].id), None, 50)
             .unwrap();
         assert_eq!(after.len(), 1);
         let before = s
-            .list(&Channel::Discussion, None, Some(last2[0].id), 50)
+            .list(&Channel::Entraide, None, Some(last2[0].id), 50)
             .unwrap();
         assert_eq!(before.len(), 3);
+    }
+
+    /// Base « d'avant la fusion » : le schéma, puis des messages et des repères de lecture dans `discussion`.
+    fn old_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        for (ch, who, body, at, deleted) in [
+            ("annonces", "mod", "news", 10, false),
+            ("entraide", "a", "e1", 20, false),
+            ("discussion", "a", "d1", 30, false),
+            ("discussion", "b", "d2 supprimé", 40, true),
+            ("discussion", "b", "d3", 50, false),
+            ("entraide", "b", "e2", 60, false),
+        ] {
+            conn.execute(
+                "INSERT INTO messages (channel, author_id, author_name, author_moderator, body, created_at, deleted_at)
+                 VALUES (?1, ?2, ?2, 0, ?3, ?4, ?5)",
+                params![ch, who, body, at, deleted.then_some(99)],
+            )
+            .unwrap();
+        }
+        // a a tout lu dans Discussion (jusqu'au 5) mais seulement le 1er message d'Entraide ; b a lu Discussion
+        // jusqu'au 3 ; c n'a lu que Discussion (jusqu'au 4) et la 1re annonce
+        for (u, ch, id) in [
+            ("a", "discussion", 5),
+            ("a", "entraide", 1),
+            ("b", "discussion", 3),
+            ("c", "discussion", 4),
+            ("c", "annonces", 1),
+        ] {
+            conn.execute(
+                "INSERT INTO reads (user_id, channel, last_read_id) VALUES (?1, ?2, ?3)",
+                params![u, ch, id],
+            )
+            .unwrap();
+        }
+        conn
+    }
+
+    fn channel_counts(s: &ChatStore) -> Vec<(String, i64)> {
+        let db = s.db();
+        let mut st = db
+            .prepare("SELECT channel, COUNT(*) FROM messages GROUP BY channel ORDER BY channel")
+            .unwrap();
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        rows.collect::<rusqlite::Result<_>>().unwrap()
+    }
+
+    fn read_marker(s: &ChatStore, user: &str, channel: &str) -> Option<i64> {
+        s.db()
+            .query_row(
+                "SELECT last_read_id FROM reads WHERE user_id = ?1 AND channel = ?2",
+                params![user, channel],
+                |r| r.get(0),
+            )
+            .optional()
+            .unwrap()
+    }
+
+    #[test]
+    fn discussion_is_merged_into_entraide_without_loss() {
+        let s = ChatStore::init(old_db()).unwrap();
+        assert_eq!(
+            channel_counts(&s),
+            vec![("annonces".to_string(), 1), ("entraide".to_string(), 5)],
+            "les 3 messages de Discussion (dont un supprimé) rejoignent les 2 d'Entraide"
+        );
+        let all = s.list(&Channel::Entraide, None, None, 50).unwrap();
+        assert_eq!(
+            all.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+            ["e1", "d1", "", "d3", "e2"],
+            "mêmes identifiants, donc même ordre ; le supprimé reste supprimé"
+        );
+        assert!(all[2].deleted && all[2].author_id == "b");
+        assert_eq!(
+            all.iter().map(|m| m.created_at).collect::<Vec<_>>(),
+            [20, 30, 40, 50, 60],
+            "dates intactes"
+        );
+        // l'ancien nom lit le même salon
+        let via_old = s
+            .list(&Channel::parse("discussion").unwrap(), None, None, 50)
+            .unwrap();
+        assert_eq!(via_old, all);
+    }
+
+    #[test]
+    fn merge_keeps_the_most_recent_read_marker_per_member() {
+        let s = ChatStore::init(old_db()).unwrap();
+        assert_eq!(
+            read_marker(&s, "a", "entraide"),
+            Some(5),
+            "Discussion (5) > Entraide (1)"
+        );
+        assert_eq!(
+            read_marker(&s, "b", "entraide"),
+            Some(3),
+            "repère repris tel quel"
+        );
+        assert_eq!(read_marker(&s, "c", "entraide"), Some(4));
+        assert_eq!(
+            read_marker(&s, "c", "annonces"),
+            Some(1),
+            "les autres salons ne bougent pas"
+        );
+        for u in ["a", "b", "c"] {
+            assert_eq!(
+                read_marker(&s, u, "discussion"),
+                None,
+                "plus de repère pour un salon qui n'existe plus"
+            );
+        }
+        // a avait tout lu : seul e2 (id 6, écrit par b) reste à lire
+        assert_eq!(s.unread("a", &Channel::Entraide).unwrap(), 1);
+        // b : son repère (3) couvre e1 et d1 ; d2 est supprimé, d3 et e2 sont de lui. Contrepartie assumée de
+        // l'unique repère par salon : e1 (id 2), jamais ouvert dans Entraide, passe pour lu.
+        assert_eq!(s.unread("b", &Channel::Entraide).unwrap(), 0);
+        // c : repère 4, il reste d3 et e2
+        assert_eq!(s.unread("c", &Channel::Entraide).unwrap(), 2);
+    }
+
+    #[test]
+    fn merge_is_idempotent_across_reopenings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chat.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute(
+                "INSERT INTO messages (channel, author_id, author_name, author_moderator, body, created_at)
+                 VALUES ('discussion', 'a', 'A', 0, 'avant', 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO reads VALUES ('a', 'discussion', 1)", [])
+                .unwrap();
+        }
+        let first = {
+            let s = ChatStore::open(&path).unwrap();
+            let v = s.list(&Channel::Entraide, None, None, 50).unwrap();
+            // un message écrit sous l'ancien nom par une page restée ouverte : il va dans Entraide
+            let m = s
+                .insert(
+                    &Channel::parse("discussion").unwrap(),
+                    &user("a", false),
+                    "après",
+                    2,
+                )
+                .unwrap();
+            assert_eq!(m.channel, "entraide");
+            v
+        };
+        let s = ChatStore::open(&path).unwrap(); // deuxième ouverture : rien à refaire
+        let again = s.list(&Channel::Entraide, None, None, 50).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(again.len(), 2);
+        assert_eq!(again[0], first[0], "le premier message n'a pas bougé");
+        assert_eq!(channel_counts(&s), vec![("entraide".to_string(), 2)]);
+        // et une base déjà fusionnée, ouverte une troisième fois, reste identique
+        drop(s);
+        let s = ChatStore::open(&path).unwrap();
+        assert_eq!(s.list(&Channel::Entraide, None, None, 50).unwrap(), again);
+    }
+
+    #[test]
+    fn merge_on_a_fresh_database_does_nothing() {
+        let s = ChatStore::open_in_memory().unwrap();
+        assert_eq!(s.max_id().unwrap(), 0);
+        s.insert(&Channel::Entraide, &user("a", false), "x", 1)
+            .unwrap();
+        merge_discussion(&s.db()).unwrap();
+        assert_eq!(channel_counts(&s), vec![("entraide".to_string(), 1)]);
+    }
+
+    const DAY: i64 = 86_400;
+
+    #[test]
+    fn new_account_does_not_see_old_announcements_as_unread() {
+        let s = ChatStore::open_in_memory().unwrap();
+        let m = user("mod", true);
+        let now = 100 * DAY;
+        // 9 annonces : 7 de plus de 14 jours, une d'il y a 12 jours, une d'hier
+        for i in 0..7 {
+            s.insert(
+                &Channel::Annonces,
+                &m,
+                &format!("vieille {i}"),
+                now - (30 - i) * DAY,
+            )
+            .unwrap();
+        }
+        s.insert(&Channel::Annonces, &m, "il y a 12 jours", now - 12 * DAY)
+            .unwrap();
+        let hier = s.insert(&Channel::Annonces, &m, "hier", now - DAY).unwrap();
+        assert_eq!(
+            s.unread("neuf", &Channel::Annonces).unwrap(),
+            9,
+            "avant la première visite : tout est non lu"
+        );
+        s.init_reads("neuf", now, 14).unwrap();
+        assert_eq!(
+            s.unread("neuf", &Channel::Annonces).unwrap(),
+            2,
+            "seules les annonces des 14 derniers jours restent non lues"
+        );
+        // le repère est figé : le temps qui passe ne change rien
+        s.init_reads("neuf", now + 60 * DAY, 14).unwrap();
+        assert_eq!(s.unread("neuf", &Channel::Annonces).unwrap(), 2);
+        // ce qui est publié ensuite reste non lu
+        s.insert(&Channel::Annonces, &m, "nouvelle", now + 60 * DAY)
+            .unwrap();
+        assert_eq!(s.unread("neuf", &Channel::Annonces).unwrap(), 3);
+        s.mark_read("neuf", &Channel::Annonces, hier.id).unwrap();
+        assert_eq!(s.unread("neuf", &Channel::Annonces).unwrap(), 1);
+    }
+
+    #[test]
+    fn first_visit_threshold_is_exclusive_and_configurable() {
+        let s = ChatStore::open_in_memory().unwrap();
+        let m = user("mod", true);
+        let now = 100 * DAY;
+        // dans l'ordre du temps, comme en production (l'identifiant croît avec la date)
+        s.insert(&Channel::Annonces, &m, "14 j et 1 s", now - 14 * DAY - 1)
+            .unwrap();
+        s.insert(&Channel::Annonces, &m, "pile 14 j", now - 14 * DAY)
+            .unwrap();
+        s.init_reads("a", now, 14).unwrap();
+        assert_eq!(
+            s.unread("a", &Channel::Annonces).unwrap(),
+            1,
+            "« de plus de 14 jours » : 14 jours pile restent non lus"
+        );
+        s.init_reads("b", now, 0).unwrap();
+        assert_eq!(
+            s.unread("b", &Channel::Annonces).unwrap(),
+            0,
+            "0 jour : tout est lu à la première visite"
+        );
+        s.init_reads("c", now, -5).unwrap(); // valeur absurde : traitée comme 0, jamais de panique
+        assert_eq!(s.unread("c", &Channel::Annonces).unwrap(), 0);
+    }
+
+    #[test]
+    fn init_reads_never_overrides_and_skips_private_threads() {
+        let s = ChatStore::open_in_memory().unwrap();
+        let (m, a) = (user("mod", true), user("a", false));
+        let now = 100 * DAY;
+        let old = s
+            .insert(&Channel::Annonces, &m, "vieille", now - 40 * DAY)
+            .unwrap();
+        s.insert(&Channel::Annonces, &m, "récente", now - DAY)
+            .unwrap();
+        s.insert(&Channel::Entraide, &a, "ancien conseil", now - 50 * DAY)
+            .unwrap();
+        s.insert(&Channel::Entraide, &a, "récent conseil", now - 2 * DAY)
+            .unwrap();
+        let pn = Channel::Private("neuf".into());
+        s.insert(&pn, &m, "bienvenue, écris-moi si besoin", now - 60 * DAY)
+            .unwrap();
+        // un compte qui avait déjà un repère dans Annonces mais pas dans Entraide : le premier est intact
+        s.mark_read("ancien", &Channel::Annonces, old.id).unwrap();
+        s.init_reads("ancien", now, 14).unwrap();
+        assert_eq!(read_marker(&s, "ancien", "annonces"), Some(old.id));
+        assert_eq!(s.unread("ancien", &Channel::Annonces).unwrap(), 1);
+        assert_eq!(
+            s.unread("ancien", &Channel::Entraide).unwrap(),
+            1,
+            "repère Entraide posé à la première visite de ce salon : seul le récent reste non lu"
+        );
+        s.init_reads("neuf", now, 14).unwrap();
+        assert_eq!(s.unread("neuf", &Channel::Entraide).unwrap(), 1);
+        assert_eq!(
+            s.unread("neuf", &pn).unwrap(),
+            1,
+            "un message de l'admin reste non lu, même ancien"
+        );
+        assert_eq!(read_marker(&s, "neuf", "prive:neuf"), None);
+    }
+
+    #[test]
+    fn unread_private_total_matches_the_threads() {
+        let s = ChatStore::open_in_memory().unwrap();
+        let (m, a, b) = (user("mod", true), user("a", false), user("b", false));
+        let (pa, pb) = (Channel::Private("a".into()), Channel::Private("b".into()));
+        s.insert(&pa, &a, "souci 1", 1).unwrap();
+        s.insert(&pa, &a, "souci 2", 2).unwrap();
+        let sup = s.insert(&pa, &a, "oups", 3).unwrap();
+        s.mark_deleted(sup.id, "a", 4).unwrap();
+        s.insert(&pb, &b, "question", 5).unwrap();
+        s.insert(&pb, &m, "réponse", 6).unwrap(); // répondre = avoir lu : ce fil n'a plus rien de non lu
+        let c = user("c", false);
+        let pc = Channel::Private("c".into());
+        s.insert(&pc, &c, "bonjour", 7).unwrap();
+        let sum = |reader: &str| -> i64 {
+            s.private_threads(reader)
+                .unwrap()
+                .iter()
+                .map(|t| t.unread)
+                .sum()
+        };
+        assert_eq!(
+            s.unread_private_total("mod").unwrap(),
+            3,
+            "souci 1 et 2, bonjour"
+        );
+        assert_eq!(s.unread_private_total("mod").unwrap(), sum("mod"));
+        s.mark_read("mod", &pa, 3).unwrap();
+        assert_eq!(s.unread_private_total("mod").unwrap(), 1);
+        assert_eq!(s.unread_private_total("mod").unwrap(), sum("mod"));
+        s.mark_read("mod", &pc, 7).unwrap();
+        assert_eq!(s.unread_private_total("mod").unwrap(), 0);
+        // un membre n'appelle jamais ceci (il ne voit que son fil, `unread` sur son salon privé)
+        assert_eq!(s.unread("b", &pb).unwrap(), 1, "la réponse du modérateur");
+        assert_eq!(s.unread("a", &pa).unwrap(), 0);
     }
 }
