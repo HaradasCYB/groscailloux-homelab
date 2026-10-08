@@ -34,6 +34,8 @@ pub struct SubInfo {
     pub expires: String,
     /// `paypal`, `manual`, `trial`, `import`.
     pub source: String,
+    /// Fiche gérée à la main (ni essai ni PayPal) dont l'échéance est passée : « à gérer » (2026-10-08).
+    pub hand_due: bool,
 }
 
 fn activity(now: i64, iso: Option<&str>) -> String {
@@ -91,7 +93,7 @@ pub fn message(code: &str, who: &str, max_premium: usize) -> Option<(&'static st
 }
 
 const CSS: &str = r#".sb{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11.5px;font-weight:600;margin-bottom:3px}
-.sb.active,.sb.offered,.sb.exempt{background:#143d2a;color:#9fe3bd}.sb.trial{background:#1c3556;color:#b9d6ff}.sb.grace{background:#4d3a10;color:#ffd98a}.sb.suspended{background:#4a1d1d;color:#ffb3b3}.sb.unknown{background:#2c3038;color:#d3d9e2}
+.sb.active,.sb.offered,.sb.exempt{background:#143d2a;color:#9fe3bd}.sb.trial{background:#1c3556;color:#b9d6ff}.sb.grace,.sb.due{background:#4d3a10;color:#ffd98a}.sb.suspended{background:#4a1d1d;color:#ffb3b3}.sb.unknown{background:#2c3038;color:#d3d9e2}
 .subf{display:flex;gap:4px;align-items:center;margin-top:2px}.subf select,.subf input{background:#16121f;color:#e6e1f5;border:1px solid #3a325a;border-radius:8px;padding:3px 6px;font:inherit;font-size:12px}.subf input{width:4.2em}
 td.sub{min-width:15em}
 .lk{display:block;font-size:12px;color:#9b94b8;margin-bottom:4px}.lnk{background:none;border:1px solid #3a325a;color:#c4b5fd;border-radius:8px;padding:4px 8px;font:inherit;font-size:12px;cursor:pointer}
@@ -215,11 +217,27 @@ pub fn render(d: &PageData<'_>) -> String {
                 Some(si) => {
                     let sel = |v: &str| if si.status == v { " selected" } else { "" };
                     format!(
-                        r#"<span class="sb {st}">{label}</span><span class="lk">{exp}{src}</span><form method="post" action="/accounts/subs" class="subf"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><select name="action" aria-label="Décision pour {name}"><option value="extend">Prolonger de N jours</option><option value="active"{sa}>Actif pour N jours</option><option value="offered_days">Offert pour N jours</option><option value="offered"{so}>Offert sans limite</option><option value="exempt"{se}>Exempté</option><option value="unknown"{su}>À qualifier</option><option value="suspended"{ss}>Suspendu</option></select><input type="number" name="days" min="1" max="730" value="30" aria-label="N jours" title="N jours : la case revient à 30 après validation, l'échéance obtenue s'affiche à gauche et dans le message"><span class="lk">j</span><button class="lnk" type="submit">OK</button></form>"#,
-                        st = esc(&si.status),
-                        label = esc(&si.label),
+                        r#"<span class="sb {st}">{label}</span><span class="lk">{was}{exp}{src}</span><form method="post" action="/accounts/subs" class="subf"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><select name="action" aria-label="Décision pour {name}"><option value="extend">Prolonger de N jours</option><option value="active"{sa}>Actif pour N jours</option><option value="offered_days">Offert pour N jours</option><option value="offered"{so}>Offert sans limite</option><option value="exempt"{se}>Exempté</option><option value="unknown"{su}>À qualifier</option><option value="suspended"{ss}>Suspendu</option></select><input type="number" name="days" min="1" max="730" value="30" aria-label="N jours" title="N jours : la case revient à 30 après validation, l'échéance obtenue s'affiche à gauche et dans le message"><span class="lk">j</span><button class="lnk" type="submit">OK</button></form>"#,
+                        // géré à la main, échéance passée : le compte reste actif, l'admin tranche
+                        st = if si.hand_due {
+                            "due".to_string()
+                        } else {
+                            esc(&si.status)
+                        },
+                        label = if si.hand_due {
+                            "À gérer (échéance passée)".to_string()
+                        } else {
+                            esc(&si.label)
+                        },
+                        was = if si.hand_due {
+                            format!("{} · ", esc(&si.label))
+                        } else {
+                            String::new()
+                        },
                         exp = if si.expires.is_empty() {
                             String::new()
+                        } else if si.hand_due {
+                            format!("échéance du {} · ", esc(&si.expires))
                         } else {
                             format!("jusqu'au {} · ", esc(&si.expires))
                         },
@@ -254,7 +272,7 @@ pub fn render(d: &PageData<'_>) -> String {
 <section class="cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} lectures simultanées par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
 {flash}
 <div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th>Abonnement</th><th>Lien de bienvenue</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
-<p class="foot">Abonnement : « Actif (période) » pose une échéance de N jours (30 par défaut), « Prolonger » l'ajoute ; « Offert » et « Exempté » ne sont jamais suspendus par le cycle ; « À qualifier » = compte actif sans abonnement connu, laissé tel quel jusqu'à ta décision. Un membre qui paie sur PayPal est rattaché et prolongé tout seul.</p>
+<p class="foot">Abonnement : « Actif (période) » pose une échéance de N jours (30 par défaut), « Prolonger » l'ajoute. Le cycle (rappels, grâce, suspension) ne suit que les essais et les abonnements PayPal ; un membre qui paie sur PayPal est rattaché et prolongé tout seul. Toute autre fiche (actif ou offert par ta décision, exempté, à qualifier) n'est jamais suspendue et le membre ne reçoit aucun rappel : à l'échéance, tu reçois une information et la fiche passe « À gérer (échéance passée) », compte laissé actif. « À qualifier » = compte actif sans abonnement connu.</p>
 <p class="foot">Les comptes protégés ne se gèrent que dans le tableau de bord Jellyfin et ne comptent pas dans le plafond. Les nouveaux comptes arrivent suspendus ; à l'activation, le membre reçoit un mail. « Renvoyer le lien » envoie un nouveau lien de bienvenue (définir ou changer son mot de passe).</p>"#,
             max = d.max_premium,
             streams = d.max_playbacks,
@@ -369,6 +387,56 @@ mod tests {
         );
         assert!(!html.contains("user_id=id-Haradas"));
         assert!(!html.contains(r#"value="id-Haradas""#));
+    }
+
+    #[test]
+    fn hand_managed_fiche_past_its_expiry_shows_to_manage() {
+        let list = [acc("alice", true), acc("bob", true)];
+        let mut subs = std::collections::HashMap::new();
+        subs.insert(
+            "id-alice".to_string(),
+            SubInfo {
+                status: "active".into(),
+                label: "Actif".into(),
+                expires: "20/10/2026".into(),
+                source: "manual".into(),
+                hand_due: true,
+            },
+        );
+        subs.insert(
+            "id-bob".to_string(),
+            SubInfo {
+                status: "active".into(),
+                label: "Actif".into(),
+                expires: "21/10/2026".into(),
+                source: "paypal".into(),
+                hand_due: false,
+            },
+        );
+        let html = render(&PageData {
+            now: 0,
+            accounts: &list,
+            max_premium: 25,
+            max_playbacks: 2,
+            token: "t",
+            msg: None,
+            links: &std::collections::HashMap::new(),
+            subs: &subs,
+        });
+        assert!(html.contains(
+            r#"<span class="sb due">À gérer (échéance passée)</span><span class="lk">Actif · échéance du 20/10/2026 · manual</span>"#
+        ));
+        assert!(html.contains(
+            r#"<span class="sb active">Actif</span><span class="lk">jusqu'au 21/10/2026 · paypal</span>"#
+        ));
+        assert_eq!(html.matches("À gérer (échéance passée)</span>").count(), 1);
+        // le pied de page ne promet plus qu'« offert » échappe seul au cycle
+        assert!(html.contains("ne suit que les essais et les abonnements PayPal"));
+        // la décision en cours reste présélectionnée dans la liste
+        assert_eq!(
+            html.matches(r#"<option value="active" selected>"#).count(),
+            2
+        );
     }
 
     #[test]

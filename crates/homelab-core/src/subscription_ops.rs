@@ -696,7 +696,9 @@ async fn send_member_mail(
     }
 }
 
-/// Un passage du cycle : rappels, grâce, suspensions. Renvoie un résumé lisible.
+/// Un passage du cycle : rappels, grâce, suspensions des essais et des fiches liées à PayPal ; pour les
+/// fiches gérées à la main ([`subs::managed_by_hand`], 2026-10-08), une seule information à l'admin par
+/// échéance, compte laissé actif. Renvoie un résumé lisible.
 pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
     let cfg = &ctx.cfg.subscriptions;
     // Jellyfin injoignable : aucune fiche gardée connue, le cycle suit les fiches comme avant
@@ -713,6 +715,8 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
     let dry = ctx.dry_run || cfg.cycle_dry_run;
     let mut actions = 0u32;
     let mut lines: Vec<String> = Vec::new();
+    // fiches gérées à la main arrivées à échéance (2026-10-08) : (compte, échéance, ligne de l'alerte)
+    let mut due: Vec<(String, i64, String)> = Vec::new();
     for s in ctx.subs.list()? {
         if is_exempt(ctx, &s.username) {
             continue;
@@ -815,15 +819,67 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
                         }
                     }
                 }
+                Action::ManualDue => {
+                    // géré à la main : le compte reste actif, rien n'est écrit au membre
+                    let exp = s.expires_at.unwrap_or(t);
+                    let line = format!(
+                        "{} : échéance du {} atteinte ({}, source {}) — compte laissé actif, à gérer à la main",
+                        s.username,
+                        date_text(exp),
+                        s.status.label(),
+                        s.source
+                    );
+                    if dry {
+                        lines.push(format!("à gérer à la main : {line}"));
+                    } else {
+                        due.push((s.user_id.clone(), exp, line));
+                    }
+                }
             }
         }
     }
-    let unknown = ctx
-        .subs
-        .list()?
+    if !due.is_empty() {
+        let sent = alerts::admin(
+            ctx,
+            Level::Warn,
+            "Abonnés : échéance à gérer à la main",
+            &format!(
+                "Ces comptes ne sont liés à aucun abonnement PayPal : le cycle ne les suspend jamais et n'écrit jamais au membre (décision du 08/10/2026). Leur échéance est atteinte et le compte reste actif. À trancher sur /accounts (prolonger, offert, suspendre…) ou en rattachant un abonnement PayPal (homelabctl subs link <compte> --sub I-…). Une seule information par échéance.\n\n{}",
+                due.iter()
+                    .map(|(_, _, l)| l.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        )
+        .await;
+        // noté seulement si l'information est partie (ou si aucun canal n'est configuré : réessayer n'y
+        // changerait rien) ; sinon elle repart au passage suivant
+        if alerts::retry_later(sent, alerts::configured(ctx)) {
+            warn!(
+                task = "subs",
+                fiches = due.len(),
+                "échéance à gérer : information admin non livrée, nouvel essai au prochain passage"
+            );
+        } else {
+            for (uid, exp, _) in &due {
+                ctx.subs.note_due(
+                    uid,
+                    *exp,
+                    &format!(
+                        "échéance du {} atteinte : compte laissé actif, à gérer à la main",
+                        date_text(*exp)
+                    ),
+                    t,
+                )?;
+            }
+        }
+    }
+    let fiches = ctx.subs.list()?;
+    let unknown = fiches
         .iter()
         .filter(|s| s.status == Status::Unknown)
         .count();
+    let hand_due = fiches.iter().filter(|s| subs::hand_due(s, t)).count();
     if !lines.is_empty() {
         let body = format!(
             "{}{}\n\n{}",
@@ -843,8 +899,8 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
     }
     Ok((
         format!(
-            "{} fiche(s), {created} créée(s), {actions} action(s){}, {unknown} à qualifier",
-            ctx.subs.list()?.len(),
+            "{} fiche(s), {created} créée(s), {actions} action(s){}, {unknown} à qualifier, {hand_due} à gérer (échéance passée)",
+            fiches.len(),
             if dry { " (observation)" } else { "" }
         ),
         actions,

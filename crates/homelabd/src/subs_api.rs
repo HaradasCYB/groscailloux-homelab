@@ -211,7 +211,7 @@ async fn me(State(st): State<SubsState>, headers: HeaderMap) -> ApiResult<Json<V
         .history(&u.id, 12)
         .unwrap_or_default()
         .into_iter()
-        .filter(|e| e.kind != "paypal_event")
+        .filter(|e| subs::member_visible(&e.kind))
         .map(|e| json!({ "at": e.at, "date": day_text(e.at), "kind": e.kind, "detail": e.detail }))
         .collect();
     let sessions = st.ctx.jellyfin.sessions_of(&u.id).await.unwrap_or_default();

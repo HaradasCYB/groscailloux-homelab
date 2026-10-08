@@ -1,5 +1,8 @@
 //! Cycle des abonnés (`[subscriptions]`) : rappels J-N, passage en grâce à l'échéance, suspension
-//! à la fin de la grâce, fiches créées pour les comptes qui n'en ont pas. Un abonnement PayPal qui
+//! à la fin de la grâce, fiches créées pour les comptes qui n'en ont pas. Depuis le 2026-10-08, seuls
+//! les essais et les fiches liées à un abonnement PayPal suivent ce cycle : toute autre fiche est gérée
+//! à la main par l'admin (jamais suspendue, aucun rappel au membre ; à l'échéance, une information à
+//! l'admin, une fois). Un abonnement PayPal qui
 //! se renouvelle tout seul ne reçoit qu'une information sans lien de paiement, et sa grâce ne
 //! commence qu'après `paypal_margin_hours`. Décisions pures dans
 //! `subscriptions::decide`, application dans `subscription_ops::run_cycle`. `cycle_dry_run = true`
