@@ -3,8 +3,8 @@
 
     scripts/jellyfin-js-apply.py [--dry-run]
 
-Scripts gérés (nom dans le plugin → fichier) ; tous « Requires authentication ». Les autres scripts
-(personnels ou enregistrés par d'autres plugins, ex. Jellysleep) ne sont pas touchés. La configuration
+Scripts gérés (nom dans le plugin → fichier) ; « Requires authentication » sauf les scripts publics (langue,
+TV, socket unique). Les autres scripts (personnels ou enregistrés par d'autres plugins) ne sont pas touchés. La configuration
 précédente est sauvegardée dans backups/jellyfin-plugin-JavaScriptInjector-<date>.json. Effet au
 prochain chargement de page des clients.
 """

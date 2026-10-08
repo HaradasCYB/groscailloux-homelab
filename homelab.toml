@@ -485,7 +485,7 @@ npm_server_name = "qbittorrent."
 [accounts]
 # Premium = compte Jellyfin actif ; non-premium = suspendu (connexion refusée, rien de supprimé).
 # Page d'admin : onboarder.<domaine>/accounts. Plafonds : 6 vCPU sans GPU (1-2 transcodages),
-# lien seedbox ~190 Mbit/s ; pic mesuré 4 lectures pour 13 comptes (2026-09-14).
+# lien seedbox ~8-10 Mo/s par connexion (agrégat plus haut à plusieurs flux) ; pic mesuré 4 lectures pour 13 comptes (2026-09-14).
 max_premium = 25
 max_devices_per_user = 0      # MaxActiveSessions de Jellyfin : 0 = illimité (bloquait les iPhone, sessions fantômes)
 max_playbacks_per_user = 2    # lectures simultanées : la tâche playback_limit arrête la 3e (comptes protégés exemptés)
@@ -517,17 +517,16 @@ subtitle_mode = "Smart"
 vo_audio_language = "jpn"
 
 [indexers]
-# C411 est le SEUL indexer, dans les 4 Arrs comme dans Prowlarr (les indexers publics et Jackett ont été
-# retirés le 2026-09-17 : ils ne servaient qu'en interactif, faisaient durer une recherche plusieurs minutes
-# et remplissaient le journal d'erreurs). Un seul compteur horaire pour tout ce qui l'interroge.
+# C411 est l'indexer principal (RSS des 4 Arrs ; recherches de homelabd par Prowlarr, deux clés). Secours pendant une
+# panne de C411 : World-torrent et Nyaa.si dans Prowlarr ([indexers] fallback*) ; RuTracker pour la seule voie russe
+# (Jackett de la seedbox). Les indexers publics et le Jackett du VPS ont été retirés le 2026-09-17.
 c411_max_per_hour = 40        # PAR CLÉ (deux clés = 80/h) ; Prowlarr coupe à 45/h par indexer
 cooldown_after_429_mins = 15  # clé qui prend un 429 : mise de côté, tout continue sur l'autre
 manual_reserve = 10           # requêtes gardées pour la page /recherche
 allow_no_french = true        # release sans français (VO) prise en dernier recours, si rien de français
-# Le CODEC ne départage rien (2026-09-18) : h264 et HEVC transcodent à la même vitesse sur ce serveur
-# (1,85× les deux), les clients lisent le HEVC en direct, et 53 % de la médiathèque est déjà en HEVC.
-# Écarter le x265 revenait à refuser la seule version française des animés. Formats HEVC/H.264/AV1 à 0
-# dans les 4 profils FR-friendly.
+# Codec (2026-09-26) : à langue, résolution et sources égales, x265 > x264 > AV1 (series_search::codec_rank : HEVC 2,
+# H.264 ou non indiqué 1, AV1 0) ; dans les Arrs, HEVC +200, H.264 +100, AV1 0. Le x265 n'est jamais exigé : il
+# transcode à la même vitesse que le h264 ici (1,85×) et c'est souvent la seule version française des animés.
 # Plafond à l'acquisition (audit lecture du 2026-09-18) : sans GPU ni ABR, un fichier > ~15 Mbit/s saccade
 # chez un membre à connexion moyenne, et 128 fichiers > 15 Mbit/s (remux 4K jusqu'à 103 Mbit/s) étaient déjà
 # entrés. 3 Go par épisode de 24 min ≈ 17 Mbit/s ; 15 Go par film de 2 h ≈ 17 Mbit/s. Même plafond côté Arrs :
@@ -596,7 +595,7 @@ moderator_mail_interval_mins = 15   # récapitulatif entraide + privé : au plus
 new_member_read_days = 14   # première visite d'un compte : annonces et entraide de plus de N jours comptent comme lues
 
 [seedbox]
-# Seedbox (tofino.usbx.me) : Radarr/Sonarr y rangent dans ~/media, monté en lecture seule sur
+# Seedbox : Radarr/Sonarr y rangent dans ~/media, monté (lecture + suppression, aucune écriture) sur
 # /mnt/seedbox/media (homelab-seedbox-mount.service) et vu par Jellyfin sous /seedbox/media.
 # Couper la seedbox : enabled = false (+ procédure docs/DEPLOY.md).
 enabled = true

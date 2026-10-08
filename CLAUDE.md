@@ -205,11 +205,5 @@ lien seedbox ~8–10 Mo/s par connexion — voir [lecture-et-transcodage.md](doc
   historiques.
 - À valider en séance réelle : Chromecast `high10` → `high`, compression des listes HLS, SyncPlay en 12.1 dans Jellyfin
   Desktop (avant de retirer `gc-syncplay.js`).
-- Commentaires périmés à corriger au prochain lot de code (commentaires seuls, aucune clé : sans risque pour
-  `deny_unknown_fields`) : `homelab.toml` l. 488 (« lien seedbox ~190 Mbit/s » : ~8–10 Mo/s par connexion, voir
-  [seedbox-et-rclone.md](docs/runbooks/seedbox-et-rclone.md)), l. 520-522 (« C411 est le SEUL indexer » : World-torrent et
-  Nyaa en secours, RuTracker pour la voie russe), l. 527-530 (« le codec ne départage rien », formats à 0 : `codec_rank`
-  HEVC 2 > H.264 1 > AV1 0, Arrs à +200/+100), l. 599 (« monté en lecture seule » : lecture + suppression) ; docstring de
-  `scripts/jellyfin-js-apply.py` (« tous Requires authentication » : 3 scripts publics ; Jellysleep, retiré le 05/10).
 - Provisoire : Collection Sections recompilée (à remplacer par Home Screen Sections), garde NPM de Home Screen Sections (à
   retirer quand l'amont corrige).
