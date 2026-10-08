@@ -2,13 +2,14 @@
 """hl.py : appels communs aux outils de tools/ (offpeak, bench). Créé le 2026-10-08 (lot 4 de la revue Kaizen).
 
 Sous-commandes :
-  guard [--idle] [--jf-tasks] [--idle-if-down] [--seedbox] [--homelabd T:S[:I] …] [--busy] [--self-unit U]
-        une ligne « ok <détail> » (code 0), « refus <motif> » (1) ou « attendre <s> <motif> || <gardes vertes> » (4)
+  guard [--idle] [--jf-tasks] [--idle-if-down] [--seedbox] [--homelabd T:S[:I] …] [--busy]
+        une ligne « ok <détail> » (code 0), « refus <motif> » (1) ou « attendre <s> <motif> || <gardes vertes> » (4) ;
+        --busy ne compte que les lot3-* (les travaux hors pic se suivent par le verrou global d'offpeak.sh)
   busy [--timers] [--margin-min N] [--self-unit U]      maintenance en cours (lot3-*, homelab-offpeak@*) : 1 si oui
-  discord <fichier> [--tries N]                          texte → salon Discord ADMIN (jamais celui des membres)
+  discord <fichier|-> [--tries N]                        texte (- : entrée standard) → salon Discord ADMIN
   members-playing                                        « <lectures de membres> <lectures de bancs> » (3 si muet)
   url <service> | public <CLÉ>                           adresse locale ([urls] du TOML) | clé PUBLIQUE de .env
-  account-create <zz_nom> --env-out <fichier> [--index k] [--config K=V …]
+  account-create <zz_nom> --env-out <fichier> [--id-out <fichier>] [--index k] [--config K=V …]
   account-delete --id <id> --name <zz_nom>
   sweep [--prefix zz_] [--max-age-min 120] [--max 20] [--dry-run]
 
@@ -23,6 +24,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import subprocess
 import sys
 import time
@@ -238,19 +240,24 @@ def systemctl(*args):
         return ''
 
 
-def maintenance_busy(self_unit=None, timers=False, margin_min=20, now=None):
+def maintenance_busy(self_unit=None, timers=False, margin_min=20, now=None, offpeak=True):
     """Motifs d'une maintenance en cours : service lot3-* ou homelab-offpeak@* actif (autre que soi) ; avec
     timers, aussi un de leurs minuteurs passé il y a moins de margin_min ou attendu dans moins de margin_min (le
-    créneau d'un lot qui repasse toutes les 15 min)."""
+    créneau d'un lot qui repasse toutes les 15 min).
+    offpeak=False (2026-10-08, garde d'offpeak.sh) : les homelab-offpeak@* ne comptent pas. Une unité Type=oneshot reste
+    « activating » pendant toute son attente (--retry, fenêtre homelabd) : deux travaux programmés se refusaient l'un
+    l'autre jusqu'à la fin de leur créneau (même OnCalendar, rattrapage Persistent=true au démarrage, travail qui attend
+    --if-idle). Le verrou global d'offpeak.sh suffit à n'en lancer qu'un à la fois."""
     now = time.time() if now is None else now
+    patterns = MAINT_PATTERNS if offpeak else tuple(x for x in MAINT_PATTERNS if not x.startswith('homelab-offpeak@'))
     out = []
-    for line in systemctl('list-units', '--all', '--plain', '--no-legend', '--type=service', *MAINT_PATTERNS).splitlines():
+    for line in systemctl('list-units', '--all', '--plain', '--no-legend', '--type=service', *patterns).splitlines():
         f = line.split()
         if len(f) >= 3 and f[0] != self_unit and f[2] in ('active', 'activating', 'reloading', 'deactivating'):
             out.append('%s actif' % f[0])
     if timers:
         names = [line.split()[0] for line in
-                 systemctl('list-units', '--all', '--plain', '--no-legend', '--type=timer', *MAINT_PATTERNS).splitlines()
+                 systemctl('list-units', '--all', '--plain', '--no-legend', '--type=timer', *patterns).splitlines()
                  if line.split()]
         for t in names:
             props = dict(x.split('=', 1) for x in systemctl(
@@ -266,11 +273,11 @@ def maintenance_busy(self_unit=None, timers=False, margin_min=20, now=None):
 
 def cmd_guard(a):
     if a.busy:
-        b = maintenance_busy(a.self_unit)
+        b = maintenance_busy(offpeak=False)
         if b:
             print('refus maintenance en cours : ' + ', '.join(b))
             return 1
-    infos = ['aucune maintenance en cours'] if a.busy else []
+    infos = ['aucune maintenance lot3 en cours'] if a.busy else []
     if a.idle or a.jf_tasks:
         try:
             members, bench, running = jf_state(Jf())
@@ -375,8 +382,11 @@ def cmd_discord(a):
     if not url:
         print('DISCORD_WEBHOOK_ADMIN absent : message non envoyé')
         return 1
-    with open(a.file, encoding='utf-8', errors='replace') as f:
-        text = f.read()[:1900]
+    if a.file == '-':  # 2026-10-08 : texte par l'entrée standard, aucun fichier à écrire (dossier d'état illisible…)
+        text = sys.stdin.read()[:1900]
+    else:
+        with open(a.file, encoding='utf-8', errors='replace') as f:
+            text = f.read()[:1900]
     body = json.dumps({'content': text, 'allowed_mentions': {'parse': []}}).encode()
     for attempt in range(a.tries):
         try:
@@ -427,19 +437,43 @@ def parse_kv(items):
     return out
 
 
+def _interrupted(signum, _frame):
+    raise KeyboardInterrupt('signal %d' % signum)
+
+
+def write_private(path, text):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(text)
+
+
 def cmd_account_create(a):
     if not BENCH_NAME_RE.match(a.name):
         die('refus nom de compte de banc invalide (zz_ puis 2 à 30 caractères a-z, 0-9, _)')
+    # 2026-10-08 : TERM et HUP deviennent une interruption comme Ctrl-C (KeyboardInterrupt) ; sans ça, Python meurt sans
+    # rien nettoyer et un compte créé par POST /Users/New restait jusqu'au balayage suivant (plus de 2 h). INT aussi,
+    # explicitement : lancé en tâche de fond par un shell, Python hérite d'un SIGINT ignoré et finissait la création.
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _interrupted)
     jf = Jf()
     users = jf.get('/Users')
     if any(u['Name'].lower() == a.name for u in users):
         die('refus le compte %s existe déjà (banc en cours ? sinon : tools/bench/bench.sh --sweep)' % a.name, 1)
     pw = secrets.token_urlsafe(18)
-    st, u = jf.call('POST', '/Users/New', {'Name': a.name, 'Password': pw})
-    if st != 200 or not u or 'Id' not in u:
-        die('refus création du compte en échec (HTTP %s)' % st, 1)
-    uid = u['Id']
+    uid = None
     try:
+        try:
+            st, u = jf.call('POST', '/Users/New', {'Name': a.name, 'Password': pw})
+        except BaseException:
+            # interrompu pendant la création : le serveur a pu créer le compte sans qu'on ait son id. Le nom était
+            # libre juste avant : un compte de ce nom maintenant est le nôtre.
+            uid = find_user_id(jf, a.name)
+            raise
+        if st != 200 or not u or 'Id' not in u:
+            die('refus création du compte en échec (HTTP %s)' % st, 1)
+        uid = u['Id']
+        if a.id_out:  # tout de suite : le lanceur le retrouve même s'il est interrompu avant d'avoir lu notre sortie
+            write_private(a.id_out, uid + '\n')
         st, _ = jf.call('POST', '/Users/%s/Policy' % uid, bench_policy(u.get('Policy') or {}, env()))
         if st not in (200, 204):
             raise RuntimeError('politique HTTP %s' % st)
@@ -454,14 +488,33 @@ def cmd_account_create(a):
         lines = ['USER_NAME_%d=%s' % (a.index, a.name), 'PW_%d=%s' % (a.index, pw), 'USER_ID_%d=%s' % (a.index, uid)]
         if a.index == 1:
             lines += ['USER_NAME=%s' % a.name, 'PW=%s' % pw, 'USER_ID=%s' % uid]
-        fd = os.open(a.env_out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            f.write('\n'.join(lines) + '\n')
-    except Exception as e:  # noqa: BLE001 — compte à moitié réglé : on le retire tout de suite
-        jf.call('DELETE', '/Users/%s' % uid)
-        die('refus réglage du compte en échec (%s) : compte retiré' % e, 1)
+        write_private(a.env_out, '\n'.join(lines) + '\n')
+    except SystemExit:
+        raise
+    except BaseException as e:  # noqa: BLE001 — compte à moitié réglé ou interrompu (Ctrl-C, TERM) : retiré tout de suite
+        if uid:
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):  # le retrait lui-même n'est plus interrompu
+                signal.signal(sig, signal.SIG_IGN)
+            try:
+                jf.call('DELETE', '/Users/%s' % uid)
+            except Unreachable:
+                pass  # le lanceur réessaie avec l'id écrit dans --id-out, sinon le balayage s'en charge
+        what = 'interrompu' if isinstance(e, KeyboardInterrupt) else 'réglage du compte en échec (%s)' % e
+        die('refus %s : %s' % (what, 'compte retiré' if uid else 'aucun compte créé'), 130 if isinstance(e, KeyboardInterrupt) else 1)
     print(uid)
     return 0
+
+
+def find_user_id(jf, name):
+    """Id du compte de banc de ce nom exact, ou None (aucune exception : appelé pendant une interruption)."""
+    try:
+        st, users = jf.call('GET', '/Users')
+    except Exception:  # noqa: BLE001
+        return None
+    if st != 200 or not users:
+        return None
+    ids = [u['Id'] for u in users if (u.get('Name') or '').lower() == name.lower()]
+    return ids[0] if len(ids) == 1 else None
 
 
 def delete_device(jf, dev_id, name, uid):
@@ -590,7 +643,6 @@ def main():
     g.add_argument('--seedbox', action='store_true')
     g.add_argument('--homelabd', action='append', default=[])
     g.add_argument('--busy', action='store_true')
-    g.add_argument('--self-unit')
     b = sub.add_parser('busy')
     b.add_argument('--timers', action='store_true')
     b.add_argument('--margin-min', type=int, default=20)
@@ -607,6 +659,7 @@ def main():
     c = sub.add_parser('account-create')
     c.add_argument('name')
     c.add_argument('--env-out', required=True)
+    c.add_argument('--id-out')
     c.add_argument('--index', type=int, default=1)
     c.add_argument('--config', action='append')
     x = sub.add_parser('account-delete')
@@ -629,6 +682,9 @@ def main():
     except Unreachable as e:
         print('refus Jellyfin ne répond pas (%s)' % e)
         return 3
+    except KeyboardInterrupt:
+        print('refus interrompu')
+        return 130
 
 
 if __name__ == '__main__':
