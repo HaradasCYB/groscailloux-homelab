@@ -9,9 +9,15 @@ After=network-online.target
 Type=notify
 User=deploy
 Group=deploy
+# Hôte SFTP et compte de la seedbox : hors du dépôt public (SEEDBOX_SFTP_HOST, SEEDBOX_USER dans .env), passés en
+# options (elles l'emportent sur rclone.conf). Variable absente ou vide : refus nommé dans le journal (`$$` = `$` lu
+# par sh, pas par systemd), sinon rclone partirait sans hôte.
+EnvironmentFile=/opt/homelab/.env
+ExecStartPre=/bin/sh -c 'test -n "$${SEEDBOX_SFTP_HOST}" && test -n "$${SEEDBOX_USER}" || { echo "SEEDBOX_SFTP_HOST ou SEEDBOX_USER absent de /opt/homelab/.env" >&2; exit 1; }'
 ExecStartPre=/bin/mkdir -p /opt/homelab/cache/rclone
 ExecStart=/usr/local/bin/rclone mount seedbox:media /mnt/seedbox/media \
   --config /opt/homelab/rclone/rclone.conf \
+  --sftp-host ${SEEDBOX_SFTP_HOST} --sftp-user ${SEEDBOX_USER} \
   --allow-other --umask 022 \
   --vfs-cache-mode full --vfs-cache-max-size 120G --vfs-cache-max-age 168h \
   --vfs-cache-min-free-space 80G \

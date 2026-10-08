@@ -26,7 +26,6 @@ import shlex
 import subprocess
 import sys
 import time
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -46,15 +45,15 @@ LIBS = {
 SEED_KEEP_DAYS = 7
 VIDEO = re.compile(r"\.(mkv|mp4|avi|m4v|ts|webm|mov)$", re.I)
 
-env = {}
-for line in open(f"{BASE}/.env"):
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1)
-        env[k] = v.strip().strip('"')
-toml = tomllib.load(open(f"{BASE}/homelab.toml", "rb"))
+# .env et homelab.toml lus comme par homelabd : `${SEEDBOX_HOME}`… remplacés (tools/lib/hlconf.py, 2026-10-08)
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "lib"))
+import hlconf  # noqa: E402
+
+env = hlconf.read_env(f"{BASE}/.env")
+toml = hlconf.load_toml(f"{BASE}/homelab.toml", env)
 SB = toml["seedbox"]
-SB_MEDIA = SB["media_root"].rstrip("/")  # /home/kakaouette/media
+SB_MEDIA = SB["media_root"].rstrip("/")  # ${SEEDBOX_HOME}/media
 JF_SEED = SB["jellyfin_root"].rstrip("/")  # /seedbox/media
 
 ARR = {

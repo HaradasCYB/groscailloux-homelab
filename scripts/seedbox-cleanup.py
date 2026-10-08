@@ -19,9 +19,9 @@ import http.cookiejar
 import json
 import os
 import shlex
+import sys
 import subprocess
 import time
-import tomllib
 import urllib.parse
 import urllib.request
 
@@ -39,14 +39,16 @@ RECYCLE = {  # catégorie C, telle qu'analysée (dossier → entrées)
                           "The Man in the High Castle"],
 }
 
-env = {}
-for line in open(f"{BASE}/.env"):
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1)
-        env[k] = v.strip().strip('"')
-SB = tomllib.load(open(f"{BASE}/homelab.toml", "rb"))["seedbox"]
-HOME = os.path.dirname(SB["media_root"].rstrip("/"))  # /home/kakaouette
+# .env et homelab.toml lus comme par homelabd : `${SEEDBOX_HOME}`… remplacés (tools/lib/hlconf.py, 2026-10-08)
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "lib"))
+import hlconf  # noqa: E402
+
+env = hlconf.read_env(f"{BASE}/.env")
+SB = hlconf.load_toml(f"{BASE}/homelab.toml", env)["seedbox"]
+HOME = os.path.dirname(SB["media_root"].rstrip("/"))  # ${SEEDBOX_HOME}
+# chemins de qBittorrent : ce qui suit « <compte>/ » (le dossier personnel peut y apparaître sous un autre préfixe)
+ACCT_DIR = os.path.basename(HOME) + "/"
 DRY = False
 LOG = None
 
@@ -71,7 +73,7 @@ class Qbit:
         self.url = SB["qbit_url"].rstrip("/")
         self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         r = self.op.open(urllib.request.Request(self.url + "/api/v2/auth/login", data=urllib.parse.urlencode(
-            {"username": SB.get("qbit_user", "kakaouette"), "password": env["SEEDBOX_QBIT_PASSWORD"]}).encode()), timeout=60).read()
+            {"username": SB["qbit_user"], "password": env["SEEDBOX_QBIT_PASSWORD"]}).encode()), timeout=60).read()
         if r != b"Ok.":
             raise RuntimeError("connexion qBittorrent seedbox refusée")
 
@@ -101,7 +103,7 @@ def classify(files, torrents):
     def in_media(i):
         return any(p.startswith("media/") and "/.recycle/" not in p for p in byino[i])
 
-    bypath = {t["content_path"].split("kakaouette/", 1)[1]: t for t in torrents if "kakaouette/" in t["content_path"]}
+    bypath = {t["content_path"].split(ACCT_DIR, 1)[1]: t for t in torrents if ACCT_DIR in t["content_path"]}
     g = collections.defaultdict(lambda: {"size": 0, "orph": 0, "exts": set(), "n": 0})
     for s, i, p in files:
         if not p.startswith("downloads/"):
@@ -159,7 +161,7 @@ def phase_now():
     byino = collections.defaultdict(list)
     for s, i, p in files:
         byino[i].append(p)
-    bypath = {t["content_path"].split("kakaouette/", 1)[1]: t for t in torrents if "kakaouette/" in t["content_path"]}
+    bypath = {t["content_path"].split(ACCT_DIR, 1)[1]: t for t in torrents if ACCT_DIR in t["content_path"]}
     rec_only = []
     for key, t in bypath.items():
         fs = [(s, i, p) for s, i, p in files if p == key or p.startswith(key + "/")]

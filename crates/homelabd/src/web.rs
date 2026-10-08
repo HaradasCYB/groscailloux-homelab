@@ -404,6 +404,7 @@ async fn premium_activate_post(
             let body = activation_mail_body(
                 st.ctx.secrets.donation.as_ref(),
                 st.ctx.secrets.onboard_token.as_ref(),
+                st.ctx.secrets.onboard_public_url.as_deref(),
                 &name,
                 &ip,
             );
@@ -434,11 +435,14 @@ async fn premium_activate_post(
     Redirect::to("/premium/activate?ok=1").into_response()
 }
 
-/// Corps du mail d'activation : horodatage lisible + epoch, IP, plan PayPal et lien admin
-/// vers la page Comptes (jeton inclus : destinataire = administrateur uniquement).
+/// Corps du mail d'activation : horodatage lisible + epoch, IP, plan PayPal et lien admin vers la page Comptes, sur
+/// l'hôte d'onboarding (`ONBOARD_PUBLIC_URL`, seul hôte qui sert les pages d'administration ; aucun domaine dans le
+/// dépôt public, aucun jeton dans le lien : la page passe par la session admin). Sans jeton d'onboarding, la page
+/// Comptes est fermée : pas de lien.
 fn activation_mail_body(
     donation: Option<&Donation>,
     onboard_token: Option<&Secret>,
+    onboard_public_url: Option<&str>,
     name: &str,
     ip: &str,
 ) -> String {
@@ -446,9 +450,16 @@ fn activation_mail_body(
     let plan = donation
         .map(|d| format!("Plan PayPal {} · 3,50 €/mois", d.paypal_plan_id))
         .unwrap_or_else(|| "Plan PayPal non configuré côté serveur".to_string());
-    let activation = match onboard_token {
-        Some(_) => "\n\nActiver le compte depuis la page Comptes :\nhttps://onboarder.groscaillouxmovie.duckdns.org/accounts\n".to_string(),
-        None => String::new(),
+    let activation = match (onboard_token, onboard_public_url) {
+        (Some(_), Some(base)) => format!(
+            "\n\nActiver le compte depuis la page Comptes :\n{}/accounts\n",
+            base.trim_end_matches('/')
+        ),
+        (Some(_), None) => {
+            "\n\nActiver le compte depuis la page Comptes (/accounts de l'adresse d'onboarding).\n"
+                .to_string()
+        }
+        (None, _) => String::new(),
     };
     format!(
         "Demande d'activation du compte Premium Homeflix GrosCailloux.\n\n\
@@ -1828,6 +1839,7 @@ mod tests {
                 paypal_plan_id: "P-9".into(),
             }),
             None,
+            None,
             "john.doe",
             "1.2.3.4",
         );
@@ -1835,5 +1847,27 @@ mod tests {
         assert!(body.contains("1.2.3.4"));
         assert!(body.contains("P-9"));
         assert!(body.contains("Epoch"));
+        // sans jeton d'onboarding, la page Comptes est fermée : aucun lien
+        assert!(!body.contains("/accounts"));
+    }
+
+    #[test]
+    fn activation_mail_links_to_the_onboarding_host_only() {
+        let tok = Secret::new("t".repeat(64));
+        let body = activation_mail_body(
+            None,
+            Some(&tok),
+            Some("https://onboarder.example.org/"),
+            "john.doe",
+            "1.2.3.4",
+        );
+        assert!(body.contains("\nhttps://onboarder.example.org/accounts\n"));
+        // jamais le jeton dans le mail
+        assert!(!body.contains(&"t".repeat(64)));
+        assert!(!body.contains("token="));
+        // adresse d'onboarding absente : la page est nommée, aucun domaine écrit en dur
+        let body = activation_mail_body(None, Some(&tok), None, "john.doe", "1.2.3.4");
+        assert!(body.contains("/accounts de l'adresse d'onboarding"));
+        assert!(!body.contains("https://"));
     }
 }

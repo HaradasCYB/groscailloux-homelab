@@ -9,7 +9,7 @@ Les **sorties** (journaux, captures) ne vont jamais dans le dépôt : `state/off
 | `offpeak/offpeak.sh` | exécuter une commande hors pic, seulement si personne ne regarde ; programmation qui survit au redémarrage |
 | `bench/bench.sh` | lancer un banc d'interface (navigateur sans écran) avec un compte de banc toujours supprimé |
 | `tests/` | bancs de non-régression lancés par `bench.sh` (`compte-russe/` : voie russe de Mon compte) |
-| `lib/` | `hl.py` (appels Jellyfin, homelabd, Discord ; seul à lire les secrets de `.env`), `common.sh`, leurs tests |
+| `lib/` | `hl.py` (appels Jellyfin, homelabd, Discord ; seul à lire les secrets de `.env`), `hlconf.py` (`.env` et `homelab.toml` lus comme par homelabd : `${NOM}` remplacés ; aussi pour `scripts/*.py`), `common.sh`, leurs tests |
 
 Configuration et secrets : toujours ceux de `/opt/homelab` (`.env`, `homelab.toml`, `state/`), même lancé depuis un
 autre arbre de travail. Aucun secret en argument ni à l'écran ; aucune adresse en dur (`[urls]` du TOML, `.env`).
@@ -115,7 +115,7 @@ Contre-épreuve : `--env MUTATE=1` doit échouer. La décision côté serveur (`
 
 ```bash
 python3 tools/lib/test_hl.py      # fenêtre homelabd, maintenance en cours (deux travaux en attente ne se bloquent pas),
-                                  # politique et création interrompue des comptes de banc, dates
+                                  # politique et création interrompue des comptes de banc, dates, variables ${NOM} du TOML
 bash tools/lib/test_common.sh     # créneau horaire (à cheval sur minuit compris), nettoyage des textes Discord
 ```
 

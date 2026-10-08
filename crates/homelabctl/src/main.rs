@@ -122,6 +122,8 @@ async fn main() -> Result<()> {
         .without_time()
         .init();
 
+    // `.env` d'abord, même pour `list` : homelab.toml cite certaines de ses variables (`${SEEDBOX_HOME}`…)
+    homelab_core::config::load_env_file(&args.env_file).context("chargement de .env")?;
     let cfg = Config::load(&args.config)?;
     if let Cmd::List = args.cmd {
         for n in tasks::names() {
