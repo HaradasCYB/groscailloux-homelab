@@ -5,7 +5,7 @@
 //! aux membres sur demande. Règles et stockage : `homelab_core::chat`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
@@ -13,7 +13,8 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use homelab_core::chat::{self, Channel, ChatStore, ChatUser, RateLimiter};
+use homelab_core::chat::{self, Channel, ChatStore, ChatUser, Message, RateLimiter};
+use homelab_core::config::Chat as ChatConfig;
 use homelab_core::{mail, TaskContext};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -28,7 +29,7 @@ struct ChatState {
     ctx: Arc<TaskContext>,
     store: Arc<ChatStore>,
     auth: Arc<Mutex<HashMap<String, (ChatUser, Instant)>>>,
-    limiter: Arc<Mutex<RateLimiter>>,
+    limiter: Arc<StdMutex<RateLimiter>>,
 }
 
 type ApiResult<T> = Result<T, (StatusCode, Json<Value>)>;
@@ -41,20 +42,52 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// Refus d'une règle du tchat (code HTTP + message lisible pour le membre) ou panne de la base. Les règles
+/// vivent dans des fonctions `svc_*` qui ne touchent ni au réseau ni au `TaskContext` : elles sont testées
+/// directement (module `tests`), les gestionnaires axum ne font qu'identifier le membre et brancher les effets
+/// de bord (Discord, mail).
+#[derive(Debug)]
+enum Fail {
+    Http(StatusCode, &'static str),
+    Db(anyhow::Error),
+}
+
+impl From<anyhow::Error> for Fail {
+    fn from(e: anyhow::Error) -> Self {
+        Fail::Db(e)
+    }
+}
+
+fn refuse<T>(code: StatusCode, msg: &'static str) -> Result<T, Fail> {
+    Err(Fail::Http(code, msg))
+}
+
 /// Exécute une opération SQLite hors du runtime async.
-async fn db<T, F>(st: &ChatState, f: F) -> ApiResult<T>
+async fn db<T, E, F>(st: &ChatState, f: F) -> ApiResult<T>
 where
     T: Send + 'static,
-    F: FnOnce(&ChatStore) -> anyhow::Result<T> + Send + 'static,
+    E: Into<Fail> + Send + 'static,
+    F: FnOnce(&ChatStore) -> Result<T, E> + Send + 'static,
 {
     let store = st.store.clone();
     tokio::task::spawn_blocking(move || f(&store))
         .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne"))?
-        .map_err(|e| {
-            warn!(task = "chat", error = format!("{e:#}"), "database error");
-            err(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne")
+        .map_err(|e| match e.into() {
+            Fail::Http(code, msg) => err(code, msg),
+            Fail::Db(e) => {
+                warn!(task = "chat", error = format!("{e:#}"), "database error");
+                err(StatusCode::INTERNAL_SERVER_ERROR, "erreur interne")
+            }
         })
+}
+
+/// Limite d'envoi par membre (`[chat] min_gap_secs`, `burst_max`) ; vrai si l'envoi est permis.
+fn limited(st: &ChatState, user: &str, cfg: &ChatConfig) -> bool {
+    st.limiter
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .check(user, now(), cfg)
 }
 
 pub fn router(ctx: Arc<TaskContext>) -> anyhow::Result<Router> {
@@ -70,7 +103,7 @@ pub fn router(ctx: Arc<TaskContext>) -> anyhow::Result<Router> {
         ctx,
         store,
         auth: Arc::new(Mutex::new(HashMap::new())),
-        limiter: Arc::new(Mutex::new(RateLimiter::default())),
+        limiter: Arc::new(StdMutex::new(RateLimiter::default())),
     };
     spawn_moderator_mail(st.clone());
     Ok(Router::new()
@@ -184,68 +217,75 @@ async fn auth(st: &ChatState, headers: &HeaderMap) -> ApiResult<ChatUser> {
     Ok(user)
 }
 
-fn channel(key: &str) -> ApiResult<Channel> {
-    Channel::parse(key).ok_or_else(|| err(StatusCode::BAD_REQUEST, "salon inconnu"))
+fn channel_of(key: &str) -> Result<Channel, Fail> {
+    Channel::parse(key).ok_or(Fail::Http(StatusCode::BAD_REQUEST, "salon inconnu"))
+}
+
+fn label(ch: &Channel) -> &'static str {
+    match ch {
+        Channel::Annonces => "Annonces",
+        Channel::Entraide => "Entraide",
+        Channel::Private(_) => "Écrire à l'admin",
+    }
+}
+
+/// Corps de `/me` : identité, salons publics avec leurs non-lus, fil privé, annonce et message de l'admin à
+/// afficher en bandeau. Le même objet est joint (clé `me`) aux réponses de `/messages` et de `/read` : la bulle
+/// n'a plus à redemander `/me` après chaque lecture ni pendant que le panneau est ouvert (2026-10-08).
+/// Première visite d'un compte : les messages publics de plus de `new_member_read_days` jours comptent comme lus.
+fn svc_me(s: &ChatStore, cfg: &ChatConfig, u: &ChatUser, now: i64) -> anyhow::Result<Value> {
+    s.init_reads(&u.id, now, cfg.new_member_read_days)?;
+    let own = Channel::Private(u.id.clone());
+    let mut channels = Vec::new();
+    let mut announcements_unread = 0;
+    for ch in Channel::PUBLIC {
+        let unread = s.unread(&u.id, &ch)?;
+        if ch == Channel::Annonces {
+            announcements_unread = unread;
+        }
+        channels.push(json!({
+            "key": ch.key(),
+            "label": label(&ch),
+            "can_post": chat::can_post(u, &ch),
+            "unread": unread,
+        }));
+    }
+    let private_unread = if u.moderator {
+        s.unread_private_total(&u.id)?
+    } else {
+        s.unread(&u.id, &own)?
+    };
+    // dernière annonce non lue (bannière de l'accueil)
+    let latest = if announcements_unread > 0 {
+        s.list(&Channel::Annonces, None, None, 1)?
+            .into_iter()
+            .next()
+            .filter(|m| !m.deleted)
+    } else {
+        None
+    };
+    // message privé de l'admin non lu (bannière de l'accueil, prioritaire sur l'annonce)
+    let latest_private = if u.moderator {
+        None
+    } else {
+        s.latest_unread_from_moderator(&u.id, &own)?
+    };
+    Ok(json!({
+        "user": { "id": u.id, "name": u.name, "moderator": u.moderator },
+        "channels": channels,
+        "private": { "key": own.key(), "unread": private_unread },
+        "latest_announcement": latest,
+        "latest_private": latest_private,
+        "limits": { "max_chars": cfg.max_chars, "delete_own_within_secs": cfg.delete_own_within_mins * 60 },
+    }))
 }
 
 async fn me(State(st): State<ChatState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     let u = auth(&st, &headers).await?;
-    let own = Channel::Private(u.id.clone());
-    let uc = u.clone();
-    let (unread, private_unread, latest, latest_private) = db(&st, move |s| {
-        let mut unread = Vec::new();
-        for ch in Channel::PUBLIC {
-            unread.push((ch.key(), s.unread(&uc.id, &ch)?));
-        }
-        let private_unread = if uc.moderator {
-            s.private_threads(&uc.id)?.iter().map(|t| t.unread).sum()
-        } else {
-            s.unread(&uc.id, &own)?
-        };
-        // dernière annonce non lue (bannière de l'accueil)
-        let latest = if unread[0].1 > 0 {
-            s.list(&Channel::Annonces, None, None, 1)?
-                .into_iter()
-                .next()
-                .filter(|m| !m.deleted)
-        } else {
-            None
-        };
-        // message privé de l'admin non lu (bannière de l'accueil, prioritaire sur l'annonce)
-        let latest_private = if uc.moderator {
-            None
-        } else {
-            s.latest_unread_from_moderator(&uc.id, &own)?
-        };
-        Ok((unread, private_unread, latest, latest_private))
-    })
-    .await?;
-    let labels = [
-        ("annonces", "Annonces"),
-        ("entraide", "Entraide"),
-        ("discussion", "Discussion"),
-    ];
-    let channels: Vec<Value> = labels
-        .iter()
-        .zip(unread)
-        .map(|((key, label), (_, n))| {
-            json!({
-                "key": key,
-                "label": label,
-                "can_post": chat::can_post(&u, &Channel::parse(key).expect("salon connu")),
-                "unread": n,
-            })
-        })
-        .collect();
-    let cfg = &st.ctx.cfg.chat;
-    Ok(Json(json!({
-        "user": { "id": u.id, "name": u.name, "moderator": u.moderator },
-        "channels": channels,
-        "private": { "key": format!("prive:{}", u.id), "unread": private_unread },
-        "latest_announcement": latest,
-        "latest_private": latest_private,
-        "limits": { "max_chars": cfg.max_chars, "delete_own_within_secs": cfg.delete_own_within_mins * 60 },
-    })))
+    let cfg = st.ctx.cfg.clone();
+    Ok(Json(
+        db(&st, move |s| svc_me(s, &cfg.chat, &u, now())).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -256,19 +296,33 @@ struct ListQuery {
     limit: Option<usize>,
 }
 
+/// Messages d'un salon (suite après `after`, ou page avant `before`) + l'état des non-lus (`me`).
+fn svc_list(
+    s: &ChatStore,
+    cfg: &ChatConfig,
+    u: &ChatUser,
+    q: &ListQuery,
+    now: i64,
+) -> Result<Value, Fail> {
+    let ch = channel_of(&q.channel)?;
+    if !chat::can_read(u, &ch) {
+        return refuse(StatusCode::FORBIDDEN, "salon réservé");
+    }
+    let limit = q.limit.unwrap_or(50).min(100);
+    let msgs = s.list(&ch, q.after, q.before, limit)?;
+    Ok(json!({ "messages": msgs, "limit": limit, "me": svc_me(s, cfg, u, now)? }))
+}
+
 async fn list(
     State(st): State<ChatState>,
     headers: HeaderMap,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
     let u = auth(&st, &headers).await?;
-    let ch = channel(&q.channel)?;
-    if !chat::can_read(&u, &ch) {
-        return Err(err(StatusCode::FORBIDDEN, "salon réservé"));
-    }
-    let limit = q.limit.unwrap_or(50).min(100);
-    let msgs = db(&st, move |s| s.list(&ch, q.after, q.before, limit)).await?;
-    Ok(Json(json!({ "messages": msgs, "limit": limit })))
+    let cfg = st.ctx.cfg.clone();
+    Ok(Json(
+        db(&st, move |s| svc_list(s, &cfg.chat, &u, &q, now())).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -279,33 +333,55 @@ struct SendBody {
     email_members: bool,
 }
 
+/// Publication d'un message : droits (Annonces = modérateurs seulement, fil privé = son propriétaire et les
+/// modérateurs), texte nettoyé, cadence, puis insertion. L'ancien nom `discussion` écrit dans Entraide.
+fn svc_send(
+    s: &ChatStore,
+    cfg: &ChatConfig,
+    limiter: &mut RateLimiter,
+    u: &ChatUser,
+    channel: &str,
+    body: &str,
+    now: i64,
+) -> Result<Message, Fail> {
+    let ch = channel_of(channel)?;
+    if !chat::can_read(u, &ch) {
+        return refuse(StatusCode::FORBIDDEN, "salon réservé");
+    }
+    if !chat::can_post(u, &ch) {
+        return refuse(StatusCode::FORBIDDEN, "seul l'admin publie ici");
+    }
+    let text = chat::validate_body(body, cfg.max_chars)
+        .map_err(|e| Fail::Http(StatusCode::BAD_REQUEST, e))?;
+    if !limiter.check(&u.id, now, cfg) {
+        return refuse(
+            StatusCode::TOO_MANY_REQUESTS,
+            "doucement : attends quelques secondes",
+        );
+    }
+    Ok(s.insert(&ch, u, &text, now)?)
+}
+
 async fn send(
     State(st): State<ChatState>,
     headers: HeaderMap,
     Json(b): Json<SendBody>,
 ) -> ApiResult<Json<Value>> {
     let u = auth(&st, &headers).await?;
-    let ch = channel(&b.channel)?;
-    if !chat::can_post(&u, &ch) {
-        return Err(err(StatusCode::FORBIDDEN, "seul l'admin publie ici"));
-    }
-    let cfg = &st.ctx.cfg.chat;
-    let text =
-        chat::validate_body(&b.body, cfg.max_chars).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
-    if !st.limiter.lock().await.check(&u.id, now(), cfg) {
-        return Err(err(
-            StatusCode::TOO_MANY_REQUESTS,
-            "doucement : attends quelques secondes",
-        ));
-    }
-    let (uc, chc, t) = (u.clone(), ch.clone(), text.clone());
-    let msg = db(&st, move |s| s.insert(&chc, &uc, &t, now())).await?;
-    info!(task = "chat", channel = %msg.channel, author = %u.name, chars = text.chars().count(), "message posted");
+    let (cfg, limiter, uc) = (st.ctx.cfg.clone(), st.limiter.clone(), u.clone());
+    let (channel, body) = (b.channel, b.body);
+    let msg = db(&st, move |s| {
+        let mut l = limiter.lock().unwrap_or_else(|e| e.into_inner());
+        svc_send(s, &cfg.chat, &mut l, &uc, &channel, &body, now())
+    })
+    .await?;
+    info!(task = "chat", channel = %msg.channel, author = %u.name, chars = msg.body.chars().count(), "message posted");
+    let ch = Channel::parse(&msg.channel).unwrap_or(Channel::Entraide);
     announce_side_effects(
         &st,
         &u,
         &ch,
-        text,
+        msg.body.clone(),
         st.ctx.cfg.discord.announcements,
         b.email_members,
     );
@@ -410,22 +486,35 @@ async fn admin_announce(
     ))
 }
 
+/// Suppression : son propre message dans le délai (`delete_own_within_mins`), ou n'importe lequel pour un
+/// modérateur ; jamais dans un fil privé d'un autre membre, ni un message déjà supprimé.
+fn svc_remove(
+    s: &ChatStore,
+    cfg: &ChatConfig,
+    u: &ChatUser,
+    id: i64,
+    now: i64,
+) -> Result<(), Fail> {
+    let m = s
+        .get(id)?
+        .ok_or(Fail::Http(StatusCode::NOT_FOUND, "message introuvable"))?;
+    let ch = channel_of(&m.channel)?;
+    let window = cfg.delete_own_within_mins * 60;
+    if !chat::can_read(u, &ch) || !chat::can_delete(u, &m, now, window) {
+        return refuse(StatusCode::FORBIDDEN, "suppression impossible");
+    }
+    s.mark_deleted(id, &u.id, now)?;
+    Ok(())
+}
+
 async fn remove(
     State(st): State<ChatState>,
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<Value>> {
     let u = auth(&st, &headers).await?;
-    let m = db(&st, move |s| s.get(id))
-        .await?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "message introuvable"))?;
-    let ch = channel(&m.channel)?;
-    let window = st.ctx.cfg.chat.delete_own_within_mins * 60;
-    if !chat::can_read(&u, &ch) || !chat::can_delete(&u, &m, now(), window) {
-        return Err(err(StatusCode::FORBIDDEN, "suppression impossible"));
-    }
-    let by = u.id.clone();
-    db(&st, move |s| s.mark_deleted(id, &by, now())).await?;
+    let (cfg, uc) = (st.ctx.cfg.clone(), u.clone());
+    db(&st, move |s| svc_remove(s, &cfg.chat, &uc, id, now())).await?;
     info!(task = "chat", id, by = %u.name, "message deleted");
     Ok(Json(json!({ "deleted": id })))
 }
@@ -436,18 +525,36 @@ struct ReadBody {
     last_id: i64,
 }
 
+/// Repère de lecture (jamais en arrière) ; la réponse porte l'état des non-lus à jour (`me`).
+fn svc_read(
+    s: &ChatStore,
+    cfg: &ChatConfig,
+    u: &ChatUser,
+    channel: &str,
+    last_id: i64,
+    now: i64,
+) -> Result<Value, Fail> {
+    let ch = channel_of(channel)?;
+    if !chat::can_read(u, &ch) {
+        return refuse(StatusCode::FORBIDDEN, "salon réservé");
+    }
+    s.mark_read(&u.id, &ch, last_id)?;
+    Ok(json!({ "ok": true, "me": svc_me(s, cfg, u, now)? }))
+}
+
 async fn read(
     State(st): State<ChatState>,
     headers: HeaderMap,
     Json(b): Json<ReadBody>,
 ) -> ApiResult<Json<Value>> {
     let u = auth(&st, &headers).await?;
-    let ch = channel(&b.channel)?;
-    if !chat::can_read(&u, &ch) {
-        return Err(err(StatusCode::FORBIDDEN, "salon réservé"));
-    }
-    db(&st, move |s| s.mark_read(&u.id, &ch, b.last_id)).await?;
-    Ok(Json(json!({ "ok": true })))
+    let cfg = st.ctx.cfg.clone();
+    Ok(Json(
+        db(&st, move |s| {
+            svc_read(s, &cfg.chat, &u, &b.channel, b.last_id, now())
+        })
+        .await?,
+    ))
 }
 
 async fn private_threads(
@@ -587,7 +694,7 @@ async fn direct(
             "destinataire inconnu ou suspendu",
         ));
     }
-    if !st.limiter.lock().await.check(&u.id, now(), cfg) {
+    if !limited(&st, &u.id, cfg) {
         return Err(err(
             StatusCode::TOO_MANY_REQUESTS,
             "doucement : attends quelques secondes",
@@ -598,7 +705,7 @@ async fn direct(
         for (id, _) in &t2 {
             s.insert(&Channel::Private(id.clone()), &uc, &tx, now())?;
         }
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     })
     .await?;
     let names: Vec<String> = targets.iter().map(|(_, n)| n.clone()).collect();
@@ -782,4 +889,346 @@ async fn mail_members(st: ChatState, author: ChatUser, text: String) {
         dry_run = st.ctx.dry_run,
         "announcement mailed"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW: i64 = 1_800_000_000;
+    const DAY: i64 = 86_400;
+
+    fn user(id: &str, moderator: bool) -> ChatUser {
+        ChatUser {
+            id: id.into(),
+            name: id.to_uppercase(),
+            moderator,
+        }
+    }
+
+    /// Réglages d'essai : pas de délai minimal entre deux messages (les tests de cadence le remettent).
+    fn cfg() -> ChatConfig {
+        ChatConfig {
+            min_gap_secs: 0,
+            ..ChatConfig::default()
+        }
+    }
+
+    fn store() -> ChatStore {
+        ChatStore::open_in_memory().unwrap()
+    }
+
+    /// Code HTTP d'un résultat : 200 si la règle a laissé passer, 500 pour une panne de base.
+    fn code<T>(r: &Result<T, Fail>) -> u16 {
+        match r {
+            Ok(_) => 200,
+            Err(Fail::Http(c, _)) => c.as_u16(),
+            Err(Fail::Db(_)) => 500,
+        }
+    }
+
+    fn refusal<T>(r: Result<T, Fail>) -> (u16, &'static str) {
+        match r {
+            Err(Fail::Http(c, m)) => (c.as_u16(), m),
+            _ => panic!("un refus était attendu"),
+        }
+    }
+
+    fn send(
+        s: &ChatStore,
+        u: &ChatUser,
+        channel: &str,
+        body: &str,
+        at: i64,
+    ) -> Result<Message, Fail> {
+        svc_send(s, &cfg(), &mut RateLimiter::default(), u, channel, body, at)
+    }
+
+    fn list(s: &ChatStore, u: &ChatUser, channel: &str) -> Result<Value, Fail> {
+        let q = ListQuery {
+            channel: channel.into(),
+            after: None,
+            before: None,
+            limit: None,
+        };
+        svc_list(s, &cfg(), u, &q, NOW)
+    }
+
+    fn bodies(v: &Value) -> Vec<String> {
+        v["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["body"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn unread(me: &Value, key: &str) -> i64 {
+        me["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["key"] == key)
+            .unwrap_or_else(|| panic!("salon {key} absent"))["unread"]
+            .as_i64()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_member_cannot_post_announcements_a_moderator_can() {
+        let s = store();
+        let (m, a) = (user("mod", true), user("a", false));
+        let (c, why) = refusal(send(&s, &a, "annonces", "je publie quand même", NOW));
+        assert_eq!((c, why), (403, "seul l'admin publie ici"));
+        assert!(
+            s.list(&Channel::Annonces, None, None, 50)
+                .unwrap()
+                .is_empty(),
+            "rien n'a été écrit"
+        );
+        let ok = send(&s, &m, "annonces", "  Maintenance dimanche  ", NOW).unwrap();
+        assert_eq!(
+            (ok.channel.as_str(), ok.body.as_str(), ok.author_moderator),
+            ("annonces", "Maintenance dimanche", true)
+        );
+        // tout le monde lit les annonces
+        assert_eq!(
+            bodies(&list(&s, &a, "annonces").unwrap()),
+            ["Maintenance dimanche"]
+        );
+        // et personne ne passe par un salon qui n'existe pas
+        assert_eq!(code(&send(&s, &m, "general", "x", NOW)), 400);
+    }
+
+    #[test]
+    fn the_old_discussion_name_reaches_the_merged_room() {
+        let s = store();
+        let a = user("a", false);
+        // une page restée ouverte avant la fusion écrit encore dans « discussion »
+        let m = send(&s, &a, "discussion", "ça marche toujours", NOW).unwrap();
+        assert_eq!(m.channel, "entraide");
+        send(&s, &a, "entraide", "et ici aussi", NOW + 5).unwrap();
+        let old = list(&s, &a, "discussion").unwrap();
+        let new = list(&s, &a, "entraide").unwrap();
+        assert_eq!(bodies(&old), ["ça marche toujours", "et ici aussi"]);
+        assert_eq!(bodies(&old), bodies(&new));
+        // un repère de lecture envoyé sous l'ancien nom compte pour Entraide
+        let r = svc_read(&s, &cfg(), &user("b", false), "discussion", 2, NOW).unwrap();
+        assert_eq!(unread(&r["me"], "entraide"), 0);
+        // la liste des salons n'en propose plus que deux
+        let me = svc_me(&s, &cfg(), &a, NOW).unwrap();
+        let keys: Vec<_> = me["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["key"].as_str().unwrap(), c["label"].as_str().unwrap()))
+            .collect();
+        assert_eq!(keys, [("annonces", "Annonces"), ("entraide", "Entraide")]);
+    }
+
+    #[test]
+    fn a_private_thread_is_for_its_member_and_the_moderators_only() {
+        let s = store();
+        let (m, a, b) = (user("mod", true), user("a", false), user("b", false));
+        send(&s, &a, "prive:a", "j'ai un souci de lecture", NOW).unwrap();
+        // le membre concerné et les modérateurs lisent
+        assert_eq!(
+            bodies(&list(&s, &a, "prive:a").unwrap()),
+            ["j'ai un souci de lecture"]
+        );
+        assert_eq!(
+            bodies(&list(&s, &m, "prive:a").unwrap()),
+            ["j'ai un souci de lecture"]
+        );
+        // un autre membre ne lit, n'écrit, ne marque lu ni ne supprime rien
+        assert_eq!(refusal(list(&s, &b, "prive:a")), (403, "salon réservé"));
+        assert_eq!(
+            refusal(send(&s, &b, "prive:a", "je m'invite", NOW + 5)),
+            (403, "salon réservé")
+        );
+        assert_eq!(code(&svc_read(&s, &cfg(), &b, "prive:a", 1, NOW)), 403);
+        assert_eq!(code(&svc_remove(&s, &cfg(), &b, 1, NOW)), 403);
+        // l'identifiant du fil est normalisé comme celui de Jellyfin (majuscules)
+        assert_eq!(bodies(&list(&s, &a, "prive:A").unwrap()).len(), 1);
+        // le modérateur répond ; le membre ne voit que son fil dans son compteur
+        send(&s, &m, "prive:a", "je regarde ça", NOW + 10).unwrap();
+        let (me_a, me_b) = (
+            svc_me(&s, &cfg(), &a, NOW + 20).unwrap(),
+            svc_me(&s, &cfg(), &b, NOW + 20).unwrap(),
+        );
+        assert_eq!(me_a["private"]["unread"], 1);
+        assert_eq!(me_a["latest_private"]["body"], "je regarde ça");
+        assert_eq!(
+            me_b["private"]["unread"], 0,
+            "le fil de a n'est pas celui de b"
+        );
+        assert!(me_b["latest_private"].is_null());
+        // un modérateur compte les messages des membres de tous les fils
+        send(&s, &b, "prive:b", "et moi", NOW + 30).unwrap();
+        let me_m = svc_me(&s, &cfg(), &m, NOW + 40).unwrap();
+        assert_eq!(
+            me_m["private"]["unread"], 1,
+            "seul « et moi » est nouveau pour lui"
+        );
+        assert!(
+            me_m["latest_private"].is_null(),
+            "pas de bandeau pour un modérateur"
+        );
+    }
+
+    #[test]
+    fn deleting_follows_the_ownership_and_time_rules() {
+        let s = store();
+        let (m, a, b) = (user("mod", true), user("a", false), user("b", false));
+        let window = cfg().delete_own_within_mins * 60;
+        let mine = send(&s, &a, "entraide", "à effacer", NOW).unwrap();
+        let other = send(&s, &b, "entraide", "de b", NOW + 1).unwrap();
+        // pas celui d'un autre membre
+        assert_eq!(
+            refusal(svc_remove(&s, &cfg(), &a, other.id, NOW + 2)),
+            (403, "suppression impossible")
+        );
+        // le sien, une fois le délai passé : non
+        assert_eq!(
+            code(&svc_remove(&s, &cfg(), &a, mine.id, NOW + window + 1)),
+            403
+        );
+        // le sien, dans le délai : oui, et il apparaît « supprimé », sans texte
+        svc_remove(&s, &cfg(), &a, mine.id, NOW + window).unwrap();
+        let v = list(&s, &b, "entraide").unwrap();
+        assert_eq!(v["messages"][0]["deleted"], true);
+        assert_eq!(v["messages"][0]["body"], "");
+        // supprimé une fois : plus de seconde suppression
+        assert_eq!(code(&svc_remove(&s, &cfg(), &m, mine.id, NOW + 5)), 403);
+        // un modérateur supprime n'importe quel message, sans délai
+        svc_remove(&s, &cfg(), &m, other.id, NOW + 10 * DAY).unwrap();
+        // message inconnu
+        assert_eq!(
+            refusal(svc_remove(&s, &cfg(), &m, 9999, NOW)),
+            (404, "message introuvable")
+        );
+        // un message d'un fil privé n'est supprimable que par son propriétaire (dans le délai) ou un modérateur
+        let p = send(&s, &a, "prive:a", "privé", NOW).unwrap();
+        assert_eq!(code(&svc_remove(&s, &cfg(), &b, p.id, NOW + 1)), 403);
+        svc_remove(&s, &cfg(), &m, p.id, NOW + 1).unwrap();
+    }
+
+    #[test]
+    fn a_new_account_sees_only_recent_announcements_as_unread() {
+        let s = store();
+        let (m, a) = (user("mod", true), user("a", false));
+        for i in 0..7 {
+            send(
+                &s,
+                &m,
+                "annonces",
+                &format!("ancienne {i}"),
+                NOW - (40 - i) * DAY,
+            )
+            .unwrap();
+        }
+        send(&s, &m, "annonces", "d'il y a 12 jours", NOW - 12 * DAY).unwrap();
+        send(&s, &m, "annonces", "d'hier", NOW - DAY).unwrap();
+        let me = svc_me(&s, &cfg(), &a, NOW).unwrap();
+        assert_eq!(unread(&me, "annonces"), 2, "pas « 9 non lus »");
+        assert_eq!(
+            me["latest_announcement"]["body"], "d'hier",
+            "bandeau : la dernière annonce"
+        );
+        // l'auteur n'a jamais rien de non lu dans ses propres annonces
+        assert_eq!(unread(&svc_me(&s, &cfg(), &m, NOW).unwrap(), "annonces"), 0);
+        // réglage à 0 jour : tout est lu à la première visite
+        let mut c = cfg();
+        c.new_member_read_days = 0;
+        let b = user("b", false);
+        assert_eq!(unread(&svc_me(&s, &c, &b, NOW).unwrap(), "annonces"), 0);
+        // lire jusqu'à la dernière annonce vide le compteur et le bandeau, sans second appel à /me
+        let last = s.max_id().unwrap();
+        let r = svc_read(&s, &cfg(), &a, "annonces", last, NOW).unwrap();
+        assert_eq!(unread(&r["me"], "annonces"), 0);
+        assert!(r["me"]["latest_announcement"].is_null());
+        assert_eq!(r["ok"], true);
+    }
+
+    #[test]
+    fn messages_and_reads_carry_the_fresh_unread_state() {
+        let s = store();
+        let (m, a) = (user("mod", true), user("a", false));
+        let first = send(&s, &m, "annonces", "une", NOW - 20 * DAY).unwrap();
+        svc_me(&s, &cfg(), &a, NOW).unwrap(); // première visite : l'ancienne annonce est lue
+        send(&s, &m, "annonces", "deux", NOW).unwrap();
+        send(&s, &m, "entraide", "bienvenue", NOW + 1).unwrap();
+        let q = ListQuery {
+            channel: "entraide".into(),
+            after: Some(0),
+            before: None,
+            limit: Some(50),
+        };
+        let v = svc_list(&s, &cfg(), &a, &q, NOW + 2).unwrap();
+        assert_eq!(unread(&v["me"], "annonces"), 1);
+        assert_eq!(unread(&v["me"], "entraide"), 1, "avant la lecture");
+        let r = svc_read(&s, &cfg(), &a, "entraide", first.id + 2, NOW + 3).unwrap();
+        assert_eq!(unread(&r["me"], "entraide"), 0);
+        assert_eq!(
+            unread(&r["me"], "annonces"),
+            1,
+            "l'autre salon n'a pas bougé"
+        );
+    }
+
+    #[test]
+    fn sending_checks_the_text_and_the_pace() {
+        let s = store();
+        let a = user("a", false);
+        let mut c = cfg();
+        c.min_gap_secs = 3;
+        let mut limiter = RateLimiter::default();
+        let mut go = |body: &str, at: i64| svc_send(&s, &c, &mut limiter, &a, "entraide", body, at);
+        assert_eq!(code(&go("   ", NOW)), 400, "message vide");
+        assert_eq!(code(&go(&"é".repeat(2001), NOW)), 400, "message trop long");
+        assert_eq!(code(&go("un", NOW)), 200);
+        assert_eq!(refusal(go("deux", NOW + 1)).0, 429, "trop rapproché");
+        assert_eq!(code(&go("trois", NOW + 3)), 200);
+        assert_eq!(
+            s.list(&Channel::Entraide, None, None, 50).unwrap().len(),
+            2,
+            "le message refusé n'est pas écrit"
+        );
+    }
+
+    #[test]
+    fn rooms_and_permissions_in_me_follow_the_role() {
+        let s = store();
+        let (m, a) = (user("mod", true), user("a", false));
+        let (me_m, me_a) = (
+            svc_me(&s, &cfg(), &m, NOW).unwrap(),
+            svc_me(&s, &cfg(), &a, NOW).unwrap(),
+        );
+        let can_post = |me: &Value| -> Vec<(String, bool)> {
+            me["channels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| {
+                    (
+                        c["key"].as_str().unwrap().to_string(),
+                        c["can_post"].as_bool().unwrap(),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            can_post(&me_a),
+            [("annonces".into(), false), ("entraide".into(), true)]
+        );
+        assert_eq!(
+            can_post(&me_m),
+            [("annonces".into(), true), ("entraide".into(), true)]
+        );
+        assert_eq!(me_a["private"]["key"], "prive:a");
+        assert_eq!(me_a["user"]["moderator"], false);
+        assert_eq!(me_m["user"]["moderator"], true);
+        assert_eq!(me_a["limits"]["max_chars"], 2000);
+        assert_eq!(me_a["limits"]["delete_own_within_secs"], 900);
+    }
 }
