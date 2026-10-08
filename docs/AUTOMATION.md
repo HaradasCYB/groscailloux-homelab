@@ -850,12 +850,17 @@ pistes coupée ; dans les clients web, le script Mon compte bascule ensuite sur 
 chaque titre (métadonnée `OriginalLanguage`, remplie par `original_language`, héritée de la série). Tant que l'interrupteur
 est à `false`, rien ne change (Mon compte, onboarding, garde). Code : `homelab_core::vo_native` (décisions pures testées).
 
-- **Règle sans régression** : un compte en VO ne passe en « Langue d'origine » que s'il n'a lu, depuis `vo_native_days`
-  (60) jours (Playback Reporting) et dans ses sessions vidéo ouvertes, QUE par des clients de `vo_native_clients`
-  (jellyfin-web et les applis qui l'embarquent). Sinon il est **gardé** sur `vo_audio_language` (`jpn`), comme aujourd'hui :
-  le bogue de Jellyfin 12.1 (piste d'origine marquée « Original » sans être par défaut) donnerait la VF à l'appli Android
-  TV / Fire TV, qui n'impose pas d'index. Historique illisible = gardé. Ajouter `Jellyfin Android TV` à la liste est le
-  compromis possible, au choix du propriétaire.
+- **Règle sans régression** : un compte en VO ne passe en « Langue d'origine » que si aucun client hors de
+  `vo_native_clients` (jellyfin-web et les applis qui l'embarquent) n'apparaît pour lui, ni dans ses lectures depuis
+  `vo_native_days` (60) jours (Playback Reporting), ni dans ses sessions ouvertes, ni dans ses appareils enregistrés
+  (`GET /Devices` lu en entier, filtré sur `LastUserId`). Sinon il est **gardé** sur `vo_audio_language` (`jpn`), comme
+  aujourd'hui : le bogue de Jellyfin 12.1 (piste d'origine marquée « Original » sans être par défaut) donnerait la VF à
+  l'appli Android TV / Fire TV, qui n'impose pas d'index. Toute session compte, capacités déclarées ou non : l'appli
+  Android TV ne déclare `PlayableMediaTypes` qu'à son démarrage à froid et Jellyfin les oublie à chaque redémarrage
+  (2 sessions Android TV sur 2 sans capacités en prod le 09/10). Seuls les services qui ne lisent jamais sont écartés,
+  par leur nom (`vo_native_ignored_clients` : Seerr, Jellyseerr). Une des trois sources illisible = gardé. Ajouter
+  `Jellyfin Android TV` à `vo_native_clients` est le compromis possible, au choix du propriétaire. Un compte gardé
+  par un vieil appareil peut être promu après sa déconnexion (Mon compte, « Appareils connectés »), puis `vo-native`.
 - **Mon compte** (`POST /compte/api/language`) et **onboarding** (s'il est réglé sur la VO) passent par
   `vo_native::decide` ; chaque décision est notée dans `state.vo_native` (avant, après, origine, clients hors liste).
 - **Migration** : `homelabctl accounts vo-native --dry-run` (plan par compte, plus la médiathèque : part des films et
@@ -873,12 +878,16 @@ est à `false`, rien ne change (Mon compte, onboarding, garde). Code : `homelab_
 
 ### vo_native_guard — 30 s
 
-Avec `vo_native = true` : un compte en VO réglé sur « Langue d'origine » qui a une session vidéo ouverte depuis un client
-hors de `vo_native_clients` (appli Android TV ou Fire TV, Chromecast, client tiers) revient sur `vo_audio_language`
-avant sa première lecture sur ce client (`state.vo_native`, origine `garde`). Jamais l'inverse (la promotion passe par
-`homelabctl accounts vo-native`). Un compte en mode `fr` qui a choisi « Langue d'origine » lui-même n'est pas concerné ;
-une session sans vidéo (Seerr) non plus. Interrupteur coupé : aucun appel. Passage sans rien à faire : « rien à garder »
-(journal en `debug`). Clé : `[tasks.vo_native_guard] interval_secs`.
+Avec `vo_native = true` : un compte en VO réglé sur « Langue d'origine » qui a une session ouverte (même sans capacités
+déclarées) ou un appareil enregistré sur un client hors de `vo_native_clients` (appli Android TV ou Fire TV, Chromecast,
+client tiers) revient sur `vo_audio_language` (`state.vo_native`, origine `garde`) : en général avant sa première
+lecture sur ce client ; sinon dès cette lecture (sondage toutes les 30 s). Reste un trou étroit : la première lecture
+d'un appareil neuf lancée moins de 30 s après sa connexion, sur un titre touché par le bogue ou sans langue d'origine,
+part en VF. Jamais l'inverse (la promotion passe par `homelabctl accounts vo-native`). Un compte en mode `fr` qui a
+choisi « Langue d'origine » lui-même n'est pas concerné ; un service de `vo_native_ignored_clients` (Seerr) non plus.
+Interrupteur coupé : aucun appel. Aucun compte en « Langue d'origine » : une lecture (`/Users`) ; sinon trois
+(`/Users`, `/Sessions`, `/Devices`). Appareils illisibles : sessions seules, passage en échec. Passage sans rien à
+faire : « rien à garder » (journal en `debug`). Clé : `[tasks.vo_native_guard] interval_secs`.
 
 ## Suivi des demandes dans l'onglet Demandes (v1.19)
 
