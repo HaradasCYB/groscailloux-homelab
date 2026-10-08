@@ -15,7 +15,7 @@
 ![Version](https://img.shields.io/badge/version-1.19-7c3aed)
 ![Rust](https://img.shields.io/badge/Rust-homelabd-b7410e?logo=rust&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker_Compose-21_services-2496ed?logo=docker&logoColor=white)
-![Jellyfin](https://img.shields.io/badge/Jellyfin-10.11-00a4dc?logo=jellyfin&logoColor=white)
+![Jellyfin](https://img.shields.io/badge/Jellyfin-12.1-00a4dc?logo=jellyfin&logoColor=white)
 [![Licence MIT](https://img.shields.io/badge/licence-MIT-22c55e)](LICENSE)
 
 [✨ Fonctionnalités](#-fonctionnalités) ·
@@ -47,7 +47,7 @@ par **`homelabctl`**, fait tout le travail que personne n'a envie de faire à la
 - 📺 **Télés** : interface dédiée (LG, Samsung), télécommande, sous-titres lisibles depuis le canapé
 - 📱 **Diffusion** : Chromecast et AirPlay, sous-titres compris
 - 👤 **Mon compte** : abonnement, appareils, langue, taille des sous-titres
-- 💬 **Tchat** des membres et annonces, aussi sur Discord
+- 💬 **« Aide et annonces »** : entraide entre membres, annonces et fil privé avec l'admin, aussi sur Discord
 
 </td>
 <td width="50%" valign="top">
@@ -75,7 +75,7 @@ flowchart LR
     npm[🔒 Nginx Proxy Manager]
     jellyfin[🎬 Jellyfin]
     seerr[🙋 Jellyseerr]
-    homelabd[🦀 homelabd<br/>25 tâches · pages membres et admin]
+    homelabd[🦀 homelabd<br/>31 tâches · pages membres et admin]
     prowlarr[🔎 Prowlarr<br/>C411 · secours publics]
     obs[📈 Telegraf · InfluxDB · Grafana]
     rclone[🔗 rclone mount]
@@ -135,7 +135,7 @@ homelabctl run <tâche> [--dry-run]        # un passage exécuté par le démon 
 homelabctl onboard <user> <email>         # compte Jellyfin + Jellyseerr + mail avec lien de bienvenue
 homelabctl accounts list|on|off|link      # comptes des membres (on/off/delete passent par le démon)
 homelabctl vpn status|on|off              # qBittorrent via gluetun ou en direct
-sudo homelabctl backup                    # état → backups/ (aussi chaque dimanche 04:40, archive testée)
+sudo homelabctl backup                    # état → backups/ (aussi chaque dimanche vers 04:30, archive testée)
 ```
 
 <details>
@@ -182,8 +182,10 @@ Tous les services passent par Nginx Proxy Manager (80/443). Les ports des conten
 | 🔑 | [docs/SECRETS.md](docs/SECRETS.md) | Chaque variable de `.env` (aucune valeur ici) |
 | 👋 | [docs/ONBOARDING.md](docs/ONBOARDING.md) | Arrivée d'un membre, côté admin |
 | ⬆️ | [docs/JELLYFIN-12.md](docs/JELLYFIN-12.md) | Migration vers Jellyfin 12.1 : répétition, prérequis, bascule et retour arrière |
+| 📒 | [docs/runbooks/](docs/runbooks/README.md) | Un runbook par domaine (Arrs, seedbox, lecture, Jellyfin, comptes, NPM…) et l'historique des incidents |
+| 🧰 | [tools/README.md](tools/README.md) | Outils versionnés : travaux hors pic, bancs d'interface, tests |
 | 📝 | [CHANGELOG.md](CHANGELOG.md) | Historique des versions |
-| 🤖 | [CLAUDE.md](CLAUDE.md) | Règles d'exploitation et pièges connus (lu par l'agent qui opère le serveur) |
+| 🤖 | [CLAUDE.md](CLAUDE.md) | Interdits, valeurs en vigueur et carte des runbooks (lu par l'agent qui opère le serveur) |
 
 ## 🗂️ Structure du dépôt
 
@@ -191,9 +193,10 @@ Tous les services passent par Nginx Proxy Manager (80/443). Les ports des conten
 📦 groscailloux-homelab
 ├── 🦀 crates/               homelab-core (logique), homelabd (daemon), homelabctl (CLI)
 ├── 🎨 branding/jellyfin/    thème (calque CSS), scripts injectés (qualité, AirPlay, langue, TV), logo
-├── 📚 docs/                 documentation (voir ci-dessus)
+├── 📚 docs/                 documentation (voir ci-dessus), dont docs/runbooks/
+├── 🧰 tools/                outillage versionné : hors pic, bancs d'interface, tests
 ├── ⚙️ systemd/              homelabd, pile Docker, sauvegarde, montage seedbox et son chien de garde
-├── 🧰 scripts/              outils ponctuels (branding, scripts injectés, déménagement, ménage seedbox)
+├── 🔧 scripts/              scripts des minuteurs (purge, chiens de garde, alertes) et outils ponctuels
 ├── 🪝 hooks/                qbit-update-port.sh, lancé par gluetun à chaque port transféré
 ├── 🐳 docker-compose.yml    21 services, images épinglées tag@digest, healthchecks, ports sur 127.0.0.1
 ├── 🧾 homelab.toml          configuration de homelabd (intervalles, seuils, chemins)

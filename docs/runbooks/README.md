@@ -99,7 +99,7 @@ Ancien CLAUDE.md = version de `main` à `bb33d63` (1 421 lignes, 153 066 octets)
 | Langue, panne de C411, secours (960) | [arrs-et-indexeurs.md § 2 et 4](arrs-et-indexeurs.md#c411-en-panne-indexeur-en-pause) |
 | Titre supprimé puis redemandé (989) | [arrs-et-indexeurs.md § 6](arrs-et-indexeurs.md#6-imports) |
 | Suppression d'une demande (996) | [arrs-et-indexeurs.md § 7](arrs-et-indexeurs.md#7-jellyseerr) ; CLAUDE.md § 3 |
-| Recherche manuelle (1001) | [arrs-et-indexeurs.md § 8](arrs-et-indexeurs.md#8-recherche-manuelle-recherche) — **périmé retiré** : clé `[manual_search] max_queries_per_hour` (n'existe plus) |
+| Recherche manuelle (1001) | [arrs-et-indexeurs.md § 8](arrs-et-indexeurs.md#8-recherche-manuelle-recherche) — **périmés retirés** : clé `[manual_search] max_queries_per_hour` (n'existe plus) ; « et chez Nyaa pour les animés » (la page n'interroge plus Nyaa depuis le 17/09) |
 | Dossiers de saison (1008) | [arrs-et-indexeurs.md § 3](arrs-et-indexeurs.md#3-profils-et-réglages-des-arrs) |
 | Vue d'ensemble des membres (1012) | [jellyfin-interface.md § 10](jellyfin-interface.md#10-vue-densemble-des-membres) ; [arrs-et-indexeurs.md § 7](arrs-et-indexeurs.md#7-jellyseerr) |
 | Historique Arr (1018) | [arrs-et-indexeurs.md § 3](arrs-et-indexeurs.md#3-profils-et-réglages-des-arrs) ; CLAUDE.md § 3 |

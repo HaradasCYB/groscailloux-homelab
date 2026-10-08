@@ -13,7 +13,7 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 | jellyfin | lecture, transcodage logiciel (un seul 1080p à la fois ; HEVC et H.264 coûtent pareil) | `jellyfin/config`, tmpfs de transcodage 4 Go |
 | jellyseerr (seerr) | demandes utilisateurs → Sonarr/Radarr | `jellyseerr/config` |
 | sonarr / radarr | séries / films : recherche, import, renommage | `*/config`, `library:/data` |
-| prowlarr | **C411 seul**, sans application liée : sert aux recherches de homelabd (`series_search`, `movie_search`, `/recherche`) ; les indexers des Arrs sont déclarés directement (C411 en RSS) | `prowlarr/config` |
+| prowlarr | C411 (deux clés : « C411 » et « C411 (2) »), plus Nyaa.si et World-torrent en secours pendant une panne de C411 ; sans application liée : sert aux recherches de homelabd (`series_search`, `movie_search`, `/recherche`) ; les indexers des Arrs sont déclarés directement (C411 en RSS) | `prowlarr/config` |
 | gluetun | WireGuard ProtonVPN, port forwarding NAT-PMP, netns de qbittorrent | `gluetun/` |
 | qbittorrent | client torrent dans le netns gluetun (`network_mode: service:gluetun`) | `qbittorrent/config` |
 | qbittorrent-direct | même client sans VPN (profil `novpn`) | idem |
@@ -27,7 +27,7 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 | influxdb / telegraf / grafana | métriques hôte + conteneurs, rétention 30 j | `influxdb/`, `grafana/` (uid 472) |
 | glances | monitoring live | — |
 | diun | notification mail des nouveaux tags d'images (`diun/images.yml`) | `diun/` |
-| homelabd (hôte, pas un conteneur) | automatisation (24 tâches) + pages web sur `:8766` (onboarding, comptes, recherche, état, Mon compte, tchat, premium) | `state/` |
+| homelabd (hôte, pas un conteneur) | automatisation (31 tâches, dont `tba_bypass` désactivée, + l'observateur `auto_import`) + pages web sur `:8766` (onboarding, comptes, recherche, état, Mon compte, tchat, premium) | `state/` |
 
 Trois conteneurs montent `docker.sock` en lecture (homarr, portainer, glances/telegraf) ;
 glances tourne `privileged`. Toutes les images sont pinnées `tag@sha256`.
@@ -44,7 +44,8 @@ classification série/film → parse + lookup Arr → ajout si absent → `Downl
 `DownloadedMoviesScan`. Archives zip/rar extraites puis supprimées.
 
 **Seedbox (tous les téléchargements).** Une seedbox partagée (quota de 3,7 To, outillage Ultra.cc `app-*`)
-héberge qBittorrent, Radarr, Sonarr, Bazarr, Unpackerr et autobrr. Les Arrs y rangent par hardlink dans
+héberge qBittorrent, Radarr, Sonarr, Bazarr, Unpackerr, autobrr (flux C411 désactivé le 08/10) et, pour la voie russe,
+Jackett et FlareSolverr. Les Arrs y rangent par hardlink dans
 `~/media/{Movies,TV Shows,Anime,Anime Movies}`. Jellyseerr leur envoie **toutes les demandes** (serveurs par
 défaut, id 1, `preventSearch`) ; homelabd cherche les releases (C411 par TMDB) et les leur pousse, ou les ajoute
 directement au qBittorrent de la seedbox avec une étiquette `homelab:`. Le VPS monte `~/media` (rclone SFTP, clé
@@ -93,7 +94,7 @@ comptes créés dans l'UI Jellyseerr. Procédure : [ONBOARDING.md](ONBOARDING.md
 
 NPM termine TLS pour `<service>.<domaine>.duckdns.org` et proxifie vers les conteneurs ; pour
 l'UI homelabd, vers la passerelle `172.18.0.1:8766`. qBittorrent n'est joignable que par
-gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-update-port.sh`
+gluetun (8080 publié sur `127.0.0.1`, 6881 public, sur le conteneur gluetun). Le hook `hooks/qbit-update-port.sh`
 (monté `/gluetun/scripts`) reçoit le port forwardé et l'applique via l'API WebUI locale.
 
 ## Sécurité des accès web
@@ -141,16 +142,18 @@ gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-updat
 
 ## Contraintes d'exploitation
 
-- **C411 est le seul indexeur**, en **RSS seulement** dans les 4 Arrs (seconde clé) ; aucune recherche depuis
-  les Arrs : homelabd cherche par TMDB via Prowlarr, dans un budget horaire par clé. Le VPS ne prend plus aucune
+- **C411 est le seul indexeur des Arrs**, en **RSS seulement** (seconde clé, `C411_RSS_API_KEY`), sauf RuTracker sur les
+  Arrs de la seedbox pour la seule voie russe ; aucune recherche depuis les Arrs : homelabd cherche par TMDB via
+  Prowlarr, dans un budget horaire par clé (`[indexers] c411_max_per_hour`), avec un secours public pendant une panne. Le VPS ne prend plus aucune
   release (`[downloads] auto_sides = ["seedbox"]`, RSS coupé).
 - Profils « FR-friendly H.264 » (VPS 6, seedbox 7) : **1080p au plus, jamais de 2160p** (CPU du VPS) ;
-  VFF/VOF > MULTi > FRENCH, codec neutre (HEVC et H.264 à 0) ; VO/VOSTFR en dernier recours (`No French Marker`
+  VFF/VOF > MULTi > FRENCH, puis codec (HEVC +200, H.264 +100, AV1 0 : x265 d'abord, jamais exigé) ; VO/VOSTFR en dernier recours (`No French Marker`
   -2000, `minFormatScore` -9999) ; rejets durs (langues étrangères, CAM/TS, sample, 3D) à -100000. Animés : profil
   « Anime - MULTi/VOSTFR » (MULTi > VOSTFR > VF). Toujours viser un profil par son **nom** : les numéros diffèrent.
 - Jamais de purge globale de queue : chaque suppression est ciblée par id/titre.
 - Arrêter qBittorrent avant d'éditer `qBittorrent.conf` (sinon il l'écrase à l'arrêt).
 - Pas d'accélération matérielle : un seul transcodage 1080p tient en temps réel ; le codec source ne change pas
   le coût (c'est l'encodage x264 qui coûte), donc jamais écarter une release parce qu'elle est en x265.
+- Règles détaillées par domaine : [runbooks/](runbooks/README.md).
 - Ne jamais `chown -R /opt/homelab` : npm, homarr (root), grafana (472), mysql (999).
 - `SECRET_ENCRYPTION_KEY` ne sert qu'à Homarr.

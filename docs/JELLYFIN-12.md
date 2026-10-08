@@ -5,7 +5,8 @@
 - l'attente d'un membre silencieux est désormais limitée.
 
 La 10.11.11 est la dernière 10.11 ; la prod tournait en 10.11.8 avant la bascule. Le contournement en place est le script
-`branding/jellyfin/gc-syncplay.js` (voir `CLAUDE.md`, « SyncPlay »).
+`branding/jellyfin/gc-syncplay.js` (voir [runbooks/jellyfin-interface.md](runbooks/jellyfin-interface.md#8-syncplay)),
+gardé tant que la 12.1 n'est pas validée en séance réelle dans Jellyfin Desktop.
 
 **État** : **prod en 12.1 depuis le 03/10 à 23:01**, après une répétition le même jour sur une instance d'essai.
 Coupure de 2 min 08 (23:01:30 → 23:03:38), 36 migrations de base, 23 extensions actives.
@@ -27,8 +28,9 @@ Coupure de 2 min 08 (23:01:30 → 23:03:38), 36 migrations de base, 23 extension
 - **Authentification** : `EnableLegacyAuthorization` est remis à `true` (étape 5 du script). Sinon `X-Emby-Token`
   et `?api_key=` répondent 401.
 - **Collection Sections** n'a pas de version 12.x : `MissingMethodException IUserManager.get_Users` au démarrage.
-  Ses 4 rangées de l'accueil manquent (Tendances, Anime, Les mieux notés, Films français). Home Screen Sections
-  sert les 12 autres.
+  Ses 4 rangées de l'accueil manquaient (Tendances, Anime, Les mieux notés, Films français). **Mise à jour du 04/10** :
+  recompilée contre 12.1 et réinstallée, les 16 rangées sont revenues (voir
+  [runbooks/jellyfin-serveur-et-extensions.md](runbooks/jellyfin-serveur-et-extensions.md#6-extensions)).
 - **Chromecast** : la réécriture NPM de `master.m3u8` (agent `CrKey` → 720p, son AAC) marche telle quelle.
 - **Nouvelle interface par défaut**. jellyfin-web 12.1 a deux interfaces :
   - « modern », en React, avec une barre `header.MuiAppBar-root` ;
@@ -49,7 +51,7 @@ Coupure de 2 min 08 (23:01:30 → 23:03:38), 36 migrations de base, 23 extension
   - la cloche NotifySync dans la barre.
 
   `gc-airplay.js` v5 gère le nouveau menu « Lire sur » (AirPlay sur iPhone, explication ailleurs). Le calque décale le
-  bloc texte de Media Bar 3.0 sous la barre. Détails dans `CLAUDE.md`, « Jellyfin 12.1 ».
+  bloc texte de Media Bar 3.0 sous la barre. Détails dans [runbooks/jellyfin-interface.md](runbooks/jellyfin-interface.md#4-nouvelle-interface-121-gardée-et-adaptée).
 
 ## Ce que la répétition a montré
 
@@ -70,7 +72,9 @@ Playback Reporting 19.0.0, Plugin Pages 3.0.1. JavaScript Injector 4.0.0 est dé
 
 **Sans version 12.x publiée, mais actives sur 12.1** : Collection Sections, Continue Watching Deduplicator, GetAvatar,
 Jellysleep, NotifySync, Transcode Nag. Elles sont à surveiller : NotifySync a montré une erreur de récupération côté
-client.
+client. **Mise à jour du 05/10** : GetAvatar et Jellysleep retirés, JavaScript Injector et NotifySync passés sur leurs
+compilations Jellyfin 12 ; NotifySync ouvrait sa propre websocket (corrigé par `gc-socket.js`) ; Intro Skipper : segments
+gelés et réglages sobres. Détails : [runbooks/jellyfin-serveur-et-extensions.md](runbooks/jellyfin-serveur-et-extensions.md).
 
 ## Avant la bascule (sur la 10.11, sans coupure)
 1. **Authentification** : passer de `X-Emby-Token` / `api_key` à `Authorization: MediaBrowser Token="…"`.

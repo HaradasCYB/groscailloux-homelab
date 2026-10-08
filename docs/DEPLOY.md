@@ -28,11 +28,14 @@ telegraf.conf, `up -d` du reste, démarre homelabd) ; `homelabctl check`.
 Réglages à faire une fois dans les UIs :
 - Sonarr/Radarr : root folders `/data/media/tvshows` et `/data/media/movies`, download client
   qBittorrent host `gluetun` port 8080, catégories, profil qualité FR (voir ARCHITECTURE.md).
-- Prowlarr : **C411 seul**, sans application liée (les indexers vivent dans les Arrs) ; il ne sert qu'aux
-  recherches de homelabd (`series_search`, `movie_search`, `/recherche`). Dans les Arrs, C411 est en RSS seulement,
-  avec la seconde clé (`C411_RSS_API_KEY`).
-- qBittorrent : whitelist WebUI `127.0.0.1/8,172.18.0.0/16` (homelabd et les Arrs appellent
-  l'API sans auth), chemin `/downloads`, `Session\IPv6Enabled=false` sous VPN.
+- Prowlarr : sans application liée (les indexers vivent dans les Arrs) ; « C411 » (clé de recherche) et « C411 (2) »
+  (`C411_RSS_API_KEY`), `queryLimit` 45 chacun, plus « Nyaa.si » et « World-torrent » (secours pendant une panne de C411,
+  `[indexers] fallback*`). Il ne sert qu'aux recherches de homelabd (`series_search`, `movie_search`, `/recherche`).
+  Dans les Arrs, C411 est en RSS seulement, avec la seconde clé.
+- qBittorrent (conteneur arrêté pour éditer `qBittorrent.conf`) : dispense d'authentification WebUI limitée à
+  `127.0.0.0/8` et `172.18.0.1/32` (homelabd depuis l'hôte) — **jamais `172.18.0.0/16`** : NPM est dans ce réseau et
+  qBittorrent serait public sans mot de passe ; les Arrs s'authentifient ; `web_ui_reverse_proxy_enabled` avec les
+  proxies de confiance `172.18.0.0/16` ; chemin `/downloads`, `Session\IPv6Enabled=false` sous VPN.
 - Jellyfin : bibliothèques Films/Séries sur `/media/movies` et `/media/tvshows` ; leurs GUID
   vont dans `.env`. Créer une clé API.
 - Jellyseerr : lier Jellyfin, Sonarr, Radarr ; clé API.
@@ -80,7 +83,8 @@ Mise en place (déjà faite sur la prod, à refaire sur une nouvelle seedbox) :
    dans le `.env` du VPS (`SEEDBOX_*`).
 2. Réglages des Arrs seedbox clonés depuis ceux du VPS (formats personnalisés, profils — vérifier le **nom** du
    profil, les numéros diffèrent d'une machine à l'autre —, C411 déclaré directement en RSS seulement, client
-   qBittorrent via le proxy HTTPS). Jackett n'est plus utilisé.
+   qBittorrent via le proxy HTTPS). Jackett et FlareSolverr de la seedbox ne servent qu'à la voie russe (RuTracker,
+   voir [runbooks/voie-russe.md](runbooks/voie-russe.md)).
 3. Clé rclone ajoutée dans `~/.ssh/authorized_keys` de la seedbox avec
    `restrict,command="/usr/lib/openssh/sftp-server -P write,mkdir,rename,…"` (lecture + suppression, aucune écriture :
    le bouton « Supprimer » de Jellyfin doit pouvoir effacer) ; rclone ≥ 1.68 dans `/usr/local/bin` ;
@@ -90,8 +94,10 @@ Mise en place (déjà faite sur la prod, à refaire sur une nouvelle seedbox) :
    de « Films » et `/seedbox/media/TV Shows` à « Séries » (Tableau de bord → Bibliothèques → Gérer
    les dossiers) ; `JELLYFIN_LIB_EXTRA` reste vide ; `[seedbox] qbit_url`/`qbit_user` +
    `SEEDBOX_QBIT_PASSWORD` pour `torrent_import`.
-5. Jellyseerr : Radarr/Sonarr seedbox en serveurs par défaut ; bibliothèques activées via
-   `…/settings/jellyfin/library?enable=<id Films>,<id Séries>` (**jamais** `sync=true` seul : il désactive tout).
+5. Jellyseerr : Radarr/Sonarr seedbox en serveurs par défaut, en `preventSearch` ; bibliothèques activées via
+   `…/settings/jellyfin/library?enable=<ids de toutes les bibliothèques>` (Seerr 3.2 : **jamais** `sync=true` seul, et le
+   `GET` sans paramètre désactive lui aussi tout ; lire l'état par `GET /api/v1/settings/jellyfin`). Le lot 3 prépare
+   Seerr 3.5.0, qui change cette API (`backups/lot3-20261008/NOTES-DOC.txt`).
 
 Vérifier : `homelabctl check` (Arrs seedbox + montage), `systemctl status homelab-seedbox-mount`.
 
@@ -108,7 +114,7 @@ Les bibliothèques et le pipeline du VPS ne sont jamais touchés par ces étapes
 
 ## Sauvegarde et restauration
 
-`sudo homelabctl backup` (et le timer `homelab-backup.timer`, dimanche 04:40) produit dans
+`sudo homelabctl backup` (et le timer `homelab-backup.timer`, dimanche 04:30 + jusqu'à 15 min) produit dans
 `backups/` (700) : `homelab-state-<ts>.tar.zst` (tout `/opt/homelab` hors `[backup] excludes` : `library/`,
 `influxdb/`, caches, journaux, vignettes de défilement et photos d'acteurs de Jellyfin ; ~3 Go), `.sha256`,
 `.list.gz` (manifeste), `guacdb-<ts>.sql.gz`, `systemd-<ts>.tar.gz` (unités, crontab, compose rendu) et
@@ -146,12 +152,21 @@ done && sudo rm -rf state/backup-snapshots
 ```
 Guacamole : `zcat backups/guacdb-<ts>.sql.gz | docker exec -i guacdb mysql -uroot -p"$MYSQL_ROOT_PASSWORD"`.
 
+Bases de homelabd restaurées d'une date antérieure :
+- `state/chat.db` est migrée à l'ouverture (salon Discussion fusionné dans Entraide, 08/10) : une copie d'avant est
+  rejouée par la même migration, idempotente.
+- `state/subscriptions.db` a gagné la colonne `due_noted` le 08/10 : un ancien binaire la lit sans erreur (liste de
+  colonnes explicite) mais reprendrait les rappels et les suspensions des abonnés gérés à la main.
+- Un état `state/homelabd.json` ancien est relu par le nouveau binaire (champs `serde(default)`).
+
 ## Retour arrière
 
 - Compose : `git log` → `git checkout <commit> -- docker-compose.yml` → `docker compose up -d`.
   Les images restent en cache local ; les digests garantissent l'identité.
-- homelabd : réinstaller un binaire précédent (release GitHub) et `systemctl restart homelabd`,
-  ou `systemctl stop homelabd` — les services Docker n'en dépendent pas.
+- homelabd : réinstaller le binaire précédent (garder une copie de `/usr/local/bin/homelab{d,ctl}` avant chaque
+  installation ; aucune release GitHub n'est publiée à ce jour) et `systemctl restart homelabd`, ou
+  `systemctl stop homelabd` — les services Docker n'en dépendent pas. Un ancien binaire refuse un `homelab.toml` qui a
+  gagné des clés (`deny_unknown_fields`) : retirer d'abord ces clés.
 - État : extraction ciblée depuis `backups/` comme ci-dessus.
 
 ## Démarrage machine
@@ -171,4 +186,6 @@ Après un reboot : `docker compose ps`, `homelabctl status` (stack_health `last_
 
 Pas de reboot planifié : aucun gain constaté (mémoire stable), une coupure de 2–3 min pour les
 lectures et téléchargements, et le boot est le moment fragile. Rebooter à la main pour les
-mises à jour du noyau (`apt` le signale), puis vérifier comme ci-dessus.
+mises à jour du noyau (`apt` le signale), **hors pic et sans lecture en cours** (programmer par
+`tools/offpeak/offpeak.sh --as root`), puis vérifier comme ci-dessus et `pgrep -cx xfce4-session` = 1. Le lot 3 prévoit un
+redémarrage le 12/10 à 04:10 (`lot3-REBOOT`), avec sa liste de contrôle `backups/lot3-20261008/reboot/check.sh`.

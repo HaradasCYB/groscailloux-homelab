@@ -277,9 +277,13 @@ propre runbook : [voie-russe.md](voie-russe.md).
 
 - Passer par la page **`/recherche`** de homelabd (hôte d'onboarding, liste NPM « admin-outils » + session), jamais par
   la recherche de Sonarr/Radarr sur un animé (plusieurs minutes, « timed out » du proxy de la seedbox à 300 s, 429).
-- Une requête C411 par identifiant TMDB (dans la réserve du budget) ; Nyaa pour les animés (liens **magnet** ajoutés au
-  qBittorrent du côté concerné avec l'étiquette `homelab:`). Toutes les releases sont montrées et marquées (VOSTFR,
-  hors profil, autre saison…) ; le choix reste à l'admin. Détail : [AUTOMATION.md](../AUTOMATION.md#recherche-manuelle-recherche).
+- Une requête C411 par identifiant TMDB (dans la réserve du budget), plus `[manual_search] text_queries` (2) noms de la
+  fiche en texte libre quand l'identifiant ne donne rien ou pour une saison (cours d'animés publiés sous leur titre).
+  **Nyaa n'est plus interrogé par la page** depuis le budget commun du 17/09 (il ne sert qu'en secours automatique pendant
+  une panne de C411) ; le bandeau de la page et la doc du code disent encore « plus Nyaa pour un animé » (texte périmé).
+  Toutes les releases sont montrées et marquées (VOSTFR, hors profil, autre saison…) ; le choix reste à l'admin ;
+  « Télécharger » passe par `series_search::send_release` (un magnet est ajouté au qBittorrent du côté concerné avec
+  l'étiquette `homelab:`). Détail : [AUTOMATION.md](../AUTOMATION.md#recherche-manuelle-recherche).
 
 ## 9. autobrr (seedbox) : flux C411 désactivé le 08/10
 
