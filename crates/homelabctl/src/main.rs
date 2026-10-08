@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use homelab_core::accounts::{self, Outcome};
 use homelab_core::tasks::{self, backup, vpn};
+use homelab_core::vo_native;
 use homelab_core::{Config, Secrets, TaskContext};
 use serde_json::{json, Value};
 use tracing_subscriber::EnvFilter;
@@ -68,9 +69,12 @@ enum Cmd {
     },
     /// Comptes Jellyfin : list ; on|off <compte> (premium ou suspendu) ; delete <compte> --yes ;
     /// limits (applique `max_devices_per_user`, appareils connectés par compte ; 0 = illimité) ;
-    /// link <compte> (renvoie un lien de bienvenue : définir ou changer son mot de passe)
+    /// link <compte> (renvoie un lien de bienvenue : définir ou changer son mot de passe) ;
+    /// vo-native (comptes en mode VO → « Langue d'origine », sauf ceux qui ont lu, ont une session ouverte ou un
+    /// appareil enregistré sur un client hors de `vo_native_clients`) ; vo-classic (retour à `vo_audio_language`) ;
+    /// les deux avec --dry-run d'abord
     Accounts {
-        #[arg(value_parser = ["list", "on", "off", "delete", "limits", "link"])]
+        #[arg(value_parser = ["list", "on", "off", "delete", "limits", "link", "vo-native", "vo-classic"])]
         action: String,
         /// Nom ou id Jellyfin (pour on/off/delete)
         who: Option<String>,
@@ -295,6 +299,37 @@ async fn main() -> Result<()> {
             subs_cmd(&ctx, &action, who, status, days, sub, webhook).await?;
         }
         Cmd::Accounts { action, who, yes } => match action.as_str() {
+            "vo-native" | "vo-classic" => {
+                let dir = if action == "vo-native" {
+                    vo_native::Direction::Native
+                } else {
+                    vo_native::Direction::Classic
+                };
+                let v = if ctx.dry_run {
+                    // plan à blanc, ici même : lectures seulement, rien d'écrit (ni état, ni sauvegarde, ni compte)
+                    let m = vo_native::migrate(
+                        &ctx.jellyfin,
+                        &ctx.cfg.accounts,
+                        &ctx.cfg.paths.backups,
+                        &ctx.state,
+                        dir,
+                        true,
+                    )
+                    .await?;
+                    serde_json::to_value(m)?
+                } else {
+                    daemon_post_long(
+                        &ctx,
+                        "/admin/vo-native",
+                        json!({ "direction": dir.as_str() }),
+                    )
+                    .await?
+                    .get("migration")
+                    .cloned()
+                    .unwrap_or(Value::Null)
+                };
+                print_vo_migration(&v);
+            }
             "link" => {
                 let who = who.context("préciser le compte : homelabctl accounts link <compte>")?;
                 let a = accounts::resolve(&ctx, &who).await?;
@@ -743,6 +778,119 @@ async fn install(cfg: &Config) -> Result<()> {
     }
     println!("→ systemctl start homelabd.service (ou restart après mise à jour du binaire)");
     Ok(())
+}
+
+/// Plan ou bilan d'une migration du mode VO (`vo_native::Migration` en JSON, local ou renvoyé par le daemon).
+fn print_vo_migration(v: &Value) {
+    let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("");
+    let dry = v.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    let pre = if dry { "DRY-RUN : " } else { "" };
+    let on = v.get("vo_native").and_then(Value::as_bool).unwrap_or(false);
+    println!(
+        "{pre}migration du mode VO → {} ([accounts] vo_native = {on})",
+        if s("direction") == "native" {
+            "« Langue d'origine »"
+        } else {
+            "vo_audio_language (retour)"
+        }
+    );
+    let steps = v
+        .get("steps")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if steps.is_empty() {
+        println!("  aucun compte en mode VO");
+    }
+    for st in &steps {
+        let g = |k: &str| st.get(k).and_then(Value::as_str).unwrap_or("");
+        let from = if g("from").is_empty() {
+            "(vide)"
+        } else {
+            g("from")
+        };
+        let change = if g("from").eq_ignore_ascii_case(g("to")) {
+            "inchangé".to_string()
+        } else {
+            format!("{from} → {}", g("to"))
+        };
+        let clients: Vec<&str> = st
+            .get("clients")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let why = match g("outcome") {
+            "held" => format!("gardé (clients hors liste : {})", clients.join(", ")),
+            "native" => "Langue d'origine".to_string(),
+            "classic" => "retour".to_string(),
+            other => other.to_string(),
+        };
+        println!("  {:<20} {:<32} {why}", g("name"), change);
+    }
+    if let Some(b) = v.get("backup").and_then(Value::as_str) {
+        println!("  sauvegarde d'avant : {b}");
+    }
+    let applied = v
+        .get("applied")
+        .and_then(Value::as_array)
+        .map(|a| a.len())
+        .unwrap_or(0);
+    if !dry {
+        println!("  changés : {applied}");
+    }
+    for e in v
+        .get("errors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        println!("  ÉCHEC {e}");
+    }
+    if let Some(e) = v.get("exposure").filter(|e| !e.is_null()) {
+        let n = |k: &str| e.get(k).and_then(Value::as_u64).unwrap_or(0);
+        let list = |k: &str| -> String {
+            e.get(k)
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" ; ")
+                })
+                .unwrap_or_default()
+        };
+        let videos = n("videos").max(1);
+        println!(
+            "  médiathèque : {} films et épisodes, langue d'origine connue pour {} ({} %)",
+            n("videos"),
+            n("with_original_language"),
+            n("with_original_language") * 100 / videos
+        );
+        println!(
+            "    avec piste japonaise mais SANS langue d'origine : {} (VF servie là où jpn donne le japonais : à remplir avant d'activer){}",
+            n("jpn_without_original_language"),
+            match list("examples_jpn_without_original_language") {
+                l if l.is_empty() => String::new(),
+                l => format!("\n      ex. {l}"),
+            }
+        );
+        println!(
+            "    piste d'origine marquée « Original » sans être par défaut (bogue 12.1) : {}, dont japonaise : {}{}",
+            n("flagged"),
+            n("flagged_jpn"),
+            match list("examples_flagged") {
+                l if l.is_empty() => String::new(),
+                l => format!("\n      ex. {l}"),
+            }
+        );
+    }
+    if let Some(err) = v.get("exposure_error").and_then(Value::as_str) {
+        println!("  médiathèque illisible : {err}");
+    }
+    if let Some(w) = v.get("warning").and_then(Value::as_str) {
+        println!("  attention : {w}");
+    }
 }
 
 /// Appel de l'API locale de homelabd (jeton `HOMELABD_ONBOARD_TOKEN`) : l'état des liens de bienvenue

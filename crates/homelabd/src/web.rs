@@ -86,6 +86,7 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/admin/mail-test", post(admin_mail_test))
         .route("/admin/run", post(admin_run))
         .route("/admin/accounts", post(admin_accounts))
+        .route("/admin/vo-native", post(admin_vo_native))
         .route("/don", get(don_redirect))
         .route("/premium", get(premium))
         .route("/premium/merci", get(premium_merci))
@@ -1581,6 +1582,57 @@ async fn admin_accounts(
             format!("action inconnue : {other}"),
         )
         .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct VoNativeBody {
+    direction: String,
+}
+
+/// `POST /admin/vo-native` (`homelabctl accounts vo-native|vo-classic`) : migration des comptes en mode VO vers « Langue
+/// d'origine » ou retour à `vo_audio_language`. Dans le daemon : il écrit l'état (chaque changement y est noté) et la
+/// sauvegarde d'avant ; la CLI fait elle-même le plan à blanc (`--dry-run`), sans rien écrire.
+async fn admin_vo_native(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<VoNativeBody>,
+) -> Response {
+    if !accounts_allowed(&st, header_token(&headers)) {
+        return fail(StatusCode::UNAUTHORIZED, "jeton manquant ou invalide").into_response();
+    }
+    let Some(dir) = homelab_core::vo_native::Direction::parse(&b.direction) else {
+        return fail(
+            StatusCode::BAD_REQUEST,
+            format!("sens inconnu : {} (native | classic)", b.direction),
+        )
+        .into_response();
+    };
+    info!(
+        task = "vo_native",
+        direction = dir.as_str(),
+        "migration requested via CLI"
+    );
+    let ctx = &st.ctx;
+    if dir == homelab_core::vo_native::Direction::Native && !ctx.cfg.accounts.vo_native {
+        return fail(
+            StatusCode::CONFLICT,
+            "[accounts] vo_native = false : passer l'interrupteur à true dans homelab.toml et redémarrer homelabd d'abord",
+        )
+        .into_response();
+    }
+    match homelab_core::vo_native::migrate(
+        &ctx.jellyfin,
+        &ctx.cfg.accounts,
+        &ctx.cfg.paths.backups,
+        &ctx.state,
+        dir,
+        ctx.dry_run,
+    )
+    .await
+    {
+        Ok(m) => Json(json!({ "success": true, "migration": m })).into_response(),
+        Err(e) => fail(StatusCode::BAD_GATEWAY, format!("{e:#}")).into_response(),
     }
 }
 

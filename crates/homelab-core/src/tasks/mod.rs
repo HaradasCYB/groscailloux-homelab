@@ -35,6 +35,7 @@ pub mod torrent_import;
 pub mod tracker_ratio;
 pub mod trending;
 pub mod user_poller;
+pub mod vo_native_guard;
 pub mod vpn;
 
 use std::time::Duration;
@@ -119,6 +120,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(trending::Trending),
         Box::new(playback_limit::PlaybackLimit),
         Box::new(playback_canary::PlaybackCanary),
+        Box::new(vo_native_guard::VoNativeGuard),
         Box::new(subtitle_sync::SubtitleSync),
         Box::new(subscription_cycle::SubscriptionCycle),
         Box::new(subscription_reconcile::SubscriptionReconcile),

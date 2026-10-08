@@ -17,6 +17,7 @@ use crate::accounts::{self, Outcome};
 use crate::clients::jellyfin::non_admin_policy;
 use crate::context::TaskContext;
 use crate::secret::Secret;
+use crate::vo_native;
 use crate::welcome;
 
 /// D'où vient la demande : formulaire admin / CLI, page publique d'inscription, ou « Add User » Jellyseerr repris
@@ -177,18 +178,48 @@ pub async fn run(ctx: &TaskContext, req: OnboardRequest) -> Result<OnboardResult
     {
         warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "skip lengths not applied");
     }
-    if let Err(e) = ctx
+    // langue d'un compte neuf : `fr` avec les réglages d'origine (`fre` + `Smart`) ; si l'onboarding est réglé sur la
+    // VO, mêmes règles que Mon compte (« Langue d'origine » quand `vo_native = true` : un compte neuf n'a rien lu, la
+    // garde `vo_native_guard` le ramène sur `vo_audio_language` dès sa première session ou son premier appareil sur un
+    // client hors liste)
+    let mode = vo_native::onboarding_mode(skip);
+    let mut prefs = vo_native::prefs_for(mode, skip, false);
+    let mut native = false;
+    if mode == vo_native::Mode::Vo {
+        let (audio, outcome) = vo_native::vo_audio(skip, &[]);
+        native = outcome == vo_native::Outcome::Native;
+        prefs.audio = audio;
+    }
+    match ctx
         .jellyfin
         .set_language_prefs(
             &jf_id,
-            &skip.audio_language,
-            &skip.subtitle_language,
-            &skip.subtitle_mode,
+            &prefs.audio,
+            &prefs.subtitles,
+            &prefs.subtitle_mode,
             false,
         )
         .await
     {
-        warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "language preferences not applied");
+        Ok(()) => {
+            if native {
+                let rec = crate::state::VoNativeRecord {
+                    at: crate::state::now(),
+                    name: req.username.clone(),
+                    source: "onboarding".into(),
+                    outcome: vo_native::Outcome::Native.as_str().into(),
+                    old: String::new(),
+                    new: prefs.audio.clone(),
+                    clients: Vec::new(),
+                };
+                if let Err(e) = vo_native::record(&ctx.state, &jf_id, rec).await {
+                    warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "VO « Langue d'origine » non notée dans l'état");
+                }
+            }
+        }
+        Err(e) => {
+            warn!(task = "onboard", username = %req.username, error = format!("{e:#}"), "language preferences not applied");
+        }
     }
     result.jellyfin_id = jf_id.clone();
 

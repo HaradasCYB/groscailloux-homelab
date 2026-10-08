@@ -19,6 +19,7 @@ use homelab_core::requests_progress::{self as rp, QueueSummary};
 use homelab_core::state::now;
 use homelab_core::subscription_ops as ops;
 use homelab_core::subscriptions::{self as subs, Status};
+use homelab_core::vo_native;
 use homelab_core::welcome;
 use homelab_core::TaskContext;
 use serde::Deserialize;
@@ -259,28 +260,11 @@ async fn me(State(st): State<SubsState>, headers: HeaderMap) -> ApiResult<Json<V
 }
 
 /// `fr` (piste française d'abord) ou `vo` (audio d'origine, sous-titres français toujours), lu dans la
-/// configuration Jellyfin du compte. VO = sous-titres `Always` et langue audio vide (ancien mode, avant le
-/// 2026-09-25) ou `[accounts] vo_audio_language`.
+/// configuration Jellyfin du compte (`vo_native::mode_of_user` : sous-titres `Always` et audio vide — ancien mode,
+/// avant le 2026-09-25 —, `[accounts] vo_audio_language` ou « Langue d'origine »).
 async fn language_mode(st: &SubsState, user_id: &str) -> &'static str {
     match st.ctx.jellyfin.user(user_id).await {
-        Ok(u) => {
-            let cfg = u.get("Configuration").cloned().unwrap_or(Value::Null);
-            let audio = cfg
-                .get("AudioLanguagePreference")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let mode = cfg
-                .get("SubtitleMode")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if mode == "Always"
-                && (audio.is_empty() || audio == st.ctx.cfg.accounts.vo_audio_language)
-            {
-                "vo"
-            } else {
-                "fr"
-            }
-        }
+        Ok(u) => vo_native::mode_of_user(&u, &st.ctx.cfg.accounts.vo_audio_language).as_str(),
         Err(_) => "fr",
     }
 }
@@ -290,7 +274,11 @@ struct LanguageBody {
     mode: String,
 }
 
-/// POST /compte/api/language {mode: "fr"|"vo"} : préférences audio/sous-titres du compte.
+/// POST /compte/api/language {mode: "fr"|"vo"} : préférences audio/sous-titres du compte. Mode VO :
+/// `[accounts] vo_audio_language` (`jpn`), ou « Langue d'origine » quand `vo_native = true` et qu'aucun client hors
+/// liste n'apparaît pour le compte : lectures, sessions ouvertes, appareils enregistrés (`vo_native::decide`). `PlayDefaultAudioTrack` reste à `false` dans les deux modes : sinon
+/// Jellyfin lit la piste « par défaut » du fichier (la VF d'un MULTi) avant la langue préférée — SNK restait en VF en
+/// mode VO (2026-09-26).
 async fn set_language(
     State(st): State<SubsState>,
     headers: HeaderMap,
@@ -298,35 +286,31 @@ async fn set_language(
 ) -> ApiResult<Json<Value>> {
     let u = auth(&st, &headers).await?;
     let a = &st.ctx.cfg.accounts;
-    let r = match b.mode.as_str() {
-        "fr" => {
-            st.ctx
-                .jellyfin
-                .set_language_prefs(
-                    &u.id,
-                    &a.audio_language,
-                    &a.subtitle_language,
-                    &a.subtitle_mode,
-                    false,
-                )
-                .await
-        }
-        "vo" => {
-            st.ctx
-                .jellyfin
-                .set_language_prefs(
-                    &u.id,
-                    &a.vo_audio_language,
-                    &a.subtitle_language,
-                    "Always",
-                    // false : sinon Jellyfin lit la piste « par défaut » du fichier (la VF d'un MULTi) avant
-                    // la langue préférée — SNK restait en VF en mode VO (2026-09-26)
-                    false,
-                )
-                .await
-        }
-        _ => return Err(err(StatusCode::BAD_REQUEST, "mode inconnu")),
+    let mode = vo_native::Mode::parse(&b.mode)
+        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "mode inconnu"))?;
+    let d = vo_native::decide(&st.ctx.jellyfin, a, &u.id, mode).await;
+    // langue d'avant, notée avec la décision quand la bascule est engagée
+    let old = match d.outcome {
+        Some(_) => st
+            .ctx
+            .jellyfin
+            .user(&u.id)
+            .await
+            .map(|x| vo_native::config_str(&x, "AudioLanguagePreference").to_string())
+            .unwrap_or_default(),
+        None => String::new(),
     };
+    let r = st
+        .ctx
+        .jellyfin
+        .set_language_prefs(
+            &u.id,
+            &d.prefs.audio,
+            &d.prefs.subtitles,
+            &d.prefs.subtitle_mode,
+            false,
+        )
+        .await;
     // sinon une piste retenue pour un titre déjà lancé l'emporte sur le mode choisi
     let r = match r {
         Ok(()) => st.ctx.jellyfin.set_remember_selections(&u.id, false).await,
@@ -336,8 +320,22 @@ async fn set_language(
         warn!(task = "subs", user = %u.name, error = format!("{e:#}"), "language prefs failed");
         err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
     })?;
-    info!(task = "subs", user = %u.name, mode = %b.mode, "language mode set from Mon compte");
-    Ok(Json(json!({ "ok": true, "language": b.mode })))
+    if let Some(outcome) = d.outcome {
+        let rec = homelab_core::state::VoNativeRecord {
+            at: now(),
+            name: u.name.clone(),
+            source: "compte".into(),
+            outcome: outcome.as_str().into(),
+            old,
+            new: d.prefs.audio.clone(),
+            clients: d.clients.clone(),
+        };
+        if let Err(e) = vo_native::record(&st.ctx.state, &u.id, rec).await {
+            warn!(task = "subs", user = %u.name, error = format!("{e:#}"), "mode VO posé mais non noté dans l'état");
+        }
+    }
+    info!(task = "subs", user = %u.name, mode = mode.as_str(), audio = %d.prefs.audio, "language mode set from Mon compte");
+    Ok(Json(json!({ "ok": true, "language": mode.as_str() })))
 }
 
 /// GET /compte/api/requests : avancement de chaque demande Jellyseerr en cours (toutes, la vue

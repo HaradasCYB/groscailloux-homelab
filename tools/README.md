@@ -8,7 +8,7 @@ Les **sorties** (journaux, captures) ne vont jamais dans le dépôt : `state/off
 |---|---|
 | `offpeak/offpeak.sh` | exécuter une commande hors pic, seulement si personne ne regarde ; programmation qui survit au redémarrage |
 | `bench/bench.sh` | lancer un banc d'interface (navigateur sans écran) avec un compte de banc toujours supprimé |
-| `tests/` | bancs de non-régression lancés par `bench.sh` (`compte-russe/` : voie russe de Mon compte) |
+| `tests/` | bancs de non-régression lancés par `bench.sh` (`compte-russe/` : voie russe de Mon compte ; `compte-vo/` : filet du mode VO) |
 | `lib/` | `hl.py` (appels Jellyfin, homelabd, Discord ; seul à lire les secrets de `.env`), `hlconf.py` (`.env` et `homelab.toml` lus comme par homelabd : `${NOM}` remplacés ; aussi pour `scripts/*.py`), `common.sh`, leurs tests |
 
 Configuration et secrets : toujours ceux de `/opt/homelab` (`.env`, `homelab.toml`, `state/`), même lancé depuis un
@@ -110,6 +110,19 @@ Le vrai `crates/homelabd/assets/compte/app.js` dans une page simulée (aucun app
 
 Contre-épreuve : `--env MUTATE=1` doit échouer. La décision côté serveur (`route_set`) a ses tests unitaires dans
 `subs_api.rs`.
+
+## Tests : `tests/compte-vo/`
+
+`tools/bench/bench.sh --offline tools/tests/compte-vo/compte-vo.js desktop tv` : le vrai `app.js` de Mon compte pendant une
+lecture simulée (session, fiche, pistes, `/api/original` servis par interception), pour le filet du mode VO face à la
+préférence native « Langue d'origine » (`homelab_core::vo_native`) :
+- piste reçue déjà en VO : aucune commande ni autre requête ;
+- partie en VF : langue d'origine lue sur la fiche Jellyfin (ou sa série), TMDB seulement pour une fiche vide, anglais si
+  inconnue ; jamais un titre d'origine française, jamais l'audiodescription, jamais un doublage qui n'est pas la VO ;
+- une seule tentative par titre, rien en mode « fr ».
+
+Contre-épreuve : `--env MUTATE=1` (piste reçue et fiche ignorées) doit échouer. Côté serveur, les décisions (mode,
+comptes gardés, migration, garde) ont leurs tests dans `vo_native.rs`.
 
 ## Tests des outils
 
