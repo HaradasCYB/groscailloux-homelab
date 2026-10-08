@@ -13,7 +13,7 @@ mod qbit;
 pub use arr::{ArrClient, QueueItem};
 pub use bazarr::{BazarrClient, HistoryRow};
 pub use jellyfin::JellyfinClient;
-pub use jellyseerr::JellyseerrClient;
+pub use jellyseerr::{original_language_of, JellyseerrClient};
 pub use paypal::PayPalClient;
 pub use prowlarr::ProwlarrClient;
 pub use qbit::{QbitClient, Torrent, TorrentFile, ETA_UNKNOWN};

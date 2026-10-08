@@ -506,6 +506,8 @@ pub struct Tasks {
     #[serde(default)]
     pub russian_search: RussianSearch,
     pub identity_check: IdentityCheck,
+    #[serde(default)]
+    pub original_language: OriginalLanguage,
     pub deletion_cleanup: DeletionCleanup,
     pub trending: Trending,
     pub playback_limit: PlaybackLimit,
@@ -980,6 +982,46 @@ impl Default for IdentityCheck {
             interval_secs: 1800,
             max_fixes_per_run: 3,
             fix_release_names: true,
+        }
+    }
+}
+
+/// Langue d'origine (OriginalLanguage) des fiches Jellyfin, remplie depuis TMDB (voir `tasks::original_language`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct OriginalLanguage {
+    pub interval_secs: u64,
+    /// Interrupteur : `false` = la tâche ne fait rien (ni lecture TMDB ni écriture).
+    pub enabled: bool,
+    /// Séries aussi (après les films). Jellyfin réécrit alors chaque saison et chaque épisode rangé dans une saison :
+    /// toute classification non verrouillée reçoit celle de la série, et la classification personnalisée aussi, sans
+    /// exception. Une série dont un enfant a sa propre valeur n'est donc pas écrite (`children_differ`) ; sinon seuls
+    /// les enfants sans classification changent, notés dans l'état. Les épisodes, eux, héritent de la langue de la
+    /// série : ils ne sont jamais écrits.
+    pub series: bool,
+    /// Fenêtre d'écriture, heure locale `HH:MM` (début inclus, fin exclue). Hors fenêtre, rien n'est écrit ; un
+    /// `--dry-run` montre quand même ce que ferait le prochain passage.
+    pub window_start: String,
+    pub window_end: String,
+    /// Fiches écrites au plus par passage.
+    pub max_movies_per_run: usize,
+    pub max_series_per_run: usize,
+    /// Fiche sans langue chez TMDB, verrouillée, série aux enfants à part, ou échec net (lecture, connexion) : nouvel
+    /// essai après ce délai. Une fiche écrite, ou dont l'écriture est partie sans confirmation, n'est jamais reprise.
+    pub retry_hours: i64,
+}
+
+impl Default for OriginalLanguage {
+    fn default() -> Self {
+        Self {
+            interval_secs: 600,
+            enabled: true,
+            series: false,
+            window_start: "07:30".into(),
+            window_end: "11:30".into(),
+            max_movies_per_run: 4,
+            max_series_per_run: 1,
+            retry_hours: 24,
         }
     }
 }

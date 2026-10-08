@@ -18,6 +18,7 @@ pub mod indexer_unblock;
 pub mod monitor_sync;
 pub mod movie_search;
 pub mod onboard;
+pub mod original_language;
 pub mod playback_canary;
 pub mod playback_limit;
 pub mod russian_search;
@@ -113,6 +114,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(anime_library::AnimeLibrary),
         Box::new(russian_search::RussianSearch),
         Box::new(identity_check::IdentityCheck),
+        Box::new(original_language::OriginalLanguage),
         Box::new(deletion_cleanup::DeletionCleanup),
         Box::new(trending::Trending),
         Box::new(playback_limit::PlaybackLimit),
