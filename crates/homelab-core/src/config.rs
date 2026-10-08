@@ -160,6 +160,9 @@ pub struct Chat {
     pub delete_own_within_mins: i64,
     /// Au plus un mail récapitulatif (entraide + privé) par intervalle.
     pub moderator_mail_interval_mins: i64,
+    /// 2026-10-08 : à la première visite d'un compte, les messages publics (annonces, entraide) de plus de
+    /// N jours comptent comme lus (un compte neuf voyait « 9 non lus »). 0 = tout est lu à la première visite.
+    pub new_member_read_days: i64,
 }
 
 /// Abonnés et cycle premium (`homelab_core::subscriptions`, tâches `subscription_cycle` et
@@ -232,6 +235,7 @@ impl Default for Chat {
             burst_window_secs: 600,
             delete_own_within_mins: 15,
             moderator_mail_interval_mins: 15,
+            new_member_read_days: 14,
         }
     }
 }

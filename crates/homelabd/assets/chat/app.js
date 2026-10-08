@@ -1,4 +1,5 @@
-/* Groscailloux Tchat : bulle dans l'en-tête de Jellyfin + panneau (salons, fil privé avec l'admin).
+/* Groscailloux « Aide et annonces » (le tchat) : bulle dans l'en-tête de Jellyfin + panneau (Annonces, Entraide,
+ * fil privé avec l'admin).
  * Chargé par JavaScript Injector depuis /gc-chat/app.js (servi par homelabd, même origine que Jellyfin).
  * Identité : jeton de session Jellyfin (ApiClient.accessToken()), vérifié côté serveur.
  * Aucun HTML venant d'un message n'est interprété : tout passe par textContent. */
@@ -10,7 +11,7 @@
   var API = '/gc-chat/api';
 
   /* Téléviseurs (LG webOS, Tizen, Android TV…) : peu de puissance et une télécommande, pas de souris.
-     On ralentit tout, on allège le rendu, et le bandeau se ferme tout seul et à la touche Retour. */
+     On ralentit tout, on allège le rendu, et le bandeau se ferme à la touche Retour. */
   var TV = (function () {
     try {
       if (/web0?s|webos|tizen|smart-?tv|netcast|viera|bravia|hbbtv|aft[a-z]|android\s?tv|googletv|crkey/i
@@ -24,13 +25,28 @@
   var TV_APP = /web0?s|webos|tizen|smart-?tv|netcast|viera|bravia|hbbtv|aft[a-z]|android\s?tv|googletv|crkey/i
     .test(navigator.userAgent || '') || document.documentElement.classList.contains('layout-tv');
   if (TV_APP) return;
+  /* Aucun pointeur du tout (télécommande à flèches) : la croix du bandeau est inatteignable, il s'efface donc seul
+     au bout de 12 s. Sur un ordinateur ou un téléphone — même à 2 cœurs, que `TV` prend pour une télé — le bandeau
+     RESTE affiché tant que l'annonce n'est pas lue (croix = lue) : le critère « cœurs » le faisait disparaître de
+     lui-même chez ces membres, qui ne le voyaient plus (2026-10-08). */
+  var NO_POINTER = (function () {
+    try { return !!(window.matchMedia && matchMedia('(hover: none) and (pointer: none)').matches); } catch (e) { return false; }
+  })();
   var LOOP = TV ? 3000 : 1000;
-  var BANNER_AUTO = TV ? 12000 : 0; // sur TV, le bandeau disparaît seul
-  var POLL_OPEN = TV ? 10000 : 5000, POLL_CLOSED = TV ? 180000 : 60000, ME_OPEN = TV ? 30000 : 20000;
+  var BANNER_AUTO = NO_POINTER ? 12000 : 0;
+  /* Sondages (2026-10-08). Panneau fermé : l'état des non-lus toutes les 60 s ; PAS pendant une lecture (la bulle et
+     le bandeau n'y sont pas affichés, et ils reviennent aussitôt après) ; toutes les 3 min si le membre n'a rien
+     touché depuis 5 min, et tout de suite dès qu'il reprend la main. Panneau ouvert : les messages toutes les 5 s,
+     et les non-lus reviennent avec eux (réponse de /messages et de /read) : /me ne sert plus qu'en filet. */
+  var POLL_OPEN = TV ? 10000 : 5000, POLL_CLOSED = TV ? 180000 : 60000, ME_OPEN = 120000;
+  /* Panneau ouvert mais SANS salon ni fil à interroger (liste des fils d'un modérateur, rédaction d'un message) : plus aucun
+     /messages ne porte l'état des non-lus, /me reprend donc son rythme d'avant (badge de la bulle et de l'onglet Privé en
+     20 s, pas en 2 min). Revu le 2026-10-08 : le filet à 2 min ne valait que salon ou fil ouvert. */
+  var ME_BLIND = TV ? 30000 : 20000;
+  var IDLE_MS = 300000, POLL_IDLE = Math.max(POLL_CLOSED, 180000);
   var INTRO = {
-    annonces: "Les nouvelles de Groscailloux. Seul l'admin publie ici.",
-    entraide: "Une question, un souci de lecture ? Tout le monde peut répondre. Précise le titre et l'appareil.",
-    discussion: 'Discussion libre entre membres.',
+    annonces: "Les nouvelles de Groscailloux. Seul l'admin publie ici : pour poser une question ou répondre, va dans Entraide.",
+    entraide: 'Une question, un souci de lecture, un conseil ? Tout le monde peut répondre. Précise le titre et l\'appareil.',
     prive: "Seuls toi et l'admin voyez cette conversation.",
     threads: 'Conversations privées des membres.',
     compose: 'Choisis un ou plusieurs membres : chacun reçoit le message dans sa conversation privée avec toi.'
@@ -39,7 +55,8 @@
   var S = {
     token: null, me: null, open: false, tab: 'annonces', thread: null,
     cache: {}, lastPoll: 0, lastMe: 0, bannerClosed: {}, busy: false, el: {},
-    composing: false, recipients: {}, members: null
+    composing: false, recipients: {}, members: null,
+    seq: 0, meSeq: 0, lastActive: Date.now(), tabsSig: '', tryAt: 0
   };
 
   /* ---------- utilitaires ---------- */
@@ -65,6 +82,17 @@
         if (!r.ok) { var e = new Error(j.error || ('HTTP ' + r.status)); e.status = r.status; throw e; }
         return j;
       });
+    });
+  }
+  /* /me, /messages et /read renvoient tous l'état des non-lus (clé `me` ; /me lui-même en est le corps). Une réponse
+     dont la requête est partie AVANT une réponse déjà appliquée est jetée : une lecture lente ne ressuscite pas un
+     compteur déjà remis à zéro. Le jeton est vérifié aussi : une réponse d'un autre compte n'est jamais appliquée. */
+  function snap(method, path, body) {
+    var seq = ++S.seq, tok = S.token;
+    return api(method, path, body).then(function (j) {
+      var me = path === '/me' ? j : j && j.me;
+      if (me && tok === S.token && seq > S.meSeq) { S.meSeq = seq; applyMe(me); }
+      return j;
     });
   }
   function when(ts) {
@@ -108,19 +136,21 @@
       '.gc-chat-btn{position:relative;overflow:visible!important}',
       '.gc-chat-btn svg{width:1.45em;height:1.45em;fill:currentColor;display:block}',
       '.gc-badge{position:absolute;top:.15em;right:.1em;min-width:1.25em;height:1.25em;padding:0 .3em;border-radius:1em;background:var(--accentColor,#2f8fff);color:#fff;font:700 .68em/1.25em Inter,system-ui,sans-serif;text-align:center;box-sizing:border-box}',
-      '.gc-badge.gc-dot{min-width:.6em;width:.6em;height:.6em;padding:0;top:.35em;right:.35em}',
-      '.gc-panel{position:fixed;top:0;right:0;bottom:0;width:min(430px,100vw);z-index:100000;display:flex;flex-direction:column;background:#0b0f16;color:#e8edf5;border-left:1px solid #232b3a;box-shadow:-12px 0 40px rgba(0,0,0,.45);font:15px/1.45 Inter,system-ui,sans-serif;transform:translateX(105%);transition:transform .22s ease}',
-      '.gc-panel.open{transform:none}',
+      '.gc-panel{position:fixed;top:0;right:0;bottom:0;width:min(430px,100vw);z-index:100000;display:flex;flex-direction:column;background:#0b0f16;color:#e8edf5;border-left:1px solid #232b3a;box-shadow:-12px 0 40px rgba(0,0,0,.45);font:15px/1.45 Inter,system-ui,sans-serif;transform:translateX(105%);visibility:hidden;transition:transform .22s ease,visibility 0s linear .22s}',
+      // fermé, le panneau est hors écran ET hors de l'ordre de tabulation (le clavier n'y entre plus)
+      '.gc-panel.open{transform:none;visibility:visible;transition-delay:0s}',
       '@media (prefers-reduced-motion:reduce){.gc-panel{transition:none}}',
       '.gc-head{display:flex;align-items:center;gap:.6em;padding:.9em 1em .6em}',
       '.gc-head strong{font-size:1.1em;flex:1}',
       '.gc-x{background:none;border:0;color:#8d99ad;font-size:1.6em;line-height:1;cursor:pointer;padding:.1em .3em;border-radius:.3em}',
       '.gc-x:hover,.gc-x:focus-visible{color:#fff;outline:2px solid var(--accentColor,#2f8fff)}',
-      '.gc-panel .gc-tabs{display:flex;flex-wrap:wrap;gap:.35em .3em;padding:0 .8em .6em;overflow:visible}',
-      '.gc-tab{flex:none;position:relative;background:#151b26;border:1px solid #232b3a;color:#c9d2df;border-radius:2em;padding:.35em .85em;font:inherit;font-size:.88em;cursor:pointer}',
+      // trois onglets (Annonces, Entraide, Écrire à l'admin) toujours sur UNE ligne, téléphone compris
+      '.gc-panel .gc-tabs{display:flex;flex-wrap:nowrap;gap:.3em;padding:0 .8em .6em;overflow:visible}',
+      '.gc-tab{flex:1 1 auto;min-width:0;white-space:nowrap;text-align:center;position:relative;background:#151b26;border:1px solid #232b3a;color:#c9d2df;border-radius:2em;padding:.35em .6em;font:inherit;font-size:.88em;cursor:pointer}',
       '.gc-tab[aria-selected=true]{background:var(--accentColor,#2f8fff);border-color:transparent;color:#fff}',
       '.gc-tab:focus-visible{outline:2px solid #fff}',
-      '.gc-tab .gc-n{margin-left:.35em;background:rgba(255,255,255,.2);border-radius:1em;padding:0 .4em;font-size:.85em}',
+      '.gc-tab .gc-n{margin-left:.3em;background:rgba(255,255,255,.2);border-radius:1em;padding:0 .4em;font-size:.85em}',
+      '@media (max-width:360px){.gc-tab{font-size:.82em;padding:.35em .45em}.gc-tab .gc-n{margin-left:.2em;padding:0 .3em}}',
       '.gc-intro{margin:0 1em .4em;color:#8d99ad;font-size:.85em}',
       '.gc-list{flex:1;overflow-y:auto;padding:.4em 1em 1em;display:flex;flex-direction:column;gap:.55em}',
       '.gc-more{align-self:center;background:none;border:1px solid #232b3a;color:#8d99ad;border-radius:2em;padding:.25em .9em;cursor:pointer;font:inherit;font-size:.82em}',
@@ -203,7 +233,7 @@
     if (!box) return;
     var b = S.el.btn;
     if (!b) {
-      b = h('button', { type: 'button', class: 'headerButton headerButtonRight paper-icon-button-light gc-chat-btn', title: 'Tchat', 'aria-label': 'Ouvrir le tchat', onclick: function () { toggle(); } }, [icon()]);
+      b = h('button', { type: 'button', class: 'headerButton headerButtonRight paper-icon-button-light gc-chat-btn', title: 'Aide et annonces', 'aria-label': 'Ouvrir Aide et annonces', onclick: function () { toggle(); } }, [icon()]);
       S.el.badge = h('span', { class: 'gc-badge', hidden: '' });
       b.appendChild(S.el.badge);
       S.el.btn = b;
@@ -217,18 +247,16 @@
     b.hidden = playing();
   }
   function counts() {
-    var me = S.me, strong = 0, soft = 0;
-    me.channels.forEach(function (c) { if (c.key === 'discussion') soft += c.unread; else strong += c.unread; });
-    strong += me.private.unread;
-    return { strong: strong, soft: soft };
+    var n = S.me.private.unread;
+    S.me.channels.forEach(function (c) { n += c.unread; });
+    return n;
   }
   function paintBadge() {
     if (!S.el.badge || !S.me) return;
     var n = counts(), b = S.el.badge;
-    b.hidden = !(n.strong || n.soft);
-    b.classList.toggle('gc-dot', !n.strong && n.soft > 0);
-    b.textContent = n.strong ? (n.strong > 9 ? '9+' : String(n.strong)) : '';
-    S.el.btn.setAttribute('aria-label', n.strong ? 'Ouvrir le tchat, ' + n.strong + ' non lu(s)' : 'Ouvrir le tchat');
+    b.hidden = !n;
+    b.textContent = n ? (n > 9 ? '9+' : String(n)) : '';
+    S.el.btn.setAttribute('aria-label', n ? 'Ouvrir Aide et annonces, ' + n + ' non lu(s)' : 'Ouvrir Aide et annonces');
   }
 
   /* ---------- panneau ---------- */
@@ -250,35 +278,76 @@
       else if (!note.classList.contains('err')) setNote('');
     });
     var tabs = h('div', { class: 'gc-tabs', role: 'tablist' });
-    var panel = h('div', { class: 'gc-panel', role: 'dialog', 'aria-label': 'Tchat Groscailloux', 'aria-modal': 'false' }, [
-      h('div', { class: 'gc-head' }, [h('strong', { text: 'Tchat' }), h('button', { type: 'button', class: 'gc-x', 'aria-label': 'Fermer le tchat', text: '×', onclick: function () { toggle(false); } })]),
+    var panel = h('div', { class: 'gc-panel', role: 'dialog', 'aria-label': 'Aide et annonces', 'aria-modal': 'false' }, [
+      h('div', { class: 'gc-head' }, [h('strong', { text: 'Aide et annonces' }), h('button', { type: 'button', class: 'gc-x', 'aria-label': 'Fermer Aide et annonces', text: '×', onclick: function () { toggle(false); } })]),
       tabs, h('p', { class: 'gc-intro' }), list, form
     ]);
-    panel.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.stopPropagation(); toggle(false); } });
     document.body.appendChild(panel);
     S.el.panel = panel; S.el.tabs = tabs; S.el.list = list; S.el.ta = ta; S.el.note = note;
     S.el.form = form; S.el.opt = opt; S.el.optText = optText; S.el.mail = mail; S.el.send = send; S.el.intro = panel.querySelector('.gc-intro');
   }
   function setNote(t, isErr) { S.el.note.textContent = t || ''; S.el.note.classList.toggle('err', !!isErr); }
+  /* Les onglets sont reconstruits à chaque changement d'état : on rend le focus à l'onglet qui l'avait (sinon il tombait
+     sur la page à chaque sondage, et un clic sur un onglet le perdait), et on ne reconstruit que si quelque chose a changé. */
   function paintTabs() {
     var me = S.me, t = S.el.tabs;
-    t.textContent = '';
     var defs = me.channels.map(function (c) { return { key: c.key, label: c.label, n: c.unread }; });
     defs.push({ key: 'prive', label: me.user.moderator ? 'Privé' : "Écrire à l'admin", n: me.private.unread });
+    var sig = S.tab + '|' + defs.map(function (d) { return d.key + ':' + d.label + ':' + d.n; }).join('|');
+    if (sig === S.tabsSig && t.firstChild) return;
+    S.tabsSig = sig;
+    var a = document.activeElement, keep = a && t.contains(a) ? a.getAttribute('data-key') : null;
+    t.textContent = '';
     defs.forEach(function (d) {
-      var b = h('button', { type: 'button', class: 'gc-tab', role: 'tab', 'aria-selected': String(S.tab === d.key), onclick: function () { S.tab = d.key; S.thread = null; S.composing = false; render(true); } }, [d.label]);
+      var b = h('button', { type: 'button', class: 'gc-tab', role: 'tab', 'data-key': d.key, 'aria-selected': String(S.tab === d.key), onclick: function () { S.tab = d.key; S.thread = null; S.composing = false; render(true); } }, [d.label]);
       if (d.n && S.tab !== d.key) b.appendChild(h('span', { class: 'gc-n', text: d.n > 99 ? '99+' : String(d.n) }));
       t.appendChild(b);
     });
+    if (keep) { var again = t.querySelector('[data-key="' + keep + '"]'); if (again) again.focus(); }
+  }
+  /* Ouverture : le focus va à l'onglet actif (ou à la croix), comme dans Mon compte — au clavier et au lecteur d'écran,
+     le panneau (role=dialog) annonce ainsi son contenu au lieu de laisser le focus sur la bulle. */
+  function focusPanel() {
+    if (!S.el.panel) return;
+    var target = (S.el.tabs && S.el.tabs.querySelector('.gc-tab[aria-selected="true"]')) || S.el.panel.querySelector('.gc-x');
+    if (!target) return;
+    try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+  }
+  /* Échap ferme le panneau ouvert, où que soit le focus (il restait sur la bulle, hors du panneau). Écouteur sur le
+     document, posé à l'ouverture et retiré à la fermeture ; en capture, pour passer avant Jellyfin ; Mon compte, qui
+     écoute sur la fenêtre avant nous, se ferme d'abord s'il est ouvert par-dessus. */
+  function onEscape(e) {
+    var k = e.keyCode;
+    var back = e.key === 'Escape' || k === 27 || k === 461 || k === 10009 || e.key === 'GoBack';
+    // télécommande à flèches : Retour est parfois un Backspace (comme le bandeau et Mon compte), sauf pendant une saisie
+    if (!back && TV && (e.key === 'Backspace' || k === 8)) {
+      back = !(e.target && (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable));
+    }
+    if (!back) return;
+    if (e.isComposing) return; // Échap d'un clavier à composition : il annule la saisie, pas le panneau
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    toggle(false);
   }
   function toggle(force) {
-    S.open = typeof force === 'boolean' ? force : !S.open;
     buildPanel();
+    var was = S.open, a = document.activeElement;
+    var inside = !a || a === document.body || S.el.panel.contains(a); // avant que le panneau ne parte
+    S.open = typeof force === 'boolean' ? force : !S.open;
     S.el.panel.classList.toggle('open', S.open);
     if (S.open) {
       closeBanner(false);
-      refreshMe().then(function () { render(true); });
-    } else if (S.el.btn) S.el.btn.focus();
+      if (!was) document.addEventListener('keydown', onEscape, true);
+      // S.me est déjà là (la bulle n'existe qu'après lui) : pas de /me à l'ouverture, les non-lus à jour reviennent
+      // avec la liste des messages
+      if (S.me) { render(true); focusPanel(); }
+    } else {
+      document.removeEventListener('keydown', onEscape, true);
+      if (was) {
+        // le focus revient à la bulle, sauf s'il était ailleurs (fermeture automatique pendant une lecture)
+        if (inside && S.el.btn && !S.el.btn.hidden) S.el.btn.focus();
+        if (Date.now() - S.lastMe > 15000) refreshMe().catch(function () {}); // bandeau à jour après la fermeture
+      }
+    }
   }
   function composerFor(key) {
     var me = S.me, can;
@@ -367,7 +436,7 @@
   }
   function msgNode(m) {
     var me = S.me, mine = m.author_id === me.user.id;
-    var box = h('div', { class: 'gc-msg' + (mine ? ' me' : '') + (m.channel === 'annonces' ? ' ann' : ''), 'data-id': String(m.id) });
+    var box = h('div', { class: 'gc-msg' + (mine ? ' me' : '') + (m.channel === 'annonces' ? ' ann' : ''), 'data-id': String(m.id), 'data-at': String(m.created_at), 'data-by': m.author_id });
     var meta = h('div', { class: 'gc-meta' }, [h('b', { text: m.author_name }), m.author_moderator ? h('span', { class: 'gc-role', text: 'admin' }) : null, h('span', { text: when(m.created_at) })]);
     var canDel = !m.deleted && (me.user.moderator || (mine && Date.now() / 1000 - m.created_at <= me.limits.delete_own_within_secs));
     if (canDel) meta.appendChild(h('button', { type: 'button', class: 'gc-del', title: 'Supprimer', 'aria-label': 'Supprimer ce message', text: '🗑', onclick: function (e) { askDelete(e.currentTarget, m.id); } }));
@@ -377,10 +446,30 @@
     box.appendChild(body);
     return box;
   }
+  /* Annonces : à l'ouverture on arrive au DÉBUT de la dernière annonce, pas à sa fin (sur téléphone, une annonce
+     longue s'ouvrait par le bas : son début et sa date étaient hors de l'écran). Une annonce découpée en plusieurs
+     messages (`homelabctl chat announce` au-delà de la limite) = suite de messages du même auteur à quelques secondes
+     d'écart : on remonte à son premier message. */
+  function lastAnnouncement(list) {
+    var nodes = list.querySelectorAll('.gc-msg'), i = nodes.length - 1;
+    if (i < 0) return null;
+    while (i > 0 && nodes[i - 1].getAttribute('data-by') === nodes[i].getAttribute('data-by') &&
+           Math.abs(Number(nodes[i].getAttribute('data-at')) - Number(nodes[i - 1].getAttribute('data-at'))) <= 10) i--;
+    return nodes[i];
+  }
+  function offsetInList(list, node) {
+    var pad = parseFloat(getComputedStyle(list).paddingTop) || 0;
+    return node.getBoundingClientRect().top - list.getBoundingClientRect().top - pad;
+  }
+  function settle(list, key) {
+    var node = key === 'annonces' ? lastAnnouncement(list) : null;
+    if (node) list.scrollTop += offsetInList(list, node);
+    else list.scrollTop = list.scrollHeight;
+  }
   function load(key, before) {
     var c = S.cache[key] || (S.cache[key] = { last: 0, first: 0 });
     var q = '/messages?channel=' + encodeURIComponent(key) + '&limit=50' + (before ? '&before=' + before : '');
-    return api('GET', q).then(function (j) {
+    return snap('GET', q).then(function (j) {
       if (channelKey() !== key) return;
       var list = S.el.list, msgs = j.messages;
       var old = list.querySelector('.gc-more'); if (old) old.remove();
@@ -392,7 +481,7 @@
       } else {
         msgs.forEach(function (m) { list.appendChild(msgNode(m)); });
         if (!msgs.length) list.appendChild(h('p', { class: 'gc-empty', text: S.tab === 'prive' ? 'Écris ton message : il ne sera lu que par l\'admin.' : 'Aucun message pour le moment.' }));
-        list.scrollTop = list.scrollHeight;
+        settle(list, key);
         c.last = msgs.length ? msgs[msgs.length - 1].id : 0;
       }
       if (msgs.length) c.first = msgs[0].id;
@@ -404,26 +493,31 @@
       markRead(key, c.last);
     }).catch(showErr);
   }
-  function poll() {
+  /* Un salon ou un fil est-il ouvert, donc interrogé à chaque tour de `poll` ? Non pour la liste des fils d'un
+     modérateur et pour la rédaction d'un message (pas de salon), ni avant que la liste ne soit chargée. */
+  function watching() {
     var key = channelKey();
-    if (!key || (S.tab === 'prive' && S.me.user.moderator && !S.thread)) return Promise.resolve();
-    var c = S.cache[key];
-    if (!c) return Promise.resolve();
-    return api('GET', '/messages?channel=' + encodeURIComponent(key) + '&after=' + c.last + '&limit=100').then(function (j) {
+    if (!key || (S.tab === 'prive' && S.me.user.moderator && !S.thread)) return false;
+    return !!S.cache[key];
+  }
+  function poll() {
+    if (!watching()) return Promise.resolve();
+    var key = channelKey(), c = S.cache[key];
+    return snap('GET', '/messages?channel=' + encodeURIComponent(key) + '&after=' + c.last + '&limit=100').then(function (j) {
       if (channelKey() !== key || !j.messages.length) return;
       var list = S.el.list, stick = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+      if (key === 'annonces') { var cur = lastAnnouncement(list); if (cur && Math.abs(offsetInList(list, cur)) < 120) stick = true; }
       var empty = list.querySelector('.gc-empty'); if (empty) empty.remove();
       j.messages.forEach(function (m) { if (!list.querySelector('[data-id="' + m.id + '"]')) list.appendChild(msgNode(m)); });
       c.last = j.messages[j.messages.length - 1].id;
-      if (stick) list.scrollTop = list.scrollHeight;
+      if (stick) settle(list, key);
       markRead(key, c.last);
     }).catch(function () {});
   }
   function markRead(key, id) {
     if (!id) return;
-    api('POST', '/read', { channel: key, last_id: id }).then(function () {
+    snap('POST', '/read', { channel: key, last_id: id }).then(function () {
       if (S.el.banner && S.el.banner.dataset.channel === key) closeBanner(false);
-      refreshMe();
     }).catch(function () {});
   }
   function post() {
@@ -439,7 +533,7 @@
       setNote(body.email_members ? 'Publié, et envoyé par mail aux membres.' : '');
       var list = S.el.list, empty = list.querySelector('.gc-empty'); if (empty) empty.remove();
       list.appendChild(msgNode(j.message));
-      list.scrollTop = list.scrollHeight;
+      settle(list, key);
       var c = S.cache[key] || (S.cache[key] = { last: 0, first: 0 });
       c.last = Math.max(c.last, j.message.id);
     }).catch(showErr).then(function () { S.busy = false; S.el.send.disabled = false; S.el.ta.focus(); });
@@ -486,11 +580,14 @@
     ]);
     document.body.appendChild(b);
     S.el.banner = b;
-    if (BANNER_AUTO) {
-      // Télécommande : pas de pointeur pour viser la croix. Retour/Échap ferme, et sinon il s'efface seul.
+    if (TV) {
+      // Télé : Retour/Échap ferme le bandeau (pour cette session, sans le marquer lu). S'il n'y a aucun pointeur pour viser
+      // la croix, il s'efface en plus au bout de BANNER_AUTO ; avec un pointeur il reste jusqu'à ce qu'il soit lu.
       var hide = function () { S.bannerClosed[item.key] = true; closeBanner(false); };
-      S.bannerTimer = setTimeout(hide, BANNER_AUTO);
+      if (BANNER_AUTO) S.bannerTimer = setTimeout(hide, BANNER_AUTO);
       S.bannerKey = function (e) {
+        var typing = e.target && (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable);
+        if (e.key === 'Backspace' && typing) return; // effacer un caractère ne ferme pas le bandeau
         if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack' || e.keyCode === 461 || e.keyCode === 10009) hide();
       };
       document.addEventListener('keydown', S.bannerKey, true);
@@ -501,21 +598,22 @@
     if (S.bannerTimer) { clearTimeout(S.bannerTimer); S.bannerTimer = null; }
     if (S.bannerKey) { document.removeEventListener('keydown', S.bannerKey, true); S.bannerKey = null; }
     if (!b) return;
-    if (markAsRead) api('POST', '/read', { channel: b.dataset.channel, last_id: Number(b.dataset.msg) }).then(refreshMe).catch(function () {});
+    if (markAsRead) snap('POST', '/read', { channel: b.dataset.channel, last_id: Number(b.dataset.msg) }).catch(function () {});
     b.remove(); S.el.banner = null;
   }
 
   /* ---------- cycle ---------- */
-  function refreshMe() {
-    return api('GET', '/me').then(function (me) {
-      S.me = me; S.lastMe = Date.now();
-      paintBadge();
-      if (S.open && S.el.tabs) paintTabs();
-      banner();
-    });
+  function applyMe(me) {
+    S.me = me; S.lastMe = Date.now();
+    paintBadge();
+    if (S.open && S.el.tabs) paintTabs();
+    banner();
   }
+  function refreshMe() { return snap('GET', '/me'); }
   function reset() {
     S.me = null; S.token = null; S.cache = {}; S.open = false; S.bannerClosed = {}; S.composing = false; S.members = null;
+    S.seq = 0; S.meSeq = 0; S.tabsSig = ''; S.tryAt = 0;
+    document.removeEventListener('keydown', onEscape, true);
     if (S.el.btn) S.el.btn.remove();
     if (S.el.panel) S.el.panel.remove();
     closeBanner(false);
@@ -525,8 +623,12 @@
     var t = token();
     if (t !== S.token) { reset(); S.token = t; }
     if (!S.token) return;
+    var now = Date.now();
     if (!S.me) {
       if (S.denied === S.token) return;
+      // premier chargement, ou serveur en panne : une tentative toutes les 15 s, pas une par seconde
+      if (now - S.tryAt < 15000) return;
+      S.tryAt = now;
       refreshMe().then(function () { css(); ensureButton(); paintBadge(); }).catch(function (e) {
         if (e && (e.status === 401 || e.status === 403)) S.denied = S.token; // hors bêta ou session invalide : rien à afficher
       });
@@ -534,16 +636,22 @@
     }
     ensureButton();
     if (document.hidden) return;
-    var now = Date.now();
+    var video = playing();
     if (S.open) {
-      if (playing()) { toggle(false); return; }
+      if (video) { toggle(false); return; }
       if (now - S.lastPoll >= POLL_OPEN) { S.lastPoll = now; poll(); }
-      if (now - S.lastMe >= ME_OPEN) refreshMe().catch(showErr);
-    } else if (now - S.lastMe >= POLL_CLOSED) {
+      if (now - S.lastMe >= (watching() ? ME_OPEN : ME_BLIND)) { S.lastMe = now; refreshMe().catch(showErr); }
+    } else if (!video && now - S.lastMe >= (now - S.lastActive > IDLE_MS ? POLL_IDLE : POLL_CLOSED)) {
+      // `lastMe` avance dès l'envoi : un serveur qui répond mal ne reçoit pas une requête par seconde
+      S.lastMe = now;
       refreshMe().catch(showErr);
     }
     banner();
   }
+  /* Le membre est-il là ? Quelques événements suffisent ; aucun traitement lourd, rien n'est lu ni envoyé. */
+  function touched() { S.lastActive = Date.now(); }
+  ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function (ev) { window.addEventListener(ev, touched, { passive: true, capture: true }); });
+  window.addEventListener('mousemove', function () { var t = Date.now(); if (t - S.lastActive > 2000) S.lastActive = t; }, { passive: true, capture: true });
   window.addEventListener('hashchange', function () { if (S.me) { ensureButton(); banner(); } });
   setInterval(loop, LOOP);
   loop();
