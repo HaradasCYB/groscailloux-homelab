@@ -188,8 +188,11 @@ for tok in "${DEVS[@]}"; do
   if [ -n "$CAND" ] && [ "$NOINJ" = 0 ]; then run+=(-v "$CAND":/cand:ro -e CANDIDATE_DIR=/cand); fi
   for e in "${XENV[@]}"; do run+=(-e "$e"); done
   run+=(--entrypoint node "$IMAGE" "/scen/$(basename "$SCEN")")
-  timeout -k 15 "$TIMEOUT" "${run[@]}" 2>&1 | grep -vE '^\s+at '
-  rc=${PIPESTATUS[0]}
+  # en tâche de fond + wait : un signal reçu par le lanceur déclenche le nettoyage TOUT DE SUITE (bash ne lance un
+  # piège qu'après la fin d'une commande au premier plan, ici jusqu'à --timeout)
+  ( timeout -k 15 "$TIMEOUT" "${run[@]}" 2>&1 | grep --line-buffered -vE '^\s+at '; exit "${PIPESTATUS[0]}" ) &
+  wait $!
+  rc=$?
   docker kill "$CT" > /dev/null 2>&1 || true
   case "$rc" in
     0) echo "----- $tok : réussi" ;;
