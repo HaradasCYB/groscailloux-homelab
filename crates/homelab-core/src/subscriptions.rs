@@ -8,10 +8,11 @@
 //! ce module n'y touche jamais directement.
 //!
 //! Depuis le 2026-10-08 (décision du propriétaire : « les abonnés hors PayPal, je les gère moi-même ») le
-//! cycle ne suit plus que les **essais** et les fiches **liées à un abonnement PayPal** (actif ou arrêté
-//! chez PayPal). Toute autre fiche ([`managed_by_hand`] : actif ou offert par décision de l'admin, import,
-//! exempté, à qualifier) n'est jamais suspendue et ne reçoit aucun rappel ; à son échéance, l'admin est
-//! prévenu une seule fois ([`Action::ManualDue`]) et `/accounts` l'affiche « à gérer (échéance passée) ».
+//! cycle ne suit plus que les **essais de l'inscription publique** ([`is_trial`]) et les fiches **liées à
+//! un abonnement PayPal** (actif ou arrêté chez PayPal). Toute autre fiche ([`managed_by_hand`] : actif,
+//! offert ou essai posé par décision de l'admin, import, exempté, à qualifier) n'est jamais suspendue et
+//! ne reçoit aucun rappel ; à son échéance, l'admin est prévenu une seule fois ([`Action::ManualDue`]) et
+//! `/accounts` l'affiche « à gérer (échéance passée) ».
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -241,11 +242,15 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
         .into()
 }
 
-/// Essai gratuit (inscription publique, ou posé par l'admin avec `subs set --status trial`), y compris
-/// pendant la grâce qui suit sa fin (le passage en grâce garde la source `trial`). Un essai prolongé par
-/// l'admin après sa fin redevient « actif » (`admin_extend`) : c'est alors une décision de l'admin.
+/// Essai gratuit de l'**inscription publique** (source `trial`, posée par `start_trial`), y compris
+/// pendant la grâce qui suit sa fin : le passage en grâce (`set_status` sans source) garde la source
+/// `trial`. Un « essai » posé par l'admin (`subs set --status trial`, case de `/accounts`) porte la
+/// source `manual` : c'est une décision de l'admin, gérée à la main dès le départ (aucun rappel, une
+/// information à l'échéance) — sinon il recevait les rappels « t'abonner » puis, passé en grâce avec la
+/// source `manual`, n'était plus jamais suspendu (2026-10-08). Un essai prolongé par l'admin après sa
+/// fin redevient « actif » (`admin_extend`) : c'est alors aussi une décision de l'admin.
 pub fn is_trial(s: &Subscriber) -> bool {
-    s.status == Status::Trial || (s.status == Status::Grace && s.source == "trial")
+    s.source == "trial" && matches!(s.status, Status::Trial | Status::Grace)
 }
 
 /// Fiche gérée à la main par l'admin (2026-10-08) : ni essai, ni abonnement PayPal lié. Source manuelle,
@@ -257,11 +262,14 @@ pub fn managed_by_hand(s: &Subscriber) -> bool {
 }
 
 /// Fiche gérée à la main dont l'échéance est passée : `/accounts` l'affiche « à gérer (échéance passée) ».
-/// Seuls les statuts qui portent une échéance comptent (actif, grâce, offert) ; un exempté ou un « à
-/// qualifier » n'en a pas de sens.
+/// Seuls les statuts qui portent une échéance comptent (actif, grâce, offert, essai posé par l'admin) ;
+/// un exempté ou un « à qualifier » n'en a pas de sens.
 pub fn hand_due(s: &Subscriber, now: i64) -> bool {
     managed_by_hand(s)
-        && matches!(s.status, Status::Active | Status::Grace | Status::Offered)
+        && matches!(
+            s.status,
+            Status::Active | Status::Grace | Status::Offered | Status::Trial
+        )
         && s.expires_at.is_some_and(|e| now >= e)
 }
 
@@ -1368,13 +1376,124 @@ mod tests {
             vec![Action::Suspend]
         );
         assert!(!hand_due(&trial(Status::Grace, Some(-3.0)), NOW));
-        // essai posé par l'admin (`subs set --status trial`, source manuelle) : un essai aussi
-        let by_admin = Subscriber {
+        // essai posé par l'admin (`subs set --status trial`, source manuelle) : décision de l'admin,
+        // gérée à la main (2026-10-08) — ni rappel « t'abonner », ni grâce, ni suspension
+        let by_admin = |e| Subscriber {
             starts_at: NOW - 60 * DAY,
-            ..sub(Status::Trial, Some(-3.0))
+            ..sub(Status::Trial, e)
         };
-        assert!(is_trial(&by_admin));
-        assert_eq!(decide(&by_admin, NOW, &c), vec![Action::Suspend]);
+        assert!(!is_trial(&by_admin(Some(0.5))));
+        assert_hand_managed(by_admin, "essai posé par l'admin");
+        // une grâce sans la source `trial` n'est pas celle d'un essai (fiche passée en grâce par l'ancien
+        // cycle) : gérée à la main
+        assert!(!is_trial(&sub(Status::Grace, Some(-1.0))));
+    }
+
+    /// Rejoue le cycle horaire sur une fiche du magasin, en appliquant chaque action comme `run_cycle`
+    /// (rappel noté, passage en grâce sans changer la source, suspension, information notée), de
+    /// `from` à `to`. Renvoie les actions et leur heure.
+    fn replay(st: &SubStore, uid: &str, from: i64, to: i64) -> Vec<(i64, Action)> {
+        let c = cfg();
+        let mut seen = Vec::new();
+        let mut t = from;
+        while t <= to {
+            let s = st.get(uid).unwrap().unwrap();
+            for a in decide(&s, t, &c) {
+                match a {
+                    Action::Remind(d) | Action::RenewalNotice(d) => {
+                        st.set_reminded(uid, d, t).unwrap()
+                    }
+                    Action::ToGrace => st
+                        .set_status(uid, Status::Grace, None, None, "cycle", "grâce", t)
+                        .unwrap(),
+                    Action::Suspend => st
+                        .set_status(uid, Status::Suspended, Some(None), None, "cycle", "fin", t)
+                        .unwrap(),
+                    Action::ManualDue => st
+                        .note_due(uid, s.expires_at.unwrap(), "échéance", t)
+                        .unwrap(),
+                }
+                seen.push((t, a));
+            }
+            t += 3600;
+        }
+        seen
+    }
+
+    #[test]
+    fn trial_paths_hour_by_hour() {
+        let c = cfg();
+        let grace = c.grace_days as i64 * DAY;
+        // essai de l'inscription publique (comme `start_trial`) : J-1, grâce à l'échéance, suspension à
+        // la fin de la grâce — le comportement d'avant le 2026-10-08, inchangé
+        let st = SubStore::open_in_memory().unwrap();
+        let exp = NOW + 7 * DAY;
+        st.ensure("pub", "membre", Status::Trial, Some(exp), "trial", NOW)
+            .unwrap();
+        let seen = replay(&st, "pub", NOW, exp + grace + 30 * DAY);
+        let kinds: Vec<&Action> = seen.iter().map(|(_, a)| a).collect();
+        assert_eq!(
+            kinds,
+            vec![&Action::Remind(1), &Action::ToGrace, &Action::Suspend]
+        );
+        assert!(
+            seen[1].0 >= exp && seen[1].0 < exp + 3600,
+            "grâce à l'échéance"
+        );
+        assert!(
+            seen[2].0 >= exp + grace && seen[2].0 < exp + grace + 3600,
+            "suspension à la fin de la grâce"
+        );
+        let s = st.get("pub").unwrap().unwrap();
+        assert_eq!((s.status, s.source.as_str()), (Status::Suspended, "trial"));
+
+        // essai posé par l'admin (comme `admin_set(Status::Trial)` : source `manual`) : aucun rappel,
+        // aucune grâce, aucune suspension ; une information à l'admin à l'échéance, une seule
+        let st = SubStore::open_in_memory().unwrap();
+        st.ensure("adm", "membre", Status::Unknown, None, "import", NOW)
+            .unwrap();
+        st.set_status(
+            "adm",
+            Status::Trial,
+            Some(Some(exp)),
+            Some("manual"),
+            "admin",
+            "décision admin",
+            NOW,
+        )
+        .unwrap();
+        let seen = replay(&st, "adm", NOW, exp + grace + 30 * DAY);
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].1, Action::ManualDue);
+        assert!(seen[0].0 >= exp && seen[0].0 < exp + 3600);
+        let s = st.get("adm").unwrap().unwrap();
+        assert_eq!((s.status, s.due_noted), (Status::Trial, Some(exp)));
+        assert!(hand_due(&s, exp + grace + 30 * DAY), "affichée « à gérer »");
+    }
+
+    #[test]
+    fn manual_active_hour_by_hour_is_never_reminded_nor_suspended() {
+        // « Actif pour 30 jours » posé par l'admin (`admin_set`) : rejoué heure par heure jusqu'à deux
+        // mois après l'échéance, une seule action en tout (l'information à l'admin)
+        let st = SubStore::open_in_memory().unwrap();
+        let exp = NOW + 30 * DAY;
+        st.ensure("m", "membre", Status::Unknown, None, "import", NOW)
+            .unwrap();
+        st.set_status(
+            "m",
+            Status::Active,
+            Some(Some(exp)),
+            Some("manual"),
+            "admin",
+            "décision admin",
+            NOW,
+        )
+        .unwrap();
+        let seen = replay(&st, "m", NOW, exp + 60 * DAY);
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].1, Action::ManualDue);
+        let s = st.get("m").unwrap().unwrap();
+        assert_eq!((s.status, s.reminded), (Status::Active, 0));
     }
 
     #[test]
@@ -1551,9 +1670,11 @@ mod tests {
     #[test]
     fn trial_reminder_never_right_after_signup() {
         let c = cfg();
+        // essai de l'inscription publique (source `trial`, comme `start_trial`)
         let trial = |starts: i64, days: i64| Subscriber {
             starts_at: starts,
             expires_at: Some(starts + days * DAY),
+            source: "trial".into(),
             ..sub(Status::Trial, None)
         };
         // inscription il y a une heure, essai de 7 jours : pas de J-7
