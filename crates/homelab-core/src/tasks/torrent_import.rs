@@ -69,7 +69,8 @@ pub enum TagTarget {
     Series {
         id: i64,
         /// Saison visée à la prise (`season=` de l'étiquette) : seul cadre où un numéro d'épisode « nu »
-        /// (`Angels of Death - 07`) est lu, voir `bare_episodes`.
+        /// (`Angels of Death - 07`) ou en tête (`05. Titre de l'épisode`) est lu, voir `bare_episodes` et
+        /// `numbered_episodes`.
         season: Option<i64>,
     },
     /// Pack d'un cours d'animé publié sous son propre titre : l'Arr lit la **mauvaise saison** dans les
@@ -433,6 +434,175 @@ pub fn bare_episodes(
         out.insert(path.clone(), vec![id]);
     }
     Ok(out)
+}
+
+/// Numéro d'épisode **en tête** d'un nom de fichier : `05. Deux Magiciens (1re partie).mkv` → 5.
+///
+/// Packs d'animés publiés sans nom de série ni `SxxEyy`, le texte après le numéro étant le titre de l'ÉPISODE.
+/// Sonarr n'y lit rien, pas même en numérotation absolue (2026-10-08 : saison 1 d'un animé de 2006, 24 fichiers
+/// « `01. …` » à « `24. …` », restée « téléchargée mais pas rangée »). Forme exigée : 1 à 3 chiffres au tout début
+/// du nom, un point, une ou plusieurs espaces, un titre qui contient au moins une lettre, l'extension. Jamais un
+/// nom qui porte sa saison (`S01E05`, `S01 - 05`, `1x05`, « Saison 2 »), ni dont le titre contient un autre nombre :
+/// un groupe de chiffres qui n'est pas suivi d'une lettre (`Show 13`, `E13`, `#13`, `013 [1080p]`, « Episode 13 »,
+/// `Titre - 07`) écarte le nom — Sonarr y lit ce numéro-là (absolu 13 ou S01E13, vérifié par `parse` sur le Sonarr
+/// de la seedbox le 2026-10-08), on ne lit pas deux numéros à la fois. Un ordinal collé (`1re partie`, `2e partie`)
+/// passe. Ce n'est qu'un filtre de forme : `13th` passe aussi alors que Sonarr y lit l'absolu 13. La vraie garde est
+/// ailleurs, `numbered_pack` n'est consulté que si Sonarr n'a rien lu dans aucun nom du torrent.
+pub fn numbered_episode(path: &str) -> Option<i64> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static SEASON: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static NUMBER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"^(\d{1,3})\. +(.*\p{L}.*)\.[A-Za-z0-9]{2,4}$").expect("regex valide")
+    });
+    let season = SEASON.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)\b(?:s\d{1,3}(?:\s*e\d{1,3})?|season\s*\d+|saison\s*\d+|\d{1,2}x\d{1,3})\b",
+        )
+        .expect("regex valide")
+    });
+    let number =
+        NUMBER.get_or_init(|| regex::Regex::new(r"\d+(?:[^\p{L}\d]|$)").expect("regex valide"));
+    let base = path.rsplit('/').next().unwrap_or(path);
+    let c = re.captures(base)?;
+    let title = c.get(2)?.as_str();
+    if season.is_match(title)
+        || number.is_match(title)
+        || bare_episode(base).is_some()
+        || crate::tasks::series_search::fansub_episode(base).is_some()
+        || crate::tasks::series_search::claimed_episode(base).is_some()
+    {
+        return None;
+    }
+    c.get(1)?.as_str().parse().ok()
+}
+
+/// Pack « `NN. Titre de l'épisode.mkv` » d'un torrent pris pour **une** saison (`season=` de l'étiquette posée par
+/// `series_search`) → épisodes de cette saison. `paths` : **toutes** les vidéos du torrent (hors extraits, fichiers
+/// désélectionnés compris : c'est la forme du pack publié qui est jugée ; l'import, lui, n'en prendra que les
+/// fichiers complets). Le titre diffère d'un fichier à l'autre, la règle « mêmes titres » de `bare_episodes` ne
+/// s'applique pas : la sûreté vient de la forme du pack entier. Refus **en bloc** (2026-10-08) si une seule vidéo
+/// n'a pas cette forme (bonus, NCOP, un `S01E05` glissé), si deux vidéos ont le même numéro, si un numéro vaut 0 ou
+/// dépasse la saison, si les numéros ne se suivent pas (1..24 ou 13..24, jamais 1..12 + 14..24), ou si une suite
+/// qui ne commence pas à 1 vise une saison précédée d'une autre (13..24 pourrait être une numérotation absolue).
+pub fn numbered_episodes(
+    paths: &[String],
+    season: i64,
+    episodes: &[Value],
+) -> Result<HashMap<String, Vec<i64>>, String> {
+    let mut nums: Vec<(i64, &String)> = Vec::with_capacity(paths.len());
+    let mut odd: Vec<&str> = Vec::new();
+    for p in paths {
+        match numbered_episode(p) {
+            Some(n) => nums.push((n, p)),
+            None => odd.push(p.rsplit('/').next().unwrap_or(p)),
+        }
+    }
+    if let Some(first) = odd.first() {
+        return Err(format!(
+            "{} vidéo(s) sur {} sans numéro en tête, dont « {first} »",
+            odd.len(),
+            paths.len()
+        ));
+    }
+    let mut seen: Vec<i64> = nums.iter().map(|(n, _)| *n).collect();
+    seen.sort_unstable();
+    let (Some(&lo), Some(&hi)) = (seen.first(), seen.last()) else {
+        return Err("aucune vidéo".into());
+    };
+    if let Some(w) = seen.windows(2).find(|w| w[0] == w[1]) {
+        return Err(format!("deux fichiers portent le numéro {}", w[0]));
+    }
+    let in_season: Vec<(i64, i64)> = episodes
+        .iter()
+        .filter(|e| e.get("seasonNumber").and_then(Value::as_i64) == Some(season))
+        .filter_map(|e| {
+            Some((
+                e.get("episodeNumber").and_then(Value::as_i64)?,
+                e.get("id").and_then(Value::as_i64)?,
+            ))
+        })
+        .collect();
+    let last = in_season.iter().map(|(n, _)| *n).max().unwrap_or(0);
+    if lo < 1 || hi > last {
+        return Err(format!(
+            "numéros {lo}..{hi} hors de la saison {season} ({last} épisodes)"
+        ));
+    }
+    if hi - lo + 1 != seen.len() as i64 {
+        return Err(format!(
+            "les numéros {lo}..{hi} ne se suivent pas ({} fichiers)",
+            seen.len()
+        ));
+    }
+    let earlier_season = episodes.iter().any(|e| {
+        e.get("seasonNumber")
+            .and_then(Value::as_i64)
+            .is_some_and(|s| (1..season).contains(&s))
+    });
+    if lo > 1 && earlier_season {
+        return Err(format!(
+            "numéros {lo}..{hi} en saison {season} : peut-être une numérotation absolue, on ne devine pas"
+        ));
+    }
+    let mut out = HashMap::new();
+    for (n, path) in nums {
+        let ids: Vec<i64> = in_season
+            .iter()
+            .filter(|(e, _)| *e == n)
+            .map(|(_, id)| *id)
+            .collect();
+        let [id] = ids[..] else {
+            return Err(format!("S{season:02}E{n:02} inconnu de la fiche"));
+        };
+        out.insert(path.clone(), vec![id]);
+    }
+    Ok(out)
+}
+
+/// Sonarr a-t-il lu quelque chose dans ce torrent ? (2026-10-08) Tant que oui, la lecture « NN. Titre » ne sert pas :
+/// la correspondance de l'Arr prime sur l'analyse du nom. Oui dès que :
+/// - le `parse` d'un nom (`parses`, un par fichier candidat) donne une information d'épisode (`parsedEpisodeInfo`),
+///   même un numéro que la fiche ne connaît pas (`01. Show 13th Night` → absolu 13) ou une saison seule ;
+/// - `manualimport` propose un épisode pour l'un des fichiers (`candidates`), quelle que soit la fiche ;
+/// - un fichier a déjà ses épisodes (`by_path` : `map_episodes` ou lecture fansub, qui passe `source` à `OursOnly`).
+///
+/// Les 24 noms du pack réel n'ont aucun `parsedEpisodeInfo` (vérifié par `parse` sur le Sonarr de la seedbox).
+pub fn sonarr_read_something(
+    candidates: &[Value],
+    parses: &[Value],
+    by_path: &HashMap<String, Vec<i64>>,
+    source: EpisodeSource,
+) -> bool {
+    parses
+        .iter()
+        .any(|p| p.get("parsedEpisodeInfo").is_some_and(|i| !i.is_null()))
+        || candidates.iter().any(|c| {
+            c.get("episodes")
+                .and_then(Value::as_array)
+                .is_some_and(|e| !e.is_empty())
+        })
+        || by_path.values().any(|e| !e.is_empty())
+        || source != EpisodeSource::ArrFirst
+}
+
+/// Lecture « NN. Titre » d'un torrent, décidée pour le torrent entier, **en dernier recours** (2026-10-08) : comme la
+/// lecture fansub et le numéro nu, elle ne sert que si Sonarr n'a rien lu (`arr_read`, voir `sonarr_read_something`)
+/// — la correspondance de l'Arr prime sur l'analyse du nom. `None` : rien à lire ainsi — Sonarr a lu, l'étiquette ne
+/// nomme pas de saison (torrent ajouté à la main, ancienne étiquette `homelab:series=<id>` : la saison ne se devine
+/// jamais) ou aucune vidéo n'a cette forme ; les chemins ordinaires suivent sans changement. `Some(Err)` : la forme
+/// est là mais la correspondance n'est pas certaine, aucun fichier n'est rangé par ce chemin.
+pub fn numbered_pack(
+    tag_season: Option<i64>,
+    arr_read: bool,
+    paths: &[String],
+    episodes: &[Value],
+) -> Option<Result<HashMap<String, Vec<i64>>, String>> {
+    let season = tag_season?;
+    if arr_read || !paths.iter().any(|p| numbered_episode(p).is_some()) {
+        return None;
+    }
+    Some(numbered_episodes(paths, season, episodes))
 }
 
 /// Fichiers importables dans une fiche : aperçu sans id, fiche fournie par nous ; les rejets
@@ -849,12 +1019,15 @@ async fn examine(
                 }
             }
         } else {
-            // torrent pris pour une saison précise : un numéro « nu » (« - 07 ») pourra y être lu, voir plus bas
+            // torrent pris pour une saison précise : un numéro en tête (« 05. Titre ») ou « nu » (« - 07 ») pourra y
+            // être lu, voir plus bas
             let tag_season = match &target {
                 Some(TagTarget::Series { season, .. }) => *season,
                 _ => None,
             };
             let mut bare: Vec<(String, String, i64)> = Vec::new();
+            // ce que Sonarr a lu dans chaque nom : tant qu'il a lu quelque chose, pas de lecture « NN. Titre »
+            let mut parses: Vec<Value> = Vec::with_capacity(candidates.len());
             for c in &candidates {
                 let Some(path) = c.get("path").and_then(Value::as_str) else {
                     continue;
@@ -906,8 +1079,37 @@ async fn examine(
                     }
                 }
                 by_path.insert(path.to_string(), eps);
+                parses.push(parse);
             }
-            if let (Some(season), false) = (tag_season, bare.is_empty()) {
+            // Pack « 05. Titre de l'épisode.mkv » (2026-10-08), en DERNIER recours : seulement si Sonarr n'a rien lu
+            // dans aucun nom (ni `parse`, ni épisode proposé par `manualimport`, ni lecture fansub). Sinon l'ancien
+            // chemin, inchangé : « 01. Show 13.mkv » … est rangé par Sonarr en E13…, jamais par nous en E01…. Jugé
+            // sur TOUTES les vidéos du torrent, chemins vus par l'Arr (`incomplete_paths` les construit de même).
+            // Retenu, il fournit les épisodes de chaque fichier ; la source reste `ArrFirst` : Sonarr n'ayant rien
+            // proposé, il n'y a rien à faire taire, et ses autres refus (extrait, qualité, déjà importé) restent
+            // bloquants. Écarté, les numéros nus suivent comme avant.
+            let arr_read = sonarr_read_something(&candidates, &parses, &by_path, source);
+            let root = t.save_path.trim_end_matches('/');
+            let video_paths: Vec<String> = videos
+                .iter()
+                .map(|f| format!("{root}/{}", f.name))
+                .collect();
+            let numbered = match numbered_pack(tag_season, arr_read, &video_paths, &episodes) {
+                Some(Ok(m)) => {
+                    info!(task = "torrent_import", side = side.name, torrent = %t.name, season = tag_season.unwrap_or_default(),
+                          files = m.len(), "numéros « NN. Titre » lus dans la saison de l'étiquette");
+                    Some(m)
+                }
+                Some(Err(why)) => {
+                    warn!(task = "torrent_import", side = side.name, torrent = %t.name, season = tag_season.unwrap_or_default(), %why,
+                          "numéros « NN. Titre » écartés : correspondance incertaine");
+                    None
+                }
+                None => None,
+            };
+            if let Some(m) = numbered {
+                by_path = m;
+            } else if let (Some(season), false) = (tag_season, bare.is_empty()) {
                 match bare_episodes(&bare, season, &episodes) {
                     Ok(m) => {
                         info!(task = "torrent_import", side = side.name, torrent = %t.name, season, files = m.len(),
@@ -1723,5 +1925,428 @@ mod tests {
             EpisodeSource::ArrFirst,
         );
         assert!(files.is_empty() && skipped.len() == 1);
+    }
+
+    /// Pack réel du 2026-10-08 (saison 1 d'un animé de 2006, côté seedbox) : 24 fichiers « `NN. Titre` », sans nom de
+    /// série ni `SxxEyy`, dans un dossier qui ne nomme pas la saison. Chemins tels que l'Arr les voit.
+    const FATE_DIR: &str = "/dl/2 - Fate Stay Night (Saber Route)";
+    const FATE_TITLES: [&str; 24] = [
+        "Le premier jour",
+        "La Nuit fatidique",
+        "Lever de rideau",
+        "Le Plus puissant des adversaires",
+        "Deux Magiciens (1re partie)",
+        "Deux Magiciens (2e partie)",
+        "Infestation",
+        "Dissonances",
+        "Ballet au clair de lune",
+        "Paisible intermède",
+        "La Forteresse de Sang",
+        "Celles qui fendent les cieux",
+        "Le Château hivernal",
+        "Au bout de ses convictions",
+        "Les Douze Travaux",
+        "L'épée de la victoire promise",
+        "La Marque de la sorcière",
+        "Bataille décisive",
+        "Le Roi d'or",
+        "Souvenirs d'un rêve lointain",
+        "Déchirant ciel et terre, l'étoile au commencement du monde",
+        "La Fin d'un rêve",
+        "Le Saint Graal",
+        "Utopie lointaine",
+    ];
+
+    fn fate_path(n: usize) -> String {
+        format!("{FATE_DIR}/{n:02}. {}.mkv", FATE_TITLES[n - 1])
+    }
+
+    fn fate_pack(range: std::ops::RangeInclusive<usize>) -> Vec<String> {
+        range.map(fate_path).collect()
+    }
+
+    /// Fiche Sonarr de l'animé : saison 1 de 24 épisodes (ids 3001…3024, numéros absolus 1…24), 4 spéciaux.
+    fn fate_episodes() -> Vec<Value> {
+        let mut v: Vec<Value> = (1..=24)
+            .map(|n| json!({"id": 3000 + n, "seasonNumber": 1, "episodeNumber": n, "absoluteEpisodeNumber": n}))
+            .collect();
+        v.extend((1..=4).map(|n| json!({"id": 4000 + n, "seasonNumber": 0, "episodeNumber": n})));
+        v
+    }
+
+    #[test]
+    fn a_leading_number_is_read_only_in_its_strict_form() {
+        assert_eq!(numbered_episode(&fate_path(5)), Some(5));
+        assert_eq!(numbered_episode(&fate_path(21)), Some(21));
+        assert_eq!(numbered_episode("24. Utopie lointaine.mkv"), Some(24));
+        assert_eq!(numbered_episode("007. Titre.mkv"), Some(7));
+        // le dossier ne compte pas, seul le nom du fichier est lu
+        assert_eq!(
+            numbered_episode("/dl/Show S02/03. Titre.mkv"),
+            Some(3),
+            "la saison du DOSSIER n'est pas lue ici"
+        );
+        // un point ET une espace, au tout début ; jamais une année ; un titre avec au moins une lettre
+        assert_eq!(numbered_episode("05.Titre.mkv"), None);
+        assert_eq!(numbered_episode("05 - Titre.mkv"), None);
+        assert_eq!(numbered_episode("Titre 05.mkv"), None);
+        assert_eq!(numbered_episode("Show. 05. Titre.mkv"), None);
+        assert_eq!(numbered_episode("2006. Titre.mkv"), None);
+        assert_eq!(numbered_episode("05. 1080.mkv"), None);
+        assert_eq!(numbered_episode("05. Titre"), None);
+        // un nom qui porte sa saison, ou un second numéro, reste aux chemins existants
+        assert_eq!(numbered_episode("05. Show S01E05.mkv"), None);
+        assert_eq!(numbered_episode("05. Show.s01e05.mkv"), None);
+        assert_eq!(numbered_episode("05. Show S01 E05.mkv"), None);
+        assert_eq!(numbered_episode("05. Erased S01 - 05 VOSTFR.mkv"), None);
+        assert_eq!(numbered_episode("05. Show 1x05.mkv"), None);
+        assert_eq!(numbered_episode("05. Show Saison 2.mkv"), None);
+        assert_eq!(numbered_episode("05. Show Season 2.mkv"), None);
+        assert_eq!(numbered_episode("05. Show - 07.mkv"), None);
+        // un autre nombre dans le titre : Sonarr y lit CE numéro-là (`parse` du 2026-10-08 : absolu 13, ou S01E13
+        // pour « E13 »), le nom est écarté ; un ordinal collé (« 1re », « 2e ») passe
+        assert_eq!(numbered_episode("01. Show 13.mkv"), None);
+        assert_eq!(numbered_episode("01. Show E13.mkv"), None);
+        assert_eq!(numbered_episode("01. Show #13.mkv"), None);
+        assert_eq!(numbered_episode("01. Show 013 [1080p].mkv"), None);
+        assert_eq!(numbered_episode("01. Show Episode 13.mkv"), None);
+        assert_eq!(numbered_episode("01. Show 13v2.mkv"), None);
+        assert_eq!(numbered_episode("01. Les 12 Travaux.mkv"), None);
+        assert_eq!(
+            numbered_episode("05. Deux Magiciens (1re partie).mkv"),
+            Some(5)
+        );
+        assert_eq!(
+            numbered_episode("06. Deux Magiciens (2e partie).mkv"),
+            Some(6)
+        );
+        // limite du filtre de forme : « 13th » passe, alors que Sonarr y lit l'absolu 13 — c'est
+        // `sonarr_read_something` qui l'écarte
+        assert_eq!(numbered_episode("01. Show 13th Night.mkv"), Some(1));
+    }
+
+    /// `parse` réel d'un nom où Sonarr lit un numéro absolu (Sonarr de la seedbox, 2026-10-08).
+    fn parse_absolute(n: i64) -> Value {
+        json!({"parsedEpisodeInfo": {"seasonNumber": 0, "episodeNumbers": [], "absoluteEpisodeNumbers": [n],
+                                     "fullSeason": false, "seriesTitle": "01  Show"},
+               "series": null, "episodes": []})
+    }
+
+    /// Ligne `manualimport` réelle d'un fichier que Sonarr ne rattache à rien.
+    fn unknown_row(path: &str) -> Value {
+        json!({"path": path, "relativePath": path.rsplit('/').next().unwrap_or(path),
+               "rejections": [{"reason": "Unknown Series"}], "series": null, "episodes": []})
+    }
+
+    #[test]
+    fn sonarr_reading_anything_keeps_the_numbered_reading_out() {
+        let none: HashMap<String, Vec<i64>> = HashMap::new();
+        let arr = EpisodeSource::ArrFirst;
+        // pack réel : `parse` ne lit rien dans les 24 noms, `manualimport` ne propose rien
+        let nothing = json!({"parsedEpisodeInfo": null, "series": null, "episodes": []});
+        let rows: Vec<Value> = fate_pack(1..=24).iter().map(|p| unknown_row(p)).collect();
+        assert!(!sonarr_read_something(
+            &rows,
+            &vec![nothing; 24],
+            &none,
+            arr
+        ));
+        assert!(!sonarr_read_something(&rows, &[json!({})], &none, arr));
+        // un seul nom lu suffit, même un absolu que la fiche ne connaît pas, ou une saison seule
+        assert!(sonarr_read_something(
+            &rows,
+            &[parse_absolute(13)],
+            &none,
+            arr
+        ));
+        let season_only = json!({"parsedEpisodeInfo": {"seasonNumber": 1, "fullSeason": true, "episodeNumbers": []}});
+        assert!(sonarr_read_something(&rows, &[season_only], &none, arr));
+        // `manualimport` propose un épisode, quelle que soit la fiche
+        let mut proposed = rows.clone();
+        proposed[4] =
+            json!({"path": fate_path(5), "series": {"id": 999}, "episodes": [{"id": 3017}]});
+        assert!(sonarr_read_something(&proposed, &[], &none, arr));
+        // un fichier déjà rangé par `map_episodes`, ou une lecture fansub
+        let mapped: HashMap<String, Vec<i64>> =
+            [(fate_path(1), vec![]), (fate_path(2), vec![3002])].into();
+        assert!(sonarr_read_something(&rows, &[], &mapped, arr));
+        assert!(sonarr_read_something(
+            &rows,
+            &[],
+            &none,
+            EpisodeSource::OursOnly
+        ));
+    }
+
+    #[test]
+    fn a_second_number_in_the_name_leaves_the_pack_to_sonarr() {
+        // revue du 2026-10-08 : second cours publié « 01. Show 13.mkv » … « 12. Show 24.mkv », pris pour la saison 1
+        // (24 épisodes, rien avant). Lu par nous, le fichier 01 irait en E01 ; Sonarr y lit l'absolu 13 → E13.
+        let eps = fate_episodes();
+        let pack: Vec<String> = (1..=12)
+            .map(|n| format!("/dl/Show/{n:02}. Show {}.mkv", n + 12))
+            .collect();
+        // la forme est refusée nom par nom : rien n'est lu ainsi, même si Sonarr n'avait rien lu
+        assert!(numbered_pack(Some(1), false, &pack, &eps).is_none());
+        // l'ancien chemin, inchangé : le `parse` réel rangé par `map_episodes`
+        let parses: Vec<Value> = (13..=24).map(parse_absolute).collect();
+        let by_path: HashMap<String, Vec<i64>> = pack
+            .iter()
+            .zip(&parses)
+            .map(|(p, x)| (p.clone(), map_episodes(x, &eps)))
+            .collect();
+        assert_eq!(by_path[&pack[0]], vec![3013]);
+        assert!(sonarr_read_something(
+            &[],
+            &parses,
+            &by_path,
+            EpisodeSource::ArrFirst
+        ));
+        let rows: Vec<Value> = pack.iter().map(|p| unknown_row(p)).collect();
+        // E01…E12 libres : jamais pourvus avec le second cours
+        let (files, skipped) = fresh_files(
+            &rows,
+            false,
+            110,
+            "H",
+            &by_path,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert_eq!(files.len(), 12, "{skipped:?}");
+        assert_eq!(files[0]["episodeIds"], json!([3013]));
+        assert!(files
+            .iter()
+            .all(|f| f["episodeIds"][0].as_i64().is_some_and(|id| id >= 3013)));
+        // E01…E12 déjà pourvus : le second cours est importé quand même, pas de « nothing_importable »
+        let has_file: HashSet<i64> = (3001..=3012).collect();
+        let (files, skipped) = fresh_files(
+            &rows,
+            false,
+            110,
+            "H",
+            &by_path,
+            &has_file,
+            EpisodeSource::ArrFirst,
+        );
+        assert_eq!(files.len(), 12, "{skipped:?}");
+        assert_eq!(files[11]["episodeIds"], json!([3024]));
+    }
+
+    #[test]
+    fn a_number_sonarr_reads_past_the_form_filter_still_wins() {
+        // « 13th » passe le filtre de forme, mais Sonarr y lit l'absolu 13 : même si la fiche ne connaît pas cet
+        // absolu (`map_episodes` vide), Sonarr a lu quelque chose, on ne devine pas
+        let pack: Vec<String> = (1..=12)
+            .map(|n| format!("/dl/Show/{n:02}. Show {}th Night.mkv", n + 12))
+            .collect();
+        assert!(pack.iter().all(|p| numbered_episode(p).is_some()));
+        let parses: Vec<Value> = (13..=24).map(parse_absolute).collect();
+        let unmapped: HashMap<String, Vec<i64>> =
+            pack.iter().map(|p| (p.clone(), Vec::new())).collect();
+        let read = sonarr_read_something(&[], &parses, &unmapped, EpisodeSource::ArrFirst);
+        assert!(read);
+        assert!(numbered_pack(Some(1), read, &pack, &fate_episodes()).is_none());
+    }
+
+    #[test]
+    fn the_real_numbered_pack_lands_in_the_tagged_season() {
+        let eps = fate_episodes();
+        let m = numbered_episodes(&fate_pack(1..=24), 1, &eps).unwrap();
+        assert_eq!(m.len(), 24);
+        assert_eq!(m[&fate_path(1)], vec![3001]);
+        assert_eq!(m[&fate_path(5)], vec![3005]);
+        assert_eq!(m[&fate_path(24)], vec![3024]);
+        // jamais dans les spéciaux
+        assert!(m.values().all(|ids| ids.len() == 1 && ids[0] < 4000));
+    }
+
+    #[test]
+    fn a_partial_continuous_numbered_pack_is_read() {
+        // second cours d'une saison de 24 épisodes, saison 1 : rien ne la précède, aucune ambiguïté
+        let m = numbered_episodes(&fate_pack(13..=24), 1, &fate_episodes()).unwrap();
+        assert_eq!(m.len(), 12);
+        assert_eq!(m[&fate_path(13)], vec![3013]);
+        assert!(!m.contains_key(&fate_path(12)));
+        // un seul fichier, au milieu de la saison
+        assert_eq!(
+            numbered_episodes(&fate_pack(7..=7), 1, &fate_episodes()).unwrap()[&fate_path(7)],
+            vec![3007]
+        );
+    }
+
+    #[test]
+    fn a_numbered_pack_is_refused_as_a_whole_when_unsure() {
+        let eps = fate_episodes();
+        // un trou : 1..12 puis 14..24
+        let mut gap = fate_pack(1..=12);
+        gap.extend(fate_pack(14..=24));
+        assert!(numbered_episodes(&gap, 1, &eps)
+            .unwrap_err()
+            .contains("ne se suivent pas"));
+        // un doublon : deux versions de l'épisode 5
+        let mut dup = fate_pack(1..=24);
+        dup.push(format!(
+            "{FATE_DIR}/Extras/05. Deux Magiciens (version longue).mkv"
+        ));
+        assert!(numbered_episodes(&dup, 1, &eps)
+            .unwrap_err()
+            .contains("deux fichiers portent le numéro 5"));
+        // un numéro au-delà de la saison (numérotation absolue d'une saison suivante), ou 0
+        let mut over = fate_pack(1..=24);
+        over.push(format!("{FATE_DIR}/25. Épilogue.mkv"));
+        assert!(numbered_episodes(&over, 1, &eps)
+            .unwrap_err()
+            .contains("hors de la saison"));
+        let mut zero = fate_pack(1..=3);
+        zero.push(format!("{FATE_DIR}/00. Prologue.mkv"));
+        assert!(numbered_episodes(&zero, 1, &eps).is_err());
+        // un mélange de formes : un « S01E24 », un bonus sans numéro
+        let mut mixed = fate_pack(1..=23);
+        mixed.push(format!("{FATE_DIR}/Fate Stay Night S01E24.mkv"));
+        assert!(numbered_episodes(&mixed, 1, &eps)
+            .unwrap_err()
+            .contains("sans numéro en tête"));
+        let mut extra = fate_pack(1..=24);
+        extra.push(format!("{FATE_DIR}/NCOP.mkv"));
+        assert!(numbered_episodes(&extra, 1, &eps).is_err());
+        // saison inconnue de la fiche
+        assert!(numbered_episodes(&fate_pack(1..=24), 2, &eps).is_err());
+        // rien du tout
+        assert!(numbered_episodes(&[], 1, &eps).is_err());
+    }
+
+    #[test]
+    fn a_numbered_pack_not_starting_at_one_is_refused_after_another_season() {
+        // saison 1 de 12, saison 2 de 24 : « 13. … » à « 24. … » pris pour la saison 2 peut être le second cours
+        // (S02E13…) ou une numérotation absolue (S02E01…) — on ne devine pas
+        let mut eps: Vec<Value> = (1..=12)
+            .map(|n| json!({"id": 100 + n, "seasonNumber": 1, "episodeNumber": n}))
+            .collect();
+        eps.extend((1..=24).map(|n| json!({"id": 200 + n, "seasonNumber": 2, "episodeNumber": n})));
+        assert!(numbered_episodes(&fate_pack(13..=24), 2, &eps)
+            .unwrap_err()
+            .contains("absolue"));
+        // la même saison 2 prise depuis son début : lue normalement
+        let m = numbered_episodes(&fate_pack(1..=12), 2, &eps).unwrap();
+        assert_eq!(m[&fate_path(1)], vec![201]);
+    }
+
+    #[test]
+    fn a_numbered_pack_needs_the_season_of_the_tag() {
+        let eps = fate_episodes();
+        let season_of = |tag: &str| match homelab_target(tag) {
+            Some(TagTarget::Series { season, .. }) => season,
+            _ => None,
+        };
+        // l'étiquette réelle posée par series_search
+        let tagged = numbered_pack(
+            season_of("homelab:series=110:season=1"),
+            false,
+            &fate_pack(1..=24),
+            &eps,
+        );
+        assert_eq!(tagged.unwrap().unwrap().len(), 24);
+        // sans saison dans l'étiquette (ancienne étiquette, ou ajout à la main) : rien n'est lu ainsi
+        assert_eq!(season_of("homelab:series=110"), None);
+        assert!(numbered_pack(
+            season_of("homelab:series=110"),
+            false,
+            &fate_pack(1..=24),
+            &eps
+        )
+        .is_none());
+        assert!(numbered_pack(None, false, &fate_pack(1..=24), &eps).is_none());
+        // Sonarr a lu quelque chose : dernier recours seulement, rien n'est lu ainsi
+        assert!(numbered_pack(Some(1), true, &fate_pack(1..=24), &eps).is_none());
+        // aucune vidéo de cette forme : les chemins ordinaires, sans un mot
+        let classic = vec!["/dl/Show.S01/Show.S01E01.mkv".to_string()];
+        assert!(numbered_pack(Some(1), false, &classic, &eps).is_none());
+        // forme présente mais refusée : une erreur, pour le journal
+        let mut gap = fate_pack(1..=3);
+        gap.push(fate_path(5));
+        assert!(numbered_pack(Some(1), false, &gap, &eps).unwrap().is_err());
+    }
+
+    #[test]
+    fn a_numbered_mapping_fills_what_sonarr_left_empty_and_never_overwrites() {
+        let eps = fate_episodes();
+        // pack réel, de bout en bout : `parse` ne lit rien, `manualimport` répond « Unknown Series » sans épisode
+        let pack = fate_pack(1..=24);
+        let rows: Vec<Value> = pack.iter().map(|p| unknown_row(p)).collect();
+        let parses = vec![json!({"parsedEpisodeInfo": null}); 24];
+        let unmapped: HashMap<String, Vec<i64>> =
+            pack.iter().map(|p| (p.clone(), Vec::new())).collect();
+        let read = sonarr_read_something(&rows, &parses, &unmapped, EpisodeSource::ArrFirst);
+        let m = numbered_pack(Some(1), read, &pack, &eps)
+            .expect("forme lue")
+            .expect("correspondance certaine");
+        // la source reste ArrFirst : Sonarr n'a rien proposé, rien à faire taire
+        let (files, skipped) = fresh_files(
+            &rows,
+            false,
+            110,
+            "H",
+            &m,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert_eq!(files.len(), 24, "{skipped:?}");
+        for (n, f) in files.iter().enumerate() {
+            assert_eq!(f["path"], json!(fate_path(n + 1)));
+            assert_eq!(f["episodeIds"], json!([3001 + n as i64]));
+            assert_eq!(f["seriesId"], json!(110));
+        }
+        // ses autres refus restent bloquants (extrait…)
+        let sample = json!({"path": fate_path(5), "rejections": [{"reason": "Sample"}], "series": null, "episodes": []});
+        let (files, skipped) = fresh_files(
+            &[sample],
+            false,
+            110,
+            "H",
+            &m,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert!(files.is_empty() && skipped[0].contains("Sample"));
+        // épisode déjà pourvu : jamais remplacé
+        let (files, skipped) = fresh_files(
+            &[unknown_row(&fate_path(5))],
+            false,
+            110,
+            "H",
+            &m,
+            &[3005].into_iter().collect(),
+            EpisodeSource::ArrFirst,
+        );
+        assert!(files.is_empty() && skipped[0].contains("déjà présent"));
+    }
+
+    #[test]
+    fn a_deselected_file_counts_for_the_pack_form_but_is_never_imported() {
+        // l'épisode 5 désélectionné : la forme du pack est jugée sur toutes ses vidéos, l'import n'en prend que
+        // les fichiers complets (`incomplete_paths` les retire des candidats avant `fresh_files`)
+        let rows: Vec<Value> = (1..=24)
+            .map(|n| {
+                let name = format!(
+                    "2 - Fate Stay Night (Saber Route)/{n:02}. {}.mkv",
+                    FATE_TITLES[n - 1]
+                );
+                let (progress, priority) = if n == 5 { (0.3, 0) } else { (1.0, 1) };
+                json!({"name": name, "size": 10, "progress": progress, "priority": priority})
+            })
+            .collect();
+        let files: Vec<TorrentFile> = serde_json::from_value(Value::Array(rows)).unwrap();
+        let paths: Vec<String> = video_files(&files)
+            .iter()
+            .map(|f| format!("/dl/{}", f.name))
+            .collect();
+        let m = numbered_pack(Some(1), false, &paths, &fate_episodes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(m.len(), 24);
+        let bad = incomplete_paths(&files, "/dl/");
+        assert_eq!(bad.len(), 1);
+        assert!(bad.contains(&fate_path(5)));
     }
 }
