@@ -221,20 +221,21 @@ async fn settle(ctx: &TaskContext, name: &'static str, ok: bool, summary: String
     let result = ctx
         .state
         .update_lazy_if(quiet, |s| {
-            // plafond commun (Jellyfin ou la seedbox tombe : plusieurs tâches échouent ensemble) : au-delà, la série
-            // n'est PAS marquée signalée, elle repart au prochain échec
-            let capped = s
-                .alerts
-                .count_recent(alerts::STREAK_SUBJECT, ts, window_secs)
-                >= cap;
             let e = s.task_runs.get_mut(name)?;
             let back = e.record_outcome(ts, ok, &summary);
-            let (alert, deferred) = if ok {
+            // plafond commun (Jellyfin ou la seedbox tombe : plusieurs tâches échouent ensemble) : au-delà, la série
+            // n'est PAS marquée signalée, elle repart au prochain échec. La place est prise ICI, dans la même mise à
+            // jour que la décision (2026-10-08) : `alerts::admin` n'enregistre l'alerte qu'après l'envoi, et deux
+            // tâches au seuil à quelques secondes d'écart passaient toutes deux. Rendue après l'envoi (voir plus bas).
+            let (alert, deferred) = if ok || !e.streak_due(ts, min_failures, min_mins) {
                 (None, false)
-            } else if capped && e.streak_due(ts, min_failures, min_mins) {
-                (None, true)
-            } else {
+            } else if s
+                .alerts
+                .reserve_streak(alerts::STREAK_SUBJECT, ts, window_secs, cap)
+            {
                 (e.take_streak_alert(ts, min_failures, min_mins), false)
+            } else {
+                (None, true)
             };
             Some((back, alert, deferred))
         })
@@ -275,6 +276,9 @@ async fn settle(ctx: &TaskContext, name: &'static str, ok: bool, summary: String
             &body,
         )
         .await;
+        // l'envoi est fini : `alerts::admin` a enregistré l'alerte (livrée ou non), qui compte à la place de la
+        // réservation — y compris sans canal configuré. Seul le dry-run n'enregistre rien : la place est rendue aussi.
+        let _ = ctx.state.update_lazy(|s| s.alerts.release_streak(ts)).await;
         warn!(
             task = name,
             failures = a.failures,

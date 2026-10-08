@@ -49,6 +49,18 @@ pub fn freshness(newest: Option<i64>, ts: i64, max_age_days: i64) -> Freshness {
     }
 }
 
+impl Freshness {
+    /// Identité du défaut pour `alerts::watch` (2026-10-08) : « trop ancienne » ou « aucune archive », sans l'âge qui
+    /// grandit chaque jour. `None` : tout va bien.
+    pub fn defect_key(&self) -> Option<&'static str> {
+        match self {
+            Freshness::Fresh { .. } => None,
+            Freshness::Stale { .. } => Some("stale"),
+            Freshness::Missing => Some("missing"),
+        }
+    }
+}
+
 /// Une archive d'état de `backup.rs` : `homelab-state-AAAAMMJJ-HHMMSS.tar.zst` (pas son `.sha256` ni son `.list.gz`).
 pub fn is_archive(name: &str) -> bool {
     name.starts_with("homelab-state-") && name.ends_with(".tar.zst")
@@ -104,10 +116,14 @@ impl Task for BackupWatch {
             }
         };
         let verdict = freshness(newest.as_ref().map(|(_, t)| *t), ts, cfg.max_age_days);
+        // identité du défaut pour `alerts::watch` (vide si tout va bien : jamais utilisée dans ce cas)
+        let key = verdict.defect_key().unwrap_or_default();
         match verdict {
             Freshness::Fresh { age_days } => {
                 let name = newest.map(|(n, _)| n).unwrap_or_default();
                 info!(task = "backup_watch", age_days, %name, "ok");
+                // retour à la normale : une rechute alertera normalement
+                alerts::watch_clear(ctx, self.name()).await;
                 Ok(Report::new(
                     format!("dernière archive : {name} ({age_days} j)"),
                     0,
@@ -116,8 +132,11 @@ impl Task for BackupWatch {
             Freshness::Stale { age_days } => {
                 let name = newest.map(|(n, _)| n).unwrap_or_default();
                 warn!(task = "backup_watch", age_days, %name, "sauvegarde trop ancienne");
-                alerts::admin(
+                // le passage a lieu aussi à chaque démarrage de homelabd : le même défaut n'est pas repris avant 20 h
+                let sent = alerts::watch(
                     ctx,
+                    self.name(),
+                    key,
                     Level::Error,
                     &format!("Sauvegarde : dernière archive vieille de {age_days} jours"),
                     &format!(
@@ -133,13 +152,15 @@ impl Task for BackupWatch {
                 .await;
                 Ok(Report::new(
                     format!("TROP ANCIENNE : {name} ({age_days} j)"),
-                    1,
+                    u32::from(sent),
                 ))
             }
             Freshness::Missing => {
                 warn!(task = "backup_watch", dir = %dir.display(), "aucune archive");
-                alerts::admin(
+                let sent = alerts::watch(
                     ctx,
+                    self.name(),
+                    key,
                     Level::Error,
                     "Sauvegarde : aucune archive d'état",
                     &format!(
@@ -151,7 +172,7 @@ impl Task for BackupWatch {
                     ),
                 )
                 .await;
-                Ok(Report::new("AUCUNE ARCHIVE", 1))
+                Ok(Report::new("AUCUNE ARCHIVE", u32::from(sent)))
             }
         }
     }
@@ -195,6 +216,19 @@ mod tests {
             freshness(Some(2000), 1000, 8),
             Freshness::Fresh { age_days: 0 }
         );
+    }
+
+    #[test]
+    fn the_defect_key_does_not_move_with_the_age() {
+        let now = 100 * DAY;
+        let key = |t| freshness(t, now, 8).defect_key();
+        // 9 puis 10 jours : même défaut, donc pas de nouvelle alerte à un redémarrage
+        assert_eq!(key(Some(now - 9 * DAY)), Some("stale"));
+        assert_eq!(key(Some(now - 10 * DAY)), Some("stale"));
+        // plus d'archive du tout : défaut différent, alerté aussitôt
+        assert_eq!(key(None), Some("missing"));
+        // sauvegarde à jour : rien (la mémoire de l'alerte est effacée, une rechute alertera)
+        assert_eq!(key(Some(now - 2 * DAY)), None);
     }
 
     #[test]

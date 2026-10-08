@@ -50,6 +50,12 @@ pub fn message(f: &Findings) -> Option<(String, String)> {
     ))
 }
 
+/// Identité du défaut (2026-10-08) : empreinte des erreurs relevées, dans l'ordre du fichier. Les avertissements n'y
+/// entrent pas (ils n'alertent pas). Sert à `alerts::watch`.
+pub fn defect_key(f: &Findings) -> String {
+    alerts::fingerprint(&f.errors)
+}
+
 #[async_trait]
 impl Task for DiunWatch {
     fn name(&self) -> &'static str {
@@ -81,6 +87,8 @@ impl Task for DiunWatch {
                     warnings = f.warnings.len(),
                     "ok"
                 );
+                // retour à la normale : une rechute alertera normalement
+                alerts::watch_clear(ctx, self.name()).await;
                 Ok(Report::new(
                     format!(
                         "{} entrée(s), YAML strict OK, {} avertissement(s)",
@@ -96,10 +104,20 @@ impl Task for DiunWatch {
                     errors = f.errors.len(),
                     "diun/images.yml invalide"
                 );
-                alerts::admin(ctx, Level::Error, &subject, &body).await;
+                // le passage a lieu aussi à chaque démarrage de homelabd : le même défaut (mêmes erreurs) n'est pas
+                // repris avant 20 h ; une erreur de plus, de moins ou différente alerte aussitôt
+                let sent = alerts::watch(
+                    ctx,
+                    self.name(),
+                    &defect_key(&f),
+                    Level::Error,
+                    &subject,
+                    &body,
+                )
+                .await;
                 Ok(Report::new(
                     format!("images.yml INVALIDE : {} problème(s)", f.errors.len()),
-                    1,
+                    u32::from(sent),
                 ))
             }
         }
@@ -132,6 +150,30 @@ mod tests {
         assert!(body.contains("- ligne 10 :") && !body.contains("- ligne 11 :"));
         assert!(body.contains("… et 3 autre(s)"));
         assert!(body.contains("sans redémarrage") && body.contains("homelabctl check"));
+    }
+
+    #[test]
+    fn the_same_errors_make_the_same_key_and_other_errors_another() {
+        let one = Findings {
+            errors: vec!["ligne 4 : clé en double".into()],
+            warnings: vec!["ligne 9 : entrée inutilisée".into()],
+            ..Default::default()
+        };
+        // les avertissements n'entrent pas dans l'identité du défaut
+        let same = Findings {
+            errors: vec!["ligne 4 : clé en double".into()],
+            ..Default::default()
+        };
+        assert_eq!(defect_key(&one), defect_key(&same));
+        // une erreur de plus : défaut différent, alerté aussitôt
+        let two = Findings {
+            errors: vec![
+                "ligne 4 : clé en double".into(),
+                "ligne 12 : image sans digest".into(),
+            ],
+            ..Default::default()
+        };
+        assert_ne!(defect_key(&one), defect_key(&two));
     }
 
     #[test]
