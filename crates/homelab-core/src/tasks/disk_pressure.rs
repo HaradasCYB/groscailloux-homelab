@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::{Report, Task};
 use crate::alerts;
@@ -78,7 +78,8 @@ impl Task for DiskPressure {
         .await;
         match level(pct, cfg.hard_pct, cfg.crit_pct) {
             Level::Ok => {
-                info!(task = "disk_pressure", use_pct = pct, "ok");
+                // 2026-10-08 : en `debug`, rien à signaler (une ligne par passage de 15 min, avec le `run_done`)
+                debug!(task = "disk_pressure", use_pct = pct, "ok");
                 return Ok(Report::new(format!("use_pct={pct} no_action"), 0));
             }
             Level::Critical => {

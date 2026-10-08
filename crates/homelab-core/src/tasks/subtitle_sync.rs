@@ -12,7 +12,9 @@
 //! (AirPlay, téléviseurs). Les plus récents d'abord, `max_per_run` items par passage, jamais pendant une lecture.
 //!
 //! Lecture de la médiathèque : un balayage complet par jour (`full_scan_hour`, et au premier passage après un
-//! démarrage), seul passage qui élague `subtitle_tries`. Les autres passages ne relisent que les éléments sauvés par
+//! démarrage), seul passage qui élague tous les `subtitle_tries` d'un coup (un passage court n'oublie que les essais
+//! des éléments qu'il a relus et qui n'ont plus rien à extraire, `prune_seen`, 2026-10-08). Les autres passages ne
+//! relisent que les éléments sauvés par
 //! Jellyfin depuis le passage précédent (`MinDateLastSaved`, marge d'une heure : un nouvel élément, une analyse, un
 //! FullRefresh), le reliquat du passage précédent et les essais dont la relance est due. Le plan d'un élément
 //! (`plan_jobs`) ne dépend que de son chemin et de ses pistes : il ne change pas sans que Jellyfin le sauve. Avant le
@@ -115,6 +117,23 @@ pub fn waiting_counts<'a>(
     tries
         .filter(|t| !due(Some(t), now, retry, failed_retry))
         .fold((0, 0), |(w, n), t| (w + 1, n + usize::from(t.no_track)))
+}
+
+/// Essais à oublier lors d'un passage **court** : ceux d'éléments relus ce passage (`read`) qui n'ont plus rien à
+/// extraire (absents de `pending`, les éléments au plan non vide). Un élément extrait avec succès garde son essai
+/// pendant `retry_hours` ; sans ça il restait compté « en attente de relance » (3 → 16 après 13 extractions, vu le
+/// 2026-10-08) et relu par Ids après 6 h, jusqu'au balayage de 05:00 qui seul élaguait. Un élément non relu garde
+/// son essai : une liste partielle n'en dit rien.
+pub fn prune_seen(
+    tries: &BTreeMap<String, SubtitleTry>,
+    read: &HashSet<String>,
+    pending: &HashSet<String>,
+) -> HashSet<String> {
+    tries
+        .keys()
+        .filter(|id| read.contains(*id) && !pending.contains(*id))
+        .cloned()
+        .collect()
 }
 
 /// Reliquat : éléments dus ce passage pour lesquels aucun essai n'a été noté.
@@ -437,7 +456,28 @@ impl Task for SubtitleSync {
                 failed_retry,
             )
         } else {
-            waiting_counts(tries.values(), now, retry, failed_retry)
+            // passage court : les éléments relus qui n'ont plus rien à extraire perdent leur essai (extraits avec
+            // succès depuis, fichier annexe désormais listé par Jellyfin), puis on compte ce qui attend vraiment
+            let read: HashSet<String> = items
+                .iter()
+                .filter_map(|i| i.get("Id").and_then(Value::as_str).map(str::to_string))
+                .collect();
+            let done = prune_seen(&tries, &read, &pending_ids);
+            if !done.is_empty() && !ctx.dry_run {
+                let _ = ctx
+                    .state
+                    .update(|s| s.subtitle_tries.retain(|id, _| !done.contains(id)))
+                    .await;
+            }
+            waiting_counts(
+                tries
+                    .iter()
+                    .filter(|(id, _)| !done.contains(*id))
+                    .map(|(_, t)| t),
+                now,
+                retry,
+                failed_retry,
+            )
         };
         let full_note = if full { " ; balayage complet" } else { "" };
         let full_at = full.then_some(local_now);
@@ -792,6 +832,53 @@ mod tests {
             vec!["a", "b", "c"]
         );
         assert_eq!(waiting_counts(tries.values(), now, retry, failed), (2, 1));
+    }
+
+    #[test]
+    fn a_short_pass_forgets_the_tries_of_items_it_read_with_nothing_left_to_extract() {
+        let (retry, failed) = (6 * 3600, 7 * 86_400);
+        let now = 1_000_000;
+        let fresh = |no_track| SubtitleTry {
+            at: now - 60,
+            no_track,
+        };
+        // 3 essais « normaux » avant le lot, puis 13 extractions réussies : 16 essais pas encore dus
+        let mut tries: BTreeMap<String, SubtitleTry> = BTreeMap::new();
+        for i in 0..3 {
+            tries.insert(format!("old{i}"), fresh(i == 0));
+        }
+        for i in 0..13 {
+            tries.insert(format!("new{i:02}"), fresh(false));
+        }
+        assert_eq!(waiting_counts(tries.values(), now, retry, failed), (16, 1));
+        // le passage suivant relit les 13 (Jellyfin les a sauvés après le rafraîchissement) : plus rien à extraire,
+        // sauf un dont le fichier annexe n'est pas encore listé ; les 3 anciens ne sont pas relus
+        let read: HashSet<String> = (0..13).map(|i| format!("new{i:02}")).collect();
+        let pending: HashSet<String> = ["new05".to_string()].into();
+        let done = prune_seen(&tries, &read, &pending);
+        assert_eq!(done.len(), 12);
+        assert!(!done.contains("new05"), "toujours à extraire : essai gardé");
+        assert!(
+            !done.iter().any(|id| id.starts_with("old")),
+            "non relus : gardés, une liste partielle n'en dit rien"
+        );
+        assert_eq!(
+            waiting_counts(
+                tries
+                    .iter()
+                    .filter(|(id, _)| !done.contains(*id))
+                    .map(|(_, t)| t),
+                now,
+                retry,
+                failed
+            ),
+            (4, 1),
+            "3 anciens + 1 en attente de son fichier annexe"
+        );
+        // rien relu, rien oublié ; élément relu et encore à extraire : gardé
+        assert!(prune_seen(&tries, &HashSet::new(), &HashSet::new()).is_empty());
+        let all: HashSet<String> = tries.keys().cloned().collect();
+        assert!(prune_seen(&tries, &all, &all).is_empty());
     }
 
     #[test]

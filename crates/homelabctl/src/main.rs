@@ -460,22 +460,16 @@ async fn main() -> Result<()> {
         Cmd::Status => {
             let runs = ctx.state.read(|s| s.task_runs.clone()).await;
             println!(
-                "{:<16} {:<8} {:<20} {:<6} {:<6} summary",
+                "{:<16} {:<8} {:<22} {:<6} {:<6} summary",
                 "task", "last_ok", "last_end", "runs", "errors"
             );
             let ts = homelab_core::state::now();
             for (name, r) in runs {
-                let end = r
-                    .last_end
-                    .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-                    .map(|d| {
-                        d.with_timezone(&chrono::Local)
-                            .format("%Y-%m-%d %H:%M:%S")
-                            .to_string()
-                    })
-                    .unwrap_or_else(|| "running".into());
+                // début sans fin : « running? depuis HH:MM » si un passage peut encore tourner, « interrompu? »
+                // au-delà du plafond d'un passage (le fichier retarde sur la mémoire du daemon, voir `phase`)
+                let end = r.phase(ts).label();
                 println!(
-                    "{:<16} {:<8} {:<20} {:<6} {:<6} {}",
+                    "{:<16} {:<8} {:<22} {:<6} {:<6} {}",
                     name,
                     r.last_ok
                         .map(|b| if b { "ok" } else { "FAIL" })

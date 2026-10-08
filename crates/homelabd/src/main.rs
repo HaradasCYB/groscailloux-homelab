@@ -86,6 +86,17 @@ async fn main() -> Result<()> {
 
     let mut handles = scheduler::spawn_all(ctx.clone());
 
+    // tenue des passages différée (`update_lazy`) : écrite au plus une minute après (2026-10-08 ; jusque-là elle
+    // attendait la mutation suivante, des heures pour une tâche rare)
+    {
+        let state = ctx.state.clone();
+        handles.push(tokio::spawn(async move {
+            state
+                .run_lazy_flusher(homelab_core::state::LAZY_MAX_AGE)
+                .await;
+        }));
+    }
+
     if !args.no_watcher && ctx.cfg.auto_import.enabled && ctx.cfg.task_enabled("auto_import") {
         let c = ctx.clone();
         handles.push(tokio::spawn(async move {

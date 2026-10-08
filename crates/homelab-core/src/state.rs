@@ -332,7 +332,54 @@ pub struct StreakAlert {
     pub last_error: String,
 }
 
+/// Durée au bout de laquelle le daemon interrompt un passage (`scheduler::run_once`). Au-delà, un début sans fin ne
+/// peut plus être un passage en cours.
+pub const RUN_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Où en est une tâche d'après ce qu'un lecteur du fichier d'état en voit (voir [`RunInfo::phase`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunPhase {
+    /// Dernier passage terminé à cette date.
+    Finished(i64),
+    /// Début à cette date, pas de fin enregistrée : un passage en cours, **ou** fini depuis moins d'une minute dont
+    /// la fin (`update_lazy`) n'est pas encore sur disque.
+    Running(i64),
+    /// Début à cette date, pas de fin, et plus ancien que [`RUN_TIMEOUT`] : le passage ne tourne plus (daemon arrêté
+    /// ou tué en plein passage). Rien ne le dira avant le passage suivant de la tâche, des heures pour une rare.
+    Interrupted(i64),
+}
+
+impl RunPhase {
+    /// Texte court pour `homelabctl status`. Un « ? » après `running` : le fichier ne sait pas dire si le passage
+    /// tourne encore ou vient de finir.
+    pub fn label(&self) -> String {
+        let local = |t: i64, fmt: &str| {
+            chrono::DateTime::from_timestamp(t, 0)
+                .map(|d| d.with_timezone(&chrono::Local).format(fmt).to_string())
+                .unwrap_or_else(|| "?".into())
+        };
+        match *self {
+            RunPhase::Finished(t) => local(t, "%Y-%m-%d %H:%M:%S"),
+            RunPhase::Running(t) => format!("running? depuis {}", local(t, "%H:%M")),
+            RunPhase::Interrupted(t) => format!("interrompu? {}", local(t, "%d/%m %H:%M")),
+        }
+    }
+}
+
 impl RunInfo {
+    /// Un début sans fin (`last_end` vide, ou plus ancienne que le début) n'est « en cours » que tant qu'un passage
+    /// peut encore durer. Avant le 2026-10-08, `homelabctl status` affichait « running » dès que `last_end` était
+    /// vide, donc aussi pour une tâche coupée en plein passage (tuée avec le daemon) — jusqu'à son passage suivant.
+    pub fn phase(&self, now: i64) -> RunPhase {
+        match self.last_end {
+            Some(end) if end >= self.last_start => RunPhase::Finished(end),
+            _ if now.saturating_sub(self.last_start) <= RUN_TIMEOUT.as_secs() as i64 => {
+                RunPhase::Running(self.last_start)
+            }
+            _ => RunPhase::Interrupted(self.last_start),
+        }
+    }
+
     /// Enregistre la fin d'un passage. `summary` est ce que la tâche a rendu (ou « error: … » / « timeout » en cas
     /// d'échec). Succès : remet la série à zéro et rend le retour à la normale si une alerte était partie. Échec :
     /// compte l'erreur (total, jour, série) et garde son texte.
@@ -522,7 +569,10 @@ impl AlertStats {
 }
 
 /// Une mutation différée (`update_lazy`) n'entraîne pas d'écriture si l'état a été sérialisé depuis moins que ça :
-/// elle part avec l'écriture suivante, au plus tard à la première mutation qui suit ce délai, ou à l'arrêt.
+/// elle part avec l'écriture suivante, ou au plus tard au tour suivant de [`StateStore::run_lazy_flusher`] (un tour
+/// de ce délai), ou à l'arrêt. Jusqu'au 2026-10-08 le drapeau `dirty` n'était lu par personne et rien ne forçait
+/// l'écriture : une mutation différée attendait la première mutation suivante, des heures pour une tâche rare (vu
+/// en production sur `deletion_cleanup`).
 pub const LAZY_MAX_AGE: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
@@ -652,8 +702,9 @@ impl StateStore {
     }
 
     /// Mutation de simple tenue (début d'un passage, fin d'un passage qui ne change rien) : appliquée tout de suite
-    /// en mémoire, écrite avec la sauvegarde suivante — au plus tard `LAZY_MAX_AGE` après la précédente, ou à
-    /// l'arrêt (`flush`). Une coupure brutale peut en perdre une minute, jamais une mutation faite par `update`.
+    /// en mémoire, écrite avec la sauvegarde suivante — au plus tard au tour suivant de `run_lazy_flusher`
+    /// (`LAZY_MAX_AGE`), ou à l'arrêt (`flush`). Une coupure brutale peut en perdre une minute, jamais une mutation
+    /// faite par `update`.
     pub async fn update_lazy<R>(&self, f: impl FnOnce(&mut State) -> R) -> Result<R> {
         self.apply(true, f).await
     }
@@ -665,6 +716,44 @@ impl StateStore {
         f: impl FnOnce(&mut State) -> R,
     ) -> Result<R> {
         self.apply(lazy, f).await
+    }
+
+    /// Écrit les mutations différées qui attendent encore, et rien du tout si aucune n'attend (ni sérialisation ni
+    /// écriture). Rend `true` si une écriture a été demandée. En cas d'échec d'écriture le drapeau est remis : le
+    /// tour suivant réessaie (l'instantané resté en attente n'aurait sinon plus personne pour l'écrire).
+    pub async fn flush_if_dirty(&self) -> Result<bool> {
+        if self.read_only {
+            return Ok(false);
+        }
+        let version = {
+            let mut g = self.inner.lock().await;
+            if !g.dirty {
+                return Ok(false);
+            }
+            self.snapshot(&mut g)?
+        };
+        if let Err(e) = self.write_up_to(version).await {
+            self.inner.lock().await.dirty = true;
+            return Err(e);
+        }
+        Ok(true)
+    }
+
+    /// Tient la promesse de [`LAZY_MAX_AGE`] : toutes les `every`, écrit ce que `update_lazy` a laissé en mémoire.
+    /// Ne rend jamais la main (à lancer dans une tâche, arrêtée avec le daemon ; `flush` écrit le reste).
+    pub async fn run_lazy_flusher(&self, every: Duration) {
+        let mut tick = tokio::time::interval(every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick.tick().await; // le premier tour part tout de suite : rien à écrire au démarrage
+        loop {
+            tick.tick().await;
+            if let Err(e) = self.flush_if_dirty().await {
+                tracing::warn!(
+                    error = format!("{e:#}"),
+                    "écriture différée de l'état échouée"
+                );
+            }
+        }
     }
 
     /// Écrit ce qui ne l'est pas encore (mutations différées) : à l'arrêt du daemon. Rien si le disque est à jour.
@@ -1045,6 +1134,58 @@ mod tests {
         assert_eq!(AlertStats::default().count_recent(p, 0, 600), 0);
     }
 
+    #[test]
+    fn a_start_without_an_end_is_running_only_while_a_pass_can_still_last() {
+        let run = |start: i64, end: Option<i64>| RunInfo {
+            last_start: start,
+            last_end: end,
+            ..Default::default()
+        };
+        let t = RUN_TIMEOUT.as_secs() as i64;
+        // passage fini : sa fin
+        assert_eq!(
+            run(1_000, Some(1_005)).phase(9_999),
+            RunPhase::Finished(1_005)
+        );
+        assert_eq!(
+            run(1_000, Some(1_000)).phase(9_999),
+            RunPhase::Finished(1_000),
+            "début et fin dans la même seconde"
+        );
+        // vraie tâche en cours : début récent, pas de fin
+        assert_eq!(run(1_000, None).phase(1_030), RunPhase::Running(1_000));
+        assert_eq!(run(1_000, None).phase(1_000 + t), RunPhase::Running(1_000));
+        // une fin plus ancienne que le début : un nouveau passage a commencé
+        assert_eq!(
+            run(2_000, Some(1_500)).phase(2_010),
+            RunPhase::Running(2_000)
+        );
+        // plus vieux que le plafond d'un passage : le passage ne tourne plus (daemon arrêté en plein passage)
+        assert_eq!(
+            run(1_000, None).phase(1_000 + t + 1),
+            RunPhase::Interrupted(1_000)
+        );
+        assert_eq!(
+            run(2_000, Some(1_500)).phase(2_000 + 3_600),
+            RunPhase::Interrupted(2_000)
+        );
+        // une horloge qui recule ne fait pas plus que « en cours »
+        assert_eq!(run(5_000, None).phase(4_000), RunPhase::Running(5_000));
+    }
+
+    #[test]
+    fn the_status_label_tells_a_guess_from_a_certainty() {
+        assert!(RunPhase::Finished(1_700_000_000).label().len() == 19);
+        let running = RunPhase::Running(1_700_000_000).label();
+        assert!(
+            running.starts_with("running? depuis "),
+            "{running}: le fichier ne sait pas si c'est fini"
+        );
+        let cut = RunPhase::Interrupted(1_700_000_000).label();
+        assert!(cut.starts_with("interrompu? "), "{cut}");
+        assert!(!cut.starts_with("running"));
+    }
+
     #[tokio::test]
     async fn read_only_store_never_writes() {
         let dir = tempfile::tempdir().unwrap();
@@ -1229,6 +1370,133 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(on_disk(&path).restarts.len(), 4);
+    }
+
+    /// 2026-10-08 : `dirty` était écrit mais jamais lu — une mutation différée attendait la suivante (des heures
+    /// pour `deletion_cleanup`). `flush_if_dirty` écrit ce qui attend, et rien d'autre.
+    #[tokio::test]
+    async fn flush_if_dirty_writes_pending_lazy_mutations_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let store = StateStore::load(&path)
+            .unwrap()
+            .with_lazy_max_age(Duration::from_secs(3600));
+        assert!(!store.flush_if_dirty().await.unwrap(), "rien d'attente");
+        assert_eq!(store.disk_writes(), 0);
+        store
+            .update_lazy(|s| {
+                s.restarts.insert("a".into(), 1);
+            })
+            .await
+            .unwrap(); // premier passage : écrit
+        assert_eq!(store.disk_writes(), 1);
+        assert!(
+            !store.flush_if_dirty().await.unwrap(),
+            "rien n'a changé depuis l'écriture"
+        );
+        store
+            .update_lazy(|s| {
+                s.restarts.insert("b".into(), 2);
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            on_disk(&path).restarts.len(),
+            1,
+            "différée : pas sur disque"
+        );
+        assert!(store.flush_if_dirty().await.unwrap());
+        assert_eq!(
+            on_disk(&path).restarts.len(),
+            2,
+            "partie sans autre mutation"
+        );
+        assert_eq!(store.disk_writes(), 2);
+        // plus rien à écrire : ni sérialisation ni écriture
+        assert!(!store.flush_if_dirty().await.unwrap());
+        assert_eq!(store.disk_writes(), 2);
+        // une mutation durable remet le drapeau à zéro : le tour suivant n'a rien à faire
+        store
+            .update_lazy(|s| {
+                s.restarts.insert("c".into(), 3);
+            })
+            .await
+            .unwrap();
+        store.update(|s| stuck(s, "x")).await.unwrap();
+        let n = store.disk_writes();
+        assert!(!store.flush_if_dirty().await.unwrap());
+        assert_eq!(store.disk_writes(), n);
+        assert_eq!(on_disk(&path).restarts.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn flush_if_dirty_keeps_retrying_after_a_failed_write() {
+        let dir = tempfile::tempdir().unwrap();
+        // le « dossier » de l'état est un fichier : toute écriture échoue
+        let blocker = dir.path().join("bloc");
+        std::fs::write(&blocker, b"x").unwrap();
+        let store = StateStore::load(&blocker.join("state.json"))
+            .unwrap()
+            .with_lazy_max_age(Duration::from_secs(3600));
+        assert!(store
+            .update_lazy(|s| {
+                s.restarts.insert("a".into(), 1);
+            })
+            .await
+            .is_err());
+        store
+            .update_lazy(|s| {
+                s.restarts.insert("b".into(), 2);
+            })
+            .await
+            .unwrap(); // différée : en mémoire seulement
+        assert!(store.flush_if_dirty().await.is_err());
+        // le drapeau est remis : le tour suivant essaie encore au lieu de croire que tout est écrit
+        assert!(store.flush_if_dirty().await.is_err());
+        assert_eq!(store.disk_writes(), 0);
+    }
+
+    #[tokio::test]
+    async fn read_only_store_never_flushes_if_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let ro = StateStore::load_read_only(&path).unwrap();
+        ro.update_lazy(|s| {
+            s.restarts.insert("a".into(), 1);
+        })
+        .await
+        .unwrap();
+        assert!(!ro.flush_if_dirty().await.unwrap());
+        assert!(!path.exists());
+    }
+
+    /// La boucle du démon : une mutation différée est sur disque au tour suivant, sans autre mutation.
+    #[tokio::test]
+    async fn the_lazy_flusher_writes_within_one_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let store = StateStore::load(&path)
+            .unwrap()
+            .with_lazy_max_age(Duration::from_secs(3600));
+        let flusher = {
+            let s = store.clone();
+            tokio::spawn(async move { s.run_lazy_flusher(Duration::from_millis(20)).await })
+        };
+        for k in ["a", "b"] {
+            store
+                .update_lazy(|s| {
+                    s.restarts.insert(k.into(), 1);
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(on_disk(&path).restarts.len(), 1, "la 2e est différée");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while on_disk(&path).restarts.len() < 2 {
+            assert!(Instant::now() < deadline, "jamais écrite par la boucle");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        flusher.abort();
     }
 
     #[test]
