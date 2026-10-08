@@ -8,13 +8,19 @@ Les dates antérieures au dépôt git (avril-août 2026) sont **reconstituées**
 notes d'exploitation ; à partir du 10/09/2026, chaque ligne renvoie aux commits. Depuis le 21/09/2026, les versions
 publiées le même jour sont regroupées sous la dernière d'entre elles (les tags git intermédiaires restent).
 
+Le 08/10/2026, ce journal a été remis en ordre : l'ancienne section « 1.19.1 » (treize jours de nouveautés, du 23/09
+au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 » (revue Kaizen) est devenue 1.22.0.
+
 ## En bref
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.20.0](#1200--07--08102026--revue-kaizen--alertes-sobriété-et-portes-dadministration)** | 07 → 08/10/2026 | **Revue Kaizen : alertes, sobriété et portes d'administration** |
-| [1.19.1](#1191--23092026--audit--fiabilité-et-sécurité) | 23/09/2026 | Audit : fiabilité et sécurité |
-| [1.19.0](#1190--21092026--suivi-des-demandes-langue-et-canari) | 21/09/2026 | Suivi des demandes, langue et canari |
+| **[1.23.0](#1230--08102026--abonnés-à-la-main--aide-et-annonces--catalogue-et-langue-dorigine)** | 08/10/2026 | **Abonnés à la main, « Aide et annonces », catalogue, langue d'origine et outils** |
+| [1.22.0](#1220--07--08102026--revue-kaizen--alertes-sobriété-et-portes-dadministration) | 07 → 08/10/2026 | Revue Kaizen : alertes, sobriété et portes d'administration |
+| [1.21.0](#1210--02--05102026--résilience-jellyfin-121-et-nouvelle-interface) | 02 → 05/10/2026 | Résilience, Jellyfin 12.1 et nouvelle interface |
+| [1.20.0](#1200--2509--01102026--codec-x265-voie-russe-chromecast-et-site-de-secours) | 25/09 → 01/10/2026 | Codec x265, voie russe, Chromecast et site de secours |
+| [1.19.1](#1191--23--25092026--audit--fiabilité-et-sécurité) | 23 → 25/09/2026 | Audit : fiabilité et sécurité |
+| [1.19.0](#1190--21--22092026--suivi-des-demandes-langue-et-canari) | 21 → 22/09/2026 | Suivi des demandes, langue et canari |
 | [1.18.0](#1180--20092026--abonnement-automatique--mon-compte--discord-et-bienvenue) | 20/09/2026 | Abonnement automatique, « Mon compte », Discord et bienvenue |
 | [1.15.1](#1151--19092026--télé-français-partout-airplay-et--lire-sur-) | 19/09/2026 | Télé, français partout, AirPlay et « Lire sur » |
 | [1.14.0](#1140--18092026--animés-complets-tout-par-la-seedbox-lecture-qui-tient-la-nuit) | 18/09/2026 | Animés complets, tout par la seedbox, lecture qui tient la nuit |
@@ -28,7 +34,114 @@ publiées le même jour sont regroupées sous la dernière d'entre elles (les ta
 
 ---
 
-## 1.20.0 — 07 → 08/10/2026 — Revue Kaizen : alertes, sobriété et portes d'administration
+## 1.23.0 — 08/10/2026 — Abonnés à la main, « Aide et annonces », catalogue et langue d'origine
+
+Lot 4 de la revue Kaizen, première vague : cinq chantiers fusionnés et installés le 08/10 en fin d'après-midi
+(contrôles du démarrage sans erreur), plus une intervention sur la seedbox le même jour. La seconde vague ne touche
+pas au service : documentation et numérotation des versions.
+
+### Pour les membres
+
+- **« Aide et annonces »** : la bulle du tchat et son panneau changent de nom, comme le guide public (captures
+  refaites, plus étirées sur les petites largeurs), la page de premiers pas et les mails de l'administrateur. Les
+  salons Entraide et Discussion sont fusionnés en un seul, « Entraide », sans message perdu ; trois onglets (Annonces,
+  Entraide, Écrire à l'admin) tiennent toujours sur une ligne, téléphone compris.
+  - À l'ouverture, Annonces arrive au début de la dernière annonce ; un compte neuf ne voit plus toutes les vieilles
+    annonces comme « non lues » (celles de plus de 14 jours comptent comme lues, clé `[chat] new_member_read_days`).
+  - Le focus va à l'onglet actif à l'ouverture et la touche Échap ferme le panneau, comme dans « Mon compte ».
+  - Le bandeau d'annonce reste affiché tant que l'annonce n'est pas lue, sur ordinateur et téléphone (il s'effaçait au
+    bout de 12 s sur les appareils à deux cœurs) ; sur télé, la touche Retour (Retour arrière sur une télécommande
+    sans pointeur) le ferme, ainsi que le panneau ouvert.
+  - Moins de requêtes : la bulle ne redemande plus son état à l'ouverture ni après chaque lecture, ne demande rien
+    pendant une lecture vidéo et ralentit son rythme quand personne n'est là, sans perdre le temps réel ; un
+    modérateur sur la liste des fils voit le badge d'un nouveau message privé en quelques secondes.
+  - À savoir : la fusion des salons peut afficher « 1 non lu » une fois sur la bulle, et une page Jellyfin déjà
+    ouverte garde l'ancien tchat jusqu'au rechargement (Ctrl+R).
+  - Les règles de l'API du tchat sont testées (annonces réservées aux modérateurs, fils privés, suppression, fusion
+    des salons, compte neuf).
+
+### Abonnements
+
+- **Abonnés hors PayPal gérés à la main** (décision du 08/10).
+  - Sont concernées les fiches qui ne sont ni un essai de l'inscription publique ni liées à un abonnement PayPal :
+    actif ou offert posé par l'admin, essai posé par l'admin, import, exempté, à qualifier.
+  - Le cycle ne les suspend plus jamais et le membre ne reçoit plus aucun rappel.
+  - À l'échéance, l'admin reçoit une seule information (mail et Discord admin) et `/accounts` affiche « À gérer
+    (échéance passée) ».
+  - Les essais de l'inscription et les abonnements PayPal ne changent pas.
+- **Correction** : un essai posé par l'admin (`subs set --status trial`) est géré à la main. Avant, il recevait les
+  rappels « t'abonner » mais n'était jamais suspendu.
+
+### Pour l'administrateur
+
+- **Rapport « catalogue jamais regardé » sur la page d'état** : la tâche `catalogue_report` (une fois par jour,
+  lecture seule, aucune suppression) relève les titres qu'aucun compte n'a commencés 60 jours après leur arrivée, par
+  sorte (film, série, animé), côté (VPS ou seedbox), taille et sorte de demandeur (membre, admin, aucune) ; elle met à
+  part l'arriéré des séries déjà commencées et suit la voie russe (épisodes disponibles et lus). Affiché dans une
+  section de `/status.html` ; l'administrateur décide. Une série demandée avant sa diffusion compte à partir de sa
+  première diffusion, et une fiche sans identifiant TMDB est « inconnu », jamais « aucune demande ».
+- **Langue d'origine des fiches** : une nouvelle tâche (`original_language`) remplit chaque matin, quelques fiches à
+  la fois, la langue d'origine TMDB des films. Jellyfin peut alors choisir de lui-même la piste en version originale
+  dans toutes les applis, télés comprises (rien ne change encore pour les membres : le mode « Toujours en VO » de
+  « Mon compte » reste celui d'avant). Elle n'écrit jamais pendant une lecture, ne relit aucune vidéo et note chaque
+  écriture pour pouvoir revenir en arrière.
+  - Les séries restent à l'arrêt (`series = false`) en attendant la décision de l'admin : Jellyfin réécrirait la
+    classification de chacune de leurs saisons et de leurs épisodes.
+  - Retour arrière fiable : une fiche remise à vide n'est jamais réécrite le lendemain ; une série dont un épisode a
+    sa propre classification n'est pas touchée ; les séries présentes à la fois sur le VPS et sur la seedbox sont
+    traitées fiche par fiche.
+- **autobrr (seedbox) : flux C411 désactivé** (08/10, intervention sur la seedbox). Son filtre unique poussait chaque
+  release du flux (musique, livres et jeux compris) aux deux Arrs de la seedbox : environ 2 000 refus et 440
+  avertissements « Unable to parse » par jour, pour 3 acceptations en six jours. Le RSS des Arrs (15 min) reste la
+  voie d'entrée.
+  - Pourquoi pas deux filtres par catégorie (films, séries) : autobrr 1.86.0, la dernière version, ne lit pas les
+    catégories de C411 dans le flux et reçoit une catégorie vide ; un filtre par catégorie paraîtrait actif sans rien
+    retenir, et trier sur le nom des releases est impossible (les packs de jeux et de musique portent des résolutions
+    et des codecs comme les films).
+  - Une troisième clé C411, propre au flux et comptée nulle part (ni dans le budget horaire ni dans Prowlarr), est
+    identifiée ; elle n'est plus utilisée.
+  - Alternative documentée, non montée : deux flux séparés par catégorie à la source. Retour arrière : réactiver le
+    flux, ce qui remet aussitôt le bruit d'origine.
+
+### Outillage
+
+- **Un seul exécutant « hors pic »** : `tools/offpeak/offpeak.sh` remplace les huit scripts recopiés dans `backups/`.
+  Il exécute une commande dans un créneau, seulement si personne ne regarde, et envoie un bilan sur le salon Discord
+  admin ; sa programmation survit au redémarrage du serveur (unités `homelab-offpeak@`).
+  - Deux travaux programmés au même moment (ou rattrapés ensemble au démarrage) ne se bloquent plus jusqu'à la fin de
+    leur créneau : ils passent l'un après l'autre.
+  - Un travail lancé en root (`sudo`) ne bloque plus les suivants : l'outil tourne toujours en `deploy`, seule la
+    commande passe en root.
+  - `homelabctl install` n'active plus aucune unité modèle (`@`) : aucun minuteur versionné n'agit seul à
+    l'installation.
+- **Un seul lanceur de bancs d'interface** : `tools/bench/bench.sh` remplace les lanceurs dispersés.
+  - Les comptes de test `zz_` sont toujours supprimés, même si le banc est interrompu pendant leur création.
+  - Les bancs sont refusés le soir (19:00–00:00) et pendant une lecture.
+  - Le navigateur de banc ne voit plus les secrets du serveur.
+- **Bancs de non-régression** : le banc de l'en-tête vérifie que le menu ☰ est libre sur toute sa largeur, sur
+  téléphone et sous 900 px ; un banc couvre la voie russe de « Mon compte » (26 contrôles, avec contre-épreuve).
+
+### Documentation et versions
+
+- **Documentation restructurée** : `CLAUDE.md` (135 Ko, dont 12 passages périmés ou contradictoires : le budget C411
+  écrit avec cinq valeurs différentes, PayPal décrit en « sandbox » alors que les abonnements tournent en production)
+  ne garde plus que les règles courtes et les interdits ; le détail passe dans `docs/runbooks/`.
+- **Numérotation remise en ordre** : l'ancienne section « 1.19.1 », qui mêlait treize jours de nouveautés (du 23/09 au
+  05/10) dans le désordre, est découpée en 1.19.1, 1.20.0 et 1.21.0, chaque entrée rangée à sa date ; l'ancienne
+  « 1.20.0 » (revue Kaizen) devient 1.22.0.
+  - La version du programme (`Cargo.toml`, `homelabctl --version`) passe de 2.0.0 (valeur posée par la refonte de
+    septembre et jamais incrémentée) à 1.23.0 : elle suit désormais ce journal. Le daemon affiche toujours `git
+    describe`, qui repart du dernier tag.
+  - Des tags annotés `v1.19.1`, `v1.20.0`, `v1.21.0` et `v1.22.0` marquent le dernier commit de chaque version (aucun
+    tag n'avait été posé depuis `v1.19.0`).
+- Commits : [`9fc590f`][9fc590f] [`2fc1cd6`][2fc1cd6] (abonnés), [`66984a9`][66984a9] [`4139ace`][4139ace]
+  (catalogue), [`1f9c09b`][1f9c09b] [`e2937cf`][e2937cf] (langue d'origine), [`9846c52`][9846c52] [`0a46682`][0a46682]
+  [`cc0b762`][cc0b762] [`d92da5e`][d92da5e] [`2f0e45b`][2f0e45b] (tchat), [`3c78191`][3c78191] [`d0f5bf6`][d0f5bf6]
+  [`38d7cc2`][38d7cc2] [`0b8d8d9`][0b8d8d9] [`f60bcdb`][f60bcdb] [`02fd974`][02fd974] [`608ed9f`][608ed9f]
+  [`798bbd3`][798bbd3] (outillage) ; fusions [`ce9615f`][ce9615f] [`cf7eaae`][cf7eaae] [`dc45ed5`][dc45ed5]
+  [`36e06d0`][36e06d0] [`bb33d63`][bb33d63].
+
+## 1.22.0 — 07 → 08/10/2026 — Revue Kaizen : alertes, sobriété et portes d'administration
 
 Revue complète de la plateforme le 07/10. Lot 1 : réglages appliqués le jour même, sans code (sauf la veille des
 images). Lot 2 : le moteur d'automatisation (homelabd), installé dans la nuit du 08/10 ; au lendemain, aucune erreur
@@ -132,38 +245,15 @@ de tâche ni alerte.
   [`ae0df9d`][ae0df9d] [`9e76693`][9e76693] [`0c8c619`][0c8c619] (robustesse), [`e8a5d3f`][e8a5d3f] (chaîne des
   erreurs), [`3c98e54`][3c98e54] (alertes, suite), [`aa8bfd0`][aa8bfd0] (sobriété, suite), [`69afbef`][69afbef]
   [`30b3572`][30b3572] (packs numérotés) ; fusions [`39bd51c`][39bd51c] [`1ddf77f`][1ddf77f] [`2febb34`][2febb34]
-  [`7d91fc2`][7d91fc2] [`33f720b`][33f720b] [`e8c8556`][e8c8556] [`e4e93b7`][e4e93b7] [`fe81d1e`][fe81d1e].
+  [`7d91fc2`][7d91fc2] [`33f720b`][33f720b] [`e8c8556`][e8c8556] [`e4e93b7`][e4e93b7] [`fe81d1e`][fe81d1e] ;
+  documentation [`599db47`][599db47] [`ebbfc24`][ebbfc24].
 
-## 1.19.1 — 23/09/2026 — Audit : fiabilité et sécurité
+## 1.21.0 — 02 → 05/10/2026 — Résilience, Jellyfin 12.1 et nouvelle interface
 
-- **Jellyfin 12.1 (03/10)** : passage à la dernière version de Jellyfin, avec 2 minutes de coupure.
-  - **Pour les membres** : SyncPlay corrigé côté serveur, sous-titres d'animés qui gardent leurs styles, pages
-    plus rapides, boutons « Tout lire » et « Aléatoire » sur les séries.
-  - **Nouvelle interface** : navigateurs, Jellyfin Desktop et téléphones passent d'office sur la nouvelle
-    interface de Jellyfin. Les bibliothèques sont dans la barre du haut. L'ancienne interface reste au choix dans
-    Réglages → Affichage → « Mode d'affichage » ; les télés ne changent pas.
-  - **Accueil** : 4 rangées ont manqué une nuit (Tendances, Anime, Les mieux notés, Films français), revenues le
-    04/10 (voir plus haut).
-  - **Retour en arrière** possible pendant 7 jours.
-- **Interface revue pour le téléphone (04/10)** : 28 défauts de la nouvelle interface relevés sur téléphone et
-  tablette, tous corrigés et vérifiés sur iPhone, Android, iPad, PC, ancienne interface et TV.
-  - **Accueil** : sur PC, les rangées apparaissent de nouveau au premier écran (elles étaient sous le bas de l'écran) et
-    ne remontent plus sur la bannière après un défilement. Sur téléphone, la ligne d'infos de la bannière est lisible
-    (« 1 saison », âge et genre entiers) et la roue des réglages en anglais a disparu.
-  - **Barre du haut** : sur PC, les onglets Accueil… Calendrier montent dans la barre quand il y a la place (une ligne
-    de moins) ; sur téléphone, le bouton ☰ (bibliothèques) n'est plus recouvert par d'autres icônes et les onglets
-    défilent avec un fondu, l'onglet ouvert restant visible ; la barre devient opaque au défilement ; le logo revient sur tablette et
-    dans le menu ☰.
-  - **Sous-titres lisibles sur téléphone et télé** : la taille choisie dans Mon compte s'applique enfin (environ 5 px
-    sur iPhone auparavant).
-  - **Lecteur** : SyncPlay et « Lire sur » ne disparaissent plus derrière un titre long ; « Passer le générique » ne
-    gêne plus les commandes ; l'aide à la qualité s'affiche en haut au lieu de couvrir les boutons.
-  - **Fiches et bibliothèques** : plus de 140 px de vide sous la barre ; titres des affiches sur deux lignes ; la barre
-    A–Z ne mord plus sur les affiches ; noms de pistes audio lisibles ; langues et tailles en français ; plus de
-    collections techniques (« Tendances cette semaine ») dans les fiches ; le bloc « Également disponible » montre les
-    services français (caché sur téléphone).
-  - **Panneaux** : Mon compte tient dans l'écran avec sa croix toujours visible ; le tchat montre ses 4 onglets ; le
-    bandeau d'annonce ne recouvre plus le menu ; boutons plus faciles à toucher ; calendrier à l'heure française (17:00).
+Du 02 au 05/10 : une seedbox et un moteur qui se relancent seuls, deux cas de séries que la recherche ne comprenait
+pas, puis le passage à Jellyfin 12.1 (en service le 03/10 au soir) et tout ce qu'il a fallu adapter autour :
+interface, extensions, SyncPlay, Intro Skipper, sauvegardes. Les entrées vont de la plus récente à la plus ancienne.
+
 - **SyncPlay fiable de nouveau (05/10)** : depuis la mise à jour des extensions du matin, une extension ouvrait une
   seconde connexion en temps réel et le serveur y envoyait parfois les messages de la séance ; l'appli ne savait alors
   pas qu'elle était dans le groupe (impossible de l'arrêter) ou qu'elle l'avait quitté. Corrigé le soir même ; pour en
@@ -193,6 +283,25 @@ de tâche ni alerte.
   compte ne dépasse plus de l'écran. Dans le lecteur, un saut (barre, « Passer l'intro ») ne compte plus comme une
   coupure : l'aide « Ta connexion ne tient pas la qualité maximale » ne s'affiche plus à tort ; sur PC, elle passe en
   haut au lieu de cacher quatre boutons du lecteur.
+- **Interface revue pour le téléphone (04/10)** : 28 défauts de la nouvelle interface relevés sur téléphone et
+  tablette, tous corrigés et vérifiés sur iPhone, Android, iPad, PC, ancienne interface et TV.
+  - **Accueil** : sur PC, les rangées apparaissent de nouveau au premier écran (elles étaient sous le bas de l'écran) et
+    ne remontent plus sur la bannière après un défilement. Sur téléphone, la ligne d'infos de la bannière est lisible
+    (« 1 saison », âge et genre entiers) et la roue des réglages en anglais a disparu.
+  - **Barre du haut** : sur PC, les onglets Accueil… Calendrier montent dans la barre quand il y a la place (une ligne
+    de moins) ; sur téléphone, le bouton ☰ (bibliothèques) n'est plus recouvert par d'autres icônes et les onglets
+    défilent avec un fondu, l'onglet ouvert restant visible ; la barre devient opaque au défilement ; le logo revient sur tablette et
+    dans le menu ☰.
+  - **Sous-titres lisibles sur téléphone et télé** : la taille choisie dans Mon compte s'applique enfin (environ 5 px
+    sur iPhone auparavant).
+  - **Lecteur** : SyncPlay et « Lire sur » ne disparaissent plus derrière un titre long ; « Passer le générique » ne
+    gêne plus les commandes ; l'aide à la qualité s'affiche en haut au lieu de couvrir les boutons.
+  - **Fiches et bibliothèques** : plus de 140 px de vide sous la barre ; titres des affiches sur deux lignes ; la barre
+    A–Z ne mord plus sur les affiches ; noms de pistes audio lisibles ; langues et tailles en français ; plus de
+    collections techniques (« Tendances cette semaine ») dans les fiches ; le bloc « Également disponible » montre les
+    services français (caché sur téléphone).
+  - **Panneaux** : Mon compte tient dans l'écran avec sa croix toujours visible ; le tchat montre ses 4 onglets ; le
+    bandeau d'annonce ne recouvre plus le menu ; boutons plus faciles à toucher ; calendrier à l'heure française (17:00).
 - **Journaux gardés 14 jours (04/10)** : Jellyfin n'en gardait que 3, malgré le réglage du 03/10 (ce n'était pas le
   bon). Un souci signalé par un membre peut maintenant être retrouvé deux semaines après.
 - **Surveillance des lectures relancées en boucle (04/10)** : l'admin est prévenu quand un lecteur fait relancer
@@ -204,8 +313,6 @@ de tâche ni alerte.
 - **Première connexion plus rapide (04/10)** : sur un nouvel appareil, la page ne se recharge plus pour passer en
   français (une dizaine de secondes gagnées). Elle ne revient plus non plus, parfois, à l'écran de connexion juste
   après avoir saisi son mot de passe.
-- **Tchat et Mon compte dans la nouvelle interface (03/10)** : leurs boutons avaient disparu après le passage à
-  Jellyfin 12.1. Ils sont de retour dans la barre du haut, dans toutes les mises en page.
 - **La nouvelle interface retrouve ses repères (04/10)** :
   - le logo « Groscailloux TV » ;
   - sur l'accueil, les onglets Accueil, Favoris, Découvrir, Demandes et Calendrier ;
@@ -216,6 +323,17 @@ de tâche ni alerte.
   Le titre du film ou de la série à la une ne passe plus sous la barre. Dans « Lire sur », l'iPhone retrouve
   l'entrée AirPlay. Le navigateur Android explique quoi installer pour diffuser, et ailleurs une liste vide dit
   pourquoi.
+- **Jellyfin 12.1 (03/10)** : passage à la dernière version de Jellyfin, avec 2 minutes de coupure.
+  - **Pour les membres** : SyncPlay corrigé côté serveur, sous-titres d'animés qui gardent leurs styles, pages
+    plus rapides, boutons « Tout lire » et « Aléatoire » sur les séries.
+  - **Nouvelle interface** : navigateurs, Jellyfin Desktop et téléphones passent d'office sur la nouvelle
+    interface de Jellyfin. Les bibliothèques sont dans la barre du haut. L'ancienne interface reste au choix dans
+    Réglages → Affichage → « Mode d'affichage » ; les télés ne changent pas.
+  - **Accueil** : 4 rangées ont manqué une nuit (Tendances, Anime, Les mieux notés, Films français), revenues le
+    04/10 (voir plus haut).
+  - **Retour en arrière** possible pendant 7 jours.
+- **Tchat et Mon compte dans la nouvelle interface (03/10)** : leurs boutons avaient disparu après le passage à
+  Jellyfin 12.1. Ils sont de retour dans la barre du haut, dans toutes les mises en page.
 - **SyncPlay sans roue de chargement (03/10)** : dans l'appli Jellyfin Desktop, avancer pendant une séance à plusieurs
   laissait le groupe bloqué ; il fallait faire pause puis lecture. Le groupe repart maintenant seul après un saut.
   Il faut redémarrer l'appli une fois pour en profiter. Le correctif définitif viendra avec Jellyfin 12.1, déjà testé
@@ -235,14 +353,46 @@ de tâche ni alerte.
 - **Tableau de bord (03/10)** : nouvelle tuile « Lien d'inscription » sur la page de supervision, pour retrouver
   d'un clic le lien à envoyer aux futurs membres. La tuile « Procédures » mène de nouveau à la bonne page, et la tuile
   d'un ancien service retiré a disparu.
-- **Moins de place pour la même image (26/09)** : à langue égale, la recherche automatique prend maintenant la
-  version **x265** d'un épisode ou d'un film plutôt que la x264, environ 2,5 à 3 fois plus légère, et l'AV1 en dernier
-  (moins bien lu par les vieux appareils). Une version française en x264 reste préférée à une x265 sans français.
-  À égalité, le son en AAC, E-AC3 ou AC3 passe devant le DTS, que Chromecast et iPhone ne lisent pas : il fallait le
-  réencoder pendant la lecture.
-- **VO, correctif (26/09)** : le mode « Toujours en VO » laissait Jellyfin lire la piste marquée par défaut dans le
-  fichier, souvent la VF d'un MULTi (un animé partait en VF). La langue choisie passe maintenant avant ; les trois
-  comptes déjà en VO ont été corrigés.
+- **Résilience (02/10)** : si la seedbox redémarre ou qu'une de ses applis s'arrête, elle se relance toute seule en
+  quelques minutes, et l'admin est prévenu si une panne dure plus de 10 minutes. Côté serveur, le moteur
+  d'automatisation est surveillé et relancé s'il se fige, et le téléchargement direct du serveur se répare seul après
+  une coupure du VPN.
+- Commits : [`02948e0`][02948e0] (résilience), [`e287e2f`][e287e2f] [`ba2d7f5`][ba2d7f5] (séries : intégrales et
+  numéros nus), [`443545e`][443545e] [`b0e3548`][b0e3548] [`3decb9c`][3decb9c] [`2fd0099`][2fd0099]
+  [`a62ede2`][a62ede2] [`82c1f32`][82c1f32] [`f3e3183`][f3e3183] (Jellyfin 12.1 et interface), [`eeb0523`][eeb0523]
+  (surveillance des relances), [`194ad67`][194ad67] (télés et aide à la qualité), [`073e5e2`][073e5e2] (sauvegardes),
+  [`693b748`][693b748] (Intro Skipper et accueil), [`1d24b0e`][1d24b0e] (extensions), [`1a25345`][1a25345]
+  [`a0269e8`][a0269e8] (SyncPlay), [`04c861e`][04c861e] (dépôt et journal).
+
+## 1.20.0 — 25/09 → 01/10/2026 — Codec x265, voie russe, Chromecast et site de secours
+
+Du 25/09 (après-midi) au 01/10 : le choix des releases passe au x265 puis à un son que les appareils lisent sans
+réencoder, la voie russe ouvre, les Chromecast et les télés LG sont repris un par un, et un site public de secours
+prend le relais quand C411 est en panne. Les entrées vont de la plus récente à la plus ancienne.
+
+- **Site de secours (30/09 → 01/10)** : quand notre site de téléchargement principal est en panne, les films demandés sont
+  cherchés automatiquement sur un site public de secours, en français. Depuis le 01/10, les séries et les animés aussi
+  (pour les animés, d'abord un site spécialisé, en VOSTFR ou en VF seulement).
+- **Demandes pendant une panne de C411 (30/09)** : quand le site de téléchargement était en panne, une demande passait
+  pour « introuvable » et n'était recherchée à nouveau que le lendemain. La panne est maintenant reconnue : la recherche
+  reprend toute seule dès que le site revient.
+- **Mon compte à la télécommande (29/09)** : sur les télés, le panneau Mon compte s'ouvrait mais on ne pouvait pas s'y
+  déplacer. Les flèches passent maintenant d'un réglage à l'autre, et la langue et la taille des sous-titres se
+  choisissent par des boutons.
+- **Sous-titres en AirPlay (29/09)** : diffusé en AirPlay depuis un iPhone, iPad ou Mac, un film arrivait sur la télé
+  sans ses sous-titres. Ils font maintenant partie du flux envoyé à la télé.
+- **Chromecast 1080p (29/09)** : sur les Chromecast non 4K, certains films restaient en chargement infini, et chaque
+  avance rapide prenait 10 à 15 secondes. Ces modèles reçoivent maintenant une image en 720p qu'ils savent tous lire :
+  reprise environ deux fois plus rapide. Les Chromecast 4K ne changent pas.
+- **Fenêtre « Épisode suivant » (29/09)** : quand le titre d'un épisode était un nom de fichier, la fenêtre de fin
+  d'épisode poussait ses boutons « Démarrer maintenant » et « Cacher » hors de l'écran. Ils restent maintenant visibles.
+- **Télés LG (29/09)** : changer de langue en cours de film (VF → VO) ne faisait rien sur les télés LG ; la télé
+  restait sur la piste par défaut. Le changement passe maintenant par le serveur (quelques secondes de chargement,
+  sans perte de qualité), et le mode « Toujours en VO » de Mon compte marche aussi sur LG. Sur les télés, les
+  sous-titres sont plus grands, avec un contour, et le panneau Mon compte est lisible depuis le canapé.
+- **Google Cast bloqué sur « Ready to cast » (27/09)** : depuis une mise à jour de l'appli Chromecast de Jellyfin, la
+  télé demandait le son AC3/E-AC3 tel quel, chargeait le premier morceau puis abandonnait. Le serveur lui envoie de
+  nouveau un son AAC stéréo, comme avant ; les autres appareils ne changent pas.
 - **Deuxième lot de fichiers allégés (27/09)** : 18 titres de plus passés en version optimisée (dont Matrix, Batman
   Begins, Loki, Bet, Blue Box, Stranger Things 1985), environ 120 Go libérés ; 22 titres gardés faute de meilleure
   version disponible.
@@ -254,33 +404,6 @@ de tâche ni alerte.
   « fantôme » dans le montage de la seedbox et Jellyfin s'y était bloqué pendant des heures ; plus rien de nouveau
   n'apparaissait. Débloqué (les 6 films attendus sont arrivés), et un chien de garde débloque désormais ce cas seul en
   quelques minutes.
-- **Google Cast bloqué sur « Ready to cast » (27/09)** : depuis une mise à jour de l'appli Chromecast de Jellyfin, la
-  télé demandait le son AC3/E-AC3 tel quel, chargeait le premier morceau puis abandonnait. Le serveur lui envoie de
-  nouveau un son AAC stéréo, comme avant ; les autres appareils ne changent pas.
-- **Chromecast 1080p (29/09)** : sur les Chromecast non 4K, certains films restaient en chargement infini, et chaque
-  avance rapide prenait 10 à 15 secondes. Ces modèles reçoivent maintenant une image en 720p qu'ils savent tous lire :
-  reprise environ deux fois plus rapide. Les Chromecast 4K ne changent pas.
-- **Fenêtre « Épisode suivant » (29/09)** : quand le titre d'un épisode était un nom de fichier, la fenêtre de fin
-  d'épisode poussait ses boutons « Démarrer maintenant » et « Cacher » hors de l'écran. Ils restent maintenant visibles.
-- **Sous-titres en AirPlay (29/09)** : diffusé en AirPlay depuis un iPhone, iPad ou Mac, un film arrivait sur la télé
-  sans ses sous-titres. Ils font maintenant partie du flux envoyé à la télé.
-- **Mon compte à la télécommande (29/09)** : sur les télés, le panneau Mon compte s'ouvrait mais on ne pouvait pas s'y
-  déplacer. Les flèches passent maintenant d'un réglage à l'autre, et la langue et la taille des sous-titres se
-  choisissent par des boutons.
-- **Demandes pendant une panne de C411 (30/09)** : quand le site de téléchargement était en panne, une demande passait
-  pour « introuvable » et n'était recherchée à nouveau que le lendemain. La panne est maintenant reconnue : la recherche
-  reprend toute seule dès que le site revient.
-- **Résilience (02/10)** : si la seedbox redémarre ou qu'une de ses applis s'arrête, elle se relance toute seule en
-  quelques minutes, et l'admin est prévenu si une panne dure plus de 10 minutes. Côté serveur, le moteur
-  d'automatisation est surveillé et relancé s'il se fige, et le téléchargement direct du serveur se répare seul après
-  une coupure du VPN.
-- **Site de secours (30/09)** : quand notre site de téléchargement principal est en panne, les films demandés sont
-  cherchés automatiquement sur un site public de secours, en français. Depuis le 01/10, les séries et les animés aussi
-  (pour les animés, d'abord un site spécialisé, en VOSTFR ou en VF seulement).
-- **Télés LG (29/09)** : changer de langue en cours de film (VF → VO) ne faisait rien sur les télés LG ; la télé
-  restait sur la piste par défaut. Le changement passe maintenant par le serveur (quelques secondes de chargement,
-  sans perte de qualité), et le mode « Toujours en VO » de Mon compte marche aussi sur LG. Sur les télés, les
-  sous-titres sont plus grands, avec un contour, et le panneau Mon compte est lisible depuis le canapé.
 - **Contenu russe (26/09)** : un membre peut demander des séries et films russes par une voie dédiée (tracker
   russe, en VO russe) en choisissant le dossier « Russian » dans la fenêtre de demande ; ils arrivent dans deux
   bibliothèques « Séries russes » et « Films russes » visibles de son compte. *La Cuisine* (Кухня) y a été rangée.
@@ -289,63 +412,93 @@ de tâche ni alerte.
 - **Films d'animation et animés visibles tout de suite (26/09)** : un titre rangé dans « Anime » ou « Films
   d'animation » n'apparaissait qu'à l'analyse du lendemain matin (un film attendu 45 min alors qu'il était déjà
   téléchargé). Il est maintenant rangé dans les 5 minutes et visible juste après.
-- **Noms des tâches** : le panneau Automatisation de Homarr et la page d'état n'affichent plus « Tâche » pour les six
-  tâches les plus récentes (lectures simultanées, test de lecture, sous-titres extraits, cycle des abonnements,
-  contrôle PayPal, lectures qui bouclent). Chaque tâche porte désormais son nom dans son propre code, et une tâche
-  sans nom ne compile plus. Leurs résumés sont écrits en français lisible.
-- **Fiabilité** : une tâche qui rencontre une erreur imprévue ne s'arrête plus pour de bon, elle repasse à
-  l'intervalle suivant ; un paiement PayPal dont le traitement échoue est rejoué à la relance de PayPal au lieu
-  d'attendre le contrôle du lendemain ; une simple coupure réseau sur un film dont l'identifiant contient « 429 »
-  ne met plus une clé C411 au repos pour rien ; la file des téléchargements est lue en entier, plus seulement ses
-  200 premiers éléments.
-- **Sous-titres extraits** : un épisode déjà traité n'est revu qu'au bout de 6 h, et une vidéo sans piste
-  extractible une fois par semaine, au lieu de toutes les 5 minutes. Un sous-titre ASS de plus de 8 Mo n'est plus
-  choisi par défaut : le SRT l'est, les lecteurs web ne peinent plus.
-- **Sauvegardes** : l'archive est relue en entier avant qu'on supprime les anciennes (une compression ratée
-  passait pour une réussite), les bases des abonnés et du tchat sont copiées proprement même en service, le mot
-  de passe MySQL n'apparaît plus dans la liste des processus, et les vignettes et photos d'acteurs, régénérables,
-  ne sont plus sauvegardées : l'archive redescend d'environ 8 Go à 3.
-- **Maintenance de nuit** : Jellyfin était bloqué depuis la veille sur la lecture d'un sous-titre de 43,8 Mo à
-  travers le montage seedbox, ce qui empêchait l'analyse de la médiathèque. Redémarrage du serveur programmé hors
-  lecture, avec contrôles automatiques au retour ; l'extraction des sous-titres est en pause en attendant son
-  correctif.
-- **Bureau à distance (Guacamole)** : après ce redémarrage, le clavier ne répondait presque plus dans le bureau.
-  Le service du bureau croyait chaque démarrage raté (il cherchait son fichier de suivi sous un autre nom), s'est
-  relancé 144 fois, et chaque essai a laissé une session ouverte : 138 sessions se disputaient le clavier. Les
-  sessions en trop sont fermées, le service démarre maintenant du premier coup, et une seule session peut
-  s'ouvrir par écran.
-- **Sous-titres, suite** : l'extraction a repris ; les 61 sous-titres complets trop lourds extraits avant le
-  correctif (Bleach, Blue Box, Erased) ne sont plus choisis d'office.
-- **Pages d'administration** : le jeton ne passe plus dans l'adresse des pages Comptes, Recherche, Créer un compte
+- **VO, correctif (26/09)** : le mode « Toujours en VO » laissait Jellyfin lire la piste marquée par défaut dans le
+  fichier, souvent la VF d'un MULTi (un animé partait en VF). La langue choisie passe maintenant avant ; les trois
+  comptes déjà en VO ont été corrigés.
+- **Moins de place pour la même image (26/09)** : à langue égale, la recherche automatique prend maintenant la
+  version **x265** d'un épisode ou d'un film plutôt que la x264, environ 2,5 à 3 fois plus légère, et l'AV1 en dernier
+  (moins bien lu par les vieux appareils). Une version française en x264 reste préférée à une x265 sans français.
+  À égalité, le son en AAC, E-AC3 ou AC3 passe devant le DTS, que Chromecast et iPhone ne lisent pas : il fallait le
+  réencoder pendant la lecture.
+- **Arrivée des nouveaux membres (25/09)** : après le choix du mot de passe, une page « Premiers pas » guide pas à pas (quelle
+  appli installer sur chaque écran, connexion à la télé par un code Quick Connect, langue, première demande, où poser
+  une question), aussi disponible à tout moment et depuis « Mon compte ». Les mails de bienvenue disent quoi
+  installer, et le guide commence par « Démarrer en 5 minutes », avec la connexion présentée appareil par appareil.
+- **« Toujours en VO » (Mon compte) fonctionne vraiment (25/09)** : les animés démarrent en japonais sur tous les appareils,
+  et sur le web, Jellyfin Desktop et l'iPhone, les films et séries basculent sur leur langue d'origine (anglais,
+  coréen…) au lancement, sous-titres français toujours affichés. Un film français reste en français. Avant, le
+  réglage suivait la piste « par défaut » du fichier, souvent la VF.
+- **Films français pas encore sortis en VOD (25/09)** : l'onglet Demandes l'explique (« au cinéma depuis le …, VOD vers
+  le … ») au lieu d'une recherche qui tourne dans le vide, et le serveur ne cherche plus avant la sortie probable.
+- Commits : [`87bd90e`][87bd90e] [`0992a8d`][0992a8d] [`4a3ceb7`][4a3ceb7] [`5e9f4f3`][5e9f4f3] [`e527ac3`][e527ac3]
+  (panne de C411 et site de secours), [`c07ea65`][c07ea65] [`d21e865`][d21e865] [`43c9367`][43c9367]
+  [`6c882d7`][6c882d7] (télés, AirPlay et fenêtre « Épisode suivant »), [`e2a246f`][e2a246f] [`84575e9`][84575e9]
+  [`8e9c762`][8e9c762] (Chromecast), [`7d99d01`][7d99d01] [`3f52c0d`][3f52c0d] [`5de524f`][5de524f]
+  [`5d38f4b`][5d38f4b] [`eda19e5`][eda19e5] [`2c9477d`][2c9477d] (voie russe), [`d4927ae`][d4927ae] (montage seedbox),
+  [`847767a`][847767a] (animés visibles tout de suite), [`240de11`][240de11] [`14a4ad7`][14a4ad7] (codec et son),
+  [`cb56e3e`][cb56e3e] [`a3f6b56`][a3f6b56] [`6eb4876`][6eb4876] [`0d63999`][0d63999] (mode VO de « Mon compte »),
+  [`4ff21bf`][4ff21bf] (premiers pas), [`6677d00`][6677d00] [`5f90e30`][5f90e30] (films français et VOD),
+  [`2b6d928`][2b6d928] [`9475b91`][9475b91] [`35d097c`][35d097c] [`21053ec`][21053ec] [`1df4e82`][1df4e82]
+  (documentation).
+
+## 1.19.1 — 23 → 25/09/2026 — Audit : fiabilité et sécurité
+
+Audit de fiabilité et de sécurité lancé le 23/09 et clos le 25/09 au matin ; les nouveautés de l'après-midi du 25/09
+sont en 1.20.0. Les entrées vont de la plus récente à la plus ancienne.
+
+- **Qualité réduite, seulement le temps d'une lecture (25/09)** : quand l'aide à la lecture a baissé la qualité sur une
+  connexion faible, la lecture suivante repart en « Auto » (avant, l'appareil restait bloqué en basse qualité,
+  image dégradée même sur une bonne connexion).
+- **Pages studio et réseau (25/09)** de l'onglet Découvrir (Netflix, Ghibli…) et « Où le voir ailleurs » : elles
+  fonctionnent (il manquait une clé TMDB, ~7 000 erreurs par jour).
+- **Serveur (25/09)** : mémoire de secours (swap), vignettes de la barre de lecture plus générées pour les titres de la
+  seedbox (la tâche du dimanche ne finissait jamais), fichier d'état plus robuste, commandes d'administration qui
+  ne l'écrasent plus.
+- **Séries françaises (23/09)** : un épisode que la base TheTVDB n'a pas encore daté (fréquent pour les séries françaises)
+  est maintenant cherché lui aussi, dès que sa saison a commencé ; et les releases « VOF » (version originale
+  française) sont enfin reconnues comme françaises, au lieu d'être écartées.
+- **Pages d'administration (23/09)** : le jeton ne passe plus dans l'adresse des pages Comptes, Recherche, Créer un compte
   et État (il était recopié en clair dans les journaux du proxy à chaque chargement). On se connecte une fois
   (`/connexion`), la session tient un an ; un ancien lien avec jeton ouvre la session puis l'efface de l'adresse.
   Essais limités, jetons renouvelés, anciens journaux nettoyés, liens du tableau Homarr mis à jour. Depuis la
   maison, aucune connexion n'est demandée.
-- **Séries françaises** : un épisode que la base TheTVDB n'a pas encore daté (fréquent pour les séries françaises)
-  est maintenant cherché lui aussi, dès que sa saison a commencé ; et les releases « VOF » (version originale
-  française) sont enfin reconnues comme françaises, au lieu d'être écartées.
-- **Qualité réduite, seulement le temps d'une lecture** : quand l'aide à la lecture a baissé la qualité sur une
-  connexion faible, la lecture suivante repart en « Auto » (avant, l'appareil restait bloqué en basse qualité,
-  image dégradée même sur une bonne connexion).
-- **Pages studio et réseau** de l'onglet Découvrir (Netflix, Ghibli…) et « Où le voir ailleurs » : elles
-  fonctionnent (il manquait une clé TMDB, ~7 000 erreurs par jour).
-- **Serveur** : mémoire de secours (swap), vignettes de la barre de lecture plus générées pour les titres de la
-  seedbox (la tâche du dimanche ne finissait jamais), fichier d'état plus robuste, commandes d'administration qui
-  ne l'écrasent plus.
-- **Films français pas encore sortis en VOD** : l'onglet Demandes l'explique (« au cinéma depuis le …, VOD vers
-  le … ») au lieu d'une recherche qui tourne dans le vide, et le serveur ne cherche plus avant la sortie probable.
-- **« Toujours en VO » (Mon compte) fonctionne vraiment** : les animés démarrent en japonais sur tous les appareils,
-  et sur le web, Jellyfin Desktop et l'iPhone, les films et séries basculent sur leur langue d'origine (anglais,
-  coréen…) au lancement, sous-titres français toujours affichés. Un film français reste en français. Avant, le
-  réglage suivait la piste « par défaut » du fichier, souvent la VF.
-- **Arrivée des nouveaux membres** : après le choix du mot de passe, une page « Premiers pas » guide pas à pas (quelle
-  appli installer sur chaque écran, connexion à la télé par un code Quick Connect, langue, première demande, où poser
-  une question), aussi disponible à tout moment et depuis « Mon compte ». Les mails de bienvenue disent quoi
-  installer, et le guide commence par « Démarrer en 5 minutes », avec la connexion présentée appareil par appareil.
-- **Réseau** : les ports d'administration des services (Sonarr, Radarr, Prowlarr, Jellyseerr, qBittorrent, Homarr,
+- **Sous-titres, suite (23/09)** : l'extraction a repris ; les 61 sous-titres complets trop lourds extraits avant le
+  correctif (Bleach, Blue Box, Erased) ne sont plus choisis d'office.
+- **Réseau (23/09)** : les ports d'administration des services (Sonarr, Radarr, Prowlarr, Jellyseerr, qBittorrent, Homarr,
   Grafana…) ne sont plus joignables directement depuis Internet ; tout passe par le proxy, comme avant.
+- **Bureau à distance (Guacamole) (23/09)** : après ce redémarrage, le clavier ne répondait presque plus dans le bureau.
+  Le service du bureau croyait chaque démarrage raté (il cherchait son fichier de suivi sous un autre nom), s'est
+  relancé 144 fois, et chaque essai a laissé une session ouverte : 138 sessions se disputaient le clavier. Les
+  sessions en trop sont fermées, le service démarre maintenant du premier coup, et une seule session peut
+  s'ouvrir par écran.
+- **Sauvegardes (23/09)** : l'archive est relue en entier avant qu'on supprime les anciennes (une compression ratée
+  passait pour une réussite), les bases des abonnés et du tchat sont copiées proprement même en service, le mot
+  de passe MySQL n'apparaît plus dans la liste des processus, et les vignettes et photos d'acteurs, régénérables,
+  ne sont plus sauvegardées : l'archive redescend d'environ 8 Go à 3.
+- **Sous-titres extraits (23/09)** : un épisode déjà traité n'est revu qu'au bout de 6 h, et une vidéo sans piste
+  extractible une fois par semaine, au lieu de toutes les 5 minutes. Un sous-titre ASS de plus de 8 Mo n'est plus
+  choisi par défaut : le SRT l'est, les lecteurs web ne peinent plus.
+- **Fiabilité (23/09)** : une tâche qui rencontre une erreur imprévue ne s'arrête plus pour de bon, elle repasse à
+  l'intervalle suivant ; un paiement PayPal dont le traitement échoue est rejoué à la relance de PayPal au lieu
+  d'attendre le contrôle du lendemain ; une simple coupure réseau sur un film dont l'identifiant contient « 429 »
+  ne met plus une clé C411 au repos pour rien ; la file des téléchargements est lue en entier, plus seulement ses
+  200 premiers éléments.
+- **Noms des tâches (23/09)** : le panneau Automatisation de Homarr et la page d'état n'affichent plus « Tâche » pour les six
+  tâches les plus récentes (lectures simultanées, test de lecture, sous-titres extraits, cycle des abonnements,
+  contrôle PayPal, lectures qui bouclent). Chaque tâche porte désormais son nom dans son propre code, et une tâche
+  sans nom ne compile plus. Leurs résumés sont écrits en français lisible.
+- **Maintenance de nuit (23/09)** : Jellyfin était bloqué depuis la veille sur la lecture d'un sous-titre de 43,8 Mo à
+  travers le montage seedbox, ce qui empêchait l'analyse de la médiathèque. Redémarrage du serveur programmé hors
+  lecture, avec contrôles automatiques au retour ; l'extraction des sous-titres est en pause en attendant son
+  correctif.
+- Commits : [`edf0a4f`][edf0a4f] [`79cdce4`][79cdce4] [`e760707`][e760707] [`f78c598`][f78c598] (tâches et fiabilité),
+  [`373e5a3`][373e5a3] [`1282b76`][1282b76] (sous-titres), [`b6af815`][b6af815] (sauvegardes), [`e5cff85`][e5cff85]
+  (bureau à distance), [`4c8d890`][4c8d890] [`8805c19`][8805c19] (réseau), [`74864b9`][74864b9] [`fd0eba1`][fd0eba1]
+  (pages d'administration), [`c2e4bbe`][c2e4bbe] (séries françaises), [`05d7510`][05d7510] [`8aba45b`][8aba45b]
+  [`3d7698f`][3d7698f] [`7894bd4`][7894bd4] (réglages, état, qualité et port 8096 du 25/09), [`483e2be`][483e2be]
+  [`23c70b0`][23c70b0] (documentation).
 
-## 1.19.0 — 21/09/2026 — Suivi des demandes, langue et canari
+## 1.19.0 — 21 → 22/09/2026 — Suivi des demandes, langue et canari
 
 - **Où en est ma demande ?** Dans l'onglet Demandes de Jellyfin, chaque demande en cours affiche une barre
   d'avancement et une estimation : recherche (prochaine tentative), téléchargement (pourcentage, temps restant),
@@ -784,11 +937,13 @@ Tag git [`v0.1.0`][v0.1.0].
 
 ## Numérotation pour la suite
 
-- **1.0.x** : corrections ;
+- **1.x.y** (y > 0) : corrections ;
 - **1.x.0** : nouveautés ;
 - **2.0.0** : changement majeur d'architecture.
 
-Chaque version ajoute sa section en haut de ce fichier, avec ses commits.
+Chaque version ajoute sa section en haut de ce fichier, avec ses commits. La version du programme
+(`workspace.package.version` de `Cargo.toml`, affichée par `homelabctl --version`) est celle de la section du haut ;
+un tag annoté `vX.Y.Z` marque le dernier commit de chaque version.
 
 <!-- liens des commits -->
 [v0.1.0]: https://github.com/HaradasCYB/groscailloux-homelab/tree/v0.1.0
@@ -872,3 +1027,100 @@ Chaque version ajoute sa section en haut de ce fichier, avec ses commits.
 [e8c8556]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e8c8556
 [e4e93b7]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e4e93b7
 [fe81d1e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/fe81d1e
+[9fc590f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/9fc590f
+[2fc1cd6]: https://github.com/HaradasCYB/groscailloux-homelab/commit/2fc1cd6
+[66984a9]: https://github.com/HaradasCYB/groscailloux-homelab/commit/66984a9
+[4139ace]: https://github.com/HaradasCYB/groscailloux-homelab/commit/4139ace
+[1f9c09b]: https://github.com/HaradasCYB/groscailloux-homelab/commit/1f9c09b
+[e2937cf]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e2937cf
+[9846c52]: https://github.com/HaradasCYB/groscailloux-homelab/commit/9846c52
+[0a46682]: https://github.com/HaradasCYB/groscailloux-homelab/commit/0a46682
+[cc0b762]: https://github.com/HaradasCYB/groscailloux-homelab/commit/cc0b762
+[d92da5e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/d92da5e
+[2f0e45b]: https://github.com/HaradasCYB/groscailloux-homelab/commit/2f0e45b
+[3c78191]: https://github.com/HaradasCYB/groscailloux-homelab/commit/3c78191
+[d0f5bf6]: https://github.com/HaradasCYB/groscailloux-homelab/commit/d0f5bf6
+[38d7cc2]: https://github.com/HaradasCYB/groscailloux-homelab/commit/38d7cc2
+[0b8d8d9]: https://github.com/HaradasCYB/groscailloux-homelab/commit/0b8d8d9
+[f60bcdb]: https://github.com/HaradasCYB/groscailloux-homelab/commit/f60bcdb
+[02fd974]: https://github.com/HaradasCYB/groscailloux-homelab/commit/02fd974
+[608ed9f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/608ed9f
+[798bbd3]: https://github.com/HaradasCYB/groscailloux-homelab/commit/798bbd3
+[ce9615f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/ce9615f
+[cf7eaae]: https://github.com/HaradasCYB/groscailloux-homelab/commit/cf7eaae
+[dc45ed5]: https://github.com/HaradasCYB/groscailloux-homelab/commit/dc45ed5
+[36e06d0]: https://github.com/HaradasCYB/groscailloux-homelab/commit/36e06d0
+[bb33d63]: https://github.com/HaradasCYB/groscailloux-homelab/commit/bb33d63
+[599db47]: https://github.com/HaradasCYB/groscailloux-homelab/commit/599db47
+[ebbfc24]: https://github.com/HaradasCYB/groscailloux-homelab/commit/ebbfc24
+[02948e0]: https://github.com/HaradasCYB/groscailloux-homelab/commit/02948e0
+[e287e2f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e287e2f
+[ba2d7f5]: https://github.com/HaradasCYB/groscailloux-homelab/commit/ba2d7f5
+[443545e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/443545e
+[b0e3548]: https://github.com/HaradasCYB/groscailloux-homelab/commit/b0e3548
+[3decb9c]: https://github.com/HaradasCYB/groscailloux-homelab/commit/3decb9c
+[2fd0099]: https://github.com/HaradasCYB/groscailloux-homelab/commit/2fd0099
+[a62ede2]: https://github.com/HaradasCYB/groscailloux-homelab/commit/a62ede2
+[82c1f32]: https://github.com/HaradasCYB/groscailloux-homelab/commit/82c1f32
+[f3e3183]: https://github.com/HaradasCYB/groscailloux-homelab/commit/f3e3183
+[eeb0523]: https://github.com/HaradasCYB/groscailloux-homelab/commit/eeb0523
+[194ad67]: https://github.com/HaradasCYB/groscailloux-homelab/commit/194ad67
+[073e5e2]: https://github.com/HaradasCYB/groscailloux-homelab/commit/073e5e2
+[693b748]: https://github.com/HaradasCYB/groscailloux-homelab/commit/693b748
+[1d24b0e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/1d24b0e
+[1a25345]: https://github.com/HaradasCYB/groscailloux-homelab/commit/1a25345
+[a0269e8]: https://github.com/HaradasCYB/groscailloux-homelab/commit/a0269e8
+[04c861e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/04c861e
+[87bd90e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/87bd90e
+[0992a8d]: https://github.com/HaradasCYB/groscailloux-homelab/commit/0992a8d
+[4a3ceb7]: https://github.com/HaradasCYB/groscailloux-homelab/commit/4a3ceb7
+[5e9f4f3]: https://github.com/HaradasCYB/groscailloux-homelab/commit/5e9f4f3
+[e527ac3]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e527ac3
+[c07ea65]: https://github.com/HaradasCYB/groscailloux-homelab/commit/c07ea65
+[d21e865]: https://github.com/HaradasCYB/groscailloux-homelab/commit/d21e865
+[43c9367]: https://github.com/HaradasCYB/groscailloux-homelab/commit/43c9367
+[6c882d7]: https://github.com/HaradasCYB/groscailloux-homelab/commit/6c882d7
+[e2a246f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e2a246f
+[84575e9]: https://github.com/HaradasCYB/groscailloux-homelab/commit/84575e9
+[8e9c762]: https://github.com/HaradasCYB/groscailloux-homelab/commit/8e9c762
+[7d99d01]: https://github.com/HaradasCYB/groscailloux-homelab/commit/7d99d01
+[3f52c0d]: https://github.com/HaradasCYB/groscailloux-homelab/commit/3f52c0d
+[5de524f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/5de524f
+[5d38f4b]: https://github.com/HaradasCYB/groscailloux-homelab/commit/5d38f4b
+[eda19e5]: https://github.com/HaradasCYB/groscailloux-homelab/commit/eda19e5
+[2c9477d]: https://github.com/HaradasCYB/groscailloux-homelab/commit/2c9477d
+[d4927ae]: https://github.com/HaradasCYB/groscailloux-homelab/commit/d4927ae
+[847767a]: https://github.com/HaradasCYB/groscailloux-homelab/commit/847767a
+[240de11]: https://github.com/HaradasCYB/groscailloux-homelab/commit/240de11
+[14a4ad7]: https://github.com/HaradasCYB/groscailloux-homelab/commit/14a4ad7
+[cb56e3e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/cb56e3e
+[a3f6b56]: https://github.com/HaradasCYB/groscailloux-homelab/commit/a3f6b56
+[6eb4876]: https://github.com/HaradasCYB/groscailloux-homelab/commit/6eb4876
+[0d63999]: https://github.com/HaradasCYB/groscailloux-homelab/commit/0d63999
+[4ff21bf]: https://github.com/HaradasCYB/groscailloux-homelab/commit/4ff21bf
+[6677d00]: https://github.com/HaradasCYB/groscailloux-homelab/commit/6677d00
+[5f90e30]: https://github.com/HaradasCYB/groscailloux-homelab/commit/5f90e30
+[2b6d928]: https://github.com/HaradasCYB/groscailloux-homelab/commit/2b6d928
+[9475b91]: https://github.com/HaradasCYB/groscailloux-homelab/commit/9475b91
+[35d097c]: https://github.com/HaradasCYB/groscailloux-homelab/commit/35d097c
+[21053ec]: https://github.com/HaradasCYB/groscailloux-homelab/commit/21053ec
+[1df4e82]: https://github.com/HaradasCYB/groscailloux-homelab/commit/1df4e82
+[edf0a4f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/edf0a4f
+[79cdce4]: https://github.com/HaradasCYB/groscailloux-homelab/commit/79cdce4
+[e760707]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e760707
+[f78c598]: https://github.com/HaradasCYB/groscailloux-homelab/commit/f78c598
+[373e5a3]: https://github.com/HaradasCYB/groscailloux-homelab/commit/373e5a3
+[1282b76]: https://github.com/HaradasCYB/groscailloux-homelab/commit/1282b76
+[b6af815]: https://github.com/HaradasCYB/groscailloux-homelab/commit/b6af815
+[e5cff85]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e5cff85
+[4c8d890]: https://github.com/HaradasCYB/groscailloux-homelab/commit/4c8d890
+[8805c19]: https://github.com/HaradasCYB/groscailloux-homelab/commit/8805c19
+[74864b9]: https://github.com/HaradasCYB/groscailloux-homelab/commit/74864b9
+[fd0eba1]: https://github.com/HaradasCYB/groscailloux-homelab/commit/fd0eba1
+[c2e4bbe]: https://github.com/HaradasCYB/groscailloux-homelab/commit/c2e4bbe
+[05d7510]: https://github.com/HaradasCYB/groscailloux-homelab/commit/05d7510
+[8aba45b]: https://github.com/HaradasCYB/groscailloux-homelab/commit/8aba45b
+[3d7698f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/3d7698f
+[7894bd4]: https://github.com/HaradasCYB/groscailloux-homelab/commit/7894bd4
+[483e2be]: https://github.com/HaradasCYB/groscailloux-homelab/commit/483e2be
+[23c70b0]: https://github.com/HaradasCYB/groscailloux-homelab/commit/23c70b0
