@@ -624,7 +624,7 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
 name = "homelab-core"
-version = "2.0.0"
+version = "1.23.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "homelabctl"
-version = "2.0.0"
+version = "1.23.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "homelabd"
-version = "2.0.0"
+version = "1.23.0"
 dependencies = [
  "anyhow",
  "axum",
