@@ -10,16 +10,18 @@ qu'elles feraient. Les logs vont dans le journal : `journalctl -u homelabd -f`.
 **calme** (réussi, sans action, résumé identique au passage réussi précédent) écrit son `run_done` en `debug` :
 c'étaient 88 % des lignes (4 344 lignes entre 01:15 et 10:25 le 07/10, 312 le 08/10) ; `RUST_LOG=debug` pour tout
 voir. L'état est sérialisé en mémoire puis écrit en un appel par un écrivain unique ; la simple tenue (début d'un
-passage, fin d'un passage calme) part avec la sauvegarde suivante (`update_lazy`, au plus tard à la première mutation
-après 60 s, ou à l'arrêt). `/health` répond 503 `scheduler_stale` quand plus aucune boucle de tâche n'a tourné depuis
-20 min (max(2 × 600 s, plus petit intervalle + 600 s)) et donne la version (`git describe`, voir `build.rs`).
+passage, fin d'un passage calme) part avec la sauvegarde suivante (`update_lazy`), au plus tard au tour suivant de
+`StateStore::run_lazy_flusher` (60 s, lancé par homelabd), ou à l'arrêt. `/health` répond 503 `scheduler_stale` quand
+plus aucune boucle de tâche n'a tourné depuis 20 min (max(2 × 600 s, plus petit intervalle + 600 s)) et donne la version
+(`git describe`, voir `build.rs`).
 
 `homelabctl run <tâche> [--dry-run]` exécute la même implémentation une fois ;
 `homelabctl status` lit `state/homelabd.json` (dernier passage, erreurs, items suivis) : la tenue d'un passage sans
-rien de neuf y arrive dans la minute, une tâche finie peut donc y apparaître « running » ; `/status.html` lit la
-mémoire du démon. Sous chaque tâche, une ligne ↳ donne les erreurs récentes (« 2 aujourd'hui, 5 sur 7 j · dernière le
-JJ/MM HH:MM : message »), seulement si la dernière date de moins de 7 jours ou si la tâche échoue en ce moment :
-`errors` est un total depuis l'origine.
+rien de neuf y arrive dans la minute, d'où `running? depuis HH:MM` (début récent sans fin enregistrée : en cours ou fini
+depuis moins d'une minute) et `interrompu? JJ/MM HH:MM` (début plus vieux que `RUN_TIMEOUT`, 600 s : daemon arrêté en
+plein passage) ; `/status.html` lit la mémoire du démon. Sous chaque tâche, une ligne ↳ donne les erreurs récentes
+(« 2 aujourd'hui, 5 sur 7 j · dernière le JJ/MM HH:MM : message »), seulement si la dernière date de moins de 7 jours
+ou si la tâche échoue en ce moment : `errors` est un total depuis l'origine.
 
 Configuration : `homelab.toml` (toute clé inconnue est refusée ; `paths.downloads` doit
 exister sinon le daemon refuse de démarrer — plus jamais un watcher mort en silence).
@@ -160,8 +162,12 @@ Jellyseerr. Pour chaque torrent terminé pas encore jugé (`state.torrent_import
    que pour un animé : *Angels of Death* (2021), une série classique, était restée « téléchargée mais pas rangée »
    le 2026-10-03. `bare_episodes` refuse **en bloc** dans trois cas : les fichiers ne portent pas tous le même
    titre, deux fichiers ont le même numéro, ou un numéro dépasse la saison (numérotation absolue). Jamais pour un
-   fichier que Sonarr attribue à une autre fiche. **Jamais de remplacement** : un fichier dont un épisode (ou le film) a déjà un fichier est
-   écarté (« déjà présent »). Le 2026-09-17, « The.Final.Season.E01 », sans saison, a été lu S01E01 et la
+   fichier que Sonarr attribue à une autre fiche. **Numéro en tête** (`05. Titre de l'épisode.mkv`, sans nom de série
+   ni `SxxEyy`, 2026-10-08, `numbered_pack`) : lu dans la saison de l'étiquette, **seulement si Sonarr n'a rien lu dans
+   aucun nom du torrent** (`sonarr_read_something`), décidé pour le torrent entier et refusé en bloc au moindre doute
+   (forme mixte, doublon, trou, numéro hors saison, suite qui ne commence pas à 1 après une autre saison) ; un titre qui
+   contient un autre nombre (`Show 13`, `E13`) reste du ressort de Sonarr. **Jamais de remplacement** : un fichier dont
+   un épisode (ou le film) a déjà un fichier est écarté (« déjà présent »). Le 2026-09-17, « The.Final.Season.E01 », sans saison, a été lu S01E01 et la
    saison 1 d'une série écrasée (réparée en réimportant ses fichiers d'origine). Puis `ManualImport` en
    **`importMode: copy`** (= hardlink). Jamais `auto` : pour un téléchargement non suivi, `auto` = déplacement.
 Rien d'importable ⇒ `nothing_importable`. Erreur (Arr injoignable…) ⇒ `retry`, `error` après `max_attempts`.
@@ -190,6 +196,8 @@ Les alertes (rafales et boucles de segments) donnent le **titre** Jellyfin (« S
 dédoublonnage des boucles de segments (client, média) reste en mémoire : il contient l'adresse d'un membre. L'ancien
 repère « non-keyframe breaks » a disparu en 12.x (et ne comptait que le canari, qui demandait `BreakOnNonKeyFrames`).
 Le résumé porte le plus grand nombre de lancements d'un titre dans l'heure et les 5xx sur segments. Rien n'est modifié.
+La ligne « passage » du journal n'est en `info` que s'il y a une boucle, une rafale ou des 5xx (`is_noteworthy`, 2026-10-08) :
+sinon `debug` (111 lignes en 9 h pour « rien à signaler »). De même la ligne « ok » de `disk_pressure`.
 
 ### series_search — 10 min (remplace unknown_series_grab)
 Les séries se cherchent **par identifiant TMDB**, par homelabd, plus par Sonarr. Pourquoi : Sonarr interroge
@@ -762,6 +770,9 @@ vide ou tronqué (tmpfs plein), si le premier segment dépasse `max_first_segmen
 le transcodage. Alerte admin (mail + Discord) au premier échec, message de retour à la normale, état dans
 `state.canary` et ligne « Canari de lecture » sur `/status.html`. Sauté si `skip_if_transcodes_at_least` (2)
 transcodages de membres sont déjà en cours. Le transcodage est arrêté proprement (`DELETE /Videos/ActiveEncodings`).
+Résumé d'un passage réussi : **`lecture OK`**, toujours identique (2026-10-08) : le côté et la latence changeaient à chaque
+passage, aucun n'était « calme » et une ligne `run_done` partait en `info` toutes les 15 min ; ils restent dans
+`state.canary.last_detail` (/status.html) et dans le journal en `debug` (le retour après un échec reste en `info`).
 
 ## Langue par membre (v1.19, 2026-09-21)
 
@@ -821,8 +832,10 @@ en lecture, budget atteint, échec passager) et les essais dont la relance est d
 processus, mise à jour seulement après un passage abouti (un échec élargit la fenêtre suivante). Avant : 9 pages de
 1,8 Mo et ~14 s de CPU Jellyfin toutes les 5 min pour « rien à extraire » 98 fois sur 100 ; maintenant ~0,4 s. Le
 balayage complet ajoute « ; balayage complet » au résumé ; après extraction : « X à reprendre, W en relance
-différée ». Limite connue : sur un passage court, « N en attente de relance » compte aussi les éléments extraits
-depuis le dernier balayage complet (16 au lieu de 3 le 08/10 après 13 extractions) jusqu'au balayage suivant.
+différée ». Un passage court oublie les essais des éléments qu'il vient de relire et qui n'ont plus rien à extraire
+(`prune_seen`, 2026-10-08) : « N en attente de relance » ne gonfle plus après des extractions (16 au lieu de 3 le 08/10
+après 13 extractions, jusqu'au balayage de 05:00), et ces éléments ne sont plus relus par `Ids=` six heures plus tard ;
+un élément non relu garde son essai.
 
 Bazarr (seedbox, `https://kakaouette.tofino.usbx.me/bazarr`) garde son rôle d'origine : profil « Français (+anglais) »,
 `use_embedded_subs = true` (une piste incrustée compte), `audio_exclude = True` sur le français, six fournisseurs dont

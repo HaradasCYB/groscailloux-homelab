@@ -943,6 +943,13 @@ journalctl -u homelabd -f
   numéro, ou si un numéro dépasse la saison. Un nom qui porte sa saison (`S01 - 06`) reste du ressort de la lecture
   fansub. Même jour : piste **russe** par défaut dans ce pack (son et sous-titres). Correction sur des copies
   (`mkvpropedit`, anglais par défaut), jamais sur les fichiers du torrent, qui doivent rester intacts pour le partage.
+- **Numéro en tête (`05. Titre de l'épisode`)** (2026-10-08) : `numbered_pack` ne sert que si Sonarr n'a rien lu dans
+  aucun nom du torrent (`sonarr_read_something` : aucun `parsedEpisodeInfo`, aucun épisode proposé par `manualimport`,
+  ni fansub ni `map_episodes`). Lecture décidée pour tout le pack, seulement avec `season=` dans l'étiquette, refusée en
+  bloc au moindre doute (forme mixte, doublon, trou, numéro hors saison, suite qui ne commence pas à 1 après une autre
+  saison). Un titre qui contient un autre nombre est écarté. La source reste `ArrFirst`. Une entrée `torrent_import`
+  déjà en `nothing_importable` est **définitive** (`is_final`) : le correctif ne la rouvre pas, il faut la retirer de
+  l'état, daemon arrêté.
 - **Épisodes sans date / VOF** (2026-09-23, *Le Voyageur*) : TheTVDB date souvent tard les séries françaises et
   Sonarr **exclut de `wanted/missing` tout épisode sans date** : `series_search` lit donc aussi les épisodes des séries
   dont une saison suivie, commencée depuis moins de `undated_window_days` (730), est incomplète, et cherche leurs
@@ -1329,11 +1336,15 @@ journalctl -u homelabd -f
   sérialisé en mémoire puis écrit en UN appel par un écrivain unique numéroté (jamais un état plus ancien après un plus
   récent ; avant : ~38 000 `write` de 4 octets par sauvegarde, 4,2 Go/j). `state.update` = durable (rend la main une
   fois écrit) ; `state.update_lazy` = simple tenue (début d'un passage, fin d'un passage « calme ») écrite avec la
-  sauvegarde suivante, au plus tard à la première mutation après 60 s ou à l'arrêt (`flush`) : jamais de donnée qui
-  compte en lazy. Le fichier peut donc retarder sur la mémoire, et `homelabctl status` montrer « running » pour une
-  tâche déjà finie ; `/status.html` lit la mémoire. Passage calme = réussi, sans action, résumé identique au précédent :
+  sauvegarde suivante, au plus tard au tour suivant de `StateStore::run_lazy_flusher` (60 s, lancé par homelabd) ou à
+  l'arrêt (`flush`) : jamais de donnée qui compte en lazy. Le fichier peut donc retarder sur la mémoire d'une minute
+  au plus ; `homelabctl status` affiche `running? depuis HH:MM` (début récent sans fin enregistrée : en cours ou fini
+  depuis moins d'une minute) ou `interrompu? JJ/MM HH:MM` (début plus vieux que `RUN_TIMEOUT`, 600 s : daemon arrêté
+  en plein passage) ; `/status.html` lit la mémoire. Passage calme = réussi, sans action, résumé identique au précédent :
   `run_done` en `debug` (`RUST_LOG=debug` pour tout voir) ; journal de homelabd passé de 4 344 à 312 lignes sur la même
-  fenêtre de 9 h (08/10).
+  fenêtre de 9 h (08/10). Le résumé du canari est `lecture OK` (côté et latence dans `state.canary.last_detail` et en
+  `debug`) pour qu'un passage réussi soit « calme » ; les lignes « passage » de `hls_loop_watch` et « ok » de
+  `disk_pressure`/`playback_canary` sont en `debug` quand il n'y a rien à signaler.
 - **Deux sessions dans le dépôt** : le binaire installé doit être construit depuis **l'arbre de travail tel quel**
   (`cargo build … -j4` dans `/opt/homelab`), jamais depuis un arbre indexé/worktree qui exclut les fichiers non
   validés d'une autre session — le 2026-09-19, cinq installs ainsi construits ont retiré les routes `/premium`

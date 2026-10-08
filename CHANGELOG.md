@@ -104,6 +104,10 @@ de tâche ni alerte.
   torrents attendaient sans partager) ; synchronisation RSS du serveur arrêtée (il ne télécharge plus depuis le 18/09) ;
   Sonarr et Radarr de la seedbox en journal normal ; sous-titres automatiques sans le fournisseur qui refusait tout ni
   les séries russes.
+- **Suites du lot 2** (08/10) : l'état différé part au plus 60 s après (avant : à la mutation suivante, des heures pour
+  une tâche rare) ; `homelabctl status` ne dit plus « running » pour une tâche finie (`running? depuis` / `interrompu?`) ;
+  le compteur « en relance différée » des sous-titres ne gonfle plus après des extractions ; le canari de lecture et les
+  surveillances calmes n'écrivent plus de ligne d'information à chaque passage.
 
 ### Robustesse
 
@@ -117,14 +121,18 @@ de tâche ni alerte.
   prélèvement en attente (une fois par jour) et suit les résiliations ; les fiches d'abonné dont le compte disparaît
   ne sont plus retirées en masse (au-delà de 3 d'un coup, rien n'est retiré et l'admin est prévenu).
 - **qBittorrent 5.2** : nouveau cookie de session accepté, en prévision de la mise à jour.
+- **Packs numérotés « 01. Titre de l'épisode »** (08/10) : une saison d'animé publiée sans nom de série ni numéro de
+  saison, que Sonarr ne lit pas du tout, est rangée dans la saison demandée, en dernier recours et seulement si le
+  pack entier est sans ambiguïté ; un nom qui contient un autre numéro reste lu par Sonarr.
 
 - Commits : [`9f62bb9`][9f62bb9] (veille des images), [`6cfa550`][6cfa550] [`cd3c901`][cd3c901]
   [`9d2a44e`][9d2a44e] [`f159451`][f159451] (portes d'administration), [`110ee1b`][110ee1b] [`d8cc62a`][d8cc62a]
   (abonnés), [`e9081bb`][e9081bb] [`4400b8b`][4400b8b] [`b582c2a`][b582c2a] (alertes), [`e08f59d`][e08f59d]
   [`e5605f3`][e5605f3] [`68a2a08`][68a2a08] [`37b3a2c`][37b3a2c] (sobriété), [`b6e7a4d`][b6e7a4d] [`b0812d1`][b0812d1]
   [`ae0df9d`][ae0df9d] [`9e76693`][9e76693] [`0c8c619`][0c8c619] (robustesse), [`e8a5d3f`][e8a5d3f] (chaîne des
-  erreurs) ; fusions [`39bd51c`][39bd51c] [`1ddf77f`][1ddf77f] [`2febb34`][2febb34] [`7d91fc2`][7d91fc2]
-  [`33f720b`][33f720b].
+  erreurs), [`3c98e54`][3c98e54] (alertes, suite), [`aa8bfd0`][aa8bfd0] (sobriété, suite), [`69afbef`][69afbef]
+  [`30b3572`][30b3572] (packs numérotés) ; fusions [`39bd51c`][39bd51c] [`1ddf77f`][1ddf77f] [`2febb34`][2febb34]
+  [`7d91fc2`][7d91fc2] [`33f720b`][33f720b] [`e8c8556`][e8c8556] [`e4e93b7`][e4e93b7] [`fe81d1e`][fe81d1e].
 
 ## 1.19.1 — 23/09/2026 — Audit : fiabilité et sécurité
 
@@ -857,3 +865,10 @@ Chaque version ajoute sa section en haut de ce fichier, avec ses commits.
 [2febb34]: https://github.com/HaradasCYB/groscailloux-homelab/commit/2febb34
 [7d91fc2]: https://github.com/HaradasCYB/groscailloux-homelab/commit/7d91fc2
 [33f720b]: https://github.com/HaradasCYB/groscailloux-homelab/commit/33f720b
+[3c98e54]: https://github.com/HaradasCYB/groscailloux-homelab/commit/3c98e54
+[aa8bfd0]: https://github.com/HaradasCYB/groscailloux-homelab/commit/aa8bfd0
+[69afbef]: https://github.com/HaradasCYB/groscailloux-homelab/commit/69afbef
+[30b3572]: https://github.com/HaradasCYB/groscailloux-homelab/commit/30b3572
+[e8c8556]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e8c8556
+[e4e93b7]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e4e93b7
+[fe81d1e]: https://github.com/HaradasCYB/groscailloux-homelab/commit/fe81d1e

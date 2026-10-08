@@ -131,7 +131,7 @@ gluetun (8080/6881 publiés sur le conteneur gluetun). Le hook `hooks/qbit-updat
   (`state/homelabd.json`) n'est écrit que par le démon : sérialisé en mémoire sous le verrou, puis écrit en UN appel
   hors du verrou par un écrivain unique numéroté (jamais un état plus ancien après un plus récent ; fichier
   temporaire, `fsync`, renommage, `fsync` du dossier ; une sérialisation identique n'est pas réécrite). `update` rend
-  la main une fois sur disque ; `update_lazy` (tenue des passages) part avec la sauvegarde suivante, `flush` à l'arrêt.
+  la main une fois sur disque ; `update_lazy` (tenue des passages) part avec la sauvegarde suivante, au plus tard au tour de `run_lazy_flusher` (60 s), `flush` à l'arrêt.
   Jusqu'au 07/10, serde_json écrivait directement dans le fichier : ~38 000 `write` de 4 octets par sauvegarde, 66 % du
   CPU du démon dans le noyau. `homelabctl` l'ouvre en lecture seule et passe par `POST /admin/run` et `/admin/accounts`.
 - Alertes : `alerts::admin` (mail + Discord admin), trace de livraison dans l'état, règles dans
