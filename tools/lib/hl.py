@@ -3,7 +3,7 @@
 
 Sous-commandes :
   guard [--idle] [--jf-tasks] [--idle-if-down] [--seedbox] [--homelabd T:S[:I] …] [--busy] [--self-unit U]
-        une ligne « ok <détail> » (code 0), « refus <motif> » (1) ou « attendre <s> <motif> » (4)
+        une ligne « ok <détail> » (code 0), « refus <motif> » (1) ou « attendre <s> <motif> || <gardes vertes> » (4)
   busy [--timers] [--margin-min N] [--self-unit U]      maintenance en cours (lot3-*, homelab-offpeak@*) : 1 si oui
   discord <fichier> [--tries N]                          texte → salon Discord ADMIN (jamais celui des membres)
   members-playing                                        « <lectures de membres> <lectures de bancs> » (3 si muet)
@@ -201,6 +201,9 @@ def homelabd_window(conds, now=None):
         task, gap = parts[0], int(parts[1])
         iv = int(parts[2]) if len(parts) == 3 else (cfg.get(task) or {}).get('interval_secs')
         r = runs.get(task)
+        if iv and gap >= iv:
+            # 2026-10-08 : « stack_health:400 » pour un passage toutes les 300 s ne serait jamais vert
+            raise ValueError('condition impossible : %s (la tâche passe toutes les %d s)' % (c, iv))
         if not iv or not r:
             wait = max(wait, 30)
             why.append('%s inconnu (ni intervalle ni passage)' % task)
@@ -308,7 +311,8 @@ def cmd_guard(a):
                 print('refus %s' % e)
                 return 1
             if why:
-                print('attendre %d %s' % (w, ', '.join(why)))
+                # après « || » : les gardes déjà vertes, pour que le journal (et le à blanc) les montre aussi
+                print('attendre %d %s || %s' % (w, ', '.join(why), '; '.join(infos) or 'aucune autre garde'))
                 return 4
             infos.append('homelabd : ' + ', '.join(info))
     print('ok ' + ('; '.join(infos) or 'aucune garde demandée'))

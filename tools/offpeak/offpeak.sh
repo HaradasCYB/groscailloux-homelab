@@ -257,12 +257,13 @@ while :; do
       out=$("$HLPY" guard "${GARGS[@]}"); rc=$?
       [ "$rc" = 4 ] || break
       s=$(awk '{print $2}' <<< "$out")
+      why=${out#attendre "$s" }; vertes=${why#* || }; why=${why%% || *}
       if [ "$DRY" = 1 ]; then
-        log "  à blanc : attendrait ~$s s (${out#attendre "$s" }) puis relancerait toutes les gardes"
-        out="ok autres gardes vertes ; fenêtre homelabd attendue (à blanc)"; rc=0; break
+        log "  à blanc : attendrait ~$s s ($why) puis relancerait toutes les gardes"
+        out="ok $vertes ; fenêtre homelabd attendue (à blanc)"; rc=0; break
       fi
-      if [ "$(date +%s)" -ge "$wend" ] || [ $(( $(date +%s) + s )) -ge "$DEADLINE" ]; then out="refus pas de fenêtre homelabd sûre (${out#attendre "$s" })"; rc=1; break; fi
-      [ "$first" = 1 ] && log "  attente d'une fenêtre homelabd sûre (${out#attendre "$s" })"
+      if [ "$(date +%s)" -ge "$wend" ] || [ $(( $(date +%s) + s )) -ge "$DEADLINE" ]; then out="refus pas de fenêtre homelabd sûre ($why)"; rc=1; break; fi
+      [ "$first" = 1 ] && log "  attente d'une fenêtre homelabd sûre ($why ; déjà vertes : $vertes)"
       first=0; sleep "$s"
     done
   fi

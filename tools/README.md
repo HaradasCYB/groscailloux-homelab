@@ -9,7 +9,7 @@ Les **sorties** (journaux, captures) ne vont jamais dans le dépôt : `state/off
 | `offpeak/offpeak.sh` | exécuter une commande hors pic, seulement si personne ne regarde ; programmation qui survit au redémarrage |
 | `bench/bench.sh` | lancer un banc d'interface (navigateur sans écran) avec un compte de banc toujours supprimé |
 | `tests/` | bancs de non-régression lancés par `bench.sh` (`compte-russe/` : voie russe de Mon compte) |
-| `lib/` | `hl.py` (appels Jellyfin, homelabd, Discord ; seul à lire les secrets de `.env`), `common.sh` |
+| `lib/` | `hl.py` (appels Jellyfin, homelabd, Discord ; seul à lire les secrets de `.env`), `common.sh`, leurs tests |
 
 Configuration et secrets : toujours ceux de `/opt/homelab` (`.env`, `homelab.toml`, `state/`), même lancé depuis un
 autre arbre de travail. Aucun secret en argument ni à l'écran ; aucune adresse en dur (`[urls]` du TOML, `.env`).
@@ -53,6 +53,7 @@ Gabarits systemd : `offpeak/systemd/homelab-offpeak@.{service,timer}`, installé
 
 ```bash
 tools/bench/bench.sh tools/bench/scenarios/header.js desktop phone          # banc de fumée de l'en-tête
+tools/bench/bench.sh tools/bench/scenarios/candidats.js desktop             # l'injection de candidats marche-t-elle ?
 tools/bench/bench.sh --candidate /chemin/candidats tools/bench/scenarios/header.js desktop-legacy tv
 tools/bench/bench.sh --offline tools/tests/compte-russe/compte-russe.js     # sans compte ni Jellyfin
 tools/bench/bench.sh backups/jellyfin12-test-20261003/modern_ui.js :desktop :iphone   # ancien scénario
@@ -97,3 +98,12 @@ Le vrai `crates/homelabd/assets/compte/app.js` dans une page simulée (aucun app
 
 Contre-épreuve : `--env MUTATE=1` doit échouer. La décision côté serveur (`route_set`) a ses tests unitaires dans
 `subs_api.rs`.
+
+## Tests des outils
+
+```bash
+python3 tools/lib/test_hl.py      # fenêtre homelabd, maintenance en cours, politique des comptes de banc, dates
+bash tools/lib/test_common.sh     # créneau horaire (à cheval sur minuit compris), nettoyage des textes Discord
+```
+
+Aucun appel réseau ni fichier de production. À relancer après toute modification de `lib/`.
