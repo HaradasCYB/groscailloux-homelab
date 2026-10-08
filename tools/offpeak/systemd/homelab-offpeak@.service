@@ -1,0 +1,26 @@
+[Unit]
+Description=Hors pic : %i (tools/offpeak)
+# Gabarit (2026-10-08, lot 4) : une instance par travail programmé par
+#   sudo /opt/homelab/tools/offpeak/offpeak.sh --schedule '<OnCalendar>' --name <nom> [options] -- <commande…>
+# Options et commande : /etc/homelab-offpeak/%i.args (écrit par --schedule, root, 0644). Sans ce fichier, l'instance
+# ne fait rien. Rangé dans tools/offpeak/systemd/ et NON dans systemd/ : `homelabctl install` ne le copie ni ne
+# l'active ; --schedule l'installe dans /etc/systemd/system au premier usage.
+After=docker.service homelabd.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/homelab-offpeak/%i.args
+
+[Service]
+Type=oneshot
+# deploy par défaut (les Arrs et gluetun refusent root) ; --as root pose User=root dans homelab-offpeak@<nom>.service.d
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/homelab
+Environment=OFFPEAK_UNIT=%n
+ExecStart=/opt/homelab/tools/offpeak/offpeak.sh --job %i
+# 3 = rien fait (hors créneau, gardes jamais vertes, autre passage en cours) : pas une panne de l'unité. Pas
+# d'OnFailure : avec --discord, offpeak.sh poste lui-même le bilan d'un échec (une alerte de plus ferait doublon).
+SuccessExitStatus=3
+# un « systemctl stop » ne signale que offpeak.sh, qui laisse la commande en cours aller au bout (comme le lot 3)
+KillMode=mixed
+TimeoutStopSec=30min
+Nice=5

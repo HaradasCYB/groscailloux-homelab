@@ -1,0 +1,14 @@
+[Unit]
+Description=Hors pic : %i (minuteur, tools/offpeak)
+# Gabarit (2026-10-08, lot 4). OnCalendar= est posé par « offpeak.sh --schedule » dans
+# /etc/systemd/system/homelab-offpeak@<nom>.timer.d/when.conf : sans lui, systemd refuse de démarrer l'instance
+# (« Timer unit lacks value setting »), donc un gabarit installé n'agit jamais seul.
+# Persistent=true : unité installée (pas un systemd-run de /run) → un passage manqué pendant un arrêt du VPS est
+# rattrapé au démarrage ; hors de son créneau (--window), il ne fait rien.
+
+[Timer]
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
