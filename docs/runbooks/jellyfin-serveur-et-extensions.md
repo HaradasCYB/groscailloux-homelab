@@ -34,8 +34,8 @@ Lecture et transcodage : [lecture-et-transcodage.md](lecture-et-transcodage.md).
 | Bibliothèque | Dossiers | Id (si utile) |
 | --- | --- | --- |
 | Films, Séries | `/media/movies`, `/media/tvshows` + `/seedbox/media/Movies`, `/seedbox/media/TV Shows` | `JELLYFIN_LIB_FILMS`, `JELLYFIN_LIB_SERIES` (`.env`) |
-| Anime | `/media/anime` + `/seedbox/media/Anime` | `0c41907140d802bb58430fed7e2cd79e` |
-| Films d'animation | `/media/anime-films` + `/seedbox/media/Anime Movies` | `bebdce85c5b682ddbce0412f41cff060` |
+| Anime | `/media/anime` + `/seedbox/media/Anime` | `0c41907140d802bb58430fed7e2cd79e`, dans `JELLYFIN_LIB_EXTRA` |
+| Films d'animation | `/media/anime-films` + `/seedbox/media/Anime Movies` | `bebdce85c5b682ddbce0412f41cff060`, dans `JELLYFIN_LIB_EXTRA` |
 | Collections | collections (sagas, rangées d'accueil) | dans `JELLYFIN_LIB_EXTRA` |
 | Séries russes, Films russes | dossiers `Russian` de la seedbox | voir [voie-russe.md](voie-russe.md) |
 
@@ -45,6 +45,9 @@ Lecture et transcodage : [lecture-et-transcodage.md](lecture-et-transcodage.md).
   (`OrderedViews`) : Films, Séries, Anime, Films d'animation, Collections, posé à la création du compte.
 - La bibliothèque « Collections » est donnée à tous les comptes : sans elle, un compte ordinaire ne voit ni les sagas ni
   les rangées de collections.
+- `JELLYFIN_LIB_EXTRA` (`.env`) = Anime, Films d'animation et Collections : l'onboarding les donne à chaque nouveau
+  compte avec Films et Séries. Une bibliothèque à donner à tous = son id dans `JELLYFIN_LIB_EXTRA` **et** dans les
+  `EnabledFolders` des comptes existants ; les bibliothèques russes n'y sont jamais.
 - Animés : rangés par `anime_library` d'après **TMDB** (genre Animation + origine japonaise), jamais d'après le type
   « anime » de Sonarr. Forcer : tag `anime` ou `pas-anime` dans l'Arr (`pas-anime` = id 4 sur le Sonarr seedbox, posé le
   07/10 sur deux fiches sans TMDB ; journaliser un « inconnu » une fois par jour reste à faire dans le code). **Tout

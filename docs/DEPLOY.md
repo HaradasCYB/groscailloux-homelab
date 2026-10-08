@@ -92,7 +92,7 @@ Mise en place (déjà faite sur la prod, à refaire sur une nouvelle seedbox) :
 4. `[seedbox] enabled = true` dans `homelab.toml`, `sudo homelabctl install` (active
    `homelab-seedbox-mount.service`) ; Jellyfin : ajouter `/seedbox/media/Movies` comme second dossier
    de « Films » et `/seedbox/media/TV Shows` à « Séries » (Tableau de bord → Bibliothèques → Gérer
-   les dossiers) ; `JELLYFIN_LIB_EXTRA` reste vide ; `[seedbox] qbit_url`/`qbit_user` +
+   les dossiers) ; `JELLYFIN_LIB_EXTRA` = ids d'Anime, de Films d'animation et de Collections (jamais les bibliothèques russes) ; `[seedbox] qbit_url`/`qbit_user` +
    `SEEDBOX_QBIT_PASSWORD` pour `torrent_import`.
 5. Jellyseerr : Radarr/Sonarr seedbox en serveurs par défaut, en `preventSearch` ; bibliothèques activées via
    `…/settings/jellyfin/library?enable=<ids de toutes les bibliothèques>` (Seerr 3.2 : **jamais** `sync=true` seul, et le
