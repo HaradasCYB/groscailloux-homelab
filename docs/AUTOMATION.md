@@ -1015,7 +1015,7 @@ la seule source de vérité ; les comptes admin ne sont jamais listés ni modifi
   mises à 0 (une session Jellyseerr ouverte survit à la suspension Jellyfin).
 - **Activation** : refusée au-delà de `accounts.max_premium` ; permissions Jellyseerr restaurées (à
   défaut de sauvegarde, celles par défaut de Jellyseerr).
-- **Comptes protégés** (`accounts.protected` : Haradas, LeGrosCailloux) : affichés avec un badge,
+- **Comptes protégés** (`[accounts] protected` : les deux comptes de l'admin) : affichés avec un badge,
   sans interrupteur ni suppression, hors plafond. Les autres admins sont gérés normalement.
 - **Suppression** : bouton « Supprimer » → page de confirmation (`GET /accounts/delete`) → `POST
   /accounts/delete` : compte Jellyfin puis compte Jellyseerr (ses demandes partent avec). CLI :
