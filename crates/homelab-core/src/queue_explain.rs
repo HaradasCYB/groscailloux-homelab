@@ -246,7 +246,10 @@ pub fn explain(f: &Facts, auto: &Automation) -> Option<Note> {
         return note(
             Family::Failed,
             "Échec",
-            "Le téléchargement a échoué. L'admin doit le retirer pour qu'une autre version soit cherchée."
+            // Sonarr et Radarr écartent eux-mêmes une version en échec (liste noire, retrait du client) ; le titre
+            // manquant reste dans les recherches de homelabd (`series_search`, `movie_search`)
+            "Le téléchargement a échoué et cette version est écartée ; le titre sera recherché de nouveau. Si cette \
+             carte reste affichée, l'admin doit vérifier."
                 .into(),
         );
     }
@@ -327,7 +330,8 @@ pub fn explain(f: &Facts, auto: &Automation) -> Option<Note> {
             "Le fichier n'a pas pu être rangé (fichier occupé ou accès refusé). L'admin doit vérifier.".into(),
         );
     }
-    if any(&r, STALLED) {
+    // « downloading metadata » est aussi la phase normale d'un magnet (statut `queued`, suivi `ok`) : seulement signalé
+    if any(&r, STALLED) && (tstatus == "warning" || tstatus == "error" || status == "warning") {
         // promesse seulement si `stuck_handler` reconnaît CE message (même motif, même champ)
         let auto_replace = auto
             .stuck
@@ -987,6 +991,20 @@ mod tests {
             assert!(!n.detail.contains("home"), "{}", n.detail);
             assert!(!n.detail.contains("/data"), "{}", n.detail);
         }
+    }
+
+    #[test]
+    fn metadata_phase_of_a_magnet_is_ordinary() {
+        let re = stuck_re();
+        let f = facts(
+            Source::Radarr,
+            "queued",
+            "downloading",
+            "ok",
+            &[],
+            Some("qBittorrent is downloading metadata"),
+        );
+        assert!(explain(&f, &auto(&re)).is_none());
     }
 
     #[test]
