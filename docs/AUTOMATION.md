@@ -910,12 +910,14 @@ détecte les cartes `.je-request-card` de Jellyfin Enhanced et y insère une bar
 Arr) : la file brute des 4 Arrs (`queue_records_detailed` : `includeSeries`/`includeEpisode`, `includeMovie`), traduite
 par `homelab_core::queue_explain` (pur et testé) en `{ source, title, year, episode, episode_title, badge, text, detail }`
 pour les seuls éléments bloqués ; `detail` (message d'origine nettoyé) n'est envoyé qu'aux administrateurs Jellyfin. Une
-file illisible est journalisée et sautée (erreur 502 seulement si aucune n'a répondu). Les promesses d'action
-automatique suivent la configuration : `id_match_import` actif (son `interval_secs`), `stuck_handler` actif et son
-`pattern` qui reconnaît le message (`stall_secs`). Deux éléments que la carte de Jellyfin Enhanced ne distingue pas (même
-source, titre, épisode) ne sont gardés qu'avec la même note. Le script « Mon compte » remplace le badge de statut de la
-carte `.je-download-card` et ajoute une ligne `.gc-dl` (toutes les 3 s, 6 s sur téléviseur où seule la première phrase
-s'affiche) ; familles : [arrs-et-indexeurs.md](runbooks/arrs-et-indexeurs.md#10-avertissements-de-la-file-onglet-téléchargements).
+file illisible est sautée ; si aucune n'a répondu, l'échec (502) est resservi 60 s sans relire les Arrs. Journal : un
+`warn` par file illisible (et pour l'échec complet) au plus toutes les 15 min, `debug` entre-temps. Côté script, une
+seule requête en vol et 25 s d'attente après une erreur. Les promesses d'action automatique suivent la configuration :
+`id_match_import` actif (son `interval_secs`) et élément qu'il traite (`is_id_match_blocked`), `stuck_handler` actif et
+son `pattern` qui reconnaît le message (`stall_secs`). Deux éléments que la carte de Jellyfin Enhanced ne distingue pas
+(même source, titre, épisode) ne sont gardés qu'avec la même note. Le script « Mon compte » remplace le badge de statut
+de la carte `.je-download-card` et ajoute une ligne `.gc-dl` (toutes les 3 s, 6 s sur téléviseur où seule la première
+phrase s'affiche) ; familles : [arrs-et-indexeurs.md](runbooks/arrs-et-indexeurs.md#10-avertissements-de-la-file-onglet-téléchargements).
 Aucune écriture d'état, aucune action sur les Arrs.
 
 ## Sous-titres (seedbox)

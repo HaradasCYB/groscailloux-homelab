@@ -323,8 +323,10 @@ propre runbook : [voie-russe.md](voie-russe.md).
 - **Familles** (badge → ce qui se passe ensuite) :
   - « Déjà disponible » : pas une amélioration du fichier en place (« Not a Custom Format upgrade », « Not an upgrade
     for existing… », révision, déjà importé) ; rien ne manque, l'admin retire l'élément de la file ;
-  - « Import imminent » : « matched to series/movie by ID », `id_match_import` l'importe à son prochain passage
-    (« Import manuel » si la tâche est dans `tasks.disabled`) ;
+  - « Import imminent » : « matched to series/movie by ID » sur un élément que `id_match_import` traite (terminé,
+    `importBlocked`, message dans `messages`) : la tâche tente l'import à chaque passage, fichiers sans rejet
+    seulement ; un fichier rejeté reste à importer à la main. « Import manuel » sinon (autre état, ou tâche dans
+    `tasks.disabled`) ;
   - « Titre attendu » (épisode « TBA »), « Pas de vidéo » (vide, sample, archive), « Non reconnu » (épisode inattendu,
     série ou film inconnu, nom illisible), « Disque plein », « Fichier bloqué » (fichier occupé, accès refusé),
     « Pack incomplet », « Échec », « Hors ligne » (client de téléchargement injoignable) ;

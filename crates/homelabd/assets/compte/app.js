@@ -487,7 +487,7 @@
   setInterval(function () { mount(); applySubtitleSize(); }, TV ? 3000 : 1000);
 
   // ---- Onglet Demandes (Jellyfin Enhanced) : barre d'avancement sous chaque demande en cours -------------
-  var REQ = { data: null, at: 0, timer: null };
+  var REQ = { data: null, at: 0, p: null, timer: null };
   function reqCss() {
     if (document.getElementById('gc-req-css')) return;
     var st = document.createElement('style'); st.id = 'gc-req-css';
@@ -544,10 +544,16 @@
     b.title = cur === 'russe' ? 'Recherche sur le tracker russe, rangé dans les bibliothèques russes'
                               : 'Passer cette demande sur le tracker russe (VO russe, bibliothèques russes)';
   }
-  function reqFetch() {
-    if (Date.now() - REQ.at < 25000 && REQ.data) return Promise.resolve(REQ.data);
-    return api('GET', '/api/requests').then(function (d) { REQ.data = d; REQ.at = Date.now(); return d; });
+  // Réponse gardée 25 s ; une seule requête en vol (les passages suivants attendent la même) ; après une erreur,
+  // aucun nouvel appel avant 25 s (les cartes gardent ce qu'elles montrent).
+  function cachedFetch(c, path) {
+    if (c.p) return c.p;
+    if (Date.now() - c.at < 25000) return c.data ? Promise.resolve(c.data) : Promise.reject(new Error('attente'));
+    c.p = api('GET', path).then(function (d) { c.data = d; c.at = Date.now(); c.p = null; return d; },
+                                function (e) { c.data = null; c.at = Date.now(); c.p = null; throw e; });
+    return c.p;
   }
+  function reqFetch() { return cachedFetch(REQ, '/api/requests'); }
   function reqPaint() {
     if (document.hidden) return; // onglet ou appli en arrière-plan
     var cards = reqCards(); if (!cards.length) return;
@@ -667,7 +673,7 @@
     return i > 0 ? s.slice(0, i + 1) : s;
   }
   // gc-dl-match:end
-  var DL = { data: null, at: 0 };
+  var DL = { data: null, at: 0, p: null };
   function dlCss() {
     if (document.getElementById('gc-dl-css')) return;
     var st = document.createElement('style'); st.id = 'gc-dl-css';
@@ -738,10 +744,7 @@
       det.title = it.detail;
     } else if (det) det.remove();
   }
-  function dlFetch() {
-    if (Date.now() - DL.at < 25000 && DL.data) return Promise.resolve(DL.data);
-    return api('GET', '/api/downloads').then(function (d) { DL.data = d; DL.at = Date.now(); return d; });
-  }
+  function dlFetch() { return cachedFetch(DL, '/api/downloads'); }
   function dlPaint() {
     if (document.hidden) return; // onglet ou appli en arrière-plan
     var cards = dlCards(); if (!cards.length) return;

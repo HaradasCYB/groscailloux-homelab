@@ -48,6 +48,10 @@ pub struct Facts<'a> {
     pub error_message: Option<&'a str>,
     /// L'épisode (ou le film) a-t-il déjà un fichier ? (`episodeHasFile`, `episode.hasFile`, `movie.hasFile`)
     pub has_file: Option<bool>,
+    /// L'élément remplit-il le critère de `id_match_import` (`tasks::id_match_import::is_id_match_blocked` :
+    /// terminé, `importBlocked`, message « matched to … by ID » dans `messages`) ? Sans lui, la tâche ne le
+    /// touchera jamais : aucune promesse d'import automatique.
+    pub id_match_eligible: bool,
 }
 
 /// Ce que homelabd fait réellement de lui-même (lu dans la configuration en vigueur) : la note ne promet une
@@ -247,17 +251,19 @@ pub fn explain(f: &Facts, auto: &Automation) -> Option<Note> {
         );
     }
     if any(&r, ID_MATCH) {
-        return match auto.id_match_every_mins {
+        // promesse seulement si `id_match_import` tourne ET que cet élément remplit son critère ; même alors, la
+        // tâche n'importe que les fichiers sans rejet : « si ça dure, l'admin… »
+        return match auto.id_match_every_mins.filter(|_| f.id_match_eligible) {
             Some(m) => note(
                 Family::IdMatch,
                 "Import imminent",
                 format!(
                     "Le nom de cette version ne correspond pas tout à fait à la fiche, mais c'est bien le bon titre : \
-                     l'import est relancé automatiquement (toutes les {m} min). Si ça dure, l'admin doit l'importer \
+                     l'import est tenté automatiquement (toutes les {m} min). Si ça dure, l'admin doit l'importer \
                      à la main."
                 ),
             ),
-            None => note(
+            _ => note(
                 Family::IdMatch,
                 "Import manuel",
                 "Le nom de cette version ne correspond pas tout à fait à la fiche : l'admin doit l'importer à la \
@@ -630,6 +636,7 @@ pub fn explain_record(source: Source, r: &Value, auto: &Automation) -> Option<No
         messages: &messages,
         error_message: r.get("errorMessage").and_then(Value::as_str),
         has_file,
+        id_match_eligible: crate::tasks::id_match_import::is_id_match_blocked(r),
     };
     explain(&f, auto)
 }
@@ -714,6 +721,8 @@ mod tests {
             messages,
             error_message: error,
             has_file: None,
+            // critère de `id_match_import` moins le message (le cas ID_MATCH ne s'atteint qu'avec lui)
+            id_match_eligible: status == "completed" && state == "importBlocked",
         }
     }
 
@@ -856,6 +865,7 @@ mod tests {
             assert_eq!(n.family, Family::IdMatch);
             assert_eq!(n.badge, "Import imminent");
             assert!(n.text.contains("automatiquement (toutes les 5 min)"));
+            assert!(n.text.contains("l'admin doit"));
             let off = explain(
                 &facts(s, "completed", "importBlocked", "warning", ms, None),
                 &Automation::default(),
@@ -1253,6 +1263,44 @@ mod tests {
         assert_eq!(v["source"], "Sonarr");
         assert_eq!(v["year"], 2024);
         assert!(v["detail"].as_str().unwrap().contains("(4100)"));
+    }
+
+    #[test]
+    fn id_match_promise_follows_the_criterion_of_id_match_import() {
+        let re = stuck_re();
+        let line = "Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. See the FAQ for details.";
+        let in_lines = serde_json::json!([{"title": "Le.Titre.S01E02.mkv", "messages": [line]}]);
+        let badge = |r: &Value| explain_record(Source::Sonarr, r, &auto(&re)).unwrap().badge;
+        // ce que la tâche traite : terminé, importBlocked, message dans `messages`
+        let handled = rec_sonarr("Le Titre", 1, 2, "importBlocked", in_lines.clone());
+        assert!(crate::tasks::id_match_import::is_id_match_blocked(&handled));
+        assert_eq!(badge(&handled), "Import imminent");
+        // pas importBlocked : la tâche ne le touchera pas
+        let pending = rec_sonarr("Le Titre", 1, 2, "importPending", in_lines.clone());
+        assert!(!crate::tasks::id_match_import::is_id_match_blocked(
+            &pending
+        ));
+        assert_eq!(badge(&pending), "Import manuel");
+        // pas terminé
+        let mut downloading = handled.clone();
+        downloading["status"] = serde_json::json!("downloading");
+        assert_eq!(badge(&downloading), "Import manuel");
+        // message porté par le seul titre (aucune ligne) : la tâche ne lit que `messages`
+        let title_only = rec_sonarr(
+            "Le Titre",
+            1,
+            2,
+            "importBlocked",
+            serde_json::json!([{"title": line, "messages": []}]),
+        );
+        assert!(!crate::tasks::id_match_import::is_id_match_blocked(
+            &title_only
+        ));
+        assert_eq!(badge(&title_only), "Import manuel");
+        // tâche coupée : jamais de promesse, même pour un élément qu'elle aurait traité
+        let off = explain_record(Source::Sonarr, &handled, &Automation::default()).unwrap();
+        assert_eq!(off.badge, "Import manuel");
+        assert!(!off.text.contains("automatiquement"));
     }
 
     #[test]
