@@ -487,7 +487,7 @@
   setInterval(function () { mount(); applySubtitleSize(); }, TV ? 3000 : 1000);
 
   // ---- Onglet Demandes (Jellyfin Enhanced) : barre d'avancement sous chaque demande en cours -------------
-  var REQ = { data: null, at: 0, timer: null };
+  var REQ = { data: null, at: 0, p: null, timer: null };
   function reqCss() {
     if (document.getElementById('gc-req-css')) return;
     var st = document.createElement('style'); st.id = 'gc-req-css';
@@ -544,10 +544,16 @@
     b.title = cur === 'russe' ? 'Recherche sur le tracker russe, rangé dans les bibliothèques russes'
                               : 'Passer cette demande sur le tracker russe (VO russe, bibliothèques russes)';
   }
-  function reqFetch() {
-    if (Date.now() - REQ.at < 25000 && REQ.data) return Promise.resolve(REQ.data);
-    return api('GET', '/api/requests').then(function (d) { REQ.data = d; REQ.at = Date.now(); return d; });
+  // Réponse gardée 25 s ; une seule requête en vol (les passages suivants attendent la même) ; après une erreur,
+  // aucun nouvel appel avant 25 s (les cartes gardent ce qu'elles montrent).
+  function cachedFetch(c, path) {
+    if (c.p) return c.p;
+    if (Date.now() - c.at < 25000) return c.data ? Promise.resolve(c.data) : Promise.reject(new Error('attente'));
+    c.p = api('GET', path).then(function (d) { c.data = d; c.at = Date.now(); c.p = null; return d; },
+                                function (e) { c.data = null; c.at = Date.now(); c.p = null; throw e; });
+    return c.p;
   }
+  function reqFetch() { return cachedFetch(REQ, '/api/requests'); }
   function reqPaint() {
     if (document.hidden) return; // onglet ou appli en arrière-plan
     var cards = reqCards(); if (!cards.length) return;
@@ -589,6 +595,167 @@
     }).catch(function () {});
   }
   setInterval(reqPaint, TV ? 6000 : 3000);
+
+  // ---- Onglet Téléchargements (Jellyfin Enhanced) : avertissements expliqués (2026-10-09) ---------------------
+  // Un élément bloqué de la file des Arrs n'y montrait qu'un badge « AVERTISSEMENT ». homelabd (/api/downloads,
+  // homelab_core::queue_explain) dit pourquoi : le badge prend un libellé court, une ligne explique au membre ce qui
+  // se passe (texte complet au survol), et l'admin voit en plus le message d'origine nettoyé. Une carte n'est
+  // enrichie que si l'appariement est sûr (source, titre, épisode) ; sinon elle reste telle que JE l'a dessinée.
+  // gc-dl-match:start (fonctions pures, testées par tools/tests/compte-telechargements/match.test.js)
+  function dlNorm(s) {
+    var t = String(s == null ? '' : s);
+    try { t = t.normalize('NFD').replace(/[̀-ͯ]/g, ''); } catch (e) { /* vieux navigateur : sans accents retirés */ }
+    return t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+  // champs lus sur une carte → { source, title, season, episode, year, pack: { season, count, from, to } | null }
+  function dlParse(f) {
+    var icon = String(f.icon || '');
+    var source = /sonarr/i.test(icon) ? 'Sonarr' : (/radarr/i.test(icon) ? 'Radarr' : '');
+    var sub = String(f.subtitle || '');
+    var c = { source: source, title: String(f.title || '').trim(), season: null, episode: null, year: null, pack: null };
+    if (f.pack) {
+      var n = sub.match(/\d+/g) || [];
+      var r = /E(\d+)\s*-\s*E(\d+)/i.exec(String(f.range || ''));
+      c.source = 'Sonarr';
+      if (n.length >= 2 && r) c.pack = { season: +n[0], count: +n[1], from: +r[1], to: +r[2] };
+      return c;
+    }
+    var m = /\bS(\d{1,3})E(\d{1,4})\b/i.exec(sub);
+    if (m) { c.season = +m[1]; c.episode = +m[2]; }
+    var y = /\b(19|20)\d{2}\b/.exec(sub);
+    if (!m && y) c.year = +y[0];
+    return c;
+  }
+  function dlEp(i) {
+    var m = /^S(\d+)E(\d+)$/i.exec(i.episode || '');
+    return m ? { s: +m[1], e: +m[2] } : null;
+  }
+  // élément expliqué de cette carte, ou null : jamais deux candidats, jamais une carte de série sans épisode
+  function dlMatch(items, c) {
+    var t = dlNorm(c.title);
+    if (!t) return null;
+    var same = (items || []).filter(function (i) { return (!c.source || i.source === c.source) && dlNorm(i.title) === t; });
+    var hits;
+    if (c.pack) {
+      var p = c.pack;
+      hits = same.filter(function (i) { var x = dlEp(i); return x && x.s === p.season; });
+      if (!hits.length || hits.length !== p.count) return null;
+      var ok = hits.every(function (i) {
+        var x = dlEp(i);
+        return x.e >= p.from && x.e <= p.to && i.badge === hits[0].badge && i.text === hits[0].text;
+      });
+      if (!ok) return null;
+      var detailSame = hits.every(function (i) { return (i.detail || '') === (hits[0].detail || ''); });
+      return { source: hits[0].source, title: hits[0].title, badge: hits[0].badge, text: hits[0].text, detail: detailSame ? hits[0].detail : '' };
+    }
+    if (c.episode != null) {
+      hits = same.filter(function (i) { var x = dlEp(i); return x && x.s === c.season && x.e === c.episode; });
+    } else if (c.source === 'Radarr') {
+      hits = same.filter(function (i) { return !i.episode; });
+      if (hits.length > 1 && c.year) hits = hits.filter(function (i) { return i.year === c.year; });
+    } else {
+      return null;
+    }
+    return hits.length === 1 ? hits[0] : null;
+  }
+  function dlKey(c) {
+    return [c.source, dlNorm(c.title), c.pack ? 'p' + c.pack.season + ':' + c.pack.from + '-' + c.pack.to : (c.season + 'x' + c.episode + ':' + c.year)].join('|');
+  }
+  // une réponse par carte ; deux cartes identiques à l'écran (même source, titre, épisode) : aucune des deux
+  function dlAssign(items, cards) {
+    var seen = {};
+    cards.forEach(function (c) { var k = dlKey(c); seen[k] = (seen[k] || 0) + 1; });
+    return cards.map(function (c) { return seen[dlKey(c)] > 1 ? null : dlMatch(items, c); });
+  }
+  // texte court (télé) : la première phrase
+  function dlShort(t) {
+    var s = String(t || ''), i = s.indexOf('. ');
+    return i > 0 ? s.slice(0, i + 1) : s;
+  }
+  // gc-dl-match:end
+  var DL = { data: null, at: 0, p: null };
+  function dlCss() {
+    if (document.getElementById('gc-dl-css')) return;
+    var st = document.createElement('style'); st.id = 'gc-dl-css';
+    st.textContent = [
+      '.gc-dl{display:block;width:100%;flex:0 0 100%;box-sizing:border-box;margin:.4em 0 .15em;font-size:.86em;color:#c9d4df}',
+      '.gc-dl .txt{white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.3}',
+      '.gc-dl .det{margin-top:.3em;font-size:.86em;color:#8fa1b3;white-space:normal;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.25}'
+    ].join('\n');
+    document.head.appendChild(st);
+  }
+  // cartes réellement à l'écran seulement (page cachée derrière le lecteur : rien)
+  function dlCards() {
+    return Array.prototype.filter.call(document.querySelectorAll('.je-download-card'), function (c) {
+      if (c.offsetParent === null) return false;
+      var r = c.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+  }
+  function dlTxt(card, sel) { var e = card.querySelector(sel); return e ? (e.textContent || '').trim() : ''; }
+  // badge de statut : le premier .je-download-badge qui n'est pas l'icône de l'Arr
+  function dlBadges(card) {
+    return Array.prototype.filter.call(card.querySelectorAll('.je-download-meta .je-download-badge'), function (b) { return !b.classList.contains('je-arr-badge'); });
+  }
+  function dlRead(card) {
+    var img = card.querySelector('.je-arr-badge img');
+    var badges = dlBadges(card);
+    var pack = card.classList.contains('je-season-pack');
+    return dlParse({
+      title: dlTxt(card, '.je-download-title'),
+      subtitle: dlTxt(card, '.je-download-subtitle'),
+      icon: img ? (img.getAttribute('src') || '') + ' ' + (img.getAttribute('alt') || '') : '',
+      pack: pack,
+      range: pack && badges[1] ? badges[1].textContent : ''
+    });
+  }
+  function dlApply(card, it) {
+    var badge = dlBadges(card)[0];
+    var box = card.querySelector('.gc-dl');
+    if (!it) {
+      // plus expliquée : on rend la carte telle que JE l'a dessinée (seuls nos ajouts sont retirés)
+      if (box) box.remove();
+      if (badge && badge.hasAttribute('data-gc-orig')) {
+        badge.textContent = badge.getAttribute('data-gc-orig');
+        badge.removeAttribute('data-gc-orig');
+        badge.removeAttribute('title');
+      }
+      return;
+    }
+    if (badge) {
+      if (!badge.hasAttribute('data-gc-orig')) badge.setAttribute('data-gc-orig', badge.textContent);
+      if (badge.textContent !== it.badge) badge.textContent = it.badge;
+      badge.title = it.text;
+    }
+    if (!box) {
+      box = h('div', { class: 'gc-dl' }, [h('div', { class: 'txt' })]);
+      // sous la rangée des badges (.je-download-meta), dans la colonne .je-download-info
+      var meta = card.querySelector('.je-download-meta');
+      if (meta) meta.insertAdjacentElement('afterend', box); else (card.querySelector('.je-download-info') || card).appendChild(box);
+    }
+    var txt = box.querySelector('.txt');
+    var shown = TV ? dlShort(it.text) : it.text;
+    if (txt.textContent !== shown) txt.textContent = shown;
+    txt.title = it.text; // texte complet au survol
+    var det = box.querySelector('.det');
+    if (it.detail && !TV) {
+      if (!det) { det = h('div', { class: 'det' }); box.appendChild(det); }
+      if (det.textContent !== it.detail) det.textContent = it.detail;
+      det.title = it.detail;
+    } else if (det) det.remove();
+  }
+  function dlFetch() { return cachedFetch(DL, '/api/downloads'); }
+  function dlPaint() {
+    if (document.hidden) return; // onglet ou appli en arrière-plan
+    var cards = dlCards(); if (!cards.length) return;
+    dlCss();
+    dlFetch().then(function (d) {
+      var items = (d && d.items) || [];
+      var found = dlAssign(items, cards.map(dlRead));
+      cards.forEach(function (card, k) { dlApply(card, found[k]); });
+    }).catch(function () {});
+  }
+  setInterval(dlPaint, TV ? 6000 : 3000);
 
   // Fenêtre « Demander » de Jellyfin Enhanced (options avancées activées pour la voie russe) : pour un compte
   // autorisé, un seul choix « Version » expliqué ; pour tous les autres, le bloc reste caché et la demande part avec

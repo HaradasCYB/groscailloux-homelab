@@ -312,3 +312,28 @@ propre runbook : [voie-russe.md](voie-russe.md).
   `/api/…` ; `POST`/`PUT /filters` exigent `resolutions`, `codecs`, `sources`, `containers` à `[]` (sinon 500) ; autobrr
   s'arrête au premier filtre qui retient une release et n'enregistre pas celles qu'aucun filtre ne retient ; un indexeur
   Torznab se crée par `POST /indexer`, puis le flux par `POST /feeds` avec `indexer_id`.
+
+## 10. Avertissements de la file (onglet Téléchargements)
+
+- **Où** : l'onglet « Téléchargements » de Jellyfin Enhanced (ouvert à tous les membres) montre la file des 4 Arrs ; un
+  élément bloqué n'y portait qu'un badge « AVERTISSEMENT ». Depuis le 09/10, le script de Mon compte remplace ce badge par
+  un libellé court et ajoute dessous une ligne pour le membre ; un administrateur voit en plus le message d'origine
+  nettoyé (nom de fichier sans dossier, ni lien, ni hôte, ni clé). Route `GET /compte/api/downloads` de homelabd
+  (session Jellyfin, cache 30 s, lecture seule), décisions dans `homelab_core::queue_explain` (testées).
+- **Familles** (badge → ce qui se passe ensuite) :
+  - « Déjà disponible » : pas une amélioration du fichier en place (« Not a Custom Format upgrade », « Not an upgrade
+    for existing… », révision, déjà importé) ; rien ne manque, l'admin retire l'élément de la file ;
+  - « Import imminent » : « matched to series/movie by ID » sur un élément que `id_match_import` traite (terminé,
+    `importBlocked`, message dans `messages`) : la tâche tente l'import à chaque passage, fichiers sans rejet
+    seulement ; un fichier rejeté reste à importer à la main. « Import manuel » sinon (autre état, ou tâche dans
+    `tasks.disabled`) ;
+  - « Titre attendu » (épisode « TBA »), « Pas de vidéo » (vide, sample, archive), « Non reconnu » (épisode inattendu,
+    série ou film inconnu, nom illisible), « Disque plein », « Fichier bloqué » (fichier occupé, accès refusé),
+    « Pack incomplet », « Échec », « Hors ligne » (client de téléchargement injoignable) ;
+  - « Sans source » (torrent à l'arrêt, métadonnées) : le retrait automatique n'est annoncé que si `stuck_handler` est
+    actif et que son `pattern` reconnaît le message (délai = `stall_secs`) ;
+  - « À vérifier » : tout autre avertissement.
+- **Rien d'inexact** : une note ne promet une action automatique que si homelabd la fait (tâche active, lue dans
+  `homelab.toml`) ; sinon elle dit « l'admin doit… ». Une carte n'est enrichie que si l'appariement est sûr (source,
+  titre, épisode ; jamais deux candidats) : sinon elle reste telle que Jellyfin Enhanced l'a dessinée.
+- Format WEB-DL (4 Arrs, 09/10) : expression `(?i)\bWEB[\.\-]?DL\b(?!-\d{3,4}p)` ; sans la fin `(?!-…p)`, le nom renommé « WEBDL-1080p » ({Quality Full}) donnait +400 au fichier existant et une REPACK nommée « WEB » restait bloquée en « Not a Custom Format upgrade » (Carrie S01E02). Sauvegarde : backups/arr-cf-webdl-20261009/.

@@ -87,16 +87,18 @@ impl ArrClient {
     /// Toute la file, page par page. Jusqu'au 2026-09-23 seule la première page (200) était lue : au-delà,
     /// `movie_search` redemandait un film déjà en file et `stuck_handler` remettait son chronomètre à zéro.
     async fn queue_all(&self) -> Result<Vec<Value>> {
+        self.queue_all_with(&[]).await
+    }
+
+    /// `queue_all` avec des paramètres en plus (`includeSeries`, `includeEpisode`, `includeMovie`).
+    async fn queue_all_with(&self, extra: &[(&str, &str)]) -> Result<Vec<Value>> {
         const PAGE: usize = 500;
         let mut all: Vec<Value> = Vec::new();
         for page in 1..=MAX_QUEUE_PAGES {
             let (p, size) = (page.to_string(), PAGE.to_string());
-            let v = self
-                .get(
-                    "api/v3/queue",
-                    &[("page", p.as_str()), ("pageSize", size.as_str())],
-                )
-                .await?;
+            let mut query = vec![("page", p.as_str()), ("pageSize", size.as_str())];
+            query.extend_from_slice(extra);
+            let v = self.get("api/v3/queue", &query).await?;
             let records = v
                 .get("records")
                 .and_then(Value::as_array)
@@ -197,6 +199,17 @@ impl ArrClient {
     /// Queue brute (tous les champs), pour les tâches qui lisent statusMessages/trackedDownloadState.
     pub async fn queue_records(&self) -> Result<Vec<Value>> {
         self.queue_all().await
+    }
+
+    /// Queue brute avec la fiche et l'épisode (Sonarr : `includeSeries`, `includeEpisode`) ou le film (Radarr :
+    /// `includeMovie`), pour expliquer les avertissements dans l'onglet Téléchargements de Jellyfin Enhanced.
+    pub async fn queue_records_detailed(&self) -> Result<Vec<Value>> {
+        if self.is_radarr() {
+            self.queue_all_with(&[("includeMovie", "true")]).await
+        } else {
+            self.queue_all_with(&[("includeSeries", "true"), ("includeEpisode", "true")])
+                .await
+        }
     }
 
     /// Aperçu d'import manuel d'un téléchargement, rattaché à une fiche (`movieId` / `seriesId`).

@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::client_addr::Client;
 
@@ -35,6 +35,14 @@ const AUTH_TTL: Duration = Duration::from_secs(300);
 
 /// (type, tmdb) → (instant, {title, original_title, year, poster}).
 type DetailsCache = HashMap<(String, i64), (Instant, Value)>;
+/// Avertissements expliqués : dernière lecture (heure, résultat ; `None` = aucune file lisible, gardé
+/// `DOWNLOADS_FAIL_TTL` pour ne pas relire les Arrs en boucle pendant une panne) et dernier avertissement journalisé
+/// par file (un par `DOWNLOADS_WARN_EVERY`).
+#[derive(Default)]
+struct DownloadsCache {
+    last: Option<(Instant, Option<Vec<Value>>)>,
+    warned: HashMap<&'static str, Instant>,
+}
 /// (côté, id série) → saison → (fichiers, épisodes diffusés, prochaine diffusion).
 type SeasonInfo = HashMap<(&'static str, i64), HashMap<i64, (i64, i64, Option<String>)>>;
 
@@ -47,6 +55,9 @@ pub struct SubsState {
     requests_cache: Arc<Mutex<Option<(Instant, Value)>>>,
     /// Titre, année et affiche TMDB par (type, tmdb), pour apparier les cartes de Jellyfin Enhanced (1 h).
     details_cache: Arc<Mutex<DetailsCache>>,
+    /// Avertissements expliqués de la file des Arrs, partagés entre tous les membres (`DOWNLOADS_TTL`) ; le verrou
+    /// est tenu pendant la lecture des files : une seule lecture à la fois, les autres attendent son résultat.
+    downloads_cache: Arc<Mutex<DownloadsCache>>,
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +65,8 @@ struct Me {
     id: String,
     name: String,
     disabled: bool,
+    /// Administrateur Jellyfin (`Policy.IsAdministrator`) : voit le message d'origine des avertissements.
+    admin: bool,
 }
 
 type ApiResult<T> = Result<T, (StatusCode, Json<Value>)>;
@@ -69,6 +82,7 @@ pub fn router(ctx: Arc<TaskContext>) -> Router {
         last: Arc::new(Mutex::new(HashMap::new())),
         requests_cache: Arc::new(Mutex::new(None)),
         details_cache: Arc::new(Mutex::new(HashMap::new())),
+        downloads_cache: Arc::new(Mutex::new(DownloadsCache::default())),
     };
     Router::new()
         .route("/paypal/webhook", post(webhook))
@@ -80,6 +94,7 @@ pub fn router(ctx: Arc<TaskContext>) -> Router {
         .route("/compte/api/language", post(set_language))
         .route("/compte/api/original", get(original_language))
         .route("/compte/api/requests", get(requests_progress))
+        .route("/compte/api/downloads", get(downloads_explained))
         .route("/compte/api/route", get(route_list).post(route_set))
         .with_state(st)
 }
@@ -163,6 +178,10 @@ async fn auth(st: &SubsState, headers: &HeaderMap) -> ApiResult<Me> {
         name: name.to_string(),
         disabled: me
             .pointer("/Policy/IsDisabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        admin: me
+            .pointer("/Policy/IsAdministrator")
             .and_then(Value::as_bool)
             .unwrap_or(false),
     };
@@ -363,6 +382,152 @@ async fn requests_progress(
     })?;
     *st.requests_cache.lock().await = Some((Instant::now(), v.clone()));
     Ok(Json(v))
+}
+
+/// Durée de vie des avertissements expliqués : les Arrs de la seedbox sont à distance, et le script de Mon compte
+/// garde lui-même sa réponse 25 s.
+const DOWNLOADS_TTL: Duration = Duration::from_secs(30);
+/// Durée pendant laquelle un échec complet (aucune file lisible) est resservi tel quel, sans relire les Arrs.
+const DOWNLOADS_FAIL_TTL: Duration = Duration::from_secs(60);
+/// Délai par file d'Arr : une file lente ne retient pas la page plus longtemps.
+const DOWNLOADS_ARR_TIMEOUT: Duration = Duration::from_secs(20);
+/// Un avertissement par file illisible (et pour l'échec complet) au plus toutes les 15 min ; le reste en debug.
+const DOWNLOADS_WARN_EVERY: Duration = Duration::from_secs(900);
+
+/// Faut-il journaliser en `warn` cet échec (`key` : nom de l'Arr, ou `*` pour l'échec complet) ? Oui la première fois
+/// et ensuite une fois par `DOWNLOADS_WARN_EVERY`.
+fn warn_due(warned: &mut HashMap<&'static str, Instant>, key: &'static str, now: Instant) -> bool {
+    match warned.get(key) {
+        Some(at) if now.saturating_duration_since(*at) < DOWNLOADS_WARN_EVERY => false,
+        _ => {
+            warned.insert(key, now);
+            true
+        }
+    }
+}
+
+/// GET /compte/api/downloads : avertissements de la file des Arrs (onglet Téléchargements de Jellyfin Enhanced,
+/// ouvert à tous les membres), expliqués par `homelab_core::queue_explain`. Le message d'origine (`detail`, nettoyé)
+/// ne part qu'aux administrateurs. Lecture seule : aucune écriture d'état, aucune action sur les Arrs.
+async fn downloads_explained(
+    State(st): State<SubsState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let u = auth(&st, &headers).await?;
+    let items = {
+        let mut guard = st.downloads_cache.lock().await;
+        let c = &mut *guard;
+        match &c.last {
+            Some((at, v))
+                if at.elapsed()
+                    < if v.is_some() {
+                        DOWNLOADS_TTL
+                    } else {
+                        DOWNLOADS_FAIL_TTL
+                    } =>
+            {
+                v.clone()
+            }
+            _ => {
+                let v = match build_downloads(&st, &mut c.warned).await {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        let error = format!("{e:#}");
+                        if warn_due(&mut c.warned, "*", Instant::now()) {
+                            warn!(task = "subs", error, "downloads explanations failed");
+                        } else {
+                            debug!(task = "subs", error, "downloads explanations failed");
+                        }
+                        None
+                    }
+                };
+                c.last = Some((Instant::now(), v.clone()));
+                v
+            }
+        }
+    };
+    let items = items.ok_or_else(|| err(StatusCode::BAD_GATEWAY, "services injoignables"))?;
+    Ok(Json(json!({ "items": for_viewer(items, u.admin) })))
+}
+
+/// `detail` retiré pour un compte qui n'est pas administrateur.
+fn for_viewer(items: Vec<Value>, admin: bool) -> Vec<Value> {
+    items
+        .into_iter()
+        .map(|mut i| {
+            if !admin {
+                if let Some(o) = i.as_object_mut() {
+                    o.remove("detail");
+                }
+            }
+            i
+        })
+        .collect()
+}
+
+/// Files des Arrs (VPS et seedbox, lues côte à côte), puis notes. Une file illisible est journalisée (`warn` une fois
+/// par `DOWNLOADS_WARN_EVERY` et par file, `debug` sinon) et sautée ; erreur seulement si aucune n'a pu être lue.
+async fn build_downloads(
+    st: &SubsState,
+    warned: &mut HashMap<&'static str, Instant>,
+) -> anyhow::Result<Vec<Value>> {
+    use homelab_core::queue_explain::{self as qe, Source};
+    let ctx = &st.ctx;
+    let mut set = tokio::task::JoinSet::new();
+    for arr in ctx.all_arrs() {
+        let arr = arr.clone();
+        set.spawn(async move {
+            let source = if arr.is_radarr() {
+                Source::Radarr
+            } else {
+                Source::Sonarr
+            };
+            let res = tokio::time::timeout(DOWNLOADS_ARR_TIMEOUT, arr.queue_records_detailed())
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("délai dépassé")));
+            (arr.name, source, res)
+        });
+    }
+    let (mut records, mut read, mut failed) = (Vec::new(), 0usize, 0usize);
+    while let Some(joined) = set.join_next().await {
+        let Ok((name, source, res)) = joined else {
+            failed += 1;
+            continue;
+        };
+        match res {
+            Ok(recs) => {
+                read += 1;
+                records.extend(recs.into_iter().map(|r| (source, r)));
+            }
+            Err(e) => {
+                failed += 1;
+                let error = format!("{e:#}");
+                if warn_due(warned, name, Instant::now()) {
+                    warn!(
+                        task = "subs",
+                        service = name,
+                        error,
+                        "queue unreadable for downloads"
+                    );
+                } else {
+                    debug!(
+                        task = "subs",
+                        service = name,
+                        error,
+                        "queue unreadable for downloads"
+                    );
+                }
+            }
+        }
+    }
+    if read == 0 && failed > 0 {
+        anyhow::bail!("aucune file d'Arr lisible ({failed} en erreur)");
+    }
+    let setup = qe::Setup::from_config(&ctx.cfg);
+    qe::explain_queue(&records, &setup.automation())
+        .into_iter()
+        .map(|i| serde_json::to_value(i).map_err(Into::into))
+        .collect()
 }
 
 fn side_of(service_id: i64, vps_id: i64) -> &'static str {
@@ -1509,6 +1674,51 @@ mod tests {
     }
     const ME: &str = "0123456789abcdef0123456789abcdef";
     const OTHER: &str = "fedcba9876543210fedcba9876543210";
+
+    #[test]
+    fn the_original_message_of_a_warning_goes_to_administrators_only() {
+        let items = vec![
+            json!({"title": "Carrie", "badge": "Déjà disponible", "text": "t", "detail": "d"}),
+            json!({"title": "Film", "badge": "Sans source", "text": "t"}),
+        ];
+        let member = for_viewer(items.clone(), false);
+        assert!(member.iter().all(|i| i.get("detail").is_none()));
+        assert_eq!(member[0]["badge"], "Déjà disponible");
+        let admin = for_viewer(items, true);
+        assert_eq!(admin[0]["detail"], "d");
+    }
+
+    #[test]
+    fn an_unreadable_queue_is_warned_once_per_window_and_per_arr() {
+        let mut warned = HashMap::new();
+        let t0 = Instant::now();
+        assert!(warn_due(&mut warned, "sonarr-seedbox", t0));
+        assert!(!warn_due(
+            &mut warned,
+            "sonarr-seedbox",
+            t0 + Duration::from_secs(30)
+        ));
+        assert!(warn_due(
+            &mut warned,
+            "radarr-seedbox",
+            t0 + Duration::from_secs(30)
+        ));
+        assert!(!warn_due(
+            &mut warned,
+            "sonarr-seedbox",
+            t0 + DOWNLOADS_WARN_EVERY - Duration::from_secs(1)
+        ));
+        assert!(warn_due(
+            &mut warned,
+            "sonarr-seedbox",
+            t0 + DOWNLOADS_WARN_EVERY
+        ));
+        assert!(!warn_due(
+            &mut warned,
+            "sonarr-seedbox",
+            t0 + DOWNLOADS_WARN_EVERY + Duration::from_secs(30)
+        ));
+    }
 
     #[test]
     fn only_listed_accounts_may_choose_the_russian_route_whatever_the_case() {

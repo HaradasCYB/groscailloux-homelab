@@ -202,7 +202,7 @@ pub fn normalize(s: &str) -> String {
         .collect()
 }
 
-fn fold(c: char) -> char {
+pub(crate) fn fold(c: char) -> char {
     match c {
         'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
         'ç' => 'c',
