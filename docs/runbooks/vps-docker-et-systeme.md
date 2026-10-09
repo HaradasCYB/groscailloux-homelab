@@ -13,7 +13,7 @@ VPN ou qBittorrent, ou avant un redémarrage du VPS. Déploiement et restauratio
   rendu diun aveugle du 18/09 au 07/10). `homelabctl check` et la tâche `diun_watch` (24 h, alerte) refusent les clés en
   double et toute image du compose sans entrée `repo:tag`. `sort_tags: semver` sur les tags semver purs seulement (le tri
   par défaut est alphabétique : 9.5.9 passe devant 13.2.3), pas sur les tags linuxserver. Formats amont (07/10) :
-  Jellyfin 12 en `x.y` ; qBittorrent `5.2.4_v2.0.15-lsN` ; Glances sans `v` (`4.5.4` ; le digest d'un tag est celui de
+  Jellyfin 12 en `x.y` ; qBittorrent `5.2.4_v2.0.15-lsN` ; Glances sans `v` (`4.5.7` depuis le 09/10 : Docker Hub n'a plus de tag `v…` ; le digest d'un tag est celui de
   son index, pas celui de `latest`). Un nouveau motif se teste avec un diun jetable (`DIUN_WATCH_RUNONSTARTUP=true`, sans
   notification).
 - **Ports publiés sur `127.0.0.1` seulement** (Docker contourne ufw) : tout passe par NPM (noms de conteneurs) ou par
@@ -85,6 +85,22 @@ VPN ou qBittorrent, ou avant un redémarrage du VPS. Déploiement et restauratio
   `backups/vnc-20260923/`). Contrôle : `pgrep -cx xfce4-session` = 1.
 
 ## 6. Pièges du système
+
+- **Outils d'administration (lot 3, 09/10)** : Grafana 13.0.10, Portainer CE 2.39.8 (ligne LTS 2.39, pas la 2.45),
+  Glances 4.5.7, File Browser v2.63.23 ; scripts `backups/lot3-20261008/<service>/{apply,rollback,check}.sh`.
+  - **Portainer** : la montée 2.39.1 → 2.39.8 migre `portainer.db` ; l'ancienne version refuse ensuite de démarrer
+    (« database schema version does not align »). Retour arrière = restaurer le dossier `portainer/` de la sauvegarde du
+    passage, jamais l'image seule (Portainer garde aussi `portainer/backups/portainer.db.bak`).
+  - **Grafana 13** s'arrête au démarrage si l'installateur de plugins n'atteint pas grafana.com (`GF_INSTALL_PLUGINS` et
+    applications préinstallées) ; le premier démarrage met à jour les plugins préinstallés. `GF_INSTALL_PLUGINS` est
+    déprécié (`GF_PLUGINS_PREINSTALL`) et `grafana-simple-json-datasource` (Angular) est refusé depuis 13.x : entrée morte.
+    Déjà cassés avant la montée : tableau Containers (5 panneaux sur 6, requête Flux au `set:` vide) et source
+    InfluxDB_InfluxQL.
+  - **Glances** : aucun filtrage du Host tant que `webui_allowed_hosts` est absent de `glances.conf` (mesuré en 4.5.4 et
+    4.5.7). Ne jamais ajouter cette clé sans y mettre `glances`, le nom qu'appelle Homarr.
+  - **File Browser** v2.63.23 est la dernière version : projet archivé le 01/09/2026, plus de correctifs ni de version
+    pour diun. Exposition publique (hôte NPM 14, sans liste d'accès) et écriture sur `/srv/media` gardées en attente de
+    décision du propriétaire. Liens symboliques hors racine refusés depuis 2.63.6 (aucun dans `library/`).
 
 - **coreutils uutils** (Rust, 0.8.0, Ubuntu 26.04) : la forme courte `tail -25 a b` (plusieurs fichiers) échoue
   (« unexpected argument '-2' »). Dans les scripts, toujours `head -n N` et `tail -n N`.

@@ -38,7 +38,7 @@
   max_tags: 3
   sort_tags: semver
   include_tags: ['^\d+\.\d+$']
-- name: grafana/grafana:13.0.1
+- name: grafana/grafana:13.0.10
   watch_repo: true
   max_tags: 3
   sort_tags: semver
@@ -53,12 +53,12 @@
   max_tags: 3
   sort_tags: semver
   include_tags: ['^\d+\.\d+\.\d+$']
-- name: jc21/nginx-proxy-manager:2.14.0
+- name: jc21/nginx-proxy-manager:2.16.0
   watch_repo: true
   max_tags: 3
   sort_tags: semver
   include_tags: ['^\d+\.\d+\.\d+$']
-- name: portainer/portainer-ce:2.39.1
+- name: portainer/portainer-ce:2.39.8
   watch_repo: true
   max_tags: 3
   sort_tags: semver
@@ -78,14 +78,14 @@
   max_tags: 3
   sort_tags: semver
   include_tags: ['^\d+\.\d+\.\d+$']
-- name: nicolargo/glances:4.5.4
+- name: nicolargo/glances:4.5.7
   watch_repo: true
   max_tags: 3
   sort_tags: semver
   include_tags: ['^\d+\.\d+\.\d+$']
 
 # --- semver préfixé v
-- name: ghcr.io/seerr-team/seerr:v3.2.0
+- name: ghcr.io/seerr-team/seerr:v3.5.0
   watch_repo: true
   max_tags: 3
   sort_tags: semver
@@ -95,7 +95,7 @@
   max_tags: 3
   sort_tags: semver
   include_tags: ['^v\d+\.\d+\.\d+$']
-- name: filebrowser/filebrowser:v2.63.2
+- name: filebrowser/filebrowser:v2.63.23
   watch_repo: true
   max_tags: 3
   sort_tags: semver

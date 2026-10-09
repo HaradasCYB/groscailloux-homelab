@@ -102,7 +102,7 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 - Nouveau marqueur de langue = code (`langs_of`) **et** formats des 4 Arrs ; changer le profil anime = aussi `activeAnimeProfileId` dans Jellyseerr.
 - Toute règle par tracker vise les deux domaines de C411 (`c411.org` et `tk.c411.tw`).
 - Prowlarr sans application liée ; avant de retirer un service, chercher qui l'appelle (`grep -r <nom>:<port>`, `baseUrl` des indexeurs).
-- **Jellyseerr (Seerr 3.2) : `GET settings/jellyfin/library` sans paramètre et `?sync=true` sans `?enable=` désactivent toutes les bibliothèques** ; lire par `GET /api/v1/settings/jellyfin`.
+- **Jellyseerr = Seerr 3.5 depuis le 09/10** : le piège de la 3.2 (`GET settings/jellyfin/library` et `?sync=true` désactivaient toutes les bibliothèques) a disparu ; lire quand même l'état par `GET /api/v1/settings/jellyfin`, activer par `PUT …/library/{id}`. Retour à la 3.2 = restaurer la base (elle ne démarre pas sur la base migrée).
 - Historique d'un titre : `history/movie?movieId=` et `history/series?seriesId=` (`history?movieId=` ignore le filtre).
 - Voie russe = choix du membre, jamais la langue TMDB ; ne pas contourner l'arrêt des torrents publics par l'hébergeur de la seedbox.
 - Flux C411 d'autobrr désactivé : le réactiver remet le bruit d'origine (décision du propriétaire).

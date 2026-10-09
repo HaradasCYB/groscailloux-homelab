@@ -97,10 +97,11 @@ Mise en place (déjà faite sur la prod, à refaire sur une nouvelle seedbox) :
    de « Films » et `/seedbox/media/TV Shows` à « Séries » (Tableau de bord → Bibliothèques → Gérer
    les dossiers) ; `JELLYFIN_LIB_EXTRA` = ids d'Anime, de Films d'animation et de Collections (jamais les bibliothèques russes) ; `[seedbox] qbit_url`/`qbit_user` +
    `SEEDBOX_QBIT_PASSWORD` pour `torrent_import`.
-5. Jellyseerr : Radarr/Sonarr seedbox en serveurs par défaut, en `preventSearch` ; bibliothèques activées via
-   `…/settings/jellyfin/library?enable=<ids de toutes les bibliothèques>` (Seerr 3.2 : **jamais** `sync=true` seul, et le
-   `GET` sans paramètre désactive lui aussi tout ; lire l'état par `GET /api/v1/settings/jellyfin`). Le lot 3 prépare
-   Seerr 3.5.0, qui change cette API (`backups/lot3-20261008/NOTES-DOC.txt`).
+5. Jellyseerr : Radarr/Sonarr seedbox en serveurs par défaut, en `preventSearch` ; bibliothèques : en Seerr 3.5
+   (depuis le 09/10), `POST /api/v1/settings/jellyfin/library/sync` (relit Jellyfin, garde l'état des bibliothèques déjà
+   connues, les nouvelles arrivent désactivées) puis `PUT /api/v1/settings/jellyfin/library/{id}` avec
+   `{"enabled": true}` ; lire l'état par `GET /api/v1/settings/jellyfin`. (En 3.2, `sync=true` seul et le `GET` sans
+   paramètre désactivaient tout.)
 
 Vérifier : `homelabctl check` (Arrs seedbox + montage), `systemctl status homelab-seedbox-mount`.
 

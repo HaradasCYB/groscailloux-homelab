@@ -87,9 +87,16 @@ Tout ce qui suit est dans la configuration avancée de l'hôte 1, **en base et d
   worker_connections are not enough » (13 épisodes du 27/09 au 05/10, des robots). **Ne jamais le remettre.** Retour :
   `backups/lot1-20261007/npm/LISEZMOI.txt`.
 
-## 5. Lot 3 (en cours jusqu'au 12/10)
+## 5. NPM 2.16 (lot 3, 09/10)
 
-Le lot 3 prépare NPM 2.16.0 (`backups/lot3-20261008/npm/`, contrôle complet `check.sh` : 15 hôtes, garde HSS, Chromecast,
-gzip, tchat, Mon compte, websocket, site par défaut, journal lu par `hls_loop_watch`). Après son exécution, reporter ici
-ce que dit `backups/lot3-20261008/NOTES-DOC.txt` (jeton DuckDNS plus gardé sur le disque, renouvellement à vérifier vers
-le 27/10).
+- **NPM 2.16.0** (OpenResty 1.31.1.1) depuis le 09/10 : CVE-2026-42945, -8711, -9256 et la RCE de l'interface corrigées.
+  Préparation, retour arrière et sauvegarde : `backups/lot3-20261008/npm/`.
+- **Jeton DuckDNS plus gardé sur le disque** : NPM l'écrit depuis sa base le temps d'un certbot, puis l'efface. Un
+  renouvellement à la main doit faire de même (recette dans `backups/lot3-20261008/npm/apply.sh`).
+- **Vers le 27/10** : vérifier le premier renouvellement sous 2.16 (`npm/data/logs/letsencrypt.log`, nouvelle échéance
+  après le 26/11) et que `credentials-1` a disparu ensuite ; supprimer alors `backups/lot3-20261008/npm/run-*`.
+- **Contrôle complet** : `backups/lot3-20261008/npm/check.sh` (production par défaut ; `--ct`, `--ports`, `--data` pour
+  une instance d'essai) : 15 hôtes, garde HSS, Chromecast, gzip, tchat, Mon compte, websocket, site par défaut, journal lu
+  par `hls_loop_watch`. Il remplace `hosts_check.sh` + `hls_check.sh` + `test_hss_guard.sh`.
+- La ligne Chromecast AAC de `1.conf` (`$1`/`$2` dans un `if`/`set`) marche toujours sous nginx 1.31 ; la passer en
+  captures nommées reste une simple cohérence, en base **et** dans `1.conf`, au prochain passage sur l'hôte 1.

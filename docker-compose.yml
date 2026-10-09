@@ -57,7 +57,7 @@ services:
 
   jellyseerr:
     <<: *base
-    image: ghcr.io/seerr-team/seerr:v3.2.0@sha256:c4cbd5121236ac2f70a843a0b920b68a27976be57917555f1c45b08a1e6b2aad
+    image: ghcr.io/seerr-team/seerr:v3.5.0@sha256:27602401178d54f1964442287b9f23f67a3fa2252645ee8065839ea1c3f69e45
     container_name: jellyseerr
     ports:
       - "127.0.0.1:5055:5055"
@@ -232,7 +232,7 @@ services:
 
   filebrowser:
     <<: *base
-    image: filebrowser/filebrowser:v2.63.2@sha256:4dce87308b9f9cfbcf8d0a284fc9565d2b515530a6bae2d920b388161e093f26
+    image: filebrowser/filebrowser:v2.63.23@sha256:a469ea076d4a1b4b1d86a41d130f2f536cd9da996a2b1fb39c0d7635f9d89b9a
     container_name: filebrowser
     user: 1000:1000
     volumes:
@@ -250,7 +250,7 @@ services:
   # ---------------------------------------------------------------- edge / accès
   npm:
     <<: *base
-    image: jc21/nginx-proxy-manager:2.14.0@sha256:2aa69b382a384b676c0d4f1d6f2eac40ecd478fcf7af1cfb3f9f1d3cd0c81e12
+    image: jc21/nginx-proxy-manager:2.16.0@sha256:4393e642e233e5efd5adeb7f10918d4aaea71c9ed875b94190273fc8e87f9594
     container_name: npm
     ports:
       - "80:80"
@@ -353,7 +353,7 @@ services:
 
   portainer:
     <<: *base
-    image: portainer/portainer-ce:2.39.1@sha256:1ae8e65d50ca5498cb2c33e617495a1e3ef245b0d2392b4a44c70ae09b822891
+    image: portainer/portainer-ce:2.39.8@sha256:da7f74b74c7f37c50d2ebd3db4c6bcfdbf2fe9ca1e8b4c6c0203e39fde1fd249
     container_name: portainer
     ports:
       - "127.0.0.1:9000:9000"
@@ -416,7 +416,7 @@ services:
 
   grafana:
     <<: *base
-    image: grafana/grafana:13.0.1@sha256:0f86bada30d65ef9d0183b90c1e2682ac92d53d95da8bed322b984ea78a4a73a
+    image: grafana/grafana:13.0.10@sha256:c8f326efdb7be9be52047edaab34cf8dadb5152c1244af102eb0a517a7797068
     container_name: grafana
     ports:
       - "127.0.0.1:3000:3000"
@@ -439,7 +439,7 @@ services:
 
   glances:
     <<: *base
-    image: nicolargo/glances:4.5.4@sha256:a11e836511ff83cd123b460c21bb4cf2795ac149ac7a18f9b01587bfcb5a5033
+    image: nicolargo/glances:4.5.7@sha256:28e4038aa2f2d635f4e6e1e3c7667ce4a808326cb918bba99b0041548b6e7425
     container_name: glances
     pid: host
     privileged: true
