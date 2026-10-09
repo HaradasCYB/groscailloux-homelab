@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.24.0](#1240--09102026--seedbox-hors-du-dépôt-mode-vo-natif-préparé-et-releases-publiques)** | 09/10/2026 | **Seedbox hors du dépôt, mode VO natif préparé et releases publiques** |
+| **[1.25.0](#1250--09102026--téléchargements-expliqués-et-lot-3-jour-1)** | 09/10/2026 | **Téléchargements expliqués et lot 3, jour 1** |
+| [1.24.0](#1240--09102026--seedbox-hors-du-dépôt-mode-vo-natif-préparé-et-releases-publiques) | 09/10/2026 | Seedbox hors du dépôt, mode VO natif préparé et releases publiques |
 | [1.23.0](#1230--08102026--abonnés-à-la-main--aide-et-annonces--catalogue-et-langue-dorigine) | 08/10/2026 | Abonnés à la main, « Aide et annonces », catalogue, langue d'origine et outils |
 | [1.22.0](#1220--07--08102026--revue-kaizen--alertes-sobriété-et-portes-dadministration) | 07 → 08/10/2026 | Revue Kaizen : alertes, sobriété et portes d'administration |
 | [1.21.0](#1210--02--05102026--résilience-jellyfin-121-et-nouvelle-interface) | 02 → 05/10/2026 | Résilience, Jellyfin 12.1 et nouvelle interface |
@@ -32,6 +33,47 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.3.0](#030--août-2026-reconstitué--jellyfin-enrichi) | août 2026 | Jellyfin enrichi par les plugins |
 | [0.2.0](#020--fin-mai-2026-reconstitué--stabilisation) | fin mai 2026 | Stabilisation |
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
+
+---
+
+## 1.25.0 — 09/10/2026 — Téléchargements expliqués et lot 3, jour 1
+
+Une version corrigée (REPACK) de Carrie S01E02 restait affichée « Avertissement » dans l'onglet Téléchargements, sans
+dire pourquoi. Chaque avertissement est maintenant expliqué, et la cause de ce blocage-là est corrigée dans les Arrs.
+Premier jour des mises à jour du lot 3, le matin.
+
+### Pour les membres
+
+- **Téléchargements : chaque avertissement est expliqué.** Une carte bloquée ne montre plus seulement
+  « Avertissement » : un libellé court (« Déjà disponible », « Titre attendu », « Sans source », « Non reconnu »,
+  « Pack incomplet », « Échec »…) et une phrase disent ce qui se passe, et si quelque chose se fera tout seul. Une
+  action automatique n'est annoncée que si la tâche qui la fait tourne vraiment. Rien ne s'affiche quand l'appariement
+  entre la carte et la file n'est pas sûr.
+
+### Pour l'administrateur
+
+- **L'admin voit en plus le message d'origine de Sonarr ou Radarr**, nettoyé (ni chemin, ni adresse, ni clé), sous
+  l'explication. Route `GET /compte/api/downloads` (session Jellyfin ; message d'origine réservé aux administrateurs ;
+  cache partagé de 30 s, échec gardé 60 s) ; règles dans `homelab_core::queue_explain`. Aucune nouvelle clé de
+  configuration.
+- **Les versions corrigées ne restent plus bloquées** : le format « WEB-DL » des 4 Arrs donnait +400 au fichier déjà
+  rangé, dont le nom renommé contient « WEBDL-1080p », mais pas à une REPACK nommée « WEB » (« Not a Custom Format
+  upgrade »). Il ne compte plus ce nom renommé. Aucun téléchargement déclenché : tous les profils concernés ont les mises
+  à niveau coupées. Carrie S01E02 a été remplacé par sa REPACK.
+- **Lot 3, jour 1** (09/10, 08:35–08:44, aucune lecture en cours) :
+  - NPM 2.16.0 (OpenResty 1.31.1.1) : CVE-2026-42945, -8711, -9256 et la RCE de l'interface corrigées ; le jeton
+    DuckDNS n'est plus gardé sur le disque ;
+  - Seerr 3.5.0 : CVE-2026-73291 corrigée, fin du piège des bibliothèques désactivées, notifications en français ;
+  - outils d'administration : Grafana 13.0.10, Portainer 2.39.8, Glances 4.5.7 (tag sans `v`), File Browser v2.63.23
+    (dernière version publiée, projet archivé) ; scripts d'application et de retour arrière avec sauvegarde des données
+    et contrôles fonctionnels.
+
+### Outillage
+
+- `tools/tests/compte-telechargements/match.test.js` (appariement d'une carte de Téléchargements avec la file, Node,
+  sans navigateur ni réseau).
+- Commits : [`2f999d3`][2f999d3] (lot 3, jour 1), [`82cf246`][82cf246] [`e90dc54`][e90dc54] [`b133708`][b133708]
+  (Téléchargements expliqués) ; fusion [`00954b4`][00954b4].
 
 ---
 
@@ -1187,3 +1229,8 @@ un tag annoté `vX.Y.Z` marque le dernier commit de chaque version.
 [76d0de6]: https://github.com/HaradasCYB/groscailloux-homelab/commit/76d0de6
 [4b3426f]: https://github.com/HaradasCYB/groscailloux-homelab/commit/4b3426f
 [3ee13d6]: https://github.com/HaradasCYB/groscailloux-homelab/commit/3ee13d6
+[2f999d3]: https://github.com/HaradasCYB/groscailloux-homelab/commit/2f999d3
+[82cf246]: https://github.com/HaradasCYB/groscailloux-homelab/commit/82cf246
+[e90dc54]: https://github.com/HaradasCYB/groscailloux-homelab/commit/e90dc54
+[b133708]: https://github.com/HaradasCYB/groscailloux-homelab/commit/b133708
+[00954b4]: https://github.com/HaradasCYB/groscailloux-homelab/commit/00954b4

@@ -256,12 +256,14 @@ propre runbook : [voie-russe.md](voie-russe.md).
 - **Job « Download Sync »** toutes les 5 min (`0 */5 * * * *`, 07/10) au lieu de chaque minute :
   `POST /api/v1/settings/jobs/<id>/schedule` avec `{"schedule": "…"}` (`cronSchedule` → 400). Les barres d'avancement
   des membres viennent de homelabd, pas de ce job.
-- **Bibliothèques Jellyfin dans Jellyseerr (Seerr 3.2)** : ne jamais appeler `settings/jellyfin/library?sync=true` sans
-  renvoyer `?enable=` avec la liste complète ; **le `GET settings/jellyfin/library` sans paramètre désactive lui aussi
-  tout** (vérifié le 20/09). Lire l'état par `GET /api/v1/settings/jellyfin` (champ `libraries`) ; n'appeler
-  `?enable=<ids>` qu'en écriture ; `--max-time 60` (un `?sync=true` peut rester bloqué). Six bibliothèques activées
-  (Films, Séries, Anime, Films d'animation, Séries russes, Films russes). Le lot 3 prépare Seerr 3.5.0, qui fait
-  disparaître ce piège : à réécrire après son exécution (`backups/lot3-20261008/NOTES-DOC.txt`).
+- **Bibliothèques Jellyfin dans Jellyseerr** : depuis **Seerr 3.5.0 (09/10, lot 3)**, `POST
+  /api/v1/settings/jellyfin/library/sync` relit Jellyfin et garde l'état des bibliothèques déjà connues (les nouvelles
+  arrivent désactivées) ; activer par `PUT /api/v1/settings/jellyfin/library/{id}` `{"enabled": true}` ; le `GET` est sans
+  effet. Lire l'état par `GET /api/v1/settings/jellyfin` (champ `libraries`). Six bibliothèques activées (Films, Séries,
+  Anime, Films d'animation, Séries russes, Films russes). En 3.2, `?sync=true` sans `?enable=` et le `GET` sans
+  paramètre désactivaient tout (20/09) ; retour à la 3.2 = restaurer la base (elle ne démarre pas sur la base migrée).
+  Seerr v3.5.0 : CVE-2026-73291 fermée, notifications en français, synchro de 05:00 qui consulte les 4 Arrs malgré
+  `syncEnabled=false`.
 - **Suppression d'une demande** : `deletion_cleanup` supprime la fiche Arr **et ses fichiers**, les torrents devenus
   inutiles, puis la fiche média — **seulement pour les médias « en attente » (2) ou « en cours » (3) sans demande**. Un
   scan Jellyfin crée une fiche média pour tout ce qui est déjà dans la bibliothèque, toutes « disponible » ou

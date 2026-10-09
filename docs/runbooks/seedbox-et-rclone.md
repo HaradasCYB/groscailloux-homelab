@@ -145,6 +145,13 @@ place et arrêt de la seedbox : [DEPLOY.md](../DEPLOY.md#seedbox-optionnelle). S
   /Items/<id série>/Refresh?Recursive=true` par série, puis comparer le nombre d'épisodes Jellyfin à `episodeFileCount` ;
   série, saison ou épisodes **nouveaux** : seulement par l'analyse complète. Remettre les nouveaux éléments dans leurs
   collections ([jellyfin-serveur-et-extensions.md](jellyfin-serveur-et-extensions.md#5-collections-après-un-remplacement-de-fichier)).
+- **REPACK ou PROPER importée par l'Arr** (le fichier change de nom, ex. « … Proper.mkv ») : `ManualImport` **copy** de
+  l'élément de file (`manualimport?downloadId=` **sans** `seriesId`, candidat par chemin exact ; l'Arr met l'ancien
+  fichier à la corbeille, raison `Upgrade`), puis `vfs/forget` + `vfs/refresh` du **dossier**, puis
+  `Library/Media/Updated` du **dossier** seulement (`Modified`). **Jamais l'ancien chemin en `Deleted`** : Jellyfin le
+  rouvre et rclone le refait apparaître depuis son cache VFS (fantôme vu le 09/10, Carrie S01E02) ; si c'est arrivé,
+  refaire `vfs/forget` + `vfs/refresh` du dossier. Jellyfin rattache d'abord le nouveau fichier comme 2e version de
+  l'épisode, puis ne garde que lui (~2 min).
 - Outils : `backups/codec-replace-20260927/` (version à jour : `verify.py`, `grab.py`, `replace.py`, `--dry-run` d'abord ;
   1er lot dans `backups/codec-replace-20260926/`).
 
