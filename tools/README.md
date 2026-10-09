@@ -8,7 +8,7 @@ Les **sorties** (journaux, captures) ne vont jamais dans le dépôt : `state/off
 |---|---|
 | `offpeak/offpeak.sh` | exécuter une commande hors pic, seulement si personne ne regarde ; programmation qui survit au redémarrage |
 | `bench/bench.sh` | lancer un banc d'interface (navigateur sans écran) avec un compte de banc toujours supprimé |
-| `tests/` | bancs de non-régression lancés par `bench.sh` (`compte-russe/` : voie russe de Mon compte ; `compte-vo/` : filet du mode VO) |
+| `tests/` | bancs de non-régression lancés par `bench.sh` (`compte-russe/` : voie russe de Mon compte ; `compte-vo/` : filet du mode VO) ; `compte-telechargements/` : appariement de l'onglet Téléchargements, sous Node |
 | `lib/` | `hl.py` (appels Jellyfin, homelabd, Discord ; seul à lire les secrets de `.env`), `hlconf.py` (`.env` et `homelab.toml` lus comme par homelabd : `${NOM}` remplacés ; aussi pour `scripts/*.py`), `common.sh`, leurs tests |
 
 Configuration et secrets : toujours ceux de `/opt/homelab` (`.env`, `homelab.toml`, `state/`), même lancé depuis un
@@ -123,6 +123,17 @@ préférence native « Langue d'origine » (`homelab_core::vo_native`) :
 
 Contre-épreuve : `--env MUTATE=1` (piste reçue et fiche ignorées) doit échouer. Côté serveur, les décisions (mode,
 comptes gardés, migration, garde) ont leurs tests dans `vo_native.rs`.
+
+## Tests : `tests/compte-telechargements/`
+
+`node tools/tests/compte-telechargements/match.test.js` : les fonctions pures du vrai `app.js` de Mon compte (entre les
+marqueurs `gc-dl-match:start` et `gc-dl-match:end`) sous Node, sans navigateur ni réseau, pour l'onglet Téléchargements :
+- une carte d'épisode trouve son avertissement expliqué, et seulement le sien (source, titre sans accents, `SxxEyy`) ;
+- jamais d'appariement ambigu (deux candidats, deux cartes identiques, série sans épisode, autre source) ;
+- film par le titre (l'année départage), pack de saison seulement si tous ses épisodes portent la même note.
+
+Contre-épreuve : `MUTATE=1` (unicité des candidats non exigée) doit échouer. Côté serveur, les familles et le nettoyage du
+message d'origine ont leurs tests dans `queue_explain.rs`.
 
 ## Tests des outils
 

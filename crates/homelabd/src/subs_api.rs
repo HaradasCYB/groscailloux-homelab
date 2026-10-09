@@ -35,6 +35,8 @@ const AUTH_TTL: Duration = Duration::from_secs(300);
 
 /// (type, tmdb) → (instant, {title, original_title, year, poster}).
 type DetailsCache = HashMap<(String, i64), (Instant, Value)>;
+/// Avertissements expliqués et leur heure de lecture.
+type DownloadsCache = Option<(Instant, Vec<Value>)>;
 /// (côté, id série) → saison → (fichiers, épisodes diffusés, prochaine diffusion).
 type SeasonInfo = HashMap<(&'static str, i64), HashMap<i64, (i64, i64, Option<String>)>>;
 
@@ -47,6 +49,9 @@ pub struct SubsState {
     requests_cache: Arc<Mutex<Option<(Instant, Value)>>>,
     /// Titre, année et affiche TMDB par (type, tmdb), pour apparier les cartes de Jellyfin Enhanced (1 h).
     details_cache: Arc<Mutex<DetailsCache>>,
+    /// Avertissements expliqués de la file des Arrs, partagés entre tous les membres (`DOWNLOADS_TTL`) ; le verrou
+    /// est tenu pendant la lecture des files : une seule lecture à la fois, les autres attendent son résultat.
+    downloads_cache: Arc<Mutex<DownloadsCache>>,
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +59,8 @@ struct Me {
     id: String,
     name: String,
     disabled: bool,
+    /// Administrateur Jellyfin (`Policy.IsAdministrator`) : voit le message d'origine des avertissements.
+    admin: bool,
 }
 
 type ApiResult<T> = Result<T, (StatusCode, Json<Value>)>;
@@ -69,6 +76,7 @@ pub fn router(ctx: Arc<TaskContext>) -> Router {
         last: Arc::new(Mutex::new(HashMap::new())),
         requests_cache: Arc::new(Mutex::new(None)),
         details_cache: Arc::new(Mutex::new(HashMap::new())),
+        downloads_cache: Arc::new(Mutex::new(None)),
     };
     Router::new()
         .route("/paypal/webhook", post(webhook))
@@ -80,6 +88,7 @@ pub fn router(ctx: Arc<TaskContext>) -> Router {
         .route("/compte/api/language", post(set_language))
         .route("/compte/api/original", get(original_language))
         .route("/compte/api/requests", get(requests_progress))
+        .route("/compte/api/downloads", get(downloads_explained))
         .route("/compte/api/route", get(route_list).post(route_set))
         .with_state(st)
 }
@@ -163,6 +172,10 @@ async fn auth(st: &SubsState, headers: &HeaderMap) -> ApiResult<Me> {
         name: name.to_string(),
         disabled: me
             .pointer("/Policy/IsDisabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        admin: me
+            .pointer("/Policy/IsAdministrator")
             .and_then(Value::as_bool)
             .unwrap_or(false),
     };
@@ -363,6 +376,108 @@ async fn requests_progress(
     })?;
     *st.requests_cache.lock().await = Some((Instant::now(), v.clone()));
     Ok(Json(v))
+}
+
+/// Durée de vie des avertissements expliqués : les Arrs de la seedbox sont à distance, et le script de Mon compte
+/// garde lui-même sa réponse 25 s.
+const DOWNLOADS_TTL: Duration = Duration::from_secs(30);
+/// Délai par file d'Arr : une file lente ne retient pas la page plus longtemps.
+const DOWNLOADS_ARR_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// GET /compte/api/downloads : avertissements de la file des Arrs (onglet Téléchargements de Jellyfin Enhanced,
+/// ouvert à tous les membres), expliqués par `homelab_core::queue_explain`. Le message d'origine (`detail`, nettoyé)
+/// ne part qu'aux administrateurs. Lecture seule : aucune écriture d'état, aucune action sur les Arrs.
+async fn downloads_explained(
+    State(st): State<SubsState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let u = auth(&st, &headers).await?;
+    let items = {
+        let mut c = st.downloads_cache.lock().await;
+        match c.as_ref() {
+            Some((at, v)) if at.elapsed() < DOWNLOADS_TTL => v.clone(),
+            _ => {
+                let v = build_downloads(&st).await.map_err(|e| {
+                    warn!(
+                        task = "subs",
+                        error = format!("{e:#}"),
+                        "downloads explanations failed"
+                    );
+                    err(StatusCode::BAD_GATEWAY, "services injoignables")
+                })?;
+                *c = Some((Instant::now(), v.clone()));
+                v
+            }
+        }
+    };
+    Ok(Json(json!({ "items": for_viewer(items, u.admin) })))
+}
+
+/// `detail` retiré pour un compte qui n'est pas administrateur.
+fn for_viewer(items: Vec<Value>, admin: bool) -> Vec<Value> {
+    items
+        .into_iter()
+        .map(|mut i| {
+            if !admin {
+                if let Some(o) = i.as_object_mut() {
+                    o.remove("detail");
+                }
+            }
+            i
+        })
+        .collect()
+}
+
+/// Files des Arrs (VPS et seedbox, lues côte à côte), puis notes. Une file illisible est journalisée et sautée ;
+/// erreur seulement si aucune n'a pu être lue.
+async fn build_downloads(st: &SubsState) -> anyhow::Result<Vec<Value>> {
+    use homelab_core::queue_explain::{self as qe, Source};
+    let ctx = &st.ctx;
+    let mut set = tokio::task::JoinSet::new();
+    for arr in ctx.all_arrs() {
+        let arr = arr.clone();
+        set.spawn(async move {
+            let source = if arr.is_radarr() {
+                Source::Radarr
+            } else {
+                Source::Sonarr
+            };
+            let res = tokio::time::timeout(DOWNLOADS_ARR_TIMEOUT, arr.queue_records_detailed())
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("délai dépassé")));
+            (arr.name, source, res)
+        });
+    }
+    let (mut records, mut read, mut failed) = (Vec::new(), 0usize, 0usize);
+    while let Some(joined) = set.join_next().await {
+        let Ok((name, source, res)) = joined else {
+            failed += 1;
+            continue;
+        };
+        match res {
+            Ok(recs) => {
+                read += 1;
+                records.extend(recs.into_iter().map(|r| (source, r)));
+            }
+            Err(e) => {
+                failed += 1;
+                warn!(
+                    task = "subs",
+                    service = name,
+                    error = format!("{e:#}"),
+                    "queue unreadable for downloads"
+                );
+            }
+        }
+    }
+    if read == 0 && failed > 0 {
+        anyhow::bail!("aucune file d'Arr lisible ({failed} en erreur)");
+    }
+    let setup = qe::Setup::from_config(&ctx.cfg);
+    qe::explain_queue(&records, &setup.automation())
+        .into_iter()
+        .map(|i| serde_json::to_value(i).map_err(Into::into))
+        .collect()
 }
 
 fn side_of(service_id: i64, vps_id: i64) -> &'static str {
@@ -1509,6 +1624,19 @@ mod tests {
     }
     const ME: &str = "0123456789abcdef0123456789abcdef";
     const OTHER: &str = "fedcba9876543210fedcba9876543210";
+
+    #[test]
+    fn the_original_message_of_a_warning_goes_to_administrators_only() {
+        let items = vec![
+            json!({"title": "Carrie", "badge": "Déjà disponible", "text": "t", "detail": "d"}),
+            json!({"title": "Film", "badge": "Sans source", "text": "t"}),
+        ];
+        let member = for_viewer(items.clone(), false);
+        assert!(member.iter().all(|i| i.get("detail").is_none()));
+        assert_eq!(member[0]["badge"], "Déjà disponible");
+        let admin = for_viewer(items, true);
+        assert_eq!(admin[0]["detail"], "d");
+    }
 
     #[test]
     fn only_listed_accounts_may_choose_the_russian_route_whatever_the_case() {

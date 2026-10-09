@@ -22,6 +22,7 @@ pub mod mail;
 pub mod manual_search;
 pub mod matching;
 pub mod net;
+pub mod queue_explain;
 pub mod quota;
 pub mod requests_progress;
 pub mod secret;

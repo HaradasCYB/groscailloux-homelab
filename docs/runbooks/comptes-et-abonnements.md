@@ -115,5 +115,9 @@ des abonnements. Procédure admin pas à pas : [ONBOARDING.md](../ONBOARDING.md)
   Identité = jeton de session Jellyfin vérifié par `/Users/Me` (cache 5 min).
 - Contenu : abonnement, appareils (déconnexion vérifiée sur `LastUserId`), mot de passe (page `/bienvenue`), langue
   VF/VO, taille des sous-titres, parrainage, historique, avancement des demandes, choix de la voie russe pour les comptes
-  autorisés. Détails : [lecture-et-transcodage.md](lecture-et-transcodage.md), [jellyfin-interface.md](jellyfin-interface.md),
+  autorisés.
+- Le même script enrichit l'onglet **Téléchargements** de Jellyfin Enhanced (09/10) : un élément bloqué de la file des
+  Arrs y prend un badge explicite (« Déjà disponible », « Sans source », « Non reconnu »…) et une ligne qui dit au membre
+  ce qui se passe ; l'admin voit aussi le message d'origine nettoyé. Route `GET /compte/api/downloads` (cache 30 s,
+  `detail` envoyé aux seuls administrateurs) ; familles et règles : [arrs-et-indexeurs.md](arrs-et-indexeurs.md#10-avertissements-de-la-file-onglet-téléchargements). Détails : [lecture-et-transcodage.md](lecture-et-transcodage.md), [jellyfin-interface.md](jellyfin-interface.md),
   [voie-russe.md](voie-russe.md).

@@ -237,3 +237,8 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
   `unknown_series` = `<arr>:<seriesId>:<saison>`, `movie_search` = `<arr>:<movieId>` (`<arr>` = `sonarr`, `radarr`,
   `sonarr-seedbox`, `radarr-seedbox`) ; Jellyseerr `serviceId` 0 = VPS, 1 = seedbox, `externalServiceId` = id Arr. Détail :
   [AUTOMATION.md](../AUTOMATION.md#suivi-des-demandes-dans-longlet-demandes-v119).
+- **Avertissements expliqués** dans l'onglet Téléchargements (09/10) : même script, cartes `.je-download-card` visibles
+  (taille à l'écran), appariées par source (icône Sonarr/Radarr), titre et `SxxEyy` de `.je-download-subtitle` ; le
+  badge de statut prend le libellé de homelabd (texte d'origine gardé dans `data-gc-orig`, rendu dès que l'élément n'est
+  plus expliqué) et une ligne `.gc-dl` s'ajoute sous `.je-download-meta`. Données : `GET /compte/api/downloads`
+  ([arrs-et-indexeurs.md](arrs-et-indexeurs.md#10-avertissements-de-la-file-onglet-téléchargements)).
