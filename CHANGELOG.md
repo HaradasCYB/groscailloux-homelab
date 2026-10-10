@@ -53,8 +53,10 @@ numérique. Deuxième jour des mises à jour du lot 3, arrêté sur un contrôle
 - **Regarder ensemble : créer ou rejoindre le groupe d'abord, puis lancer l'épisode depuis le groupe.** Un groupe créé
   pendant une lecture reste bloqué 30 s (bogue de Jellyfin 12.1) ; pour débloquer, relancer l'épisode depuis le groupe.
 - **Un film demandé avant sa sortie arrive dès qu'il est en ligne.** Il est recherché toutes les 2 h à partir de
-  3 jours avant sa date de sortie numérique (et jusqu'à 3 jours après), au lieu d'attendre le jour même : la version
+  2 jours avant sa date de sortie numérique (et jusqu'à 2 jours après), au lieu d'attendre le jour même : la version
   française arrive souvent la veille. L'onglet Demandes l'annonce : « recherché toutes les 2 h dès le … ».
+- **Une VOSTFR toute fraîche ne passe plus devant la VF.** Publiée depuis moins de 3 h, elle attend qu'une version
+  française sorte ; s'il n'y en a toujours pas, elle est prise ensuite.
 
 ### Pour l'administrateur
 
@@ -65,10 +67,15 @@ numérique. Deuxième jour des mises à jour du lot 3, arrêté sur un contrôle
   (`upload_*.log`, « gc-syncplay v2 »). Nouveau banc `tools/bench/scenarios/syncplay.js` (deux comptes temporaires ;
   sauts normaux, seedbox à froid, premier octet lent, appli muette, démarrage) ; cause du démarrage bloqué : liste de
   lecture vide envoyée par le serveur 12.1 (runbook jellyfin-interface § 8).
-- **`movie_search` : fenêtre de sortie** (`[tasks.movie_search] release_window_days = 3`, `release_retry_hours = 2`).
-  La tâche pose `availabilityDelay = -3` dans le Radarr de la seedbox : Radarr tient le film pour sorti 3 jours avant
+- **`movie_search` : fenêtre de sortie** (`[tasks.movie_search] release_window_days = 2`, `release_retry_hours = 2`).
+  La tâche pose `availabilityDelay = -2` dans le Radarr de la seedbox : Radarr tient le film pour sorti 2 jours avant
   sa date, ce qui ouvre aussi son RSS (15 min). Dans la fenêtre, « aucune release » est retenté toutes les 2 h au lieu
-  de 72 h. *Spider-Man: Brand New Day* était sur C411 dès le 05/10 à 15:43 et n'a été pris que le 06/10 à 00:05.
+  de 72 h. *Spider-Man: Brand New Day* était sur C411 dès le 05/10 à 15:43 et n'a été pris que le 06/10 à 00:05 ; sur
+  14 films récents, aucune release n'est arrivée plus de 23 h avant la date (3 jours le premier soir, 2 ensuite).
+- **`movie_search` : VOSTFR fraîche retenue** (`vo_wait_hours = 3`, `vo_wait_bypass_score = 2500`). Le RSS de Radarr
+  prend la première release acceptable et le profil ne remplace jamais un fichier (*Insidious* : VOSTFR 48 min avant
+  la VFF). homelabd retient une release sans audio français de moins de 3 h (résultat `vo_wait`) ; la tâche pose le
+  profil de délai par défaut de Radarr (torrents retenus 180 min sauf score ≥ 2500, protocole préféré torrent).
   Au passage, la valeur par défaut de `[tasks.original_language] series` passe à `true` comme `homelab.toml`.
 - **Lot 3, jour 2** (10/10, 08:35–08:44, aucune lecture en cours) : Prowlarr 2.6.5 appliqué. Sonarr 4.0.20 remis en
   4.0.17 par son retour arrière (le contrôle d'après a refusé un simple changement d'ordre de champs du client de

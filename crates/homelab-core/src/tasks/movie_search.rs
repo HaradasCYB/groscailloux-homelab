@@ -182,6 +182,85 @@ async fn ensure_availability_delay(ctx: &TaskContext, arr: &ArrClient, days: i64
     Ok(())
 }
 
+/// Résultat d'un passage qui attend une version française (voir `fresh_without_french`) : refait au bout de
+/// `release_retry_hours`.
+pub const VO_WAIT: &str = "vo_wait";
+
+/// Release sans audio français (VOSTFR, VO) publiée il y a moins de `hours` heures : la VF suit souvent de peu
+/// (*Insidious*, 2026-10-05 : VOSTFR 48 min avant la VFF) et le profil ne remplace jamais un fichier pris.
+pub fn fresh_without_french(r: &Value, now_secs: i64, hours: i64) -> bool {
+    let Some(title) = r.get("title").and_then(Value::as_str) else {
+        return false;
+    };
+    lang_rank(title) < 2
+        && r.get("publishDate")
+            .and_then(Value::as_str)
+            .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+            .is_some_and(|d| now_secs - d.timestamp() < hours * 3600)
+}
+
+/// Profil de délai par défaut de Radarr (sans étiquette) corrigé, ou `None` s'il est déjà bon : son RSS prendrait
+/// sinon la première release venue, VOSTFR comprise. Une release torrent attend `vo_wait_hours`, sauf au-dessus de
+/// `vo_wait_bypass_score` (MULTi, VFF…) ; « torrent » doit être le protocole préféré, sans quoi Radarr ignore le
+/// passe-droit au score.
+pub fn delay_profile_fix(profile: &Value, cfg: &crate::config::MovieSearch) -> Option<Value> {
+    let want = [
+        ("torrentDelay", json!(cfg.vo_wait_hours * 60)),
+        ("preferredProtocol", json!("torrent")),
+        ("bypassIfHighestQuality", json!(false)),
+        ("bypassIfAboveCustomFormatScore", json!(true)),
+        ("minimumCustomFormatScore", json!(cfg.vo_wait_bypass_score)),
+    ];
+    if want.iter().all(|(k, v)| profile.get(*k) == Some(v)) {
+        return None;
+    }
+    let mut fixed = profile.clone();
+    for (k, v) in want {
+        fixed[k] = v;
+    }
+    Some(fixed)
+}
+
+/// Pose le profil de délai par défaut de Radarr (`delay_profile_fix`).
+async fn ensure_delay_profile(
+    ctx: &TaskContext,
+    arr: &ArrClient,
+    cfg: &crate::config::MovieSearch,
+) -> Result<()> {
+    let profiles = arr.get("api/v3/delayprofile", &[]).await?;
+    let Some(default) = profiles.as_array().and_then(|a| {
+        a.iter().find(|p| {
+            p.get("tags")
+                .and_then(Value::as_array)
+                .is_some_and(|t| t.is_empty())
+        })
+    }) else {
+        anyhow::bail!("profil de délai par défaut introuvable");
+    };
+    let Some(fixed) = delay_profile_fix(default, cfg) else {
+        return Ok(());
+    };
+    if ctx.dry_run {
+        info!(
+            task = "movie_search",
+            service = arr.name,
+            "dry-run: would set the delay profile"
+        );
+        return Ok(());
+    }
+    let id = default.get("id").and_then(Value::as_i64).unwrap_or(1);
+    arr.put(&format!("api/v3/delayprofile/{id}"), &fixed)
+        .await?;
+    info!(
+        task = "movie_search",
+        service = arr.name,
+        torrent_delay_mins = cfg.vo_wait_hours * 60,
+        bypass_score = cfg.vo_wait_bypass_score,
+        "profil de délai réglé"
+    );
+    Ok(())
+}
+
 /// Meilleure release d'un film : identifiant TMDB, français, qualité acceptable ; tri langue, résolution,
 /// sources. Le codec ne compte pas (voir `series_search::choose`). `items` : (résultat Prowlarr,
 /// `parsedMovieInfo` Radarr).
@@ -318,13 +397,37 @@ async fn process_movie(
         .unwrap_or(0);
     let allowed = allowed_qualities(&arr.quality_profile(profile_id).await?);
     let ix = &ctx.cfg.indexers;
-    let Some((_, release)) = best_movie_release(
-        &items,
+    // une VOSTFR ou une VO toute fraîche attend `vo_wait_hours` qu'une version française la rattrape
+    let t = now();
+    let (fresh, ready): (Vec<_>, Vec<_>) = items
+        .iter()
+        .cloned()
+        .partition(|(r, _)| fresh_without_french(r, t, cfg.vo_wait_hours));
+    let best = best_movie_release(
+        &ready,
         tmdb,
         &allowed,
         ix.max_gb_per_movie,
         ix.allow_no_french,
-    ) else {
+    );
+    let best_french = best.as_ref().is_some_and(|(_, rel)| {
+        rel.get("title")
+            .and_then(Value::as_str)
+            .is_some_and(|x| lang_rank(x) >= 2)
+    });
+    if !best_french
+        && best_movie_release(&fresh, tmdb, &allowed, ix.max_gb_per_movie, true).is_some()
+    {
+        return Ok((
+            VO_WAIT.into(),
+            format!(
+                "{} release(s) sans audio français de moins de {} h : on attend une version française",
+                fresh.len(),
+                cfg.vo_wait_hours
+            ),
+        ));
+    }
+    let Some((_, release)) = best else {
         // secours sans rien d'acceptable : refait dans `fallback_retry_hours`, ou dès que C411 répond
         if fallback {
             return Ok((
@@ -411,6 +514,14 @@ impl Task for MovieSearch {
                     "availabilityDelay not checked"
                 );
             }
+            if let Err(e) = ensure_delay_profile(ctx, arr, cfg).await {
+                warn!(
+                    task = "movie_search",
+                    service = arr.name,
+                    error = format!("{e:#}"),
+                    "delay profile not checked"
+                );
+            }
             let prepared = async {
                 let queued: HashSet<i64> = arr
                     .queue_records()
@@ -435,9 +546,12 @@ impl Task for MovieSearch {
                             continue;
                         }
                         let rec = records.get(&format!("{}:{id}", arr.name));
-                        let retry = retry_hours(cfg, release_date(&m), today);
+                        let mut retry = retry_hours(cfg, release_date(&m), today);
                         if retry != cfg.retry_after_hours {
                             watched += 1;
+                        }
+                        if rec.is_some_and(|r| r.outcome == VO_WAIT) {
+                            retry = cfg.release_retry_hours;
                         }
                         let go = super::series_search::fallback_due(
                             rec,
@@ -638,19 +752,76 @@ mod tests {
         let cfg = crate::config::MovieSearch::default();
         let verity = Some(d("2026-10-27"));
         assert_eq!(
-            retry_hours(&cfg, verity, d("2026-10-23")),
+            retry_hours(&cfg, verity, d("2026-10-24")),
             72,
-            "4 jours avant"
+            "3 jours avant"
         );
-        assert_eq!(retry_hours(&cfg, verity, d("2026-10-24")), 2, "72 h avant");
+        assert_eq!(retry_hours(&cfg, verity, d("2026-10-25")), 2, "48 h avant");
         assert_eq!(retry_hours(&cfg, verity, d("2026-10-27")), 2);
         assert_eq!(
-            retry_hours(&cfg, verity, d("2026-10-30")),
+            retry_hours(&cfg, verity, d("2026-10-29")),
             2,
-            "3 jours après"
+            "2 jours après"
         );
-        assert_eq!(retry_hours(&cfg, verity, d("2026-10-31")), 72);
+        assert_eq!(retry_hours(&cfg, verity, d("2026-10-30")), 72);
         assert_eq!(retry_hours(&cfg, None, d("2026-10-27")), 72);
+    }
+
+    #[test]
+    fn a_fresh_release_without_french_audio_waits() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-05T14:00:00Z")
+            .unwrap()
+            .timestamp();
+        let r = |t: &str, at: &str| json!({"title": t, "publishDate": at});
+        // Insidious : VOSTFR publiée à 13:12, VFF à 14:00
+        let vost = r(
+            "Insidious.L.Invasion.du.Lointain.2026.VOSTFR.1080p.WEB.EAC3.5.1.H264-K",
+            "2026-10-05T13:12:00Z",
+        );
+        assert!(fresh_without_french(&vost, now, 3));
+        assert!(
+            !fresh_without_french(&vost, now + 3 * 3600, 3),
+            "3 h plus tard : prise si rien d'autre"
+        );
+        let vo = r("Insidious.2026.1080p.WEB.H264-X", "2026-10-05T13:50:00Z");
+        assert!(fresh_without_french(&vo, now, 3));
+        let vff = r(
+            "Insidious.Out.Of.The.Further.2026.MULTI.VFF.1080p.WEB.AC3.5.1.H265-Slay3R",
+            "2026-10-05T14:00:00Z",
+        );
+        assert!(!fresh_without_french(&vff, now, 3));
+        let french = r(
+            "Film.2026.TRUEFRENCH.1080p.WEB.H264-X",
+            "2026-10-05T13:59:00Z",
+        );
+        assert!(!fresh_without_french(&french, now, 3));
+        // sans date de publication : jamais retenue
+        assert!(!fresh_without_french(
+            &json!({"title": "Film.2026.VOSTFR.1080p"}),
+            now,
+            3
+        ));
+    }
+
+    #[test]
+    fn the_radarr_delay_profile_is_fixed_once() {
+        let cfg = crate::config::MovieSearch::default();
+        let current = json!({"id": 1, "enableUsenet": true, "enableTorrent": true, "preferredProtocol": "usenet",
+            "usenetDelay": 0, "torrentDelay": 0, "bypassIfHighestQuality": true,
+            "bypassIfAboveCustomFormatScore": false, "minimumCustomFormatScore": 0, "order": 2147483647, "tags": []});
+        let fixed = delay_profile_fix(&current, &cfg).expect("à corriger");
+        assert_eq!(fixed["torrentDelay"], 180);
+        assert_eq!(fixed["preferredProtocol"], "torrent");
+        assert_eq!(fixed["bypassIfHighestQuality"], false);
+        assert_eq!(fixed["bypassIfAboveCustomFormatScore"], true);
+        assert_eq!(fixed["minimumCustomFormatScore"], 2500);
+        assert_eq!(fixed["usenetDelay"], 0, "le reste ne change pas");
+        assert_eq!(fixed["tags"], json!([]));
+        assert_eq!(
+            delay_profile_fix(&fixed, &cfg),
+            None,
+            "déjà bon : rien à écrire"
+        );
     }
 
     fn movie(id: i64, monitored: bool, has_file: bool, added: &str) -> Value {

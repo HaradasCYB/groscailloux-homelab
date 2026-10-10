@@ -29,9 +29,11 @@ propre runbook : [voie-russe.md](voie-russe.md).
   Jellyseerr.** `animeCategories=[5070]` et `animeStandardFormatSearch=true` restent dans les deux Sonarr pour le RSS.
 - **Films : `movie_search`** cherche dès le passage qui suit la demande (`[tasks.movie_search] missing_hours = 0`,
   passage toutes les 5 min) : Radarr n'a plus de recherche et son RSS ne ramène que les nouveautés. Un film attendu
-  est guetté dès 3 jours avant sa date numérique, toutes les 2 h jusqu'à 3 jours après (`release_window_days`,
-  `release_retry_hours`) : la tâche pose elle-même `availabilityDelay = -3` dans le Radarr de la seedbox (le changer
-  dans Radarr ne sert à rien, il est remis au passage suivant).
+  est guetté dès 2 jours avant sa date numérique, toutes les 2 h jusqu'à 2 jours après (`release_window_days`,
+  `release_retry_hours`) ; une VOSTFR ou une VO de moins de 3 h attend une version française (`vo_wait_hours`). La
+  tâche pose elle-même, dans le Radarr de la seedbox, `availabilityDelay = -2` et le profil de délai par défaut
+  (torrents retenus 180 min sauf score ≥ 2500, protocole préféré torrent) : les changer dans Radarr ne sert à rien,
+  ils sont remis au passage suivant (`docs/AUTOMATION.md`, movie_search).
 - **Recherche manuelle** : page `/recherche` de homelabd, jamais la recherche de Sonarr/Radarr (voir § 8).
 
 ## 2. Indexeurs et clés C411

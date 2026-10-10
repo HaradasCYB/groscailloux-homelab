@@ -911,6 +911,11 @@ pub struct MovieSearch {
     /// jours après.
     pub release_window_days: i64,
     pub release_retry_hours: i64,
+    /// Release sans audio français (VOSTFR, VO) publiée depuis moins de N heures : on attend une version française
+    /// (homelabd et le profil de délai de Radarr, posé par la tâche).
+    pub vo_wait_hours: i64,
+    /// Score Radarr à partir duquel une release part sans attendre (`minimumCustomFormatScore` du profil de délai).
+    pub vo_wait_bypass_score: i64,
 }
 
 impl Default for MovieSearch {
@@ -924,8 +929,10 @@ impl Default for MovieSearch {
             query_gap_secs: 5,
             indexer: "C411".into(),
             min_days_after_cinema: 110,
-            release_window_days: 3,
+            release_window_days: 2,
             release_retry_hours: 2,
+            vo_wait_hours: 3,
+            vo_wait_bypass_score: 2500,
         }
     }
 }

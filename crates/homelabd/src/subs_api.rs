@@ -1200,9 +1200,16 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                 ss.error_retry_hours,
             )
         } else {
-            let retry = movie_info
-                .get(&(side, ext))
-                .map_or(ms.retry_after_hours, |i| i.3);
+            let retry = if search
+                .as_ref()
+                .is_some_and(|s| s.outcome == homelab_core::tasks::movie_search::VO_WAIT)
+            {
+                ms.release_retry_hours
+            } else {
+                movie_info
+                    .get(&(side, ext))
+                    .map_or(ms.retry_after_hours, |i| i.3)
+            };
             (retry, 168, ms.error_retry_hours)
         };
         let created = r

@@ -334,11 +334,21 @@ indexer = "C411"
 # la salle ; le membre voit « VOD vers le … » dans l'onglet Demandes (Le Vertige, 2026-09-25). Le RSS reste actif.
 min_days_after_cinema = 110
 # Film attendu : C411 a souvent la WEB la veille de la date numérique de TMDB (Spider-Man: Brand New Day, 2026-10-05 :
-# première release 10 h avant, prise 8 h après elle). Radarr tient le film pour sorti N jours avant sa date
-# (`availabilityDelay = -N`, posé par la tâche : son RSS le prend aussi), et on le recherche toutes les
-# `release_retry_hours` jusqu'à N jours après (au lieu de `retry_after_hours`). Demande du 2026-10-10.
-release_window_days = 3
+# première release 10 h avant, prise 8 h après elle ; sur 14 films récents, jamais plus de 23 h avant). Radarr tient
+# le film pour sorti N jours avant sa date (`availabilityDelay = -N`, posé par la tâche : son RSS le prend aussi), et
+# on le recherche toutes les `release_retry_hours` jusqu'à N jours après (au lieu de `retry_after_hours`).
+# Demande du 2026-10-10 (3 jours, ramenés à 2 le soir même au vu de ces mesures).
+release_window_days = 2
 release_retry_hours = 2
+# Le RSS de Radarr prend la PREMIÈRE release acceptable et le profil ne remplace jamais un fichier : Insidious
+# (2026-10-05) a eu sa VOSTFR 48 min avant sa VFF. Une release sans audio français (VOSTFR, VO) de moins de
+# `vo_wait_hours` attend donc une version française, chez homelabd (résultat « vo_wait », refait au bout de
+# `release_retry_hours`) comme chez Radarr (profil de délai par défaut posé par la tâche : torrents retenus
+# vo_wait_hours, sauf score ≥ `vo_wait_bypass_score`). 2500 : le format « FRENCH » compte aussi la VOSTFR, qui monte
+# jusqu'à ~2400 (FRENCH 1500 + VOSTFR 200 + source + codec) ; MULTi ou VF = 3500 et plus. Une release « FRENCH »
+# seule (sans MULTi ni VF) attend aussi, c'est rare sur un film récent.
+vo_wait_hours = 3
+vo_wait_bypass_score = 2500
 
 [tasks.russian_search]
 # Voie russe : Sonarr/Radarr cherchent par le titre anglais, RuTracker range par le titre russe (« The Interns »

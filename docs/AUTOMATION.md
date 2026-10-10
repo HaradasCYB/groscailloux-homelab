@@ -295,13 +295,24 @@ sinon qBittorrent + `homelab:movie=<id>`. Au plus `max_per_run` films (3) par pa
 panne) est retenté après `error_retry_hours` (1), « aucune release » après `retry_after_hours` (72).
 
 **Films attendus** (2026-10-10) : C411 a souvent la WEB avant la date numérique de TMDB (*Spider-Man: Brand New Day* :
-première release le 05/10 à 15:43, date numérique le 06/10, prise le 06/10 à 00:05). La tâche pose à chaque passage
-`availabilityDelay = -release_window_days` (3) dans les Radarr qui téléchargent (`GET`/`PUT
-/api/v3/config/indexer`) : Radarr tient le film pour sorti 3 jours avant sa date (la plus proche des dates numérique
-et physique, sinon salle + 90 jours : `release_date`), ce qui ouvre en même temps son RSS (15 min) et la recherche
-de homelabd. À moins de `release_window_days` jours de cette date, avant comme après, « aucune release » est retenté
-toutes les `release_retry_hours` (2) au lieu de 72 h (`retry_hours` ; résumé : « N autour de leur sortie »). L'onglet
-Demandes affiche « Pas encore sorti en numérique (prévu le …) : recherché toutes les 2 h dès le … ».
+première release le 05/10 à 15:43, date numérique le 06/10, prise le 06/10 à 00:05). Sur 14 films récents, 6 sont arrivés avant leur date, jamais plus de 23 h avant.
+La tâche pose à chaque passage `availabilityDelay = -release_window_days` (2) dans les Radarr qui téléchargent
+(`GET`/`PUT /api/v3/config/indexer`) : Radarr tient le film pour sorti 2 jours avant sa date (la plus proche des dates
+numérique et physique, sinon salle + 90 jours : `release_date`), ce qui ouvre en même temps son RSS (15 min) et la
+recherche de homelabd. À moins de `release_window_days` jours de cette date, avant comme après, « aucune release »
+est retenté toutes les `release_retry_hours` (2) au lieu de 72 h (`retry_hours` ; résumé : « N autour de leur
+sortie »). L'onglet Demandes affiche « Pas encore sorti en numérique (prévu le …) : recherché toutes les 2 h dès le … ».
+
+**VOSTFR fraîche : on attend la VF** (2026-10-10). Le RSS de Radarr prend la *première* release acceptable et le
+profil FR-friendly ne remplace jamais un fichier (`upgradeAllowed = false`) : *Insidious* a eu sa VOSTFR 48 min avant
+sa VFF. Une release sans audio français (`lang_rank` < 2 : VOSTFR, VO) publiée depuis moins de `vo_wait_hours` (3)
+n'est pas prise tant que rien de français n'est là : résultat `vo_wait`, refait au bout de `release_retry_hours`
+(`fresh_without_french`). Côté Radarr, la tâche pose le profil de délai par défaut (`GET`/`PUT /api/v3/delayprofile`,
+`delay_profile_fix`) : torrents retenus `vo_wait_hours` × 60 min, sauf score ≥ `vo_wait_bypass_score` (2500),
+protocole préféré « torrent » (sinon Radarr ignore le passe-droit au score), sans passe-droit « plus haute qualité ».
+Le seuil est à 2500 parce que le format « FRENCH » reconnaît aussi « VOSTFR » : une VOSTFR monte jusqu'à ~2400, un
+MULTi ou une VF part de 3500. Une release « FRENCH » seule attend aussi (rare sur un film récent). Le délai compte
+depuis la publication : une vieille VOSTFR (catalogue) part tout de suite.
 
 **Films français sans date numérique** (`awaiting_vod`, 2026-09-25) : sans date numérique, Radarr croit un film
 disponible 90 jours après la salle ; en France la VOD arrive 4 mois après (chronologie des médias) et C411 n'a rien
