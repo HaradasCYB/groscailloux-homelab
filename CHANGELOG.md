@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.25.0](#1250--09102026--téléchargements-expliqués-et-lot-3-jour-1)** | 09/10/2026 | **Téléchargements expliqués et lot 3, jour 1** |
+| **[1.25.1](#1251--10102026--syncplay-après-un-saut-et-lot-3-jour-2)** | 10/10/2026 | **SyncPlay après un saut et lot 3, jour 2** |
+| [1.25.0](#1250--09102026--téléchargements-expliqués-et-lot-3-jour-1) | 09/10/2026 | Téléchargements expliqués et lot 3, jour 1 |
 | [1.24.0](#1240--09102026--seedbox-hors-du-dépôt-mode-vo-natif-préparé-et-releases-publiques) | 09/10/2026 | Seedbox hors du dépôt, mode VO natif préparé et releases publiques |
 | [1.23.0](#1230--08102026--abonnés-à-la-main--aide-et-annonces--catalogue-et-langue-dorigine) | 08/10/2026 | Abonnés à la main, « Aide et annonces », catalogue, langue d'origine et outils |
 | [1.22.0](#1220--07--08102026--revue-kaizen--alertes-sobriété-et-portes-dadministration) | 07 → 08/10/2026 | Revue Kaizen : alertes, sobriété et portes d'administration |
@@ -35,6 +36,36 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.25.1 — 10/10/2026 — SyncPlay après un saut et lot 3, jour 2
+
+Séance SyncPlay à trois dans la nuit du 09 au 10/10 : après chaque saut, tout le groupe attendait 12 s un membre sur
+Jellyfin Desktop 2.0.0-dev, et un groupe créé pendant la lecture est resté bloqué 30 s au démarrage. Le contournement
+SyncPlay est corrigé et ses délais choisis au banc. Deuxième jour des mises à jour du lot 3, arrêté sur un contrôle.
+
+### Pour les membres
+
+- **SyncPlay dans Jellyfin Desktop : la lecture repart quand tout le monde a vraiment l'image.** Avec l'appli 2.x, le
+  groupe repartait trop tôt après un saut puis se remettait « en chargement » 3 s plus tard, ou attendait 12 s à chaque
+  saut. Si une appli ne répond pas, le groupe repart quand même au bout de 10 s (appli 2.x) ou 5 s (appli 1.x), au lieu
+  de 12 s.
+- **Regarder ensemble : créer ou rejoindre le groupe d'abord, puis lancer l'épisode depuis le groupe.** Un groupe créé
+  pendant une lecture reste bloqué 30 s (bogue de Jellyfin 12.1) ; pour débloquer, relancer l'épisode depuis le groupe.
+
+### Pour l'administrateur
+
+- **`gc-syncplay.js` VERSION 2** : sur le lecteur web, l'arrivée après un saut se lit sur l'élément `<video>` (saut
+  fini, `readyState` ≥ 3, à la cible), plus sur sa position, que Chrome annonce dès le début du saut ; mpv garde la
+  position. Attente maximale 10 s (lecteur web) et 5 s (mpv) : au banc, couper plus tôt a fait perdre son saut à un
+  lecteur encore en chargement (10 min de décalage). Chaque attente maximale atteinte part au journal client du serveur
+  (`upload_*.log`, « gc-syncplay v2 »). Nouveau banc `tools/bench/scenarios/syncplay.js` (deux comptes temporaires ;
+  sauts normaux, seedbox à froid, premier octet lent, appli muette, démarrage) ; cause du démarrage bloqué : liste de
+  lecture vide envoyée par le serveur 12.1 (runbook jellyfin-interface § 8).
+- **Lot 3, jour 2** (10/10, 08:35–08:44, aucune lecture en cours) : Prowlarr 2.6.5 appliqué. Sonarr 4.0.20 remis en
+  4.0.17 par son retour arrière (le contrôle d'après a refusé un simple changement d'ordre de champs du client de
+  téléchargement), Radarr 6.4.4 sauté, gluetun v3.41.3 remis en place d'origine (avertissement passager de Sonarr juste
+  après la recréation de qBittorrent ; la restauration notée « incomplète » ne l'était pas : rsync refuse un `chgrp`,
+  données vérifiées identiques), Homarr pas lancé. Téléchargements et port transféré vérifiés sains.
 
 ## 1.25.0 — 09/10/2026 — Téléchargements expliqués et lot 3, jour 1
 

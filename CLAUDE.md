@@ -214,7 +214,8 @@ lien seedbox ~8–10 Mo/s par connexion — voir [lecture-et-transcodage.md](doc
   le cache reste `seedbox{9oylk}`. Ancien cache sans suffixe (`cache/rclone/{vfs,vfsMeta}/seedbox`, ~20 Go, inutilisé
   depuis le 19/09) à supprimer ensuite.
 - En attente du propriétaire : import CSV des abonnés historiques ; reste du lot 4.
-- À valider en séance réelle : Chromecast `high10` → `high`, compression des listes HLS, SyncPlay en 12.1 dans Jellyfin
-  Desktop (avant de retirer `gc-syncplay.js`).
+- À valider en séance réelle : Chromecast `high10` → `high`, compression des listes HLS, `gc-syncplay.js` VERSION 2
+  (10/10 : arrivée lue sur l'élément vidéo du lecteur web, attente maximale 10 s / 5 s ; lire les `upload_*.log`
+  « gc-syncplay » après une séance avec Jellyfin Desktop 2.x).
 - Provisoire : Collection Sections recompilée (à remplacer par Home Screen Sections), garde NPM de Home Screen Sections (à
   retirer quand l'amont corrige).

@@ -200,11 +200,28 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
   - Symptôme d'origine : roue de chargement après un saut, puis pause/lecture obligatoire ; ni NPM ni la conversion. À
     chaque saut, l'appli qui a sauté (Jellyfin Desktop 1.0.0, mpv) ne répondait jamais « prêt » (`PlaybackCore.scheduleSeek`
     attend `playing` 30 s) et le serveur programmait une pause lointaine pour l'autre.
-  - Le script remplace `scheduleSeek` : pause, saut, attente que le lecteur soit à 5 s de la cible (12 s au plus), puis
-    « prêt » **à la cible** (le serveur n'accepte un « prêt » en pause qu'à 500 ms près). Le module est retrouvé par le
-    registre webpack (`self.webpackChunk`, `__webpack_require__.m`) d'après son code, jamais son numéro ; sans module
-    trouvé, il ne fait rien.
-  - Banc : `backups/syncplay-20261003/run.sh [0|1]` (deux navigateurs, comptes temporaires). Mesuré : reprise 0,5 s après.
+  - Le script remplace `scheduleSeek` : pause, saut, attente de l'arrivée, puis « prêt » **à la cible** (le serveur
+    n'accepte un « prêt » en pause qu'à 500 ms près). Le module est retrouvé par le registre webpack
+    (`self.webpackChunk`, `__webpack_require__.m`) d'après son code, jamais son numéro ; sans module trouvé, il ne fait
+    rien.
+  - **Arrivée (VERSION 2, 10/10)** : mpv (Jellyfin Desktop 1.x, `currentTimeAsync`) = position à 5 s de la cible ;
+    lecteur web (Jellyfin Desktop 2.x, navigateur forcé) = élément `video.htmlvideoplayer` sorti du saut
+    (`seeking` faux, `readyState` ≥ 3) et à la cible. **Jamais la position du lecteur web** : Chrome émet `timeupdate`
+    dès le DÉBUT d'un saut, la position annonce la cible avant l'image (VERSION 1 : « prêt » en 0,3 s puis « en
+    chargement » 3 s plus tard et nouvelle attente du groupe ; lecteur rechargé à 0 : attente maximale à chaque saut).
+  - **Attente maximale** : 10 s (lecteur web), 5 s (mpv), au lieu de 12 s. Couper plus tôt coûte plus cher qu'attendre
+    (banc du 10/10 : à 5 s, un lecteur encore en chargement a perdu son saut, 10 min de décalage jamais rattrapé ; à
+    3 s, synchro après 11 s). Sauts mesurés : lecteur web en HLS, fichier froid de la seedbox 1,4–8,9 s ; mpv en
+    séance 0,3–0,6 s. Chaque attente maximale atteinte part au journal client (`upload_*.log`, « gc-syncplay v2
+    attente maximale » : appli, position du lecteur, état de l'élément vidéo) : les lire avant de retoucher ces valeurs.
+  - Banc : `tools/bench/bench.sh --accounts 2 --prefix zz_sp --item <id H.264 du VPS> --env ITEM2=<id seedbox> --timeout
+    1500 tools/bench/scenarios/syncplay.js desktop` (phases normal, seedbox, lent, muet, depart ; ~12 min ; les
+    navigateurs du banc lisent en HLS remuxé). Résultats du 10/10 : `backups/bench/20261010/syncplay/`.
+  - **Groupe créé pendant une lecture = bloqué 30 s** (bogue de Jellyfin 12.1, reproduit au banc dans un navigateur) :
+    le serveur envoie une liste de lecture **vide** (« SyncPlay startPlayback: empty playlist »), chaque appli ignore
+    ensuite les commandes (« playlist item does not match ») jusqu'à l'abandon du serveur. Consigne : créer ou
+    rejoindre le groupe d'abord, puis lancer l'épisode depuis le groupe ; pour débloquer, relancer l'épisode depuis le
+    groupe (lecture commune en 1 à 2 s).
 - NPM de l'hôte 1 garde les réglages SyncPlay (websocket, délais 3600 s, tampons coupés) : [npm.md](npm.md).
 - **Après un banc SyncPlay** : un compte supprimé garde sa session et son groupe SyncPlay (visible de tous) : fermer
   l'appareil de test précis par `DELETE /Devices?id=<id vérifié>`. **Ne jamais cliquer un vrai groupe de membre** (le

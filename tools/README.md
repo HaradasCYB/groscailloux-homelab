@@ -60,6 +60,8 @@ est une erreur franche (code 2, bilan Discord), jamais « un autre travail tourn
 ```bash
 tools/bench/bench.sh tools/bench/scenarios/header.js desktop phone          # banc de fumée de l'en-tête
 tools/bench/bench.sh tools/bench/scenarios/candidats.js desktop             # l'injection de candidats marche-t-elle ?
+tools/bench/bench.sh --accounts 2 --prefix zz_sp --item <id> --env ITEM2=<id> --timeout 1500 \
+  tools/bench/scenarios/syncplay.js desktop                                  # SyncPlay : reprise après un saut (~12 min)
 tools/bench/bench.sh --candidate /chemin/candidats tools/bench/scenarios/header.js desktop-legacy tv
 tools/bench/bench.sh --offline tools/tests/compte-russe/compte-russe.js     # sans compte ni Jellyfin
 tools/bench/bench.sh backups/jellyfin12-test-20261003/modern_ui.js :desktop :iphone   # ancien scénario (voir plus bas)
