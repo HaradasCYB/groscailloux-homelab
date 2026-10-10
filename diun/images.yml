@@ -15,7 +15,7 @@
   watch_repo: true
   max_tags: 3
   include_tags: ['^\d+\.\d+\.\d+\.\d+-ls\d+$']
-- name: lscr.io/linuxserver/prowlarr:2.3.5.5327-ls144
+- name: lscr.io/linuxserver/prowlarr:2.6.5.5623-ls163
   watch_repo: true
   max_tags: 3
   include_tags: ['^\d+\.\d+\.\d+\.\d+-ls\d+$']
