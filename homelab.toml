@@ -397,7 +397,7 @@ enabled = true
 # → celle de la série, classification personnalisée aussi, sans exception). Une série dont un enfant a sa propre valeur
 # n'est pas écrite ; sinon seuls les enfants sans classification changent (~1 600 lignes pour 86 séries), notés dans
 # l'état. Laissé à false tant que ce n'est pas accepté.
-series = false
+series = true
 # Matin : après l'analyse de 05:00, les segments (05:15/05:30) et les images de chapitre (06:30), avant midi.
 window_start = "07:30"
 window_end = "11:30"
