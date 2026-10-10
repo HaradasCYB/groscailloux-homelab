@@ -121,6 +121,67 @@ pub fn awaiting_vod(
     Some((c, c.checked_add_months(chrono::Months::new(4))?))
 }
 
+/// Date à laquelle Radarr tient un film pour sorti (`minimumAvailability = released`) : la plus proche des dates
+/// numérique et physique, sinon la salle + 90 jours ; `None` sans aucune date.
+pub fn release_date(movie: &Value) -> Option<chrono::NaiveDate> {
+    let day = |k: &str| {
+        let d = movie.get(k).and_then(Value::as_str)?;
+        chrono::NaiveDate::parse_from_str(d.get(..10)?, "%Y-%m-%d").ok()
+    };
+    match (day("digitalRelease"), day("physicalRelease")) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => day("inCinemas")?.checked_add_days(chrono::Days::new(90)),
+    }
+}
+
+/// Délai avant de rechercher de nouveau un film resté sans release : `release_retry_hours` à moins de
+/// `release_window_days` jours de sa date de sortie, `retry_after_hours` sinon.
+pub fn retry_hours(
+    cfg: &crate::config::MovieSearch,
+    release: Option<chrono::NaiveDate>,
+    today: chrono::NaiveDate,
+) -> i64 {
+    match release {
+        Some(d) if (today - d).num_days().abs() <= cfg.release_window_days => {
+            cfg.release_retry_hours
+        }
+        _ => cfg.retry_after_hours,
+    }
+}
+
+/// Radarr ne tient un film pour sorti (`isAvailable`, RSS, `release/push`) qu'à sa date ; `availabilityDelay`
+/// négatif avance ce moment. Réglé ici pour que `homelab.toml` reste la source de la valeur.
+async fn ensure_availability_delay(ctx: &TaskContext, arr: &ArrClient, days: i64) -> Result<()> {
+    let mut cfg = arr.get("api/v3/config/indexer", &[]).await?;
+    let before = cfg.get("availabilityDelay").and_then(Value::as_i64);
+    if before == Some(-days) {
+        return Ok(());
+    }
+    if ctx.dry_run {
+        info!(
+            task = "movie_search",
+            service = arr.name,
+            ?before,
+            after = -days,
+            "dry-run: would set availabilityDelay"
+        );
+        return Ok(());
+    }
+    let id = cfg.get("id").and_then(Value::as_i64).unwrap_or(1);
+    cfg["availabilityDelay"] = json!(-days);
+    arr.put(&format!("api/v3/config/indexer/{id}"), &cfg)
+        .await?;
+    info!(
+        task = "movie_search",
+        service = arr.name,
+        ?before,
+        after = -days,
+        "availabilityDelay réglé"
+    );
+    Ok(())
+}
+
 /// Meilleure release d'un film : identifiant TMDB, français, qualité acceptable ; tri langue, résolution,
 /// sources. Le codec ne compte pas (voir `series_search::choose`). `items` : (résultat Prowlarr,
 /// `parsedMovieInfo` Radarr).
@@ -337,8 +398,19 @@ impl Task for MovieSearch {
         let t = now();
         let mut todo: Vec<(&ArrClient, Value)> = Vec::new();
         let mut vod_wait = 0u32;
+        let mut watched = 0u32;
         let now_dt = chrono::Utc::now();
+        let today = now_dt.date_naive();
         for arr in radarrs {
+            // avant la liste des films : leur `isAvailable` en dépend
+            if let Err(e) = ensure_availability_delay(ctx, arr, cfg.release_window_days).await {
+                warn!(
+                    task = "movie_search",
+                    service = arr.name,
+                    error = format!("{e:#}"),
+                    "availabilityDelay not checked"
+                );
+            }
             let prepared = async {
                 let queued: HashSet<i64> = arr
                     .queue_records()
@@ -363,6 +435,10 @@ impl Task for MovieSearch {
                             continue;
                         }
                         let rec = records.get(&format!("{}:{id}", arr.name));
+                        let retry = retry_hours(cfg, release_date(&m), today);
+                        if retry != cfg.retry_after_hours {
+                            watched += 1;
+                        }
                         let go = super::series_search::fallback_due(
                             rec,
                             t,
@@ -373,7 +449,7 @@ impl Task for MovieSearch {
                             due(
                                 rec,
                                 t,
-                                cfg.retry_after_hours,
+                                retry,
                                 cfg.retry_after_hours,
                                 cfg.error_retry_hours,
                                 15,
@@ -446,6 +522,12 @@ impl Task for MovieSearch {
         let mut summary: Vec<String> = counts.iter().map(|(k, v)| format!("{k}={v}")).collect();
         if vod_wait > 0 {
             summary.push(format!("{vod_wait} en attente de la VOD"));
+        }
+        if watched > 0 {
+            summary.push(format!(
+                "{watched} autour de leur sortie (toutes les {} h)",
+                cfg.release_retry_hours
+            ));
         }
         let summary = if summary.is_empty() {
             "rien à rattraper".to_string()
@@ -533,6 +615,42 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn release_date_follows_radarr() {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        // Spider-Man: Brand New Day : numérique avant physique
+        let m = json!({"inCinemas": "2026-07-29T00:00:00Z", "digitalRelease": "2026-10-06T00:00:00Z",
+                       "physicalRelease": "2026-12-02T00:00:00Z"});
+        assert_eq!(release_date(&m), Some(d("2026-10-06")));
+        let m = json!({"physicalRelease": "2026-11-17T00:00:00Z"});
+        assert_eq!(release_date(&m), Some(d("2026-11-17")));
+        // sans date numérique ni physique : salle + 90 jours, comme Radarr
+        let m = json!({"inCinemas": "2026-09-30T00:00:00Z"});
+        assert_eq!(release_date(&m), Some(d("2026-12-29")));
+        assert_eq!(release_date(&json!({"digitalRelease": ""})), None);
+    }
+
+    #[test]
+    fn films_are_watched_around_their_release() {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let cfg = crate::config::MovieSearch::default();
+        let verity = Some(d("2026-10-27"));
+        assert_eq!(
+            retry_hours(&cfg, verity, d("2026-10-23")),
+            72,
+            "4 jours avant"
+        );
+        assert_eq!(retry_hours(&cfg, verity, d("2026-10-24")), 2, "72 h avant");
+        assert_eq!(retry_hours(&cfg, verity, d("2026-10-27")), 2);
+        assert_eq!(
+            retry_hours(&cfg, verity, d("2026-10-30")),
+            2,
+            "3 jours après"
+        );
+        assert_eq!(retry_hours(&cfg, verity, d("2026-10-31")), 72);
+        assert_eq!(retry_hours(&cfg, None, d("2026-10-27")), 72);
     }
 
     fn movie(id: i64, monitored: bool, has_file: bool, added: &str) -> Value {

@@ -1007,7 +1007,8 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
     let mut season_info: SeasonInfo = HashMap::new();
     let mut movie_files: HashSet<(&'static str, i64)> = HashSet::new();
     // films connus de l'Arr : (côté, id) → (isAvailable, date de sortie numérique/physique la plus proche)
-    // (disponible selon Radarr, date numérique/physique, attente de la VOD pour un film français : salle, VOD estimée)
+    // (disponible selon Radarr, date numérique/physique, attente de la VOD pour un film français : salle, VOD estimée,
+    // délai avant la prochaine recherche : plus court autour de la date de sortie)
     #[allow(clippy::type_complexity)]
     let mut movie_info: HashMap<
         (&'static str, i64),
@@ -1015,6 +1016,7 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
             bool,
             Option<String>,
             Option<(chrono::NaiveDate, chrono::NaiveDate)>,
+            i64,
         ),
     > = HashMap::new();
     let vod_days = ctx.cfg.tasks.movie_search.min_days_after_cinema;
@@ -1086,7 +1088,12 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                     chrono::Utc::now(),
                     vod_days,
                 );
-                movie_info.insert((side, id), (avail, release, vod));
+                let retry = homelab_core::tasks::movie_search::retry_hours(
+                    &ctx.cfg.tasks.movie_search,
+                    homelab_core::tasks::movie_search::release_date(&m),
+                    chrono::Utc::now().date_naive(),
+                );
+                movie_info.insert((side, id), (avail, release, vod, retry));
             }
         }
     }
@@ -1193,7 +1200,10 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                 ss.error_retry_hours,
             )
         } else {
-            (ms.retry_after_hours, 168, ms.error_retry_hours)
+            let retry = movie_info
+                .get(&(side, ext))
+                .map_or(ms.retry_after_hours, |i| i.3);
+            (retry, 168, ms.error_retry_hours)
         };
         let created = r
             .get("createdAt")
@@ -1218,7 +1228,7 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                             "Fiche absente côté téléchargement : l'administrateur doit la refaire"
                                 .into()
                     }
-                    Some((true, _, Some((cinema, vod)))) => {
+                    Some((true, _, Some((cinema, vod)), _)) => {
                         let d =
                             |n: &chrono::NaiveDate| rp::date_fr(&n.format("%Y-%m-%d").to_string());
                         p.label = format!(
@@ -1227,16 +1237,31 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                             d(vod)
                         );
                     }
-                    Some((false, release, _)) => {
-                        p.label = match release {
-                            Some(d) => format!(
+                    Some((false, release, _, _)) => {
+                        // Radarr le tient pour sorti `release_window_days` avant : recherche dès ce jour-là
+                        let from = release
+                            .as_deref()
+                            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                            .and_then(|d| {
+                                d.checked_sub_days(chrono::Days::new(
+                                    ms.release_window_days.max(0) as u64
+                                ))
+                            });
+                        p.label = match (release, from) {
+                            (Some(d), Some(f)) => format!(
+                                "Pas encore sorti en numérique (prévu le {}) : recherché toutes les {} h dès le {}",
+                                rp::date_fr(d),
+                                ms.release_retry_hours,
+                                f.format("%d/%m")
+                            ),
+                            (Some(d), None) => format!(
                                 "Pas encore sorti en numérique (prévu le {})",
                                 rp::date_fr(d)
                             ),
-                            None => "Pas encore sorti en numérique".into(),
+                            (None, _) => "Pas encore sorti en numérique".into(),
                         }
                     }
-                    Some((true, _, _)) if search.is_none() && t - created > 6 * 3600 => {
+                    Some((true, _, _, _)) if search.is_none() && t - created > 6 * 3600 => {
                         p.label =
                             "Recherche régulière en cours, rien de trouvé pour l'instant".into();
                     }

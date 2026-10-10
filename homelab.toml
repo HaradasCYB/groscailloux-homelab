@@ -333,6 +333,12 @@ indexer = "C411"
 # VOD arrive 4 mois après (chronologie des médias) et C411 n'a rien avant. On ne le cherche pas avant N jours après
 # la salle ; le membre voit « VOD vers le … » dans l'onglet Demandes (Le Vertige, 2026-09-25). Le RSS reste actif.
 min_days_after_cinema = 110
+# Film attendu : C411 a souvent la WEB la veille de la date numérique de TMDB (Spider-Man: Brand New Day, 2026-10-05 :
+# première release 10 h avant, prise 8 h après elle). Radarr tient le film pour sorti N jours avant sa date
+# (`availabilityDelay = -N`, posé par la tâche : son RSS le prend aussi), et on le recherche toutes les
+# `release_retry_hours` jusqu'à N jours après (au lieu de `retry_after_hours`). Demande du 2026-10-10.
+release_window_days = 3
+release_retry_hours = 2
 
 [tasks.russian_search]
 # Voie russe : Sonarr/Radarr cherchent par le titre anglais, RuTracker range par le titre russe (« The Interns »

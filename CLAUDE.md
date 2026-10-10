@@ -152,7 +152,7 @@ Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la
 | Budget C411 | 40 requêtes/h **par clé**, 2 clés ; 10 gardées pour `/recherche` ; clé en 429 mise de côté 15 min | `homelab.toml` `[indexers]` `c411_max_per_hour`, `manual_reserve`, `cooldown_after_429_mins` |
 | Filet Prowlarr | 45 requêtes/h par indexeur C411 | Prowlarr, `queryLimit` de « C411 » et « C411 (2) » |
 | Indexeurs de Prowlarr | C411, C411 (2), Nyaa.si, World-torrent (secours) | Prowlarr `GET /api/v1/indexer` ; `[indexers] fallback`, `fallback_anime` |
-| Rythme des recherches | séries : 6 requêtes par passage de 10 min, 5 s d'écart, 60 épisodes au plus par saison ; films : 3 par passage de 5 min | `[tasks.series_search]` `max_queries_per_run`, `query_gap_secs`, `max_grabs_per_season` ; `[tasks.movie_search]` `max_per_run` |
+| Rythme des recherches | séries : 6 requêtes par passage de 10 min, 5 s d'écart, 60 épisodes au plus par saison ; films : 3 par passage de 5 min ; film attendu guetté de 3 jours avant à 3 jours après sa date numérique, toutes les 2 h (Radarr `availabilityDelay` -3, posé par la tâche) | `[tasks.series_search]` `max_queries_per_run`, `query_gap_secs`, `max_grabs_per_season` ; `[tasks.movie_search]` `max_per_run`, `release_window_days`, `release_retry_hours` |
 | Plafonds de taille | 3 Go par épisode, 15 Go par film | `[indexers]` `max_gb_per_episode`, `max_gb_per_movie` |
 | Côté qui télécharge | seedbox seule | `[downloads] auto_sides` |
 | Profils de qualité | FR-friendly H.264 : VPS 6, seedbox 7 | Arrs `GET /api/v3/qualityprofile` (par nom) ; `[seedbox] quality_profile_id` |

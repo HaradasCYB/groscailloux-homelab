@@ -906,6 +906,11 @@ pub struct MovieSearch {
     pub indexer: String,
     /// Film français sans date numérique : pas de recherche avant N jours après la salle (VOD à 4 mois en France).
     pub min_days_after_cinema: i64,
+    /// Fenêtre autour de la date de sortie (numérique ou physique) : Radarr tient le film pour sorti N jours avant
+    /// (`availabilityDelay = -N`, posé par la tâche), et on le recherche toutes les `release_retry_hours` jusqu'à N
+    /// jours après.
+    pub release_window_days: i64,
+    pub release_retry_hours: i64,
 }
 
 impl Default for MovieSearch {
@@ -919,6 +924,8 @@ impl Default for MovieSearch {
             query_gap_secs: 5,
             indexer: "C411".into(),
             min_days_after_cinema: 110,
+            release_window_days: 3,
+            release_retry_hours: 2,
         }
     }
 }
@@ -1064,7 +1071,7 @@ impl Default for OriginalLanguage {
         Self {
             interval_secs: 600,
             enabled: true,
-            series: false,
+            series: true,
             window_start: "07:30".into(),
             window_end: "11:30".into(),
             max_movies_per_run: 4,

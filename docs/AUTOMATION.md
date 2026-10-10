@@ -294,6 +294,15 @@ RSS seulement) et le RSS ne ramène que les nouveautés — un film ancien ne pe
 sinon qBittorrent + `homelab:movie=<id>`. Au plus `max_per_run` films (3) par passage ; un échec (indexeur en
 panne) est retenté après `error_retry_hours` (1), « aucune release » après `retry_after_hours` (72).
 
+**Films attendus** (2026-10-10) : C411 a souvent la WEB avant la date numérique de TMDB (*Spider-Man: Brand New Day* :
+première release le 05/10 à 15:43, date numérique le 06/10, prise le 06/10 à 00:05). La tâche pose à chaque passage
+`availabilityDelay = -release_window_days` (3) dans les Radarr qui téléchargent (`GET`/`PUT
+/api/v3/config/indexer`) : Radarr tient le film pour sorti 3 jours avant sa date (la plus proche des dates numérique
+et physique, sinon salle + 90 jours : `release_date`), ce qui ouvre en même temps son RSS (15 min) et la recherche
+de homelabd. À moins de `release_window_days` jours de cette date, avant comme après, « aucune release » est retenté
+toutes les `release_retry_hours` (2) au lieu de 72 h (`retry_hours` ; résumé : « N autour de leur sortie »). L'onglet
+Demandes affiche « Pas encore sorti en numérique (prévu le …) : recherché toutes les 2 h dès le … ».
+
 **Films français sans date numérique** (`awaiting_vod`, 2026-09-25) : sans date numérique, Radarr croit un film
 disponible 90 jours après la salle ; en France la VOD arrive 4 mois après (chronologie des médias) et C411 n'a rien
 avant. Un film en langue originale française, sans `digitalRelease` ni `physicalRelease`, sorti en salle depuis
