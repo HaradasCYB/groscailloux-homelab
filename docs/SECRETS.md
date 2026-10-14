@@ -37,7 +37,7 @@ commentaire en fin de ligne (les lecteurs Python de `.env` le garderaient dans l
 | `JELLYSEERR_API_KEY` | Settings → General | homelabd |
 | `JELLYFIN_LIB_FILMS`, `JELLYFIN_LIB_SERIES` | GUID dans l'URL de chaque bibliothèque | onboarding (policy) |
 | `QUALITY_PROFILE_ID` | Sonarr/Radarr → Profiles (id dans l'URL) | auto_import |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_FROM_NAME` | Gmail : mot de passe d'application (2FA requis) | onboarding, diun |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_FROM_NAME` | Proton (depuis le 14/10) : `SMTP_USER` = `SMTP_FROM` = adresse `contact@` du domaine principal, `SMTP_PASS` = jeton SMTP de cette adresse (Paramètres → IMAP/SMTP → Jetons SMTP), `smtp.protonmail.ch` port **465** (TLS direct ; 587 en STARTTLS ne marche pas avec `curl smtps://`). Ancien envoi Gmail en commentaire dans `.env` jusqu'au 21/10, puis mot de passe d'application révoqué | onboarding, diun |
 | `ADMIN_EMAIL` | boîte lue par l'admin | diun |
 | `HOMELABD_ONBOARD_TOKEN` | `openssl rand -hex 32` | `POST /onboard` |
 | `COMPOSE_PROFILES` | `vpn` ou `novpn`, géré par `homelabctl vpn` | docker compose |

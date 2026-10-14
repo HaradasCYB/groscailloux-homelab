@@ -48,6 +48,7 @@ l'identique : rien à changer dans les applis déjà réglées, et les liens des
 - **Nouvelle adresse principale** : le domaine nu ouvre Jellyfin (le plus simple à taper sur une télé) ; les demandes,
   « Mon compte », l'abonnement et le guide sont sur le même domaine. Les mails, le guide et Discord donnent désormais
   ces adresses. **L'ancienne adresse marche toujours**, pour tout.
+- **Les mails arrivent de l'adresse du domaine** (`contact@`) et non plus d'une adresse Gmail.
 
 ### Pour l'administrateur
 
@@ -64,6 +65,8 @@ l'identique : rien à changer dans les applis déjà réglées, et les liens des
 - **Homarr : sessions Jellyfin plus lisibles sans connexion.** Le widget « Nouveautés » du tableau public était relié à
   l'intégration Jellyfin, ce qui ouvrait aux anonymes la liste des sessions en cours (trouvé par le point complet du
   14/10) ; lien retiré, deux contrôles anonymes dans [homarr.md](docs/runbooks/homarr.md).
+- **Mails envoyés par Proton** depuis l'adresse `contact@` du domaine (SPF, DKIM et DMARC publiés chez Cloudflare) au
+  lieu de Gmail ; port 465 en TLS direct, donc aucun changement de code ni de diun. [SECRETS.md](docs/SECRETS.md).
 
 ---
 

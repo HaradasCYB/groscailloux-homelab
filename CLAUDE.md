@@ -218,9 +218,10 @@ lien seedbox ~8–10 Mo/s par connexion — voir [lecture-et-transcodage.md](doc
   depuis le 19/09) à supprimer ensuite.
 - En attente du propriétaire : import CSV des abonnés historiques ; reste du lot 4.
 - **Domaine principal (14/10)** : DNS, certificats, NPM, homelabd, Seerr, Home Screen Sections et Homarr basculés ;
-  `PublishedServerUrl` de Jellyfin au passage hors pic `jf-published-url` (15/10 04:30) ; mails depuis l'adresse du
-  domaine par Proton (enregistrements DNS et jeton SMTP attendus du propriétaire) ; certificat joker DuckDNS (`npm-1`)
-  à supprimer vers le 21/10 ; webhook PayPal laissé sur l'ancien nom (URL modifiable dans PayPal, même identifiant).
+  `PublishedServerUrl` de Jellyfin au passage hors pic `jf-published-url` (15/10 04:30) ; mails par Proton depuis
+  l'adresse `contact@` du domaine (Gmail en commentaire dans `.env`, à retirer et révoquer vers le 21/10) ;
+  certificat joker DuckDNS (`npm-1`) à supprimer vers le 21/10 ; webhook PayPal laissé sur l'ancien nom (URL
+  modifiable dans PayPal, même identifiant).
 - À valider en séance réelle : Chromecast `high10` → `high`, compression des listes HLS, `gc-syncplay.js` VERSION 2
   (10/10 : arrivée lue sur l'élément vidéo du lecteur web, attente maximale 10 s / 5 s ; lire les `upload_*.log`
   « gc-syncplay » après une séance avec Jellyfin Desktop 2.x).
