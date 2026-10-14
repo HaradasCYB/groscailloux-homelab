@@ -1919,6 +1919,9 @@ pub struct Secrets {
     /// Adresse publique de l'onboarder (`ONBOARD_PUBLIC_URL`) : lien vers `/guide` dans le mail de
     /// bienvenue. Absente = pas de lien.
     pub onboard_public_url: Option<String>,
+    /// Ancienne adresse de l'onboarder (`ONBOARD_FALLBACK_URL`), gardée en secours : ses pages d'administration
+    /// restent servies. Absente = seul l'hôte de `ONBOARD_PUBLIC_URL`.
+    pub onboard_fallback_url: Option<String>,
     /// Contact affiché par le guide (`GUIDE_CONTACT_EMAIL`, `GUIDE_CONTACT_DISCORD`), hors du dépôt.
     pub guide_contact_email: Option<String>,
     pub guide_contact_discord: Option<String>,
@@ -2068,6 +2071,8 @@ impl Secrets {
             jellyfin_public_url: req("JELLYFIN_PUBLIC_URL")?,
             jellyseerr_public_url: req("JELLYSEERR_PUBLIC_URL")?,
             onboard_public_url: opt("ONBOARD_PUBLIC_URL")
+                .map(|u| u.trim_end_matches('/').to_string()),
+            onboard_fallback_url: opt("ONBOARD_FALLBACK_URL")
                 .map(|u| u.trim_end_matches('/').to_string()),
             guide_contact_email: opt("GUIDE_CONTACT_EMAIL"),
             guide_contact_discord: opt("GUIDE_CONTACT_DISCORD"),

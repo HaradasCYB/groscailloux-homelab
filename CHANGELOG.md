@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.26.0](#1260--10102026--syncplay-après-un-saut-films-guettés-avant-leur-sortie-et-lot-3-jour-2)** | 10/10/2026 | **SyncPlay après un saut, films guettés avant leur sortie et lot 3, jour 2** |
+| **[1.27.0](#1270--14102026--nouveau-domaine-principal)** | 14/10/2026 | **Nouveau domaine principal** |
+| [1.26.0](#1260--10102026--syncplay-après-un-saut-films-guettés-avant-leur-sortie-et-lot-3-jour-2) | 10/10/2026 | SyncPlay après un saut, films guettés avant leur sortie et lot 3, jour 2 |
 | [1.25.0](#1250--09102026--téléchargements-expliqués-et-lot-3-jour-1) | 09/10/2026 | Téléchargements expliqués et lot 3, jour 1 |
 | [1.24.0](#1240--09102026--seedbox-hors-du-dépôt-mode-vo-natif-préparé-et-releases-publiques) | 09/10/2026 | Seedbox hors du dépôt, mode VO natif préparé et releases publiques |
 | [1.23.0](#1230--08102026--abonnés-à-la-main--aide-et-annonces--catalogue-et-langue-dorigine) | 08/10/2026 | Abonnés à la main, « Aide et annonces », catalogue, langue d'origine et outils |
@@ -34,6 +35,32 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.3.0](#030--août-2026-reconstitué--jellyfin-enrichi) | août 2026 | Jellyfin enrichi par les plugins |
 | [0.2.0](#020--fin-mai-2026-reconstitué--stabilisation) | fin mai 2026 | Stabilisation |
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
+
+---
+
+## 1.27.0 — 14/10/2026 — Nouveau domaine principal
+
+Le serveur a un vrai nom de domaine, plus court, chez Cloudflare. L'ancienne adresse DuckDNS reste servie à
+l'identique : rien à changer dans les applis déjà réglées, et les liens des anciens mails marchent toujours.
+
+### Pour les membres
+
+- **Nouvelle adresse principale** : le domaine nu ouvre Jellyfin (le plus simple à taper sur une télé) ; les demandes,
+  « Mon compte », l'abonnement et le guide sont sur le même domaine. Les mails, le guide et Discord donnent désormais
+  ces adresses. **L'ancienne adresse marche toujours**, pour tout.
+
+### Pour l'administrateur
+
+- **DNS chez Cloudflare en « DNS only »** (`A @` et `A *` vers le VPS, posés par l'API avec `CLOUDFLARE_API_TOKEN`,
+  jeton limité à la zone) : jamais le proxy de Cloudflare, qui exclut la vidéo.
+- **NPM : chaque hôte porte les deux noms** et un certificat Let's Encrypt HTTP-01 qui couvre les deux (`npm-2` à
+  `npm-16`), émis sans couper aucun hôte ; le certificat joker DuckDNS (défi DNS, renouvellement à surveiller le 27/10)
+  n'est plus utilisé. Hôte 7 (Jackett du VPS, retiré) laissé sur l'ancien nom. [npm.md § 6](docs/runbooks/npm.md#6-deux-domaines-1410).
+- **homelabd** : `*_PUBLIC_URL` sur le nouveau domaine ; nouvelle variable facultative `ONBOARD_FALLBACK_URL` (l'ancien
+  onboarder) dont l'hôte sert aussi les pages d'administration (`admin_auth::host_allowed_any`).
+- **Seerr** (`applicationUrl`, adresse externe de Jellyfin), **Home Screen Sections** (lien vers Seerr) et **Homarr**
+  (25 liens de tuiles) passés au nouveau domaine. `PublishedServerUrl` de Jellyfin : passage hors pic
+  `jf-published-url` (15/10, 04:30). Le webhook PayPal reste sur l'ancien nom, toujours servi.
 
 ---
 

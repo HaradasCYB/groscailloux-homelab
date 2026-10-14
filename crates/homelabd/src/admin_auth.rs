@@ -141,6 +141,13 @@ pub fn host_allowed(host: Option<&str>, onboard: Option<&str>) -> bool {
     }
 }
 
+/// Comme `host_allowed`, avec un second hôte public accepté : `ONBOARD_FALLBACK_URL`, l'ancien domaine gardé en
+/// secours après le passage au domaine principal (14/10). Sans `onboard`, pas de filtre, comme `host_allowed`.
+pub fn host_allowed_any(host: Option<&str>, onboard: Option<&str>, fallback: Option<&str>) -> bool {
+    host_allowed(host, onboard)
+        || (onboard.is_some() && fallback.is_some() && host_allowed(host, fallback))
+}
+
 /// Jeton attendu, donné et égal, comparé à temps constant. Aucun jeton configuré = refus.
 pub fn token_matches(expected: Option<&Secret>, given: Option<&str>) -> bool {
     match (expected, given) {
@@ -180,8 +187,10 @@ pub struct AdminAuth {
     /// Refus de `/admin/*` écrits en `warn` (lu par les tests).
     refusals_logged: Arc<AtomicUsize>,
     proxy: Arc<ProxyTrust>,
-    /// Hôte de `ONBOARD_PUBLIC_URL`, seul hôte public des pages d'administration.
+    /// Hôte de `ONBOARD_PUBLIC_URL`, hôte public des pages d'administration.
     onboard_host: Option<String>,
+    /// Hôte de `ONBOARD_FALLBACK_URL` (ancien domaine), aussi accepté.
+    fallback_host: Option<String>,
 }
 
 impl AdminAuth {
@@ -196,13 +205,19 @@ impl AdminAuth {
         // adresse de NPM lue dès le démarrage, avant la première requête
         let proxy = ProxyTrust::new(&ctx.cfg.web);
         proxy.start();
-        Self::from_parts(
+        let mut auth = Self::from_parts(
             ctx.secrets.onboard_token.clone(),
             ctx.secrets.status_token.clone(),
             ctx.secrets.admin_trusted_ips.clone(),
             onboard_host,
             proxy,
-        )
+        );
+        auth.fallback_host = ctx
+            .secrets
+            .onboard_fallback_url
+            .as_deref()
+            .and_then(url_host);
+        auth
     }
 
     fn from_parts(
@@ -221,6 +236,7 @@ impl AdminAuth {
             refusals_logged: Arc::new(AtomicUsize::new(0)),
             proxy: Arc::new(proxy),
             onboard_host,
+            fallback_host: None,
         }
     }
 
@@ -678,7 +694,11 @@ pub async fn layer(State(auth): State<AdminAuth>, mut req: Request, next: Next) 
             .and_then(|v| v.to_str().ok())
             .map(str::to_string)
             .or_else(|| req.uri().authority().map(|a| a.to_string()));
-        if !host_allowed(host.as_deref(), auth.onboard_host.as_deref()) {
+        if !host_allowed_any(
+            host.as_deref(),
+            auth.onboard_host.as_deref(),
+            auth.fallback_host.as_deref(),
+        ) {
             return not_found();
         }
     }
@@ -1033,6 +1053,23 @@ mod tests {
         assert!(!host_allowed(Some("203.0.113.9"), ob));
         // sans ONBOARD_PUBLIC_URL : pas de filtre (comportement d'origine)
         assert!(host_allowed(Some("premium.example.org"), None));
+    }
+
+    #[test]
+    fn the_old_onboarder_host_keeps_the_admin_pages() {
+        let ob = Some("onboarder.new.example");
+        let old = Some("onboarder.old.example");
+        assert!(host_allowed_any(Some("onboarder.new.example"), ob, old));
+        assert!(host_allowed_any(Some("Onboarder.Old.Example:443"), ob, old));
+        assert!(host_allowed_any(Some("127.0.0.1:8766"), ob, old));
+        // les autres hôtes, anciens ou nouveaux : 404
+        assert!(!host_allowed_any(Some("premium.old.example"), ob, old));
+        assert!(!host_allowed_any(Some("jellyfin.new.example"), ob, old));
+        assert!(!host_allowed_any(None, ob, old));
+        // sans secours : seul le principal
+        assert!(!host_allowed_any(Some("onboarder.old.example"), ob, None));
+        // un secours sans principal ne crée pas de filtre plus large que l'absence de filtre
+        assert!(host_allowed_any(Some("premium.old.example"), None, old));
     }
 
     #[test]

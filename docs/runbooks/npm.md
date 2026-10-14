@@ -93,10 +93,30 @@ Tout ce qui suit est dans la configuration avancée de l'hôte 1, **en base et d
   Préparation, retour arrière et sauvegarde : `backups/lot3-20261008/npm/`.
 - **Jeton DuckDNS plus gardé sur le disque** : NPM l'écrit depuis sa base le temps d'un certbot, puis l'efface. Un
   renouvellement à la main doit faire de même (recette dans `backups/lot3-20261008/npm/apply.sh`).
-- **Vers le 27/10** : vérifier le premier renouvellement sous 2.16 (`npm/data/logs/letsencrypt.log`, nouvelle échéance
-  après le 26/11) et que `credentials-1` a disparu ensuite ; supprimer alors `backups/lot3-20261008/npm/run-*`.
+- ~~Vers le 27/10 : vérifier le premier renouvellement DuckDNS sous 2.16~~ : sans objet depuis le 14/10, plus aucun
+  hôte n'utilise le certificat joker DuckDNS (§ 6). Supprimer `backups/lot3-20261008/npm/run-*` quand on voudra.
 - **Contrôle complet** : `backups/lot3-20261008/npm/check.sh` (production par défaut ; `--ct`, `--ports`, `--data` pour
   une instance d'essai) : 15 hôtes, garde HSS, Chromecast, gzip, tchat, Mon compte, websocket, site par défaut, journal lu
   par `hls_loop_watch`. Il remplace `hosts_check.sh` + `hls_check.sh` + `test_hss_guard.sh`.
 - La ligne Chromecast AAC de `1.conf` (`$1`/`$2` dans un `if`/`set`) marche toujours sous nginx 1.31 ; la passer en
   captures nommées reste une simple cohérence, en base **et** dans `1.conf`, au prochain passage sur l'hôte 1.
+
+## 6. Deux domaines (14/10)
+
+- **Domaine principal** chez Cloudflare (adresses dans `.env` : `*_PUBLIC_URL`), **ancien domaine DuckDNS gardé en
+  secours** : applis des membres déjà réglées, liens des anciens mails, webhook PayPal. Chaque hôte NPM porte **les
+  deux noms** (une seule configuration par service) : hôte 1 = domaine nu, `www.` et `jellyfin.` + l'ancien nom ;
+  les autres gardent leur sous-domaine. La redirection `don.` vise la nouvelle adresse premium. Hôte 7 (Jackett du VPS,
+  conteneur retiré) laissé sur l'ancien nom seul.
+- **DNS Cloudflare : « DNS only » (nuage gris) seulement**, jamais le proxy : ses conditions excluent la vidéo sur
+  l'offre gratuite, et il coupe les longues requêtes. Enregistrements `A @` et `A *` vers l'IP du VPS (même IP que
+  l'ancien nom), posés par l'API avec `CLOUDFLARE_API_TOKEN` (jeton limité à la zone).
+- **Certificats : un Let's Encrypt par hôte, en HTTP-01, couvrant le nouveau et l'ancien nom** (`npm-2` à `npm-16`) ;
+  NPM les renouvelle seul (défi HTTP). Le joker DuckDNS (`npm-1`, défi DNS) n'est plus utilisé : à supprimer après
+  une semaine sans souci. Émis en imitant `internal/certificate.js` **sans** son étape « désactiver les hôtes qui
+  utilisent ces noms » (elle couperait Jellyfin le temps de certbot) : les défis passent par les hôtes existants
+  (anciens noms) et par le site par défaut (nouveaux noms), qui incluent tous `letsencrypt-acme-challenge.conf`.
+  Outils (avec les noms, donc hors dépôt) : `backups/domaine-20261014/certs.py` (ligne `certificate` + certbot de NPM)
+  et `switch.py` (base **et** fichier : seules les lignes `server_name` et `ssl_certificate*` changent, `nginx -t`,
+  retour à l'identique sinon ; contrôle des deux noms, certificat vérifié).
+- **Ajouter un hôte** : son certificat doit couvrir les deux noms ; un certificat d'un seul nom casse l'autre.

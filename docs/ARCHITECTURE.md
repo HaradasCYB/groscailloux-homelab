@@ -20,7 +20,7 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 | pyload | téléchargements directs | `pyload/config` |
 | filebrowser | explorateur web de `library/` | `filebrowser/` |
 | npm | reverse proxy TLS (Let's Encrypt), entrée publique 80/443 | `npm/data`, `npm/letsencrypt` (root) |
-| duckdns | DNS dynamique | — |
+| duckdns | DNS dynamique de l'ancien domaine (secours) | — |
 | guacamole / guacd / guacdb | bureau distant navigateur, MySQL 8.0 | `guacamole/mysql` |
 | homarr | deux tableaux : **« Groscailloux-TV »** public (accueil : Regarder, Demander, nouveautés, à venir, demandes) et **« Operations »** privé (admin : automatisation homelabd, ressources, lectures, téléchargements VPS + seedbox, conteneurs, mises à jour d'images, Grafana partagé, outils) ; dispositions mobile / tablette / bureau ; français, sombre ; intégrations (VPS + seedbox) dont les secrets sont chiffrés en base avec `SECRET_ENCRYPTION_KEY` (AES-256-CBC) — modifier la base Homarr arrêté, après sauvegarde | `homarr/` (root) |
 | portainer | UI Docker | `portainer/` |
@@ -92,10 +92,12 @@ comptes créés dans l'UI Jellyseerr. Procédure : [ONBOARDING.md](ONBOARDING.md
 
 ## Réseau et exposition
 
-NPM termine TLS pour `<service>.<domaine>.duckdns.org` et proxifie vers les conteneurs ; pour
-l'UI homelabd, vers la passerelle `172.18.0.1:8766`. qBittorrent n'est joignable que par
-gluetun (8080 publié sur `127.0.0.1`, 6881 public, sur le conteneur gluetun). Le hook `hooks/qbit-update-port.sh`
-(monté `/gluetun/scripts`) reçoit le port forwardé et l'applique via l'API WebUI locale.
+NPM termine TLS pour le domaine principal (chez Cloudflare, en « DNS only » ; Jellyfin sur le domaine nu, les
+autres services en `<service>.<domaine>`) **et** pour l'ancien `<service>.<sous-domaine>.duckdns.org`, gardé en
+secours : chaque hôte porte les deux noms (depuis le 14/10, [npm.md § 6](runbooks/npm.md#6-deux-domaines-1410)).
+Il proxifie vers les conteneurs ; pour l'UI homelabd, vers la passerelle `172.18.0.1:8766`.
+qBittorrent n'est joignable que par gluetun (8080 publié sur `127.0.0.1`, 6881 public, sur le conteneur gluetun).
+Le hook `hooks/qbit-update-port.sh` (monté `/gluetun/scripts`) reçoit le port forwardé et l'applique via l'API WebUI locale.
 
 ## Sécurité des accès web
 

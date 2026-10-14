@@ -20,11 +20,13 @@ commentaire en fin de ligne (les lecteurs Python de `.env` le garderaient dans l
 |---|---|---|
 | `TZ` | `Europe/Paris` | tous les conteneurs |
 | `HOST_IP` | IP publique du VPS | **plus lue nulle part** (compose, homelabd, scripts) : `PublishedServerUrl` vient de `JELLYFIN_PUBLIC_URL` ; à retirer de `.env` et de `.env.example` |
-| `JELLYFIN_PUBLIC_URL`, `JELLYSEERR_PUBLIC_URL` | URLs NPM | mails, guide, `PublishedServerUrl` de Jellyfin (compose), `cert_watch` |
+| `JELLYFIN_PUBLIC_URL`, `JELLYSEERR_PUBLIC_URL` | URLs NPM du domaine principal (depuis le 14/10 ; Jellyfin = domaine nu) | mails, guide, `PublishedServerUrl` de Jellyfin (compose), `cert_watch` |
 | `CHAT_ADMIN_EMAIL` (facultatif, repli `GUIDE_CONTACT_EMAIL`) | adresse de l'admin | récapitulatifs du tchat |
 | `ONBOARD_PUBLIC_URL`, `GUIDE_CONTACT_EMAIL`, `GUIDE_CONTACT_DISCORD` | URL NPM de l'onboarder, contact de l'admin | page `/guide`, lien du mail de bienvenue |
+| `ONBOARD_FALLBACK_URL` (facultatif) | URL de l'onboarder sur l'ancien domaine (DuckDNS, gardé en secours depuis le 14/10) | homelabd : pages d'administration aussi servies sur cet hôte |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → jeton de compte « Modifier la zone DNS », limité à la zone du domaine principal (jamais un jeton complet : celui collé dans une conversation le 14/10 a été révoqué) | DNS du domaine principal par l'API (enregistrements A, Proton) ; aucun service ne le lit |
 | `SECRET_ENCRYPTION_KEY` | `openssl rand -hex 32` | Homarr |
-| `DUCKDNS_SUBDOMAIN`, `DUCKDNS_TOKEN` | duckdns.org | duckdns |
+| `DUCKDNS_SUBDOMAIN`, `DUCKDNS_TOKEN` | duckdns.org (ancien domaine, gardé en secours) | duckdns |
 | `VPN_SERVICE_PROVIDER`, `VPN_TYPE`, `WIREGUARD_PRIVATE_KEY`, `WIREGUARD_ADDRESSES`, `SERVER_COUNTRIES` | account.proton.me → WireGuard, cocher NAT-PMP | gluetun |
 | `INFLUXDB_INIT_*` | choisis au premier boot (mode setup) | influxdb |
 | `INFLUX_TOKEN` | InfluxDB UI → API Tokens (ou token opérateur initial) | telegraf.conf (via setup.sh), grafana |
@@ -91,7 +93,8 @@ désactivé le 08/10, comptée dans aucun budget : à révoquer chez C411 si le 
 - `HOMELABD_ADMIN_TRUSTED_IPS` (une IP, donc hors dépôt) : IP de la maison, pages d'admin sans connexion, lue
   seulement dans un `X-Forwarded-For` posé par NPM confirmé par Docker (jamais une connexion locale ni un autre
   conteneur). Si la box change d'IP : mettre la nouvelle, restart homelabd (le cookie d'un an couvre l'entre-deux).
-- `ONBOARD_PUBLIC_URL` : son hôte est le seul qui sert les pages d'administration de homelabd (404 ailleurs).
+- `ONBOARD_PUBLIC_URL` : son hôte (et celui de `ONBOARD_FALLBACK_URL`) sont les seuls qui servent les pages
+  d'administration de homelabd (404 ailleurs).
 
 ## Où sont les autres secrets
 

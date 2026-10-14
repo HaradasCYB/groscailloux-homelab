@@ -79,6 +79,8 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 - Nouveau service : port publié en `"127.0.0.1:<port>:<port>"` et `cpu_shares: 512`.
 - Arrêter un service volontairement = l'ajouter à `[tasks.stack_health] ignore` (+ restart homelabd), sinon il est relancé sous 5 min.
 - **SSH du VPS (sshd, clés, mots de passe, fail2ban), port 81 de NPM et listes d'accès NPM : on n'y touche pas** (signaler seulement).
+- **Domaine principal chez Cloudflare en « DNS only »**, jamais le proxy (vidéo) ; l'ancien domaine DuckDNS reste servi : chaque hôte
+  NPM porte les deux noms et un certificat HTTP-01 qui couvre les deux ([npm.md § 6](docs/runbooks/npm.md#6-deux-domaines-1410)).
 - **Redémarrages (VPS, Jellyfin, montage rclone, conteneurs qui coupent la lecture) : hors pic et sans lecture en cours**, par `tools/offpeak/offpeak.sh`.
 - Scripts : `head -n N` et `tail -n N` (coreutils uutils : `tail -25 a b` échoue) ; `.env` sans expression shell ; hook gluetun en POSIX sh avec `wget`.
 - Tout dossier volumineux sous `/opt/homelab` → `[backup] excludes` ; toute nouvelle base SQLite d'un service → `[backup] sqlite`.
@@ -173,6 +175,7 @@ Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la
 | Mode VO | `jpn` ; « Langue d'origine » native préparée, **coupée** | `[accounts]` `vo_audio_language`, `vo_native`, `vo_native_clients`, `vo_native_ignored_clients`, `vo_native_days` |
 | Tchat | annonces de plus de 14 j lues d'office pour un compte neuf | `[chat] new_member_read_days` |
 | Tâches de homelabd | 32 (dont `tba_bypass`, désactivée, et `vo_native_guard`, inactive tant que `vo_native = false`) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
+| Domaines | principal (Cloudflare, DNS only, Jellyfin = domaine nu) depuis le 14/10 ; ancien DuckDNS en secours, mêmes hôtes | `.env` `*_PUBLIC_URL`, `ONBOARD_FALLBACK_URL` ; NPM (2 noms par hôte) |
 | Ports ouverts à Internet | 80/443 (NPM), 6881 (BitTorrent), 81 (admin NPM) ; le reste sur 127.0.0.1 | `docker-compose.yml` |
 
 Mesures de référence (pas des réglages) : un seul transcodage 1080p tient en temps réel ; lecture directe 65 % (04/10) ;
@@ -214,6 +217,10 @@ lien seedbox ~8–10 Mo/s par connexion — voir [lecture-et-transcodage.md](doc
   le cache reste `seedbox{9oylk}`. Ancien cache sans suffixe (`cache/rclone/{vfs,vfsMeta}/seedbox`, ~20 Go, inutilisé
   depuis le 19/09) à supprimer ensuite.
 - En attente du propriétaire : import CSV des abonnés historiques ; reste du lot 4.
+- **Domaine principal (14/10)** : DNS, certificats, NPM, homelabd, Seerr, Home Screen Sections et Homarr basculés ;
+  `PublishedServerUrl` de Jellyfin au passage hors pic `jf-published-url` (15/10 04:30) ; mails depuis l'adresse du
+  domaine par Proton (enregistrements DNS et jeton SMTP attendus du propriétaire) ; certificat joker DuckDNS (`npm-1`)
+  à supprimer vers le 21/10 ; webhook PayPal laissé sur l'ancien nom (URL modifiable dans PayPal, même identifiant).
 - À valider en séance réelle : Chromecast `high10` → `high`, compression des listes HLS, `gc-syncplay.js` VERSION 2
   (10/10 : arrivée lue sur l'élément vidéo du lecteur web, attente maximale 10 s / 5 s ; lire les `upload_*.log`
   « gc-syncplay » après une séance avec Jellyfin Desktop 2.x).
