@@ -226,8 +226,8 @@ max_backlog_listed = 15     # séries commencées mais pas finies (volume non vu
 user_pause_ms = 150         # pause entre deux comptes Jellyfin
 
 [tasks.cert_watch]
-# Certificat TLS unique des hôtes NPM (Let's Encrypt, défi DNS-01 DuckDNS ; expire le 26/11/2026) : NPM le renouvelle
-# seul dès J-30 mais ne remonte rien en cas d'échec, et le canari passe par localhost:8096 (ni NPM ni TLS). Une fois
+# Certificats TLS des hôtes NPM (Let's Encrypt, un par hôte en défi HTTP-01, domaine principal + ancien DuckDNS, depuis le
+# 14/10 ; expirent le 12/01/2027) : NPM les renouvelle seul dès J-30 mais ne remonte rien en cas d'échec, et le canari passe par localhost:8096 (ni NPM ni TLS). Une fois
 # par jour : connexion TLS sur `connect` avec le nom de l'hôte public de Jellyfin (JELLYFIN_PUBLIC_URL, jamais en dur),
 # lecture de la date d'expiration, `GET <hôte public><health_path>` pour la chaîne NPM → Jellyfin, et contrôle que la
 # chaîne est reconnue pour ce nom. Alerte admin (mail + Discord) sous `warn_days` jours, puis chaque jour tant que ça dure.

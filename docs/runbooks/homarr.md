@@ -15,8 +15,12 @@
 - **Tableau public** (`isPublic`) : Homarr sert aux anonymes les données de **tout** widget lié à une intégration (tRPC,
   sans cookie). **Aucun widget de demandes, d'utilisateurs ou de sessions sur le tableau public** : « Demandes récentes »
   y exposait les 20 dernières demandes avec le pseudo des demandeurs (déplacé le 07/10 sur le tableau privé
-  « Operations »). Contrôle : `GET` anonyme de `widget.mediaRequests.getLatestRequests` → 403. Calendriers et Nouveautés
-  y restent (contenu non vérifié).
+  « Operations »). **L'autorisation est par intégration, pas par widget** : le 14/10, le widget « Nouveautés » du tableau
+  public, relié à l'intégration Jellyfin, ouvrait aux anonymes `widget.mediaServer.getCurrentStreams` (sessions en cours,
+  pseudos, appareils, titres). Lien retiré (`integration_item`, sauvegarde `backups/domaine-20261014/homarr-db-avant-r1.sqlite`) :
+  le widget reste, vide. **Aucune intégration Jellyfin, Seerr ou de téléchargement reliée à un widget du tableau public** ;
+  seul le calendrier (Sonarr, Radarr) y reste. Contrôles anonymes → 403 : `widget.mediaRequests.getLatestRequests` et
+  `widget.mediaServer.getCurrentStreams` (entrée `{"json":{"integrationIds":["<id Jellyfin>"],"showOnlyPlaying":false}}`).
 - Le widget « Releases » affiche la dernière version publiée d'un logiciel, pas celle qui tourne.
 
 ## Réglages notables

@@ -61,6 +61,9 @@ l'identique : rien à changer dans les applis déjà réglées, et les liens des
 - **Seerr** (`applicationUrl`, adresse externe de Jellyfin), **Home Screen Sections** (lien vers Seerr) et **Homarr**
   (25 liens de tuiles) passés au nouveau domaine (f5f3344). `PublishedServerUrl` de Jellyfin : passage hors pic
   `jf-published-url` (15/10, 04:30). Le webhook PayPal reste sur l'ancien nom, toujours servi.
+- **Homarr : sessions Jellyfin plus lisibles sans connexion.** Le widget « Nouveautés » du tableau public était relié à
+  l'intégration Jellyfin, ce qui ouvrait aux anonymes la liste des sessions en cours (trouvé par le point complet du
+  14/10) ; lien retiré, deux contrôles anonymes dans [homarr.md](docs/runbooks/homarr.md).
 
 ---
 
