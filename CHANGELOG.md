@@ -59,7 +59,7 @@ l'identique : rien à changer dans les applis déjà réglées, et les liens des
 - **homelabd** : `*_PUBLIC_URL` sur le nouveau domaine ; nouvelle variable facultative `ONBOARD_FALLBACK_URL` (l'ancien
   onboarder) dont l'hôte sert aussi les pages d'administration (`admin_auth::host_allowed_any`).
 - **Seerr** (`applicationUrl`, adresse externe de Jellyfin), **Home Screen Sections** (lien vers Seerr) et **Homarr**
-  (25 liens de tuiles) passés au nouveau domaine. `PublishedServerUrl` de Jellyfin : passage hors pic
+  (25 liens de tuiles) passés au nouveau domaine (f5f3344). `PublishedServerUrl` de Jellyfin : passage hors pic
   `jf-published-url` (15/10, 04:30). Le webhook PayPal reste sur l'ancien nom, toujours servi.
 
 ---
