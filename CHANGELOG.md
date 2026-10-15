@@ -76,7 +76,7 @@ mail dans sa propre boîte avant de valider (8550908).
   demande, un court message redonne le compte ; une demande refusée pour quota ouvre de nouveau la fenêtre « Limite de
   demandes atteinte », avec la raison en français (depuis Jellyfin Enhanced 12.10, elle ne s'ouvrait plus : le refus
   arrivait en anglais, sans explication). Une série que TMDB ne relie à aucune fiche TVDB se demande de nouveau avec la
-  fiche TVDB choisie à la main (le choix se perdait en route).
+  fiche TVDB choisie à la main (le choix se perdait en route) (7d2ebdd).
 
 ### Pour l'administrateur
 
@@ -86,7 +86,7 @@ mail dans sa propre boîte avant de valider (8550908).
   série entière : côté épuisé seulement), tout autre 403 reste celui de JE ; quota relu sans le cache de 30 min de JE,
   gardé 60 s ; le message d'après demande ne capte aucun toucher, se cache sous une fenêtre ou un dialogue et se pose
   au-dessus de celui de JE. Rien pour un compte sans limite. Banc `tools/bench/scenarios/quota.js` (proxy Seerr simulé
-  dans le navigateur, aucune vraie demande ; bureau, téléphone et télé ; contre-épreuve)
+  dans le navigateur, aucune vraie demande ; bureau, téléphone et télé ; contre-épreuve) (7d2ebdd)
   ([jellyfin-interface.md § 10](docs/runbooks/jellyfin-interface.md#10-vue-densemble-des-membres)).
 - **Gabarit commun `mail_layout`** : logo, fond, affiche et puces, bouton, cartes d'infos, encadrés, carte de message,
   pied ; tout texte échappé, typographie française dans le HTML seulement, HTML sous 40 Ko (Gmail coupe vers 102 Ko),
