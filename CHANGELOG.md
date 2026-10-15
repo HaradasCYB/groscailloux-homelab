@@ -91,7 +91,7 @@ mail dans sa propre boîte avant de valider (8550908).
   Mail abandonné (échecs répétés, attente de plus de 48 h) : alerte admin gardée dans l'état jusqu'à ce qu'elle parte,
   une par passage ; écart de l'état au-delà duquel rien n'est envoyé, ni ce qui attendait avant lui, réglable
   (`max_gap_mins`, 120 ; refusé au démarrage s'il ne dépasse pas `interval_secs` + 10 min).
-- **Envoi des mails « disponible » allumé le 15/10, agent e-mail de Seerr coupé** : bloc `[tasks.media_mail]`
+- **Envoi des mails « disponible » allumé le 15/10, agent e-mail de Seerr coupé** (5d62957) : bloc `[tasks.media_mail]`
   décommenté avec `send_to_members = true` (même défaut dans le code ; le test du bloc commenté devient
   `media_mail_block_is_live_and_complete` : bloc actif, complet, sans copie commentée), homelabd et homelabctl installés
   ensemble. **Seerr n'envoie plus aucun mail** : Seerr 3.5 n'a pas de types de notification pour l'e-mail, d'où la
