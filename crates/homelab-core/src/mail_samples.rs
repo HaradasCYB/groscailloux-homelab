@@ -838,6 +838,7 @@ mod tests {
             season,
             ready_at: at,
             user: 1,
+            seerr_announced: true,
         }
     }
 

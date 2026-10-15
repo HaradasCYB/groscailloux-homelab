@@ -599,7 +599,8 @@ existe → marqué et ignoré. Sinon `DELETE /api/v1/user/{id}` puis onboarding 
 
 ### media_mail — 5 min (2026-10-15)
 Mails « ta demande est disponible » aux membres, en français, à la place de ceux de Jellyseerr (anglais mêlé de français,
-logo SVG cassé dans Gmail, bouton vers Jellyseerr). Rendu : `available_mail::render` (gabarit `mail_layout`, fond,
+logo SVG cassé dans Gmail, bouton vers Jellyseerr). **Envoi aux membres allumé le 15/10**, agent e-mail de Seerr coupé
+le même jour : Seerr n'envoie plus aucun mail. Rendu : `available_mail::render` (gabarit `mail_layout`, fond,
 affiche, puces, bouton « Regarder… » vers `<JELLYFIN_PUBLIC_URL>/web/#/details?id=<fiche>`), objets
 `« Le Menu » est disponible`, `La saison 8 de « Dexter » est disponible`, `Les saisons 1 à 10 de « … » sont
 disponibles`, `« Le Menu » et 3 autres demandes sont disponibles`.
@@ -634,35 +635,53 @@ disponibles`, `« Le Menu » et 3 autres demandes sont disponibles`.
   renvoie aussi les éléments des bibliothèques non partagées, Jellyfin 12.1 : ne pas y revenir ; saisons et premier
   épisode par `/Shows/{id}/…?UserId=`) : invisible pour lui, il attend `max_hold_mins` puis `not_visible`. Images lues
   dans Jellyfin (`format=Jpg`, anonymes), TMDB en secours, jointes en `cid:` ; le mail part sans celle qui manque.
-- **Envoi** : `send_to_members = false` (défaut) = tout le chemin tourne, le mail est journalisé (« envoi aux membres
-  coupé ») et ses clés notées `logged` : passer à `true` n'envoie que ce qui arrive ensuite. `MEDIA_MAIL_PREVIEW_TO`
-  (`.env`) reçoit alors une copie de chaque mail (essai de délivrabilité). `true` : `List-Unsubscribe` en `mailto:`
-  vers l'adresse d'envoi, pas de `Reply-To` ; échec net → nouvel essai après `retry_mins` (15, 60, 240), puis
-  `gave_up` ; `curl` en échec après avoir passé le message entier (délai dépassé ou connexion coupée en attendant la
-  réponse) → `sent_uncertain`, jamais renvoyé. Journal : id Jellyseerr et nom du membre, clés, objet ; jamais
-  l'adresse.
+- **Envoi** : `send_to_members = true` (défaut, depuis le 15/10) : `List-Unsubscribe` en `mailto:` vers l'adresse
+  d'envoi, pas de `Reply-To` ; échec net → nouvel essai après `retry_mins` (15, 60, 240), puis `gave_up` ; `curl` en
+  échec après avoir passé le message entier (délai dépassé ou connexion coupée en attendant la réponse) →
+  `sent_uncertain`, jamais renvoyé. `false` (observation jusqu'au 15/10, retour arrière) = tout le chemin tourne, le
+  mail est journalisé (« envoi aux membres coupé ») et ses clés notées `logged`, jamais envoyées ;
+  `MEDIA_MAIL_PREVIEW_TO` (`.env`) reçoit alors une copie de chaque mail (essai de délivrabilité). Journal : id
+  Jellyseerr et nom du membre, clés, objet ; jamais l'adresse.
 - **Alerte d'abandon** (`gave_up` : échecs d'envoi répétés, ou titre en attente depuis plus de `max_age_hours`) : sa
   ligne est notée dans l'état (`media_mail_alerts`) **dans la même écriture** que l'abandon, et n'en sort que quand
   l'alerte est partie (`alerts::retry_later` : au moins un canal a pris l'alerte, ou aucun canal n'est configuré).
   **Une** alerte par passage, qui reprend tout ce qui attend, passages précédents compris, et part même quand
   Jellyseerr ne répond pas ou que le passage échoue ; une ligne n'y entre jamais deux fois.
-- Réglages `[tasks.media_mail]` (bloc commenté dans `homelab.toml` jusqu'à la bascule, valeurs = défauts du code) :
-  `interval_secs` (300), `send_to_members` (`false`), `max_mails_per_run` (5), `settle_mins` (10), `max_hold_mins`
+- Réglages `[tasks.media_mail]` (bloc actif dans `homelab.toml`, toutes les clés, valeurs = défauts du code : test
+  `media_mail_block_is_live_and_complete` ; `send_to_members` reste à `false` dans le fichier jusqu'à la minute de la
+  bascule, ces deux tests échouent d'ici là) :
+  `interval_secs` (300), `send_to_members` (`true`), `max_mails_per_run` (5), `settle_mins` (10), `max_hold_mins`
   (60), `max_age_hours` (48), `max_gap_mins` (120), `retry_mins` ([15, 60, 240]), `keep_days` (90).
   `max_gap_mins` doit rester bien au-dessus de `interval_secs` : homelabd refuse de démarrer si `max_gap_mins` × 60 ne
   dépasse pas `interval_secs` + 600 s (un passage au plafond), sinon chaque passage serait un écart et plus aucun mail
   ne partirait.
 - **Ménage** : sur une liste complète seulement, clés terminées d'une demande disparue, après `keep_days`.
-- **Bascule** (décision de l'admin, après validation) : bloc `[tasks.media_mail]` décommenté avec `send_to_members =
-  true`, installation de homelabd **et** homelabctl (livré commenté : les binaires d'avant refusent la clé), puis
-  arrêt des mails « disponible » de Jellyseerr dans la même minute ; procédure et choix côté Seerr :
-  [comptes-et-abonnements.md § 2](runbooks/comptes-et-abonnements.md#2-onboarding-et-mails). Premier passage =
-  référence (rien d'envoyé). Après des passages sans envoi, le premier passage avec envoi note `logged` ce qui
-  attendait encore (le regroupement retient un titre jusqu'à `max_hold_mins`), que Jellyseerr, encore actif, a déjà
-  annoncé. Reste au pire un titre en double pour ce qui arrive entre le dernier passage sans envoi et l'arrêt des
-  mails de Seerr (un passage, 5 min). **Seerr 3.5 n'a pas de types de notification pour l'agent e-mail** (vérifié
-  dans son code le 15/10) : « Média disponible » ne se décoche que compte par compte, et `media_mail` lit justement
-  cette case comme un refus du membre (`opted_out`) ; voie par défaut : couper l'agent e-mail de Seerr.
+- **Bascule du 15/10** (décision du propriétaire, après validation des exemples) : binaires construits d'abord, puis
+  dans la même minute `send_to_members = true` dans `homelab.toml` (même défaut dans le code), **agent e-mail de Seerr
+  coupé**, homelabd **et** homelabctl installés, redémarrage. La ligne ne passe jamais à `true` à l'avance : homelabd
+  ne lit `homelab.toml` qu'au démarrage, et un redémarrage du binaire d'avant (chien de garde, plantage) enverrait
+  pendant que Seerr envoie encore. **Seerr 3.5 n'a pas de types de notification pour l'agent e-mail** (vérifié dans
+  son code le 15/10) : « Média disponible » ne se décoche que compte par compte, et `media_mail` lit justement cette
+  case comme un refus du membre (`opted_out`) ; d'où la coupure de tout l'agent (par l'écran : par l'API, `POST`
+  remplace tout l'objet et `GET` renvoie le mot de passe SMTP). Procédure, conséquences côté Seerr et retour arrière :
+  [comptes-et-abonnements.md § 2](runbooks/comptes-et-abonnements.md#2-onboarding-et-mails).
+  **Premier passage avec envoi** (dans les 30 s qui suivent le démarrage : décalage initial de l'ordonnanceur ; un
+  passage sans Jellyseerr ne compte pas, le suivant fait la bascule) : il note `logged` ce qui attendait encore (le
+  regroupement retient un titre jusqu'à `max_hold_mins`) **et** ce qui est apparu depuis le dernier passage sans
+  envoi, **si Jellyseerr, encore actif, l'a annoncé** (`Continuity::switch_on`, `Ready::seerr_announced`). Jellyseerr
+  n'envoie son mail qu'au passage de la demande à `COMPLETED`, et pour une série seulement si toutes les saisons
+  demandées sont alors disponibles (`notifyAvailableSeries`) : une saison arrivée d'une demande dont d'autres saisons
+  manquent (ou d'une demande pas encore terminée) n'a eu aucun mail de lui et n'en aura plus ; elle reste à homelabd
+  (en attente, puis un mail, au besoin dès ce passage). Les clés déjà notées (`baseline`, `logged`…) ne sont jamais
+  réévaluées. La date de ce passage est notée dans l'état (`media_mail_last_pass.send_since`, gardée tant que l'envoi
+  reste allumé) : une nouvelle clé disponible avant elle mais absente de sa lecture (une demande supprimée pendant la
+  lecture paginée fait sauter un id à la frontière d'une page, sans que la liste paraisse incomplète) suit la même
+  règle au passage suivant (`Continuity::switched_at` ; sans effet au-delà de `max_age_hours`). Seul ce qui devient
+  disponible après ce passage part, au plus une fois. Au plus un mail, jamais deux ; au pire un titre sans mail :
+  arrivé entre la coupure de l'agent de Seerr et ce premier passage (moins d'une minute quand l'agent est coupé juste
+  avant le redémarrage), ou saison d'une demande pas encore entière déjà notée `logged` pendant l'observation (Seerr
+  attendait la dernière saison ; aucune avant la bascule du 15/10). Si la tâche n'a jamais tourné, ce premier passage
+  est la référence (rien d'envoyé non plus).
 
 ### cleanup — 24 h
 Fichiers de `jellyfin/cache/transcodes` > 1 j ; dossiers vides de `library/downloads`

@@ -54,7 +54,7 @@ commentaire en fin de ligne (les lecteurs Python de `.env` le garderaient dans l
 | `C411_RSS_API_KEY` | compte C411 (seconde clé) | **copie de référence**, lue par aucun fichier versionné : clé saisie dans l'indexeur C411 (RSS) des 4 Arrs et dans « C411 (2) » de Prowlarr |
 | `RUTRACKER_USERNAME`, `RUTRACKER_PASSWORD` | compte RuTracker | **copie de référence** : compte saisi dans le Jackett de la seedbox (voie russe) ; mot de passe collé dans une conversation, à changer |
 | `HOMELABD_RUSSIAN_USERS` | pseudos des comptes autorisés (virgules) ; hors dépôt | bouton « Chercher en russe » de Mon compte |
-| `MEDIA_MAIL_PREVIEW_TO` (facultatif) | adresse de test de l'admin ; hors dépôt | `media_mail` : copie de chaque mail « disponible » tant que `[tasks.media_mail] send_to_members = false` (essai de délivrabilité) |
+| `MEDIA_MAIL_PREVIEW_TO` (facultatif) | adresse de test de l'admin ; hors dépôt | `media_mail` : copie de chaque mail « disponible » tant que `[tasks.media_mail] send_to_members = false` (essai de délivrabilité ; sans effet depuis la bascule du 15/10, `true`) |
 | `MEDIA_MAIL_OPTOUT` (facultatif) | adresses, pseudos Jellyfin ou ids des membres qui ont demandé l'arrêt (virgules, sans casse) ; hors dépôt | `media_mail` : aucun mail « disponible » pour eux |
 | `TMDB_API_KEY` | compte TMDB | **lue par aucun fichier versionné** (réserve) |
 | `DISCORD_WEBHOOK_MEMBERS`, `DISCORD_WEBHOOK_ADMIN` | Discord : Modifier le salon → Intégrations → Webhooks | homelabd (`homelab_core::discord`, alertes), `homelabctl discord apply` (Arrs, Jellyseerr), `scripts/homelab-alert.sh`, `homelabd-watchdog.sh` ; jamais dans le dépôt ni les journaux |
@@ -85,8 +85,9 @@ désactivé le 08/10, comptée dans aucun budget : à révoquer chez C411 si le 
 - Un secret collé dans une conversation (mot de passe RuTracker, identifiants PayPal sandbox…) est à régénérer.
 - Jeton SMTP Proton (`SMTP_PASS`) : il sert à **deux** endroits. Nouveau jeton dans Proton, puis `.env`, restart
   homelabd, `docker compose up -d diun`, **et** Jellyseerr (Paramètres → Notifications → E-mail : mot de passe SMTP,
-  enregistrer) ; seulement ensuite révoquer l'ancien jeton. Contrôle : `homelabctl mail-test <adresse> --kind
-  sub_activated` et le test d'e-mail de Jellyseerr vers l'adresse de l'admin.
+  enregistrer ; son agent e-mail est coupé depuis le 15/10, le mot de passe y reste à jour pour un retour arrière de
+  `media_mail`) ; seulement ensuite révoquer l'ancien jeton. Contrôle : `homelabctl mail-test <adresse> --kind
+  sub_activated` (Jellyseerr n'envoie plus aucun mail : pas de test de son côté).
 - `INFLUX_TOKEN` : mettre à jour `.env`, `sudo ./setup.sh` (régénère `telegraf.conf`),
   `docker compose restart telegraf`, datasource Grafana.
 - Secrets de conteneurs (`WIREGUARD_*`, `DUCKDNS_TOKEN`, `MYSQL_*`, `GRAFANA_*`) : `.env` puis

@@ -164,6 +164,12 @@ pub struct MediaMailPass {
     pub at: i64,
     /// `send_to_members` valait `true` au dernier passage qui a noté de nouvelles clés.
     pub send: bool,
+    /// Date du passage de bascule vers l'envoi (premier passage avec envoi après des passages sans), gardée tant que
+    /// l'envoi reste allumé (2026-10-15) : une clé disponible avant lui mais absente de sa lecture est traitée comme
+    /// s'il l'avait vue (`tasks::media_mail::Continuity::switched_at`). Absente sinon (un ancien binaire ignore le
+    /// champ : aucun `deny_unknown_fields`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_since: Option<i64>,
 }
 
 /// Une demande (film) ou une saison demandée, devenue disponible, et la suite donnée (`tasks::media_mail`).

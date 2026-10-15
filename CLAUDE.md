@@ -174,7 +174,7 @@ Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la
 | Langue d'origine | films ; séries à partir du 10/10 07:05 (minuteur `lot4-ol-series`) ; 07:30–11:30 | `[tasks.original_language]` |
 | Mode VO | `jpn` ; « Langue d'origine » native préparée, **coupée** | `[accounts]` `vo_audio_language`, `vo_native`, `vo_native_clients`, `vo_native_ignored_clients`, `vo_native_days` |
 | Tchat | annonces de plus de 14 j lues d'office pour un compte neuf | `[chat] new_member_read_days` |
-| Tâches de homelabd | 33 (dont `tba_bypass`, désactivée, `vo_native_guard`, inactive tant que `vo_native = false`, et `media_mail`, sans envoi aux membres tant que `send_to_members = false`) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
+| Tâches de homelabd | 33 (dont `tba_bypass`, désactivée, `vo_native_guard`, inactive tant que `vo_native = false`, et `media_mail`, mails « disponible » envoyés aux membres depuis le 15/10, agent e-mail de Seerr coupé) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
 | Domaines | principal (Cloudflare, DNS only, Jellyfin = domaine nu) depuis le 14/10 ; ancien DuckDNS en secours, mêmes hôtes | `.env` `*_PUBLIC_URL`, `ONBOARD_FALLBACK_URL` ; NPM (2 noms par hôte) |
 | Ports ouverts à Internet | 80/443 (NPM), 6881 (BitTorrent), 81 (admin NPM) ; le reste sur 127.0.0.1 | `docker-compose.yml` |
 

@@ -1096,9 +1096,13 @@ impl Default for OriginalLanguage {
 #[serde(deny_unknown_fields, default)]
 pub struct MediaMail {
     pub interval_secs: u64,
-    /// `false` = rien n'est envoyé aux membres : chaque mail qui serait parti est journalisé (et copié à
-    /// `MEDIA_MAIL_PREVIEW_TO` si `.env` le donne), puis noté comme traité. Passer à `true` n'envoie donc jamais
-    /// l'arriéré, seulement ce qui devient disponible ensuite.
+    /// `true` (depuis le 2026-10-15, agent e-mail de Jellyseerr coupé) : les mails partent aux membres. `false`
+    /// (observation, retour arrière) = rien n'est envoyé aux membres : chaque mail qui serait parti est journalisé (et
+    /// copié à `MEDIA_MAIL_PREVIEW_TO` si `.env` le donne), puis noté comme traité. Repasser à `true` n'envoie jamais
+    /// l'arriéré : le premier passage avec envoi note sans mail ce qui attendait et ce qui vient d'arriver, quand
+    /// Jellyseerr l'a annoncé (`tasks::media_mail::Continuity::switch_on`), seul le reste part. `homelab.toml` n'est lu
+    /// qu'au démarrage : la valeur n'y passe à `true` que dans la minute du redémarrage qui suit la coupure de l'agent
+    /// e-mail de Jellyseerr, jamais à l'avance.
     pub send_to_members: bool,
     /// Mails au plus par passage (les suivants attendent le passage d'après).
     pub max_mails_per_run: usize,
@@ -1124,7 +1128,7 @@ impl Default for MediaMail {
     fn default() -> Self {
         Self {
             interval_secs: 300,
-            send_to_members: false,
+            send_to_members: true,
             max_mails_per_run: 5,
             settle_mins: 10,
             max_hold_mins: 60,
@@ -2691,34 +2695,26 @@ mod toml_matches_defaults {
         }
     }
 
-    /// `[tasks.media_mail]` est livré **commenté** (`#clé = valeur`) tant que les binaires qui le connaissent ne sont
-    /// pas installés (`deny_unknown_fields`) : décommenté, il doit redonner exactement les défauts du code. Une fois
-    /// décommenté, `homelab_toml_equals_code_defaults` le couvre.
+    /// `[tasks.media_mail]` (livré commenté, décommenté à la bascule du 2026-10-15) : bloc actif et **complet**.
+    /// `homelab_toml_equals_code_defaults` compare chaque clé présente aux défauts du code, mais ne voit pas une clé
+    /// absente du fichier : ce bloc-ci doit porter toutes les clés de `MediaMail` (la valeur réglable s'écrit dans
+    /// `homelab.toml`), et aucune copie commentée (`#[tasks.media_mail]`) ne doit rester à côté.
     #[test]
-    fn commented_media_mail_block_equals_code_defaults() {
+    fn media_mail_block_is_live_and_complete() {
         let raw =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../homelab.toml"))
                 .expect("homelab.toml");
-        let Some(start) = raw.find("\n#[tasks.media_mail]\n") else {
-            assert!(
-                raw.contains("\n[tasks.media_mail]\n"),
-                "bloc media_mail absent"
-            );
-            return;
-        };
-        let mut block = String::new();
-        for line in raw[start + 1..].lines() {
-            let Some(rest) = line.strip_prefix('#') else {
-                break;
-            };
-            if !rest.starts_with(' ') {
-                block.push_str(rest);
-                block.push('\n');
-            }
-        }
-        let file: toml::Value = toml::from_str(&block).unwrap();
+        assert!(
+            !raw.contains("\n#[tasks.media_mail]"),
+            "copie commentée de [tasks.media_mail] restée dans homelab.toml"
+        );
+        let file: toml::Value = toml::from_str(&raw).unwrap();
+        let block = file
+            .get("tasks")
+            .and_then(|t| t.get("media_mail"))
+            .expect("[tasks.media_mail] absent de homelab.toml");
         let def = toml::Value::try_from(super::MediaMail::default()).unwrap();
-        assert_eq!(file["tasks"]["media_mail"], def, "{block}");
+        assert_eq!(block, &def);
     }
 
     #[test]

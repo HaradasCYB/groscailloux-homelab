@@ -21,9 +21,13 @@
 //!   est arrivé pendant l'écart est `stale` aussi (l'état perdu l'avait peut-être envoyé), et ce qui attendait avant
 //!   lui (`pending`, `error`) passe en `sent_uncertain`, sans mail ni alerte (l'état perdu l'a très probablement
 //!   envoyé) ; une clé en attente qui dépasse `max_age_hours` sans pouvoir partir est abandonnée (`gave_up`, alerte) ;
-//! - `send_to_members = false` : tout le chemin tourne (destinataire, choix, visibilité, rendu) et les clés sont
-//!   notées `logged` au moment où le mail serait parti : passer à `true` n'envoie que ce qui arrive ensuite (le
-//!   premier passage avec envoi note aussi `logged` ce qui attendait encore : Jellyseerr l'a déjà annoncé) ;
+//! - `send_to_members = false` (observation, jusqu'à la bascule du 2026-10-15) : tout le chemin tourne (destinataire,
+//!   choix, visibilité, rendu) et les clés sont notées `logged` au moment où le mail serait parti. Bascule vers
+//!   `true` ([`Continuity::switch_on`]) : le premier passage avec envoi note `logged` ce qui attendait encore **et**
+//!   ce qui est arrivé depuis le passage précédent, si Jellyseerr (encore actif jusque-là) l'a annoncé
+//!   ([`Ready::seerr_announced`]) ; une saison d'une demande dont d'autres saisons manquent, que Jellyseerr n'annonce
+//!   qu'avec la dernière, reste à homelabd. Après lui, une nouvelle clé disponible avant lui (absente de sa lecture
+//!   paginée) suit la même règle ([`Continuity::switched_at`]). Le reste part ;
 //! - envoi : clés notées `sending` sur disque **avant** `curl`. Un passage interrompu pendant l'envoi (arrêt,
 //!   `RUN_TIMEOUT`) les retrouve ainsi au passage suivant et les passe en `sent_uncertain`, jamais renvoyées (au
 //!   plus un mail) ; de même un `curl` en échec après avoir passé le message entier ([`mail::MaybeSent`]). Un échec
@@ -122,6 +126,12 @@ pub struct Ready {
     pub ready_at: i64,
     /// Demandeur (id Jellyseerr).
     pub user: i64,
+    /// Jellyseerr l'a annoncée, quand son agent e-mail était actif : il n'envoie son mail « disponible » qu'au moment
+    /// où la demande passe à `COMPLETED` (`MediaRequestSubscriber.afterUpdate`, 3.5), et pour une série seulement si
+    /// **toutes** les saisons demandées sont alors disponibles (`notifyAvailableSeries`). Une saison arrivée d'une
+    /// demande dont d'autres saisons manquent n'a donc eu aucun mail de Jellyseerr. Ne sert qu'à la bascule vers
+    /// l'envoi ([`Continuity::switch_on`], [`Continuity::switched_at`]).
+    pub seerr_announced: bool,
 }
 
 fn ts(v: Option<&Value>) -> i64 {
@@ -211,6 +221,7 @@ pub fn ready_events(requests: &[Value], seasons: &MediaSeasons) -> Vec<Ready> {
                     season: None,
                     ready_at,
                     user,
+                    seerr_announced: status == REQUEST_COMPLETED,
                 });
             }
             // l'état d'une série change avec chaque nouvelle demande (« en cours » dès qu'une autre saison est
@@ -220,12 +231,24 @@ pub fn ready_events(requests: &[Value], seasons: &MediaSeasons) -> Vec<Ready> {
                     .get("id")
                     .and_then(Value::as_i64)
                     .and_then(|m| seasons.get(&m));
-                for s in r
+                let requested: Vec<&Value> = r
                     .get("seasons")
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                {
+                    .collect();
+                // ce que Jellyseerr exige avant son mail : demande terminée, toutes les saisons demandées (saison 0
+                // comprise) disponibles dans le média
+                let seerr_announced = status == REQUEST_COMPLETED
+                    && !requested.is_empty()
+                    && requested.iter().all(|s| {
+                        s.get("seasonNumber")
+                            .and_then(Value::as_u64)
+                            .and_then(|n| u32::try_from(n).ok())
+                            .and_then(|n| of_media.and_then(|m| m.get(&n)))
+                            .is_some_and(|&(st, _)| st == MEDIA_AVAILABLE)
+                    });
+                for s in requested {
                     let Some(n) = s
                         .get("seasonNumber")
                         .and_then(Value::as_u64)
@@ -250,6 +273,7 @@ pub fn ready_events(requests: &[Value], seasons: &MediaSeasons) -> Vec<Ready> {
                         season: Some(n),
                         ready_at: ts(s.get("updatedAt")).max(available_at),
                         user,
+                        seerr_announced,
                     });
                 }
             }
@@ -296,9 +320,19 @@ pub struct Continuity {
     /// L'état n'a rien noté depuis cette date pendant plus de `max_gap_mins` (état restauré d'une sauvegarde, daemon
     /// longtemps arrêté) : une clé devenue disponible depuis a peut-être été envoyée par l'état perdu → `stale`.
     pub gap_since: Option<i64>,
-    /// Premier passage avec envoi après des passages sans envoi : les clés en attente ont déjà eu le mail de
-    /// Jellyseerr, encore actif pendant ces passages → `logged` (sinon le membre recevrait les deux).
+    /// Premier passage avec envoi après des passages sans envoi : les clés en attente **et** celles qui apparaissent à
+    /// ce passage (arrivées depuis le passage précédent, ou pendant le redémarrage de l'installation) ont déjà eu le
+    /// mail de Jellyseerr, encore actif jusque-là → `logged`, sans mail (sinon le membre recevrait les deux), **si**
+    /// Jellyseerr les a annoncées ([`Ready::seerr_announced`]). Une saison d'une demande dont d'autres saisons
+    /// manquent n'a pas eu de mail de Jellyseerr, et n'en aura plus (agent coupé) : elle reste à homelabd. Seul ce
+    /// qui devient disponible après ce passage part, avec ces saisons-là.
     pub switch_on: bool,
+    /// Passage de bascule vers l'envoi, noté dans l'état ([`MediaMailPass::send_since`]), envoi toujours allumé
+    /// depuis : une nouvelle clé disponible **avant** lui a manqué à sa lecture (une demande supprimée pendant la
+    /// lecture paginée fait sauter un id à la frontière d'une page, sans que la liste paraisse incomplète). Elle suit
+    /// la même règle que si ce passage l'avait vue (`logged` si Jellyseerr l'a annoncée). Sans effet au-delà de
+    /// `max_age_hours` (`stale` d'abord).
+    pub switched_at: Option<i64>,
 }
 
 /// `max_gap_secs` : `[tasks.media_mail] max_gap_mins` en secondes.
@@ -308,9 +342,13 @@ pub fn continuity(
     mode: Mode,
     max_gap_secs: i64,
 ) -> Continuity {
+    let sending = mode == Mode::Send;
     Continuity {
         gap_since: last.map(|p| p.at).filter(|at| now - at > max_gap_secs),
-        switch_on: mode == Mode::Send && !last.is_some_and(|p| p.send),
+        switch_on: sending && !last.is_some_and(|p| p.send),
+        switched_at: last
+            .filter(|p| sending && p.send)
+            .and_then(|p| p.send_since),
     }
 }
 
@@ -329,8 +367,14 @@ pub struct Prepared {
     pub gap_held: Vec<String>,
     /// `pending` / `error` devenues disponibles il y a plus de `max_age_hours` → `gave_up`.
     pub expired: Vec<String>,
-    /// `pending` / `error` au passage de bascule vers l'envoi ([`Continuity::switch_on`]) → `logged`.
+    /// Au passage de bascule vers l'envoi ([`Continuity::switch_on`]) : `pending` / `error` notées avant lui, et
+    /// nouvelles clés de ce passage (hors `stale`) → `logged`, sans mail ; après lui, nouvelles clés disponibles avant
+    /// lui ([`Continuity::switched_at`]). Seulement ce que Jellyseerr a annoncé ([`Ready::seerr_announced`]).
     pub handed_over: Vec<String>,
+    /// Clés que la bascule aurait notées `logged`, mais que Jellyseerr n'a pas annoncées (saison d'une demande dont
+    /// d'autres saisons manquent, demande pas encore terminée) : gardées en attente (ou entrées en attente), le mail
+    /// de homelabd est le seul.
+    pub not_announced: Vec<String>,
     /// En attente, demandeur changé dans Jellyseerr (l'admin peut réattribuer une demande) : suit le nouveau.
     pub reassigned: Vec<String>,
     /// Même id de demande, autre titre (base Jellyseerr restaurée : ses ids repartent en arrière) : nouvelle clé.
@@ -338,9 +382,11 @@ pub struct Prepared {
 }
 
 /// Une clé déjà notée n'est jamais réévaluée : seules les nouvelles clés entrent (`pending`, ou `stale` si elles sont
-/// disponibles depuis plus de `max_age_secs` ou pendant un écart de l'état). Une clé notée pour un autre titre que
-/// celui de sa demande actuelle est une nouvelle clé. Après un écart de l'état, les clés `pending` / `error` notées
-/// avant lui passent en `sent_uncertain` (l'état perdu les a très probablement envoyées).
+/// disponibles depuis plus de `max_age_secs` ou pendant un écart de l'état, ou `logged` au passage de bascule vers
+/// l'envoi, et après lui si elles étaient disponibles avant lui, quand Jellyseerr les a annoncées). Une clé notée pour
+/// un autre titre que celui de sa demande actuelle est une nouvelle clé. Après un écart de l'état, les clés `pending` /
+/// `error` notées avant lui passent en `sent_uncertain` (l'état perdu les a très probablement envoyées) ; à la bascule
+/// vers l'envoi, en `logged` si Jellyseerr les a annoncées (sinon elles restent en attente : à homelabd).
 pub fn prepare(
     known: &BTreeMap<String, MediaMailRecord>,
     ready: &[Ready],
@@ -372,11 +418,16 @@ pub fn prepare(
                 p.changes.insert(k.clone(), with_outcome(r, GAVE_UP, now));
                 p.expired.push(k.clone());
             }
-            PENDING | ERROR if cont.switch_on => {
+            // bascule : déjà annoncée par Jellyseerr. Absente de cette lecture : notée aussi (au plus un mail).
+            PENDING | ERROR if cont.switch_on && now_ready.is_none_or(|c| c.seerr_announced) => {
                 p.changes.insert(k.clone(), with_outcome(r, LOGGED, now));
                 p.handed_over.push(k.clone());
             }
             PENDING | ERROR => {
+                if cont.switch_on {
+                    // saison d'une demande pas encore entière : Jellyseerr ne l'a pas annoncée, elle reste à nous
+                    p.not_announced.push(k.clone());
+                }
                 if let Some(c) = now_ready.filter(|c| c.user != r.user) {
                     p.changes.insert(
                         k.clone(),
@@ -399,13 +450,25 @@ pub fn prepare(
         if replaced {
             p.replaced.push(r.key.clone());
         }
+        // vue au passage de bascule, ou disponible avant lui (absente de sa lecture)
+        let handover = cont.switch_on || cont.switched_at.is_some_and(|s| r.ready_at <= s);
         let outcome = if now - r.ready_at > max_age_secs {
             p.new_stale += 1;
             STALE
         } else if cont.gap_since.is_some_and(|g| r.ready_at > g) {
             p.gap_stale += 1;
             STALE
+        } else if handover && r.seerr_announced {
+            // arrivée depuis le dernier passage sans envoi (ou pendant le redémarrage de l'installation), ou avant la
+            // bascule mais absente de sa lecture : Jellyseerr, encore actif, l'a annoncée ; un mail de plus serait un
+            // doublon (au plus un mail)
+            p.handed_over.push(r.key.clone());
+            LOGGED
         } else {
+            if handover {
+                // saison d'une demande pas encore entière : Jellyseerr ne l'a pas annoncée, elle est à nous
+                p.not_announced.push(r.key.clone());
+            }
             p.new_pending += 1;
             PENDING
         };
@@ -1336,8 +1399,8 @@ impl MediaMail {
             let at = now();
             ctx.state
                 .update_lazy(move |s| {
-                    let send = s.media_mail_last_pass.is_some_and(|p| p.send);
-                    s.media_mail_last_pass = Some(MediaMailPass { at, send });
+                    let last = s.media_mail_last_pass.unwrap_or_default();
+                    s.media_mail_last_pass = Some(MediaMailPass { at, ..last });
                 })
                 .await?;
         }
@@ -1357,6 +1420,7 @@ impl MediaMail {
         let this_pass = MediaMailPass {
             at: t,
             send: mode == Mode::Send,
+            send_since: None,
         };
         let (baseline_at, mut records) = ctx
             .state
@@ -1398,14 +1462,36 @@ impl MediaMail {
             ));
         }
 
-        // 2. Nouvelles clés, envois interrompus, attentes trop longues, bascule vers l'envoi.
-        let cont = continuity(last_pass, t, mode, cfg.max_gap_mins * 60);
+        // 2. Nouvelles clés, envois interrompus, attentes trop longues, bascule vers l'envoi. Un dry-run prend la même
+        // décision que le passage réel (`homelabctl run media_mail --dry-run` montre la bascule à venir), sans écrire.
+        let real_mode = if cfg.send_to_members {
+            Mode::Send
+        } else {
+            Mode::Log
+        };
+        let cont = continuity(last_pass, t, real_mode, cfg.max_gap_mins * 60);
+        // date de la bascule, gardée tant que l'envoi reste allumé (`Continuity::switched_at`)
+        let this_pass = MediaMailPass {
+            send_since: match (this_pass.send, cont.switch_on) {
+                (true, true) => Some(t),
+                (true, false) => last_pass.and_then(|p| p.send_since),
+                (false, _) => None,
+            },
+            ..this_pass
+        };
         let prep = prepare(&records, &ready, t, max_age, cont);
         for k in &prep.uncertain {
             warn!(task = TASK, key = %k, "envoi interrompu au passage précédent : noté sent_uncertain, jamais renvoyé");
         }
         if !prep.handed_over.is_empty() {
-            info!(task = TASK, keys = ?prep.handed_over, "bascule vers l'envoi : titres en attente déjà annoncés par Jellyseerr, notés logged");
+            if cont.switch_on {
+                info!(task = TASK, keys = ?prep.handed_over, "bascule vers l'envoi : titres en attente ou arrivés depuis le passage précédent, déjà annoncés par Jellyseerr, notés logged sans mail");
+            } else {
+                info!(task = TASK, keys = ?prep.handed_over, switched_at = ?cont.switched_at, "disponibles avant la bascule vers l'envoi mais absents de sa lecture, déjà annoncés par Jellyseerr : notés logged sans mail");
+            }
+        }
+        if !prep.not_announced.is_empty() {
+            info!(task = TASK, keys = ?prep.not_announced, "bascule vers l'envoi : saisons d'une demande pas encore entière (ou demande pas terminée), jamais annoncées par Jellyseerr : gardées, mail de homelabd");
         }
         if !prep.gap_held.is_empty() {
             warn!(
@@ -1451,8 +1537,9 @@ impl MediaMail {
         if !ctx.dry_run {
             // le passage est noté avec ses nouvelles clés : sur disque tout de suite s'il change quelque chose (dont
             // la bascule), sinon avec la prochaine écriture
-            let durable =
-                !prep.changes.is_empty() || last_pass.map(|p| p.send) != Some(this_pass.send);
+            let durable = !prep.changes.is_empty()
+                || last_pass.map(|p| (p.send, p.send_since))
+                    != Some((this_pass.send, this_pass.send_since));
             let changes = prep.changes.clone();
             let apply = move |s: &mut crate::state::State| {
                 s.media_mail.extend(changes);
@@ -1825,6 +1912,12 @@ impl MediaMail {
                 prep.handed_over.len()
             ));
         }
+        if !prep.not_announced.is_empty() {
+            parts.push(format!(
+                "{} jamais annoncé(s) par Jellyseerr, gardé(s) (bascule)",
+                prep.not_announced.len()
+            ));
+        }
         let uncertain = prep.uncertain.len() + tally.uncertain as usize;
         if uncertain > 0 {
             parts.push(format!("{uncertain} envoi(s) incertain(s)"));
@@ -2164,6 +2257,7 @@ mod tests {
                 season: None,
                 ready_at: T,
                 user: 7,
+                seerr_announced: true,
             },
             T,
             PENDING,
@@ -2216,6 +2310,7 @@ mod tests {
                 season: None,
                 ready_at: T,
                 user: 7,
+                seerr_announced: true,
             },
             T,
             PENDING,
@@ -2519,12 +2614,21 @@ mod tests {
         assert_eq!(m.len(), 2);
     }
 
-    /// Bascule `send_to_members = true` : ce qui attendait pendant les passages sans envoi a déjà eu le mail de
-    /// Jellyseerr (encore actif) ; seul ce qui arrive à partir de la bascule part.
+    /// Bascule `send_to_members = true` : ce qui attendait pendant les passages sans envoi, et ce qui est arrivé entre
+    /// le dernier d'entre eux et le premier passage avec envoi, a déjà eu le mail de Jellyseerr (encore actif) ; seul
+    /// ce qui arrive après ce premier passage part.
     #[test]
     fn switching_sending_on_hands_over_what_seerr_already_mailed() {
-        let log = MediaMailPass { at: T, send: false };
-        let send = MediaMailPass { at: T, send: true };
+        let log = MediaMailPass {
+            at: T,
+            send: false,
+            send_since: None,
+        };
+        let send = MediaMailPass {
+            at: T,
+            send: true,
+            send_since: None,
+        };
         let gap = cfg().max_gap_mins * MIN;
         assert!(continuity(Some(log), T + 5 * MIN, Mode::Send, gap).switch_on);
         assert!(continuity(None, T + 5 * MIN, Mode::Send, gap).switch_on);
@@ -2537,31 +2641,339 @@ mod tests {
         let mut reqs = vec![movie(90, 7, 5, 5, T - 20 * MIN)];
         assert!(pass(&mut records, &reqs, T).is_empty());
         assert_eq!(records["r90"].outcome, PENDING);
+        // arrivé entre le dernier passage sans envoi (T) et la bascule (T + 5 min) : Seerr l'a annoncé
         reqs.push(movie(91, 8, 5, 5, T + 4 * MIN));
         let c = continuity(Some(log), T + 5 * MIN, Mode::Send, gap);
         let prep = prepare(&records, &ready_of(&reqs), T + 5 * MIN, 48 * H, c);
-        assert_eq!(prep.handed_over, ["r90"]);
+        assert_eq!(prep.handed_over, ["r90", "r91"]);
         assert_eq!(prep.changes["r90"].outcome, LOGGED);
         assert_eq!(
-            prep.changes["r91"].outcome, PENDING,
-            "arrivé à la bascule : à nous"
+            prep.changes["r91"].outcome, LOGGED,
+            "arrivé avant la bascule : déjà annoncé par Seerr"
         );
+        assert_eq!(prep.new_pending, 0);
+        // sans la bascule, il serait parti aussi (doublon avec le mail de Seerr)
+        let without = prepare(
+            &records,
+            &ready_of(&reqs),
+            T + 5 * MIN,
+            48 * H,
+            Continuity::default(),
+        );
+        assert_eq!(without.changes["r91"].outcome, PENDING);
         records.extend(prep.changes);
-        let due = due_groups(&records, T + 20 * MIN, 600, 3600);
+        assert!(due_groups(&records, T + 20 * MIN, 600, 3600).is_empty());
+        // arrivé après la bascule : à nous, une fois (passages suivants : `send` noté, plus de bascule)
+        reqs.push(movie(92, 8, 5, 5, T + 6 * MIN));
+        assert!(pass(&mut records, &reqs, T + 10 * MIN).is_empty());
+        let due = pass(&mut records, &reqs, T + 20 * MIN);
         assert_eq!(
             due,
             vec![Due {
                 user: 8,
-                keys: vec!["r91".into()]
+                keys: vec!["r92".into()]
             }]
         );
+    }
+
+    /// Ce que Jellyseerr annonce (3.5) : son mail part quand la demande passe à `COMPLETED`, et pour une série
+    /// seulement si toutes les saisons demandées sont alors disponibles.
+    #[test]
+    fn ready_events_flag_what_seerr_announced() {
+        let completed = |mut s: Value| {
+            s["status"] = json!(REQUEST_COMPLETED);
+            s
+        };
+        let reqs = vec![
+            movie(1, 7, 5, 5, T),                                 // terminé : annoncé
+            movie(2, 7, 2, 5, T), // approuvé, média déjà disponible : pas de passage à COMPLETED, pas de mail
+            completed(series(3, 7, &[(1, 5, T - H), (2, 5, T)])), // demande entière
+            series(4, 7, &[(1, 5, T), (2, 2, T)]), // saison 2 attendue : Seerr attend
+            completed(series(5, 7, &[(1, 5, T), (2, 5, T)])), // terminée, mais saison 2 supprimée du média
+        ];
+        let mut media = media_of(&reqs);
+        media.get_mut(&5005).unwrap().insert(2, (MEDIA_DELETED, T));
+        let flags: Vec<(String, bool)> = ready_events(&reqs, &media)
+            .into_iter()
+            .map(|r| (r.key, r.seerr_announced))
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                ("r1".to_string(), true),
+                ("r2".to_string(), false),
+                ("r3:s1".to_string(), true),
+                ("r3:s2".to_string(), true),
+                ("r4:s1".to_string(), false),
+                ("r5:s1".to_string(), false),
+            ]
+        );
+    }
+
+    /// Bascule et demande de plusieurs saisons : une saison arrivée alors qu'une autre manque n'a eu aucun mail de
+    /// Jellyseerr (il attend la dernière) et n'en aura plus (agent coupé). Elle reste à homelabd, qu'elle soit en
+    /// attente ou apparue au passage de bascule ; la demande entière, elle, est notée `logged`.
+    #[test]
+    fn switching_on_keeps_seasons_seerr_never_announced() {
+        let c = cfg();
+        let (settle, hold, gap) = (
+            c.settle_mins * MIN,
+            c.max_hold_mins * MIN,
+            c.max_gap_mins * MIN,
+        );
+        let log = MediaMailPass {
+            at: T,
+            send: false,
+            send_since: None,
+        };
+        let switch = T + 4 * MIN;
+        let mut whole = series(32, 9, &[(1, 5, T + 2 * MIN), (2, 5, T + 3 * MIN)]);
+        whole["status"] = json!(REQUEST_COMPLETED);
+        let reqs = vec![
+            series(30, 7, &[(1, 5, T + 3 * MIN), (2, 2, T - 30 * H)]), // arrivée 1 min avant la bascule
+            series(31, 8, &[(1, 5, T - 2 * MIN), (2, 2, T - 30 * H)]), // en attente au dernier passage sans envoi
+            whole,
+        ];
+        let mut records = BTreeMap::new();
+        records.insert(
+            "r31:s1".to_string(),
+            record(&ready_of(&reqs)[1], T, PENDING),
+        );
+        let cont = continuity(Some(log), switch, Mode::Send, gap);
+        let prep = prepare(&records, &ready_of(&reqs), switch, 48 * H, cont);
+        assert_eq!(prep.handed_over, ["r32:s1", "r32:s2"]);
+        assert_eq!(prep.not_announced, ["r31:s1", "r30:s1"]);
+        assert_eq!(prep.changes["r30:s1"].outcome, PENDING);
+        assert!(
+            !prep.changes.contains_key("r31:s1"),
+            "en attente, inchangée"
+        );
+        records.extend(prep.changes);
+        // un mail chacun, au délai de regroupement ; la demande entière jamais
+        let due = due_groups(&records, switch + settle, settle, hold);
+        assert_eq!(
+            due,
+            vec![
+                Due {
+                    user: 8,
+                    keys: vec!["r31:s1".into()]
+                },
+                Due {
+                    user: 7,
+                    keys: vec!["r30:s1".into()]
+                },
+            ]
+        );
+    }
+
+    /// Une clé disponible avant la bascule mais absente de sa lecture (une demande supprimée pendant la lecture
+    /// paginée fait sauter un id, sans que la liste paraisse incomplète) : vue au passage suivant, elle suit la règle
+    /// de la bascule (`logged` si Jellyseerr l'a annoncée), pas celle d'une arrivée.
+    #[test]
+    fn a_key_missed_by_the_switch_pass_follows_the_switch_rule() {
+        let gap = cfg().max_gap_mins * MIN;
+        let switch = T + 5 * MIN;
+        let sent = MediaMailPass {
+            at: switch,
+            send: true,
+            send_since: Some(switch),
+        };
+        let c = continuity(Some(sent), switch + 5 * MIN, Mode::Send, gap);
+        assert_eq!((c.switch_on, c.switched_at), (false, Some(switch)));
+        // retour arrière, ou état d'avant le champ : plus de règle de bascule
+        assert_eq!(
+            continuity(Some(sent), switch + 5 * MIN, Mode::Log, gap).switched_at,
+            None
+        );
+        assert_eq!(
+            continuity(
+                Some(MediaMailPass {
+                    send_since: None,
+                    ..sent
+                }),
+                switch + 5 * MIN,
+                Mode::Send,
+                gap
+            )
+            .switched_at,
+            None
+        );
+
+        let reqs = vec![
+            movie(40, 7, 5, 5, switch - 2 * MIN), // annoncée par Seerr, sautée par la lecture de la bascule
+            movie(41, 7, 5, 5, switch + 3 * MIN), // arrivée après la bascule
+            movie(42, 8, 2, 5, switch - MIN), // demande pas terminée : Seerr ne l'a pas annoncée
+        ];
+        let prep = prepare(
+            &BTreeMap::new(),
+            &ready_of(&reqs),
+            switch + 5 * MIN,
+            48 * H,
+            c,
+        );
+        assert_eq!(prep.handed_over, ["r40"]);
+        assert_eq!(prep.changes["r40"].outcome, LOGGED);
+        assert_eq!(prep.changes["r41"].outcome, PENDING);
+        assert_eq!(prep.changes["r42"].outcome, PENDING);
+        assert_eq!(prep.not_announced, ["r42"]);
+        assert_eq!(prep.new_pending, 2);
+        // sans la date de bascule (règle d'avant), r40 partait : doublon avec le mail de Seerr
+        let before = prepare(
+            &BTreeMap::new(),
+            &ready_of(&reqs),
+            switch + 5 * MIN,
+            48 * H,
+            Continuity::default(),
+        );
+        assert_eq!(before.changes["r40"].outcome, PENDING);
+    }
+
+    /// Premier passage après la bascule du 15/10, sur un état tenu en observation depuis l'installation : référence
+    /// (`baseline`), clés `logged`, une clé encore en attente au dernier passage sans envoi, une arrivée pendant le
+    /// redémarrage. Ce passage n'envoie rien, et rien de tout cela ne part ensuite (48 h de passages) ; seul un titre
+    /// devenu disponible après lui part, une fois.
+    #[test]
+    fn first_send_pass_after_observation_mails_nothing_and_only_later_arrivals_go() {
+        let c = cfg();
+        let (settle, hold) = (c.settle_mins * MIN, c.max_hold_mins * MIN);
+        let (max_age, gap) = (c.max_age_hours * H, c.max_gap_mins * MIN);
+        let last_log = T + 120 * MIN; // dernier passage sans envoi (ancien binaire)
+        let switch = T + 124 * MIN; // premier passage du nouveau binaire, après le redémarrage
+
+        // demandes telles que Jellyseerr les montre à `now`
+        let reqs_at = |now: i64| {
+            let mut v = vec![
+                movie(1, 7, 5, 5, T - 5 * 86_400),
+                series(2, 8, &[(1, 5, T - 2 * H)]),
+            ];
+            for (id, user, at) in [
+                (3, 7, T + 58 * MIN),     // observation : noté `logged`
+                (5, 8, T + 117 * MIN),    // vu au dernier passage sans envoi, en attente
+                (6, 9, T + 122 * MIN),    // pendant le redémarrage
+                (7, 7, switch + 2 * MIN), // après la bascule
+            ] {
+                if at <= now {
+                    v.push(movie(id, user, 5, 5, at));
+                }
+            }
+            let s4: Vec<(u64, i64, i64)> = [(1, T + 60 * MIN), (2, T + 62 * MIN)]
+                .into_iter()
+                .map(|(n, at)| (n, if at <= now { 5 } else { 2 }, at))
+                .collect();
+            v.push(series(4, 9, &s4));
+            v
+        };
+        // un passage du daemon (`last` : passage précédent noté dans l'état) : mails dus notés `sent` (envoi) ou
+        // `logged` (observation) ; rend les mails dus, les clés notées par ce passage et celles passées à la bascule
+        let run = |records: &mut BTreeMap<String, MediaMailRecord>,
+                   now: i64,
+                   last: MediaMailPass,
+                   mode: Mode| {
+            let cont = continuity(Some(last), now, mode, gap);
+            assert!(cont.gap_since.is_none());
+            let prep = prepare(records, &ready_of(&reqs_at(now)), now, max_age, cont);
+            let changed: Vec<String> = prep.changes.keys().cloned().collect();
+            records.extend(prep.changes);
+            let due = due_groups(records, now, settle, hold);
+            let outcome = if mode == Mode::Send { SENT } else { LOGGED };
+            mark(records, &due, outcome, now);
+            (due, changed, prep.handed_over)
+        };
+
+        // 11:31 : référence, puis observation (un passage toutes les 5 min)
+        let mut records: BTreeMap<_, _> = baseline(&ready_of(&reqs_at(T)), T).into_iter().collect();
+        let mut last = MediaMailPass {
+            at: T,
+            send: false,
+            send_since: None,
+        };
+        let mut now = T;
+        while now < last_log {
+            now += 5 * MIN;
+            run(&mut records, now, last, Mode::Log);
+            last = MediaMailPass {
+                at: now,
+                send: false,
+                send_since: None,
+            };
+        }
+        let outcome = |records: &BTreeMap<String, MediaMailRecord>, k: &str| {
+            records
+                .get(k)
+                .map(|r| r.outcome.clone())
+                .unwrap_or_default()
+        };
+        for (k, o) in [
+            ("r1", BASELINE),
+            ("r2:s1", BASELINE),
+            ("r3", LOGGED),
+            ("r4:s1", LOGGED),
+            ("r4:s2", LOGGED),
+            ("r5", PENDING),
+        ] {
+            assert_eq!(outcome(&records, k), o, "{k} avant la bascule");
+        }
+        assert!(!records.contains_key("r6"));
+
+        // bascule : premier passage avec envoi
+        let before = records.clone();
+        let (due, changed, handed) = run(&mut records, switch, last, Mode::Send);
+        assert!(due.is_empty(), "aucun mail au passage de bascule : {due:?}");
+        assert_eq!(changed, ["r5", "r6"], "rien d'autre n'est réévalué");
+        assert_eq!(handed, ["r5", "r6"]);
+        for k in ["r5", "r6"] {
+            assert_eq!(outcome(&records, k), LOGGED, "{k}");
+        }
+        for (k, r) in &before {
+            if k != "r5" {
+                assert_eq!(&records[k], r, "{k} inchangée");
+            }
+        }
+
+        // 48 h de passages avec envoi : seul r7 (arrivé après la bascule) part, une fois, au délai de regroupement
+        // (`send_since` : date de la bascule, gardée par chaque passage avec envoi)
+        let mut last = MediaMailPass {
+            at: switch,
+            send: true,
+            send_since: Some(switch),
+        };
+        let mut sent: Vec<(i64, Due)> = Vec::new();
+        let mut now = switch;
+        while now < switch + 48 * H {
+            now += 5 * MIN;
+            let (due, _, handed) = run(&mut records, now, last, Mode::Send);
+            assert!(handed.is_empty());
+            sent.extend(due.into_iter().map(|d| (now, d)));
+            last = MediaMailPass {
+                at: now,
+                send: true,
+                send_since: Some(switch),
+            };
+        }
+        assert_eq!(
+            sent,
+            vec![(
+                switch + 15 * MIN,
+                Due {
+                    user: 7,
+                    keys: vec!["r7".into()]
+                }
+            )]
+        );
+        for k in ["r3", "r4:s1", "r4:s2", "r5", "r6"] {
+            assert_eq!(outcome(&records, k), LOGGED, "{k} jamais envoyée");
+        }
     }
 
     /// État restauré d'une sauvegarde (ou daemon longtemps arrêté) : ce qui est arrivé pendant l'écart a peut-être
     /// été envoyé par l'état perdu, jamais renvoyé.
     #[test]
     fn a_gap_in_the_state_marks_titles_of_the_gap_stale() {
-        let last = MediaMailPass { at: T, send: true };
+        let last = MediaMailPass {
+            at: T,
+            send: true,
+            send_since: None,
+        };
         // `[tasks.media_mail] max_gap_mins` : 120 par défaut, l'écart d'avant (code) gardé
         let gap = cfg().max_gap_mins * MIN;
         assert_eq!(gap, 2 * H);
@@ -2599,7 +3011,11 @@ mod tests {
     /// par l'état perdu. Noté `sent_uncertain` sans mail (au plus un mail), ni abandon signalé, même trop ancien.
     #[test]
     fn a_gap_in_the_state_settles_what_the_restored_state_was_holding() {
-        let last = MediaMailPass { at: T, send: true };
+        let last = MediaMailPass {
+            at: T,
+            send: true,
+            send_since: None,
+        };
         let c = cfg();
         let held = |key: &str, id: i64, user: i64, ready_at: i64, outcome: &str| {
             let mut r = record(
@@ -2611,6 +3027,7 @@ mod tests {
                     season: None,
                     ready_at,
                     user,
+                    seerr_announced: true,
                 },
                 T - 5 * MIN,
                 outcome,
@@ -2666,7 +3083,11 @@ mod tests {
         assert!(due_groups(&settled, now, c.settle_mins * MIN, c.max_hold_mins * MIN).is_empty());
         // écart et bascule vers l'envoi au même passage : l'écart l'emporte, même suite
         let switch = continuity(
-            Some(MediaMailPass { at: T, send: false }),
+            Some(MediaMailPass {
+                at: T,
+                send: false,
+                send_since: None,
+            }),
             now,
             Mode::Send,
             c.max_gap_mins * MIN,
@@ -2695,6 +3116,7 @@ mod tests {
                     season: None,
                     ready_at: T - 49 * H,
                     user: 7,
+                    seerr_announced: true,
                 },
                 T - 49 * H,
                 PENDING,

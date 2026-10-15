@@ -18,14 +18,14 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   valeur). Un binaire d'avant 9c9075f lit ces chaînes telles quelles : installer homelabd ET homelabctl. Le lien du mail
   d'activation vient de `ONBOARD_PUBLIC_URL`. Un script qui lit `homelab.toml` par `tomllib` sans `hlconf` voit `${…}`.
 - Les valeurs par défaut du code restent égales à celles du TOML : test `config::toml_matches_defaults` (seuls `paths`,
-  `urls`, `seedbox.*` et `tasks.disabled` sont exemptés). Exception : `[tasks.media_mail]` est livré **commenté**
-  (2026-10-15, les binaires installés refusent une clé inconnue) ; le test `commented_media_mail_block_equals_code_defaults`
-  décommente le bloc et le compare aux valeurs du code. Le décommenter dans la fenêtre où homelabd et homelabctl sont
-  installés ensemble.
+  `urls`, `seedbox.*` et `tasks.disabled` sont exemptés). Ce test ne voit pas une clé **absente** du fichier ; pour
+  `[tasks.media_mail]` (livré commenté le 15/10, décommenté à la bascule du même jour, installation de homelabd et
+  homelabctl ensemble), `media_mail_block_is_live_and_complete` exige en plus le bloc actif, complet, sans copie
+  commentée.
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans `registry()`, section
   `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run respecté, tests unitaires de la décision, paragraphe dans
   [AUTOMATION.md](../AUTOMATION.md). Au 15/10 : 33 tâches dans `registry()` (dont `tba_bypass`, dans `tasks.disabled`,
-  `vo_native_guard`, et `media_mail`, sans envoi aux membres tant que `send_to_members = false`) + l'observateur
+  `vo_native_guard`, et `media_mail`, qui envoie les mails « disponible » aux membres depuis le 15/10) + l'observateur
   `auto_import`.
 - **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans `ReadWritePaths`
   de `systemd/homelabd.service` (sinon « Read-only file system »).

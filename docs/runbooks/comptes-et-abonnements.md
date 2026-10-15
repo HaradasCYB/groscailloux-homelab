@@ -62,42 +62,97 @@ des abonnements. Procédure admin pas à pas : [ONBOARDING.md](../ONBOARDING.md)
   n'ont testé que des dégradés en ligne). Si elle devient claire, retirer l'encre du bouton principal (`ink_button`,
   classe `gc-o`) : son libellé blanc serait alors simplement inversé par Gmail, sombre sur bleu clair (5,5:1), au lieu
   de rester clair sur un bleu devenu clair.
-- **Mails « disponible »** (tâche `media_mail`, 2026-10-15) : remplacent ceux de Jellyseerr. Livrés **sans envoi aux
-  membres** (`[tasks.media_mail] send_to_members = false`, bloc commenté dans `homelab.toml` jusqu'à l'installation de
-  homelabd **et** homelabctl) : journal, état `logged`, copie à `MEDIA_MAIL_PREVIEW_TO` si `.env` la donne. Bascule,
-  référence du premier passage et garde-fous : [AUTOMATION.md](../AUTOMATION.md#media_mail--5-min-2026-10-15). Un membre
-  qui répond « stop » (ou clique « Se désabonner » dans Gmail, qui envoie un mail depuis son adresse) : son adresse,
-  son pseudo ou son id Jellyfin dans `MEDIA_MAIL_OPTOUT` (`.env`), puis redémarrage de homelabd.
-- **Bascule, une fois les exemples validés** (dans une fenêtre d'installation) :
-  1. `homelab.toml` : décommenter **tout** le bloc `[tasks.media_mail]` et y passer `send_to_members = true` ; même
-     valeur pour le défaut du code (`MediaMail::default` dans `config.rs`) : une fois le bloc décommenté,
-     `homelab_toml_equals_code_defaults` compare tout le fichier aux défauts du code, et `cargo test` doit passer ;
-  2. installer **homelabd et homelabctl ensemble**, depuis l'arbre de travail de `/opt/homelab` (`deny_unknown_fields` :
-     un binaire d'avant refuse le bloc), redémarrer homelabd, puis les contrôles d'après redémarrage
-     ([homelabd.md](homelabd.md)) et `homelabctl run media_mail --dry-run`. Si la tâche n'avait jamais tourné, son
-     premier passage est la référence (tout ce qui est déjà disponible est noté sans mail) ; sinon il note sans mail
-     ce qui attendait encore (déjà annoncé par Seerr) ;
-  3. **dans la même minute**, arrêter les mails « Média disponible » de Seerr. **À trancher avant la bascule** : Seerr
-     3.5 n'a **pas** de types de notification pour son agent e-mail (vérifié dans le code de la 3.5.0 le 15/10 ;
-     Discord, Slack… en ont, l'e-mail non), donc pas de case « Média disponible » à décocher pour tout le monde dans
-     Paramètres → Notifications → E-mail. Deux voies :
-     - **couper l'agent e-mail** (même écran, décocher l'activation), **voie par défaut** : marche avec le code actuel
-       et ne change rien à la connexion ni au mot de passe des membres. Leurs comptes sont des comptes Jellyfin : le
-       « Mot de passe oublié ? » de Seerr, qui disparaît avec l'agent, ne leur a jamais servi (mot de passe oublié =
-       lien de bienvenue, ou « Mon compte »). Côté admin, « Add User » dans Seerr demande alors un mot de passe : en
-       saisir un quelconque, `user_poller` supprime ce compte local et lance l'onboarding (lien de bienvenue). Seerr
-       n'envoie plus aucun mail (demande approuvée, refusée, en échec, mot de passe généré ; mails de demandes à
-       l'admin, que le salon Discord admin garde). Les membres ne voient plus l'onglet E-mail de leurs notifications ;
-       le choix déjà enregistré reste lu par `media_mail`, et `MEDIA_MAIL_OPTOUT` prend le relais pour un « stop » ;
-     - **garder l'agent**, seulement si le propriétaire tient aux mails de statut de Seerr (approuvée, refusée, en
-       échec), et décocher « Média disponible » **compte par compte** (`notificationTypes.email` de chaque membre) :
-       bien plus risqué, demande d'abord un changement de `media_mail`, qui lit aujourd'hui cette case comme un refus
-       du membre (`opted_out` : plus aucun mail « disponible » pour personne), le report dans `MEDIA_MAIL_OPTOUT` des
-       membres qui l'avaient décochée eux-mêmes, et l'onboarding (Seerr coche tout pour un compte neuf) ; écriture
-       compte par compte, comptée et vérifiée avant et après.
+- **Mails « disponible »** (tâche `media_mail`, 2026-10-15) : remplacent ceux de Jellyseerr et partent aux membres
+  **depuis le 15/10** (`[tasks.media_mail] send_to_members = true`). Détection, regroupement, référence du premier
+  passage et garde-fous : [AUTOMATION.md](../AUTOMATION.md#media_mail--5-min-2026-10-15). Un membre qui répond
+  « stop » (ou clique « Se désabonner » dans Gmail, qui envoie un mail depuis son adresse) : son adresse, son pseudo ou
+  son id Jellyfin dans `MEDIA_MAIL_OPTOUT` (`.env`), puis redémarrage de homelabd.
+- **Bascule du 15/10, voie 1 : agent e-mail de Seerr coupé** (décision du propriétaire, exemples validés). Le bloc
+  `[tasks.media_mail]` est déjà actif et complet dans `homelab.toml`, `send_to_members = false` ; le code a le défaut
+  `true` (`MediaMail::default`). Ordre :
+  1. construire homelabd **et** homelabctl depuis l'arbre de travail de `/opt/homelab` (le build ne lit pas
+     `homelab.toml`), sans rien installer ;
+  2. **puis, dans la même minute** : `send_to_members = true` dans `homelab.toml` (seule ligne changée), agent e-mail
+     de Seerr coupé (ci-dessous), installation des deux binaires (`deny_unknown_fields` : un binaire d'avant la 1.28.0
+     refuse le bloc) et `sudo systemctl restart homelabd`, puis les contrôles d'après redémarrage
+     ([homelabd.md](homelabd.md)).
 
-  Au pire un titre reçu deux fois, pour ce qui arrive dans les 5 min qui précèdent l'arrêt des mails de Seerr. Tant
-  que Seerr n'est pas arrêté, il envoie toujours son propre mail (anglais mêlé de français).
+  **`send_to_members = true` ne s'écrit que dans cette minute-là, jamais à l'avance** : homelabd ne lit
+  `homelab.toml` qu'à son démarrage, et le binaire en service connaît déjà la clé. Le premier redémarrage venu (chien
+  de garde `homelabd-watchdog.sh` après 3 échecs de `/health`, `Restart=always` après un plantage, `restart` lancé par
+  une autre session) le passerait en envoi, avec sa règle de bascule d'avant et pendant que Seerr envoie encore : deux
+  mails par titre. Bascule reportée (build en échec, décision du propriétaire) : la ligne reste, ou repasse, à
+  `false`. En attendant, `homelab_toml_equals_code_defaults` et `media_mail_block_is_live_and_complete` échouent
+  (`false` dans le fichier, `true` dans le code) : c'est attendu, ils repassent dès la bascule.
+
+  **Couper l'agent par l'écran de Seerr** : Paramètres → Notifications → E-mail, « Activer » décoché, Enregistrer
+  (l'écran renvoie tout le formulaire : les réglages SMTP restent enregistrés). Seerr 3.5 n'a **pas** de types de
+  notification pour son agent e-mail (vérifié dans le code de la 3.5.0 le 15/10 ; Discord, Slack… en ont, l'e-mail
+  non) : pas de case « Média disponible » à décocher pour tout le monde, d'où la coupure de tout l'agent. **Par l'API,
+  deux pièges** (`server/routes/settings/notifications.ts` de la 3.5.0) : `POST /api/v1/settings/notifications/email`
+  **remplace tout l'objet** (`{"enabled": false}` seul efface l'hôte, le compte et le mot de passe SMTP : au retour
+  arrière, l'agent se rallumerait sans SMTP et n'enverrait rien, sans le signaler) ; `GET` et la réponse du `POST`
+  renvoient l'objet entier, **mot de passe SMTP compris** (`options.authPass`) : ne jamais les afficher. Donc relire
+  l'objet dans une variable (jamais affichée), n'y changer que `enabled`, renvoyer l'objet entier, puis contrôler par
+  une lecture filtrée. Jamais de tube direct `GET | POST` : un `GET` en échec enverrait un corps vide, qui efface tout.
+
+  ```bash
+  k=$(sed -n 's/^JELLYSEERR_API_KEY=//p' /opt/homelab/.env); u=http://127.0.0.1:5055/api/v1/settings/notifications/email
+  # objet relu en entier, SMTP présent, sinon rien n'est envoyé (jq -e : code 4 sans sortie)
+  o=$(curl -sf -H "X-Api-Key: $k" "$u" | jq -ce 'select(.options.smtpHost | length > 0) | .enabled = false') && \
+    printf '%s' "$o" | curl -sf -o /dev/null -w '%{http_code}\n' -X POST -H "X-Api-Key: $k" \
+      -H 'Content-Type: application/json' --data-binary @- "$u"
+  unset o
+  curl -sf -H "X-Api-Key: $k" "$u" | jq -c '{enabled, smtp: (.options.smtpHost | length > 0)}'   # {"enabled":false,"smtp":true}
+  ```
+
+  Réactiver (retour arrière) : même chose avec `.enabled = true`.
+
+  Premier passage avec envoi (dans les 30 s qui suivent le démarrage) : il note sans mail (`logged`) ce qui attendait
+  encore et ce qui est apparu depuis le dernier passage sans envoi, **quand Seerr l'a annoncé**. Seerr n'envoie son
+  mail qu'au moment où la demande passe à « terminée », et pour une série seulement si **toutes** les saisons
+  demandées sont alors disponibles (`notifyAvailableSeries`) : une saison arrivée d'une demande dont d'autres saisons
+  manquent n'a jamais eu de mail de Seerr, et n'en aura plus. Elle reste donc à homelabd (en attente, puis un mail,
+  au besoin dès ce premier passage). Les clés déjà notées (`baseline`, `logged`) ne sont jamais réévaluées. Une clé
+  disponible avant la bascule mais absente de la lecture paginée de ce passage (une demande supprimée pendant la
+  lecture fait sauter un id à la frontière d'une page, sans que la liste paraisse incomplète) suit la même règle au
+  passage suivant : la date de la bascule est notée dans l'état (`media_mail_last_pass.send_since`). Seul ce qui
+  devient disponible ensuite part, une fois. Au pire un titre sans mail, jamais deux : arrivé entre la coupure de
+  l'agent et ce passage, ou saison d'une demande pas encore entière notée `logged` **pendant l'observation** (Seerr
+  attendait la dernière saison ; homelabd ne réévalue pas une clé notée : avant la bascule, l'état n'en comptait
+  aucune). Journal du premier passage : « bascule vers l'envoi … notés logged sans mail », « … jamais annoncées par
+  Jellyseerr : gardées » ; résumé « N déjà annoncé(s) par Jellyseerr (bascule) », « N jamais annoncé(s) par
+  Jellyseerr, gardé(s) (bascule) » ; ensuite « mail « disponible » envoyé » par mail parti.
+- **Ce que change la coupure de l'agent e-mail de Seerr** : rien pour la connexion ni le mot de passe des membres.
+  Leurs comptes sont des comptes Jellyfin : le « Mot de passe oublié ? » de Seerr, disparu avec l'agent, ne leur a
+  jamais servi (mot de passe oublié = lien de bienvenue, ou « Mon compte »). Côté admin, « Add User » dans Seerr demande
+  un mot de passe : en saisir un quelconque, `user_poller` supprime ce compte local et lance l'onboarding (lien de
+  bienvenue). **Seerr n'envoie plus aucun mail de notification** (ni « disponible », ni statut de demande, ni mot de passe
+  généré, ni mail « auto-approuvée » ou « en échec » aux admins ; son agent Discord, sur le salon **membres**, garde
+  « en attente », « auto-approuvée », « refusée » et « disponible », pas « en échec », qui n'est plus signalé nulle
+  part : rare, 0 du 09 au 15/10). Seule exception : `POST /api/v1/auth/reset-password` (page `/resetpassword`, plus
+  liée nulle part) ne regarde pas l'agent et envoie encore « Password Reset » avec le SMTP enregistré. Les membres ne voient plus l'onglet E-mail de
+  leurs notifications Seerr ; le choix déjà enregistré (« disponible » décoché) reste lu par `media_mail`
+  (`opted_out`), et `MEDIA_MAIL_OPTOUT` prend le relais pour un « stop ». Les réglages SMTP restent enregistrés dans
+  Seerr, agent coupé **par l'écran** (ou par l'API en renvoyant l'objet entier, voir la bascule ci-dessus) : son mot de
+  passe SMTP suit quand même chaque rotation de `SMTP_PASS` ([SECRETS.md](../SECRETS.md)), pour un retour arrière.
+- **Voie 2 écartée** (garder l'agent et décocher « Média disponible » **compte par compte**, `notificationTypes.email`
+  de chaque membre) : `media_mail` lit cette case comme un refus du membre (`opted_out` : plus aucun mail
+  « disponible » pour personne) ; elle demanderait un changement de `media_mail`, le report dans `MEDIA_MAIL_OPTOUT`
+  des membres qui l'avaient décochée eux-mêmes et une reprise de l'onboarding (Seerr coche tout pour un compte neuf).
+- **Retour arrière** (mails de homelabd en cause : délivrabilité, contenu) :
+  1. `homelab.toml` : `send_to_members = false`, puis `sudo systemctl restart homelabd` (clé connue des binaires
+     installés : aucune installation). homelabd repasse en observation (journal, `logged`, copie à
+     `MEDIA_MAIL_PREVIEW_TO`) ; ce qu'il retenait encore pour le regroupement (60 min au plus) est noté sans mail ;
+  2. juste après, réactiver l'agent e-mail de Seerr (même écran, ou l'API comme ci-dessus avec `.enabled = true` ;
+     mot de passe SMTP à jour, contrôle filtré `smtp: true`) : Seerr envoie de nouveau tous ses mails, « disponible »
+     compris ;
+  3. au build suivant, même défaut `false` dans `MediaMail::default` (sinon `homelab_toml_equals_code_defaults`
+     échoue), et une ligne dans `CHANGELOG.md`.
+
+  Repasser plus tard à `true` suit la même règle qu'au 15/10 : la ligne ne change que dans la minute du redémarrage,
+  jamais à l'avance, agent de Seerr coupé juste avant ; le premier passage avec envoi note `logged` ce que Seerr a
+  annoncé, garde ce qu'il n'a pas annoncé, rien de l'arriéré.
 - Demandes Jellyseerr validées d'office et droits « voir les demandes » posés à la création et à l'activation :
   [arrs-et-indexeurs.md](arrs-et-indexeurs.md#7-jellyseerr). Langue et saut posés à l'onboarding :
   [lecture-et-transcodage.md](lecture-et-transcodage.md#7-langue-audio-et-sous-titres-des-comptes).

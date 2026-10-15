@@ -27,7 +27,7 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 | influxdb / telegraf / grafana | métriques hôte + conteneurs, rétention 30 j | `influxdb/`, `grafana/` (uid 472) |
 | glances | monitoring live | — |
 | diun | notification mail des nouveaux tags d'images (`diun/images.yml`) | `diun/` |
-| homelabd (hôte, pas un conteneur) | automatisation (33 tâches, dont `tba_bypass` désactivée et `media_mail` en observation, + l'observateur `auto_import`) + pages web sur `:8766` (onboarding, comptes, recherche, état, Mon compte, tchat, premium) | `state/` |
+| homelabd (hôte, pas un conteneur) | automatisation (33 tâches, dont `tba_bypass` désactivée et `media_mail`, mails « disponible » aux membres depuis le 15/10, + l'observateur `auto_import`) + pages web sur `:8766` (onboarding, comptes, recherche, état, Mon compte, tchat, premium) | `state/` |
 
 Trois conteneurs montent `docker.sock` en lecture (homarr, portainer, glances/telegraf) ;
 glances tourne `privileged`. Toutes les images sont pinnées `tag@sha256`.

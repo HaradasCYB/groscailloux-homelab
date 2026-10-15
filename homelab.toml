@@ -471,30 +471,33 @@ interval_secs = 60
 max_age_secs = 600
 admin_user_id = 1
 
-# [tasks.media_mail] : mails « ta demande est disponible » aux membres (2026-10-15), à la place de ceux de Jellyseerr.
-# BLOC COMMENTÉ tant que homelabd ET homelabctl ne sont pas installés avec cette tâche : les binaires en service refusent
-# toute clé inconnue. Valeurs = défauts du code (vérifié par un test) : la tâche tourne pareil sans ce bloc. À décommenter
-# dans la fenêtre d'installation. Bascule (send_to_members = true ici et dans le défaut du code, installation des deux
-# binaires, mails « disponible » de Seerr arrêtés dans la même minute) : docs/runbooks/comptes-et-abonnements.md § 2.
-# Copie d'essai tant que l'envoi est coupé : MEDIA_MAIL_PREVIEW_TO (.env).
-#[tasks.media_mail]
-#interval_secs = 300
-# false = journal seulement (+ copie à MEDIA_MAIL_PREVIEW_TO) ; ce qui passe est noté et ne partira jamais.
-#send_to_members = false
-#max_mails_per_run = 5
+# [tasks.media_mail] : mails « ta demande est disponible » aux membres, à la place de ceux de Jellyseerr (2026-10-15).
+# Valeurs = défauts du code (vérifié par un test), sauf send_to_members tant que la bascule n'est pas faite.
+# Bascule (docs/runbooks/comptes-et-abonnements.md § 2) : binaires construits d'abord ; puis, dans la même minute,
+# send_to_members = true ici, agent e-mail de Seerr coupé, installation et redémarrage. JAMAIS true à l'avance :
+# homelabd ne lit ce fichier qu'au démarrage, et tout redémarrage du binaire en service (chien de garde, plantage,
+# autre session) enverrait alors pendant que Seerr envoie encore (deux mails). Bascule reportée : remettre false.
+# Retour arrière : false, restart homelabd, puis agent e-mail de Seerr réactivé (même section du runbook).
+[tasks.media_mail]
+interval_secs = 300
+# true = les mails partent aux membres. false = journal seulement (+ copie à MEDIA_MAIL_PREVIEW_TO) ; ce qui passe est
+# noté et ne partira jamais. Passer à true n'envoie jamais l'arriéré : le premier passage avec envoi note sans mail
+# ce qui attendait et ce qui vient d'arriver, quand Jellyseerr l'a annoncé.
+send_to_members = true
+max_mails_per_run = 5
 # Regroupement par membre : 10 min sans nouvelle arrivée pour lui, 60 min d'attente au plus.
-#settle_mins = 10
-#max_hold_mins = 60
+settle_mins = 10
+max_hold_mins = 60
 # Devenu disponible (selon Jellyseerr) il y a plus longtemps (daemon arrêté, état restauré) : jamais envoyé.
-#max_age_hours = 48
+max_age_hours = 48
 # Plus de N minutes sans passage noté dans l'état (état restauré, daemon longtemps arrêté) : ce qui est arrivé pendant
 # l'écart, et ce qui attendait avant lui, n'est jamais envoyé (l'état perdu l'avait peut-être envoyé). Doit dépasser
 # interval_secs + 10 min (un passage au plafond), sinon homelabd refuse de démarrer.
-#max_gap_mins = 120
+max_gap_mins = 120
 # Nouvel essai après un envoi en échec (minutes), puis abandon et alerte admin (gardée jusqu'à ce qu'elle parte).
-#retry_mins = [15, 60, 240]
+retry_mins = [15, 60, 240]
 # Clés d'une demande disparue de Jellyseerr oubliées au bout de N jours.
-#keep_days = 90
+keep_days = 90
 
 [auto_import]
 enabled = true

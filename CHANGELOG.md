@@ -42,9 +42,9 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 ## 1.28.0 — 15/10/2026 — Mails aux couleurs de Groscailloux TV
 
 Tous les mails qu'un membre peut recevoir changent d'habit : sombres, au logo de Groscailloux TV, un seul gros bouton,
-en vrai français. Nouveau : le mail « ta demande est disponible » avec l'affiche du film ou de la série, prêt à
-remplacer celui de Jellyseerr dès que l'admin l'aura validé. L'admin peut recevoir un exemple de chaque mail dans sa
-propre boîte avant de valider (8550908).
+en vrai français. Nouveau : le mail « ta demande est disponible » avec l'affiche du film ou de la série, qui remplace
+celui de Jellyseerr depuis le 15/10 (Jellyseerr n'envoie plus aucun mail). L'admin peut recevoir un exemple de chaque
+mail dans sa propre boîte avant de valider (8550908).
 
 ### Pour les membres
 
@@ -57,11 +57,11 @@ propre boîte avant de valider (8550908).
 - **« Ton compte est actif » mène directement à Groscailloux TV** quand le lien de bienvenue a servi dans les 7 derniers
   jours (mot de passe choisi), sans nouveau lien inutile ; sinon, le bouton propose de choisir le mot de passe, ou de se
   connecter avec son mot de passe habituel.
-- **Bientôt : « ta demande est disponible », avec l'affiche.** Quand un film ou une saison demandés arrivent, un mail
-  en français avec l'image du titre, l'affiche, l'année, la durée, la note, la langue (VF · VO, VOSTFR) et un bouton
-  « Regarder » qui ouvre la fiche dans Jellyfin. Une saison arrivée est annoncée sans attendre les autres saisons de la
-  même demande ; plusieurs titres arrivés ensemble donnent un seul mail. Il remplacera celui de Jellyseerr (moitié en
-  anglais, logo cassé dans Gmail, bouton vers Jellyseerr) une fois validé ; d'ici là, rien ne change.
+- **« Ta demande est disponible », avec l'affiche, depuis le 15/10.** Quand un film ou une saison demandés arrivent,
+  un mail en français avec l'image du titre, l'affiche, l'année, la durée, la note, la langue (VF · VO, VOSTFR) et un
+  bouton « Regarder » qui ouvre la fiche dans Jellyfin. Une saison arrivée est annoncée sans attendre les autres
+  saisons de la même demande ; plusieurs titres arrivés ensemble donnent un seul mail. Il remplace celui de Jellyseerr
+  (moitié en anglais, logo cassé dans Gmail, bouton vers Jellyseerr) : Jellyseerr n'envoie plus aucun mail.
 - **Liens cliquables dans les annonces et les messages de l'admin.** Une adresse écrite dans une annonce ou un message
   d'« Aide et annonces » devient un lien dans le mail, et une longue adresse passe à la ligne au lieu d'élargir le mail
   sur un téléphone.
@@ -69,6 +69,8 @@ propre boîte avant de valider (8550908).
   dans Jellyfin (regarder, et demander un film ou une série dans l'onglet *Découvrir*, comme le dit aussi l'accroche du
   guide), et nos mails arrivent d'une adresse à ajouter aux contacts. La partie « Tu utilisais déjà l'ancienne adresse ? » explique comment passer une
   appli sur la nouvelle adresse, se reconnecter et retrouver son mot de passe.
+- **Guide : plus de mail « Reset password » de Jellyseerr à ignorer.** Jellyseerr n'envoie plus aucun mail, la
+  consigne de « Ton mail de bienvenue » disparaît.
 
 ### Pour l'administrateur
 
@@ -84,14 +86,28 @@ propre boîte avant de valider (8550908).
   ignorées), premier passage = référence sans mail, jamais deux fois
   ni l'arriéré (plus de 48 h : jamais envoyé), titres d'un même membre regroupés (10 min sans nouvelle arrivée, 1 h au
   plus), titre relu dans Jellyfin **comme le membre**, choix de notifications de Jellyseerr respecté, envoi noté avant
-  `curl` (au plus un mail). **Livrée sans envoi aux membres** (`send_to_members = false` : journal, état `logged`, copie
-  facultative à `MEDIA_MAIL_PREVIEW_TO`) ; bloc `[tasks.media_mail]` commenté dans `homelab.toml` jusqu'à l'installation
-  de homelabd **et** homelabctl ; `MEDIA_MAIL_OPTOUT` (adresse, pseudo ou id) pour un membre qui répond « stop ».
+  `curl` (au plus un mail). Installée d'abord en observation (`send_to_members = false` : journal, état `logged`, copie
+  facultative à `MEDIA_MAIL_PREVIEW_TO`) ; `MEDIA_MAIL_OPTOUT` (adresse, pseudo ou id) pour un membre qui répond « stop ».
   Mail abandonné (échecs répétés, attente de plus de 48 h) : alerte admin gardée dans l'état jusqu'à ce qu'elle parte,
   une par passage ; écart de l'état au-delà duquel rien n'est envoyé, ni ce qui attendait avant lui, réglable
-  (`max_gap_mins`, 120 ; refusé au démarrage s'il ne dépasse pas `interval_secs` + 10 min). Bascule (passer à `true`,
-  puis arrêter les mails « disponible » de Seerr dans la même minute ; Seerr 3.5 n'a pas de types de notification pour
-  l'e-mail, voie par défaut : couper son agent e-mail) : [comptes-et-abonnements.md § 2](docs/runbooks/comptes-et-abonnements.md#2-onboarding-et-mails),
+  (`max_gap_mins`, 120 ; refusé au démarrage s'il ne dépasse pas `interval_secs` + 10 min).
+- **Envoi des mails « disponible » allumé le 15/10, agent e-mail de Seerr coupé** : bloc `[tasks.media_mail]`
+  décommenté avec `send_to_members = true` (même défaut dans le code ; le test du bloc commenté devient
+  `media_mail_block_is_live_and_complete` : bloc actif, complet, sans copie commentée), homelabd et homelabctl installés
+  ensemble. **Seerr n'envoie plus aucun mail** : Seerr 3.5 n'a pas de types de notification pour l'e-mail, d'où la
+  coupure de tout l'agent ; son « Mot de passe oublié ? » disparaît (sans usage pour des comptes Jellyfin) et « Add
+  User » demande un mot de passe quelconque, repris par `user_poller`. Premier passage avec envoi : il note `logged`
+  ce qui attendait encore **et** ce qui est apparu depuis le dernier passage d'observation, quand Seerr l'a annoncé
+  (le binaire installé à 11:31 aurait envoyé aussi une arrivée de ces 5 dernières minutes, en double avec Seerr) ;
+  seul ce qui arrive ensuite part. Seerr n'annonce une série qu'une fois **toutes** les saisons demandées arrivées
+  (`notifyAvailableSeries`) : une saison arrivée d'une demande dont d'autres saisons manquent reste à homelabd (sinon
+  personne ne l'annonçait). Date de la bascule notée dans l'état (`media_mail_last_pass.send_since`) : une clé
+  disponible avant elle mais absente de sa lecture paginée (demande supprimée pendant la lecture) suit la même règle
+  au passage suivant, au lieu de partir en double. `send_to_members = true` ne s'écrit que dans la minute de la
+  bascule, jamais à l'avance (homelabd ne lit `homelab.toml` qu'au démarrage : un redémarrage du binaire d'avant
+  enverrait pendant que Seerr envoie encore). `homelabctl run media_mail --dry-run` prend la même décision que le
+  passage réel. Retour arrière (`send_to_members = false`, restart, agent de Seerr réactivé) :
+  [comptes-et-abonnements.md § 2](docs/runbooks/comptes-et-abonnements.md#2-onboarding-et-mails),
   [AUTOMATION.md](docs/AUTOMATION.md#media_mail--5-min-2026-10-15).
 - **`homelabctl mail-test` montre chaque mail** : `--all` envoie un exemple de chacun des 17 mails aux membres (compte
   fictif « Exemple », objet « [Exemple] … », 2 s d'écart, vrais titres arrivés pour « disponible »), `--kind <type>` un
