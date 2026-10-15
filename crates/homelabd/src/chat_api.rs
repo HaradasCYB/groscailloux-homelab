@@ -445,32 +445,12 @@ async fn admin_announce(
         return Err(err(StatusCode::UNAUTHORIZED, "jeton manquant ou invalide"));
     }
     let cfg = &st.ctx.cfg.chat;
-    if !chat::is_listed(&b.author, &cfg.moderators) {
-        return Err(err(StatusCode::FORBIDDEN, "l'auteur n'est pas modérateur"));
-    }
-    let jf = st.ctx.jellyfin.find_user(&b.author).await.map_err(|e| {
-        warn!(
-            task = "chat",
-            error = format!("{e:#}"),
-            "announce: jellyfin unreachable"
-        );
-        err(StatusCode::BAD_GATEWAY, "Jellyfin injoignable")
-    })?;
-    let Some(jf) = jf else {
-        return Err(err(StatusCode::NOT_FOUND, "compte modérateur introuvable"));
-    };
-    let u = ChatUser {
-        id: chat::normalize_id(jf.get("Id").and_then(Value::as_str).unwrap_or("")),
-        name: jf
-            .get("Name")
-            .and_then(Value::as_str)
-            .unwrap_or(&b.author)
-            .to_string(),
-        moderator: true,
-    };
+    // même auteur et même texte que l'aperçu (`homelabctl mail-test --announce`, `POST /admin/mail-test/announce`)
+    let u = chat::announcement_author(&st.ctx, &b.author)
+        .await
+        .map_err(|e| author_refused(&e))?;
     // même nettoyage que pour un message ordinaire, sans le plafond de taille (découpage ensuite)
-    let text =
-        chat::validate_body(&b.body, usize::MAX).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    let text = chat::announcement_text(&b.body).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
     let parts = chat::split_parts(&text, cfg.max_chars);
     let mut ids = Vec::new();
     for p in &parts {
@@ -484,6 +464,20 @@ async fn admin_announce(
     Ok(Json(
         json!({ "success": true, "message_ids": ids, "parts": parts.len(), "discord": discord, "email_members": b.email_members }),
     ))
+}
+
+/// Refus de l'auteur d'une annonce : 403 (pas modérateur), 404 (compte introuvable), 502 (Jellyfin injoignable,
+/// cause journalisée).
+fn author_refused(e: &chat::AuthorError) -> (StatusCode, Json<Value>) {
+    if let chat::AuthorError::Jellyfin(cause) = e {
+        warn!(
+            task = "chat",
+            error = format!("{cause:#}"),
+            "announce: jellyfin unreachable"
+        );
+    }
+    let status = StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::BAD_GATEWAY);
+    err(status, &e.to_string())
 }
 
 /// Suppression : son propre message dans le délai (`delete_own_within_mins`), ou n'importe lequel pour un
@@ -745,12 +739,12 @@ async fn mail_direct(
             missing += 1;
             continue;
         };
-        let (subject, body) = chat::direct_mail(&author.name, name, &text, &s.jellyfin_public_url);
+        let m = chat::direct_mail(&author.name, name, &text, &s.jellyfin_public_url);
         if st.ctx.dry_run {
             sent += 1;
             continue;
         }
-        match mail::send_plain(smtp, name, email, &subject, &body).await {
+        match mail::send_rendered(smtp, name, email, &m, None, &[]).await {
             Ok(()) => sent += 1,
             Err(e) => {
                 failed += 1;
@@ -849,7 +843,7 @@ async fn mail_members(st: ChatState, author: ChatUser, text: String) {
         }
     };
     let cfg = &st.ctx.cfg.chat;
-    let (subject, body) = chat::announcement_mail(&author.name, &text, &s.jellyfin_public_url);
+    let m = chat::announcement_mail(&author.name, &text, &s.jellyfin_public_url);
     let (mut sent, mut failed) = (0, 0);
     for u in &users {
         let (Some(id), Some(name)) = (
@@ -873,7 +867,7 @@ async fn mail_members(st: ChatState, author: ChatUser, text: String) {
             sent += 1;
             continue;
         }
-        match mail::send_plain(smtp, name, email, &subject, &body).await {
+        match mail::send_rendered(smtp, name, email, &m, None, &[]).await {
             Ok(()) => sent += 1,
             Err(e) => {
                 failed += 1;

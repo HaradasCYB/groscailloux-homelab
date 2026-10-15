@@ -1229,6 +1229,10 @@ mod tests {
                 .route("/accounts/premium", post(toggle))
                 .route("/onboard", post(onboard))
                 .route("/admin/run", post(|| async { "passage lancé" }))
+                .route(
+                    "/admin/mail-test/announce",
+                    post(|| async { "aperçu envoyé" }),
+                )
                 .route("/premium", get(|| async { "page publique" }))
                 .route("/whoami", get(whoami))
                 .route("/connexion", get(login_get).post(login_post))
@@ -1522,6 +1526,18 @@ mod tests {
             for host in [ONBOARD, PREMIUM] {
                 let (st, _, _) =
                     send(&app, req(Method::POST, "/admin/run", host, NPM, Some(HOME))).await;
+                assert_eq!(st, StatusCode::NOT_FOUND, "{host}");
+            }
+            // aperçu d'une annonce (`mail-test --announce`) : même porte
+            let path = "/admin/mail-test/announce";
+            let (st, _, b) = send(
+                &app,
+                req(Method::POST, path, "127.0.0.1:8766", "127.0.0.1", None),
+            )
+            .await;
+            assert_eq!((st, b.as_str()), (StatusCode::OK, "aperçu envoyé"));
+            for host in [ONBOARD, PREMIUM] {
+                let (st, _, _) = send(&app, req(Method::POST, path, host, NPM, Some(HOME))).await;
                 assert_eq!(st, StatusCode::NOT_FOUND, "{host}");
             }
             // un autre conteneur qui vise la passerelle

@@ -597,6 +597,73 @@ reste une erreur.
 depuis < 10 min, email pas encore traité (`state.onboarded`). Si un user Jellyfin du même nom
 existe → marqué et ignoré. Sinon `DELETE /api/v1/user/{id}` puis onboarding unifié.
 
+### media_mail — 5 min (2026-10-15)
+Mails « ta demande est disponible » aux membres, en français, à la place de ceux de Jellyseerr (anglais mêlé de français,
+logo SVG cassé dans Gmail, bouton vers Jellyseerr). Rendu : `available_mail::render` (gabarit `mail_layout`, fond,
+affiche, puces, bouton « Regarder… » vers `<JELLYFIN_PUBLIC_URL>/web/#/details?id=<fiche>`), objets
+`« Le Menu » est disponible`, `La saison 8 de « Dexter » est disponible`, `Les saisons 1 à 10 de « … » sont
+disponibles`, `« Le Menu » et 3 autres demandes sont disponibles`.
+- **Détection** : `GET /api/v1/request?filter=all` et `GET /api/v1/media` complets à chaque passage (la fin d'une
+  saison ne change pas la date de sa demande ; la liste des demandes ne porte pas l'état des saisons). Film : média
+  disponible, clé `r<id demande>`. Série : chaque saison demandée dont la demande de saison est `COMPLETED` **et** dont
+  la saison du média est disponible, clé `r<id>:s<n>` : une saison arrivée part sans attendre les autres. Jellyseerr
+  3.5 termine aussi la demande d'une saison **supprimée** (`MediaSubscriber` : saison `AVAILABLE` ou `DELETED`), ce
+  que fait sa synchro de disponibilité pour une saison incomplète introuvable dans Sonarr et Jellyfin : sans le
+  contrôle de la saison du média, elle serait annoncée, et sa vraie arrivée plus tard jamais. Demande de série en
+  échec (`FAILED`) : ses saisons arrivées comptent (Jellyseerr ne termine la demande qu'avec la dernière). Saison 0,
+  4K, demandes en attente ou refusées, films en échec, médias supprimés : ignorés.
+- **Jamais deux fois, jamais l'arriéré** (`state.media_mail`, une suite par clé) : le premier passage est une
+  référence (`baseline`, rien d'envoyé, `media_mail_baseline_at`) ; une clé notée n'est plus réévaluée, sauf
+  `pending` et `error` ; disponible depuis plus de `max_age_hours` (daemon arrêté) → `stale` ; plus de `max_gap_mins`
+  sans passage noté (`media_mail_last_pass` : état restauré d'une sauvegarde, daemon longtemps arrêté) → ce qui est
+  arrivé pendant l'écart est `stale` aussi (l'état perdu l'avait peut-être envoyé), et ce que l'état restauré tenait
+  encore en attente (`pending`, `error`) passe en `sent_uncertain`, sans mail ni alerte d'abandon (l'état perdu l'a
+  très probablement envoyé : au plus un mail) ; clé notée pour un autre titre que sa
+  demande actuelle (base Jellyseerr restaurée : ses ids repartent en arrière) → nouvelle clé ; clé notée `sending`
+  sur disque **avant** `curl`, retrouvée au passage suivant → `sent_uncertain`, jamais renvoyée ; demande absente de
+  la liste → `gone` seulement sur un 404 de `GET /api/v1/request/{id}`.
+- **Regroupement par membre** : ses titres attendent `settle_mins` sans nouvelle arrivée (`max_hold_mins` au plus).
+  Un titre (film, ou saisons d'une série réunies) = mail du titre ; plusieurs = récapitulatif (le dernier arrivé en
+  avant, 3 affiches en rangée, les autres en liste dans le texte). `max_mails_per_run` par passage. Demande
+  réattribuée dans Jellyseerr : le titre suit le nouveau demandeur. Un titre illisible (fiche TMDB retirée, panne)
+  reste en attente sans bloquer les autres titres du membre.
+- **Destinataire** : adresse Jellyseerr du demandeur (sinon `no_email`) ; pas de mail s'il a décoché « disponible »
+  dans ses notifications par mail de Jellyseerr ou s'il est listé dans `MEDIA_MAIL_OPTOUT` par son adresse, son pseudo
+  ou son id (`opted_out`), si son compte Jellyfin est suspendu (`suspended`) ou absent (`no_account`). Chaque titre est
+  relu **comme le membre** par son id (`GET /Items/{id}?userId=`, 404 = invisible ; la liste `GET /Items?Ids=&UserId=`
+  renvoie aussi les éléments des bibliothèques non partagées, Jellyfin 12.1 : ne pas y revenir ; saisons et premier
+  épisode par `/Shows/{id}/…?UserId=`) : invisible pour lui, il attend `max_hold_mins` puis `not_visible`. Images lues
+  dans Jellyfin (`format=Jpg`, anonymes), TMDB en secours, jointes en `cid:` ; le mail part sans celle qui manque.
+- **Envoi** : `send_to_members = false` (défaut) = tout le chemin tourne, le mail est journalisé (« envoi aux membres
+  coupé ») et ses clés notées `logged` : passer à `true` n'envoie que ce qui arrive ensuite. `MEDIA_MAIL_PREVIEW_TO`
+  (`.env`) reçoit alors une copie de chaque mail (essai de délivrabilité). `true` : `List-Unsubscribe` en `mailto:`
+  vers l'adresse d'envoi, pas de `Reply-To` ; échec net → nouvel essai après `retry_mins` (15, 60, 240), puis
+  `gave_up` ; `curl` en échec après avoir passé le message entier (délai dépassé ou connexion coupée en attendant la
+  réponse) → `sent_uncertain`, jamais renvoyé. Journal : id Jellyseerr et nom du membre, clés, objet ; jamais
+  l'adresse.
+- **Alerte d'abandon** (`gave_up` : échecs d'envoi répétés, ou titre en attente depuis plus de `max_age_hours`) : sa
+  ligne est notée dans l'état (`media_mail_alerts`) **dans la même écriture** que l'abandon, et n'en sort que quand
+  l'alerte est partie (`alerts::retry_later` : au moins un canal a pris l'alerte, ou aucun canal n'est configuré).
+  **Une** alerte par passage, qui reprend tout ce qui attend, passages précédents compris, et part même quand
+  Jellyseerr ne répond pas ou que le passage échoue ; une ligne n'y entre jamais deux fois.
+- Réglages `[tasks.media_mail]` (bloc commenté dans `homelab.toml` jusqu'à la bascule, valeurs = défauts du code) :
+  `interval_secs` (300), `send_to_members` (`false`), `max_mails_per_run` (5), `settle_mins` (10), `max_hold_mins`
+  (60), `max_age_hours` (48), `max_gap_mins` (120), `retry_mins` ([15, 60, 240]), `keep_days` (90).
+  `max_gap_mins` doit rester bien au-dessus de `interval_secs` : homelabd refuse de démarrer si `max_gap_mins` × 60 ne
+  dépasse pas `interval_secs` + 600 s (un passage au plafond), sinon chaque passage serait un écart et plus aucun mail
+  ne partirait.
+- **Ménage** : sur une liste complète seulement, clés terminées d'une demande disparue, après `keep_days`.
+- **Bascule** (décision de l'admin, après validation) : bloc `[tasks.media_mail]` décommenté avec `send_to_members =
+  true`, installation de homelabd **et** homelabctl (livré commenté : les binaires d'avant refusent la clé), puis
+  arrêt des mails « disponible » de Jellyseerr dans la même minute ; procédure et choix côté Seerr :
+  [comptes-et-abonnements.md § 2](runbooks/comptes-et-abonnements.md#2-onboarding-et-mails). Premier passage =
+  référence (rien d'envoyé). Après des passages sans envoi, le premier passage avec envoi note `logged` ce qui
+  attendait encore (le regroupement retient un titre jusqu'à `max_hold_mins`), que Jellyseerr, encore actif, a déjà
+  annoncé. Reste au pire un titre en double pour ce qui arrive entre le dernier passage sans envoi et l'arrêt des
+  mails de Seerr (un passage, 5 min). **Seerr 3.5 n'a pas de types de notification pour l'agent e-mail** (vérifié
+  dans son code le 15/10) : « Média disponible » ne se décoche que compte par compte, et `media_mail` lit justement
+  cette case comme un refus du membre (`opted_out`) ; voie par défaut : couper l'agent e-mail de Seerr.
+
 ### cleanup — 24 h
 Fichiers de `jellyfin/cache/transcodes` > 1 j ; dossiers vides de `library/downloads`
 (profondeur ≤ 3) > 2 j ; fichiers des `.recycle` Sonarr/Radarr > 14 j ; logs Jellyfin > 7 j.
@@ -750,10 +817,11 @@ Le compte Jellyfin est créé avec un mot de passe aléatoire **jamais communiqu
 (8 caractères min, sans le pseudo ; `POST /Users/{id}/Password` en admin, Jellyseerr suit), consomme le lien et
 affiche les accès (Jellyfin, Jellyseerr, guide). Lien expiré ou consommé → page « recevoir un nouveau lien »
 (`POST /bienvenue/renouveler`, réponse identique que l'adresse soit connue ou non, `renew_per_hour` par adresse) :
-c'est aussi le « mot de passe oublié ». À l'**activation** depuis `/accounts`, mail « ton compte est actif » (lien
-`activated`, même page si le mot de passe n'est pas encore défini). `/accounts` montre l'état du lien et permet
+c'est aussi le « mot de passe oublié ». À l'**activation** depuis `/accounts`, mail « ton compte est actif » : bouton
+vers Jellyfin si le dernier lien du compte a servi (mot de passe choisi, aucun lien émis), sinon nouveau lien
+`activated` vers la même page. `/accounts` montre l'état du lien et permet
 de le renvoyer ; `homelabctl accounts link <compte>` idem ; `homelabctl mail-test <adresse>` envoie le mail avec
-un lien de démonstration (page en lecture seule). Les liens vivent dans l'état **du daemon** : la CLI passe par
+un lien de démonstration (page en lecture seule ; `--all` : tous les mails aux membres, voir **Mails**). Les liens vivent dans l'état **du daemon** : la CLI passe par
 `POST /admin/link` et `/admin/mail-test` (jeton en en-tête). `cleanup` purge les liens finis depuis > 7 j.
 
 **Inscription publique** : pseudo + e-mail + case « validé par l'admin » + champ leurre ; rate limit IP
@@ -762,9 +830,19 @@ création, pseudo pris → message. Le compte est créé suspendu, le membre re�
 « nouveau compte à activer » (`CHAT_ADMIN_EMAIL`, repli `GUIDE_CONTACT_EMAIL`).
 
 **Mails** (`mail.rs`) : `curl smtps` vers le SMTP de `.env`, message MIME construit ici — `Date`, `Message-ID`,
-`Reply-To` (contact), sujet/noms RFC 2047, corps quoted-printable UTF-8, `multipart/alternative` texte + HTML
-pour les membres (`assets/mail/welcome.html`), texte seul pour l'admin. Jamais d'identifiant ni de mot de passe
-dans un mail.
+`Reply-To` (contact, mails de lien seulement), sujet/noms RFC 2047, corps quoted-printable UTF-8 ; texte seul pour
+l'admin. **Mails aux membres** (2026-10-15) : gabarit sombre « bleu galet » `mail_layout.rs`, `multipart/alternative`
+= vraie version texte + `multipart/related` (HTML, logo et bandeau joints en `cid:`). Chacun est rendu par une
+fonction pure : `welcome::welcome_mail` / `activated_mail` (bienvenue, démo, activation),
+`subscriptions::reminder_mail` / `renewal_mail` / `suspended_mail` / `payment_failed_mail` / `activated_mail`
+(prix tiré de `[subscriptions] price_text`), `chat::direct_mail` / `announcement_mail`, `available_mail::render`
+(« disponible », tâche `media_mail`). Jamais d'identifiant, de mot de passe ni de `token=` dans un mail ; aucun lien
+dans l'information de renouvellement ni dans le prélèvement échoué. **Exemples** (`mail_samples.rs`) : `homelabctl
+mail-test <adresse> --all | --kind <type>` (`POST /admin/mail-test` `{to, all}` ou `{to, kinds}`, réponse une ligne
+par type : envoyé ou échec) envoie un exemple de chaque mail aux membres, rendu par ces mêmes fonctions pour un compte
+fictif « Exemple » (objet « [Exemple] … », mêmes en-têtes, 2 s d'écart ; « disponible » sur les derniers vrais titres
+arrivés, relus par un compte qui voit toutes les bibliothèques) ; `--dump <dossier>` les écrit (`.html` + `img/`,
+`.eml`, `.txt`) sans homelabd ni envoi. Seul état écrit : le lien de démonstration des mails de bienvenue.
 
 ## Discord
 
@@ -837,7 +915,12 @@ fois). Règles côté client (sondages, focus, Échap, bandeau) : [runbooks/tcha
   `HOMELABD_ONBOARD_TOKEN`, hors du préfixe `/gc-chat/` publié par NPM). L'auteur doit être dans `[chat] moderators`
   et exister dans Jellyfin ; le texte est nettoyé comme un message ordinaire puis **découpé** en messages ≤ `max_chars`
   entre deux paragraphes (`chat::split_parts`, testé) ; Discord (salon des membres) et le mail facultatif reçoivent le
-  texte entier, une fois. `--dry-run` affiche le nombre de messages sans rien publier.
+  texte entier, une fois. `--dry-run` affiche le nombre de messages sans rien publier. **Aperçu** :
+  `homelabctl mail-test <adresse> --announce <fichier> [--author <modérateur>]` (`POST /admin/mail-test/announce`
+  `{to, author, body}`) envoie à cette adresse seulement le mail que `--mail` enverrait aux membres
+  (`chat::announcement_author`, `announcement_text`, `announcement_mail` partagés avec `/admin/chat/announce`), objet
+  « [Aperçu] … » ; rien dans le tchat ni sur Discord ; `--dump <dossier>` le rend sans homelabd. Une URL `http(s)://`
+  du texte devient un lien dans la carte du mail (annonce et message privé, même règle que le tchat).
 - **Couper** : `[chat] enabled = false` (+ restart homelabd) et désactiver le script dans JavaScript Injector.
 
 ### playback_canary — 15 min

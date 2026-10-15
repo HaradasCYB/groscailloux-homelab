@@ -25,6 +25,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::config::Subscriptions as SubsConfig;
+use crate::mail_layout::{
+    date_long_fr, day_month_fr, welcome_banner, Block, InfoRow, MailContent, RenderedMail, Tone,
+};
 
 pub const DAY: i64 = 86_400;
 
@@ -1102,70 +1105,35 @@ fn split_csv(line: &str, sep: char) -> Vec<String> {
     out
 }
 
-/// Texte des mails et messages du cycle.
-pub fn reminder_mail(username: &str, days: i64, status: Status, pay_url: &str) -> (String, String) {
-    let quoi = match status {
-        Status::Trial => "ton essai gratuit",
-        Status::Offered => "ton accès offert",
-        _ => "ton abonnement",
-    };
-    let quand = match days {
-        0 | 1 => "demain".to_string(),
-        d => format!("dans {d} jours"),
-    };
-    (
-        format!("Groscailloux : {quoi} se termine {quand}"),
-        format!(
-            "Salut {username},\n\n{quoi} se termine {quand}. Pour garder l'accès sans coupure, tu peux {} ici :\n{pay_url}\n\nSi tu es déjà abonné et que ce message te surprend, réponds à ce mail : on regarde ensemble.\n\nÀ bientôt sur Groscailloux.",
-            if status == Status::Trial { "t'abonner (3,50 € par mois, sans engagement)" } else { "renouveler ou vérifier ton abonnement" },
-            quoi = capitalize(quoi),
-        ),
-    )
-}
+// ---------------------------------------------------------------------------------------------
+// Mails aux membres (gabarit sombre `mail_layout`, 2026-10-15) : fonctions pures sur des données typées ;
+// l'envoi et ses garde-fous (adresse, dry-run, `cycle_dry_run`) restent dans
+// `subscription_ops::send_member_mail`. Jamais de lien de paiement dans l'information de renouvellement ni
+// dans le mail de prélèvement échoué (un clic ferait un second abonnement, donc un second prélèvement).
+// ---------------------------------------------------------------------------------------------
 
-/// Information avant un renouvellement PayPal automatique : aucun lien de paiement (un clic ferait un
-/// second abonnement, donc un second prélèvement).
-pub fn renewal_mail(username: &str, renews_on: &str) -> (String, String) {
-    (
-        format!("Groscailloux : ton abonnement se renouvelle le {renews_on}"),
-        format!(
-            "Salut {username},\n\nPetite information : ton abonnement Premium se renouvelle automatiquement le {renews_on} par PayPal. Tu n'as rien à faire.\n\nPour le consulter ou l'arrêter : ton compte PayPal → Paiements automatiques.\n\nÀ bientôt sur Groscailloux."
-        ),
-    )
-}
+const ACCOUNT_REASON: &str = "Tu reçois ce mail parce que tu as un compte sur Groscailloux TV, le service de streaming privé entre amis. Il concerne ton accès.";
+const ACCOUNT_CONTACT: &str =
+    "Une question ? Réponds à ce mail ou écris dans « Aide et annonces ».";
+/// Compte en pause : il n'ouvre plus Jellyfin, donc plus « Aide et annonces ».
+const PAUSED_CONTACT: &str = "Une question ? Réponds simplement à ce mail.";
+const SIGN_OFF: &str = "À bientôt sur Groscailloux TV.";
+const ALREADY_SUBSCRIBED: &str =
+    "Tu as déjà un abonnement en cours ? Réponds à ce mail : on regarde ensemble.";
+const PAYPAL_NOTE: &str = "Le paiement passe par PayPal ; tu peux arrêter quand tu veux.";
 
-pub fn suspended_mail(username: &str, pay_url: &str) -> (String, String) {
-    (
-        "Groscailloux : ton accès est en pause".to_string(),
-        format!(
-            "Salut {username},\n\nTon abonnement est arrivé à échéance et ton accès est en pause. Rien n'est supprimé : ton historique, tes favoris et tes demandes t'attendent.\n\nPour reprendre, il suffit de t'abonner à nouveau :\n{pay_url}\n\nL'accès est rétabli automatiquement dès le paiement.\n\nÀ bientôt sur Groscailloux."
-        ),
-    )
-}
-
-/// Suspension d'un abonnement PayPal qui se renouvelle tout seul (prélèvement échoué, abonnement encore
-/// actif chez PayPal, qui retente) : aucun lien de paiement — un second abonnement serait débité puis
-/// refusé, et le membre resterait suspendu.
-pub fn payment_failed_mail(username: &str) -> (String, String) {
-    (
-        "Groscailloux : ton prélèvement PayPal n'est pas passé".to_string(),
-        format!(
-            "Salut {username},\n\nTon prélèvement PayPal n'est pas passé, et ton accès est en pause en attendant. Rien n'est supprimé : ton historique, tes favoris et tes demandes t'attendent.\n\nPour reprendre, mets à jour ton moyen de paiement dans ton compte PayPal → Paiements automatiques. PayPal retente le prélèvement, et l'accès revient tout seul dès qu'il passe. Inutile de t'abonner une deuxième fois : ce serait deux prélèvements.\n\nSi ce message te surprend, réponds à ce mail : on regarde ensemble.\n\nÀ bientôt sur Groscailloux."
-        ),
-    )
-}
-
-pub fn activated_mail(
-    username: &str,
-    expires_at_text: &str,
-    jellyfin_url: &str,
-) -> (String, String) {
-    (
-        "Groscailloux : ton compte Premium est actif".to_string(),
-        format!(
-            "Salut {username},\n\nMerci ! Ton abonnement est enregistré : ton compte est actif jusqu'au {expires_at_text}, et se prolonge automatiquement à chaque paiement.\n\nC'est par ici : {jellyfin_url}\n\nBon visionnage."
-        ),
-    )
+/// `[subscriptions] price_text` sous deux formes : le montant seul et le prix d'une période en toutes lettres
+/// (« 3,50 € / mois » → « 3,50 € », « 3,50 € par mois »). Un texte d'une autre forme est repris tel quel.
+pub fn price_parts(price_text: &str) -> (String, String) {
+    let p = price_text.trim();
+    let split = p.split_once('/').or_else(|| p.split_once(" par "));
+    if let Some((amount, period)) = split {
+        let (amount, period) = (amount.trim(), period.trim());
+        if !amount.is_empty() && !period.is_empty() {
+            return (amount.to_string(), format!("{amount} par {period}"));
+        }
+    }
+    (p.to_string(), p.to_string())
 }
 
 fn capitalize(s: &str) -> String {
@@ -1176,9 +1144,258 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+/// Rappel avant la fin d'un essai, d'un accès offert ou d'un abonnement qui ne se renouvelle pas tout seul.
+pub struct Reminder<'a> {
+    pub username: &'a str,
+    /// Palier de `remind_days` (jours restants) : 0 ou 1 = « demain ».
+    pub days: i64,
+    /// `Trial` = essai, `Offered` = accès offert, autre = abonnement.
+    pub status: Status,
+    /// Échéance : fin de l'essai ou de la période payée.
+    pub ends_at: i64,
+    /// Abonnement PayPal lié mais arrêté : la carte le dit (« Renouvellement automatique : arrêté »).
+    pub renewal_stopped: bool,
+    /// `[subscriptions] price_text`.
+    pub price_text: &'a str,
+    /// Lien `/premium?compte=…&k=…` (`subscription_ops::pay_url`) ; vide = pas de bouton.
+    pub pay_url: &'a str,
+}
+
+/// Rappel J-7 / J-1 : objet sans préfixe (« Ton essai se termine demain »), carte échéance et prix, bouton
+/// vers la page de paiement.
+pub fn reminder_mail(r: &Reminder) -> RenderedMail {
+    let (_, per) = price_parts(r.price_text);
+    let u = r.username;
+    let tomorrow = r.days <= 1;
+    let quand = if tomorrow {
+        "demain".to_string()
+    } else {
+        format!("dans {} jours", r.days)
+    };
+    let (short, long) = (day_month_fr(r.ends_at), date_long_fr(r.ends_at));
+    let trial = r.status == Status::Trial;
+    let new_sub = trial || r.status == Status::Offered;
+    let (eyebrow, what, end_label, button, preheader) = match r.status {
+        Status::Trial => (
+            "Essai",
+            "ton essai",
+            "Fin de l'essai",
+            "M'abonner",
+            format!("Pour continuer sans coupure : {per}, sans engagement."),
+        ),
+        Status::Offered => (
+            "Accès offert",
+            "ton accès offert",
+            "Accès jusqu'au",
+            "M'abonner",
+            format!("Ton accès court jusqu'au {short} : abonne-toi pour le garder sans coupure."),
+        ),
+        _ => (
+            "Abonnement",
+            "ton abonnement",
+            "Accès jusqu'au",
+            "Renouveler mon abonnement",
+            format!(
+                "Ton accès court jusqu'au {short} : renouvelle-le pour le garder sans coupure."
+            ),
+        ),
+    };
+    let subject = format!("{} se termine {quand}", capitalize(what));
+    let lead = if trial {
+        format!("Salut {u}, ton essai se termine {quand}. Pour continuer sans coupure, abonne-toi : {per}.")
+    } else {
+        let when = if tomorrow {
+            format!("demain ({short})")
+        } else {
+            format!("le {short}")
+        };
+        // un accès offert ne se renouvelle jamais : seule la carte dit qu'un abonnement PayPal lié est arrêté
+        let stopped = if r.renewal_stopped && !new_sub {
+            " et ne se renouvellera pas tout seul"
+        } else {
+            ""
+        };
+        let ask = if new_sub {
+            "abonne-toi ici"
+        } else {
+            "renouvelle-le ici"
+        };
+        format!("Salut {u}, {what} se termine {when}{stopped}. Pour garder l'accès sans coupure, {ask}.")
+    };
+    let price = if new_sub {
+        format!("{per}, sans engagement")
+    } else {
+        per.clone()
+    };
+    let mut rows = vec![InfoRow::new(end_label, long.as_str())];
+    let mut rows_text = vec![format!("{end_label} : {long}")];
+    if r.renewal_stopped && !trial {
+        rows.push(InfoRow::new("Renouvellement automatique", "Arrêté").tone(Tone::Warning));
+        rows_text.push("Renouvellement automatique : arrêté".into());
+    }
+    rows.push(InfoRow::new("Abonnement", price.as_str()));
+    rows_text.push(format!("Abonnement : {price}"));
+    let mut m = MailContent::new(subject.as_str(), preheader);
+    m.push(Block::header(None))
+        .push_html_only(Block::intro(eyebrow, subject))
+        .push(Block::text([lead]))
+        .push_with_text(Block::info_card(rows), rows_text.join("\n"));
+    if !r.pay_url.is_empty() {
+        m.push(Block::button(button, r.pay_url).top(24));
+    }
+    if new_sub {
+        m.push(Block::note(PAYPAL_NOTE));
+    }
+    m.push(Block::text([SIGN_OFF]).top(24))
+        .push(Block::small([ALREADY_SUBSCRIBED]).top(12))
+        .push(Block::footer(ACCOUNT_REASON, ACCOUNT_CONTACT, None));
+    m.render()
+}
+
+/// Information avant un renouvellement PayPal automatique : **aucun lien** (logo compris), la marche à suivre
+/// pour l'arrêter est écrite (compte PayPal, « Paiements automatiques »).
+pub fn renewal_mail(username: &str, renews_at: i64) -> RenderedMail {
+    let (short, long) = (day_month_fr(renews_at), date_long_fr(renews_at));
+    let mut m = MailContent::new(
+        format!("Ton abonnement se renouvelle le {short}"),
+        "Rien à faire de ton côté : le renouvellement est automatique.",
+    );
+    m.push(Block::header(None))
+        .push_html_only(Block::intro("Abonnement", format!("Renouvellement le {short}")))
+        .push(Block::text([format!("Salut {username}, petite info : ton abonnement se renouvelle automatiquement le {short} par PayPal. Tu n'as rien à faire.")]))
+        .push(Block::info_card([
+            InfoRow::new("Prochain prélèvement", long),
+            InfoRow::new("Moyen de paiement", "PayPal, automatique"),
+        ]))
+        .push(Block::notice(
+            Tone::Info,
+            "Gérer ou arrêter ton abonnement",
+            "Dans ton compte PayPal, rubrique « Paiements automatiques ».",
+        ))
+        .push(Block::text([SIGN_OFF]).top(24))
+        .push(Block::footer(ACCOUNT_REASON, ACCOUNT_CONTACT, None));
+    m.render()
+}
+
+/// Accès en pause à la fin d'un essai ou d'un abonnement qui ne se renouvelle pas : rien n'est perdu, bouton
+/// vers la page de paiement. `ended_at` = échéance dépassée (absente : « arrivé à échéance »).
+pub fn suspended_mail(
+    username: &str,
+    ended_at: Option<i64>,
+    trial: bool,
+    price_text: &str,
+    pay_url: &str,
+) -> RenderedMail {
+    let (_, per) = price_parts(price_text);
+    let (subject, eyebrow, what, button, preheader) = if trial {
+        (
+            "Ton essai est terminé",
+            "Essai",
+            "ton essai",
+            "M'abonner",
+            "Rien n'est supprimé : abonne-toi quand tu veux, l'accès revient dès le paiement.",
+        )
+    } else {
+        (
+            "Ton accès est en pause",
+            "Abonnement",
+            "ton abonnement",
+            "Reprendre mon abonnement",
+            "Rien n'est supprimé : reprends quand tu veux, l'accès revient dès le paiement.",
+        )
+    };
+    let p = match ended_at {
+        Some(t) => format!(
+            "Salut {username}, {what} a pris fin le {}.",
+            day_month_fr(t)
+        ),
+        None => format!("Salut {username}, {what} est arrivé à échéance."),
+    };
+    let mut m = MailContent::new(subject, preheader);
+    m.push(Block::header(None))
+        .push_html_only(Block::intro(eyebrow, subject))
+        .push_with_text(
+            Block::text([p.as_str()]),
+            format!("{p} Ton accès est en pause."),
+        )
+        .push(
+            Block::notice(
+                Tone::Success,
+                "Rien n'est perdu",
+                "Ton historique, tes favoris et tes demandes t'attendent.",
+            )
+            .top(20),
+        );
+    if !pay_url.is_empty() {
+        m.push(Block::button(button, pay_url).top(24));
+    }
+    m.push(Block::note(format!(
+        "{per}, sans engagement. L'accès revient tout seul dès le paiement."
+    )))
+    .push(Block::text([SIGN_OFF]).top(24))
+    .push(Block::footer(ACCOUNT_REASON, PAUSED_CONTACT, None));
+    m.render()
+}
+
+/// Suspension d'un abonnement PayPal qui se renouvelle tout seul (prélèvement échoué, abonnement encore
+/// actif chez PayPal, qui retente) : **aucun lien** — un second abonnement serait débité puis refusé, et le
+/// membre resterait suspendu. « PayPal » deux fois au plus, jamais dans l'objet.
+pub fn payment_failed_mail(username: &str) -> RenderedMail {
+    let warn = (
+        "Ne t'abonne pas une deuxième fois",
+        "Ton abonnement PayPal est toujours en place : un nouveau ferait deux prélèvements chaque mois.",
+    );
+    let mut m = MailContent::new(
+        "Ton paiement n'est pas passé : ton accès est en pause",
+        "Rien n'est supprimé : vérifie ton moyen de paiement, l'accès revient tout seul.",
+    );
+    m.push(Block::header(None))
+        .push_html_only(Block::intro("Abonnement", "Ton paiement n'est pas passé"))
+        .push(Block::text([format!("Salut {username}, le dernier prélèvement de ton abonnement n'est pas passé, et ton accès est en pause en attendant. Rien n'est supprimé : ton historique, tes favoris et tes demandes t'attendent.")]))
+        .push_with_text(Block::h2("Pour reprendre").top(28), "Pour reprendre :")
+        .push(Block::steps([
+            ("Ouvre ton compte PayPal", "Rubrique « Paiements automatiques »."),
+            ("Vérifie la carte liée à ton compte", "Mets-la à jour si elle a expiré ou changé."),
+            ("C'est tout", "Le prélèvement est retenté, et l'accès revient tout seul dès qu'il passe."),
+        ]))
+        .glue()
+        .push_with_text(
+            Block::notice(Tone::Warning, warn.0, warn.1),
+            format!("{}. {}", warn.0, warn.1),
+        )
+        .push(Block::small(["Rien ne bouge au bout de quelques jours, ou ce message te surprend ? Réponds à ce mail : on regarde ensemble."]).top(24))
+        .push(Block::footer(ACCOUNT_REASON, PAUSED_CONTACT, None));
+    m.render()
+}
+
+/// Premier paiement enregistré : compte actif jusqu'au `expires_at`, bouton vers Jellyfin.
+pub fn activated_mail(username: &str, expires_at: i64, jellyfin_url: &str) -> RenderedMail {
+    let long = date_long_fr(expires_at);
+    let mut m = MailContent::new(
+        "Ton compte Premium est actif",
+        "Merci ! Ton abonnement est enregistré : bon visionnage.",
+    );
+    m.push(Block::header(Some(jellyfin_url)))
+        .push(Block::banner(welcome_banner()))
+        .push_html_only(Block::intro("Abonnement", "Ton compte Premium est actif").top(8))
+        .push(Block::text([format!("Salut {username}, merci ! Ton abonnement est enregistré, et ton compte se prolonge automatiquement à chaque paiement.")]))
+        .push_with_text(
+            Block::info_card([
+                InfoRow::new("Actif jusqu'au", long.as_str()),
+                InfoRow::new("Renouvellement", "Automatique, par PayPal"),
+            ]),
+            format!("Actif jusqu'au : {long}\nRenouvellement : automatique, par PayPal"),
+        )
+        .push(Block::play_button("Regarder maintenant", jellyfin_url).top(24))
+        .push(Block::text(["Bon visionnage !"]).top(24))
+        .push(Block::footer(ACCOUNT_REASON, ACCOUNT_CONTACT, None));
+    m.render()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mail_layout::checks::assert_member_mail;
 
     fn cfg() -> SubsConfig {
         SubsConfig::default()
@@ -1915,18 +2132,147 @@ mod tests {
         );
     }
 
+    /// Midi UTC le 22/10/2026 : la même date dans tous les fuseaux d'Europe.
+    const OCT22: i64 = 1_792_670_400;
+    const PAY: &str = "https://premium.example.test/premium?compte=membre&k=0123456789abcdef";
+
     #[test]
     fn renewal_notice_has_no_payment_link() {
-        let (subject, body) = renewal_mail("membre", "21/10/2026");
-        assert!(subject.contains("21/10/2026") && body.contains("21/10/2026"));
-        assert!(!body.contains("http") && !body.contains("/premium"));
+        let r = renewal_mail("membre", OCT22);
+        assert_member_mail(&r);
+        assert_eq!(r.subject, "Ton abonnement se renouvelle le 22 octobre");
+        assert!(r.text.contains("le 22 octobre par PayPal") && r.text.contains("22 octobre 2026"));
+        // montant non écrit : celui de `price_text` peut différer de l'abonnement réellement prélevé
+        assert!(!r.text.contains("Montant") && r.text.contains("Paiements automatiques"));
+        assert!(!r.text.contains("http") && !r.text.contains("/premium"));
+        // aucun lien dans le HTML, logo compris
+        assert!(!r.html.contains("<a ") && !r.html.contains("/premium"));
     }
 
     #[test]
     fn failed_charge_suspension_has_no_payment_link() {
-        let (subject, body) = payment_failed_mail("membre");
-        assert!(subject.contains("PayPal") && body.contains("Paiements automatiques"));
-        assert!(!body.contains("http") && !body.contains("/premium"));
+        let r = payment_failed_mail("membre");
+        assert_member_mail(&r);
+        assert!(!r.subject.contains("PayPal") && r.subject.contains("en pause"));
+        assert!(r.text.contains("Paiements automatiques") && r.text.contains("deux prélèvements"));
+        assert!(!r.text.contains("http") && !r.text.contains("/premium"));
+        assert!(!r.html.contains("<a ") && !r.html.contains("/premium"));
+        assert!(r.text.matches("PayPal").count() <= 2 && r.html.matches("PayPal").count() <= 2);
+    }
+
+    #[test]
+    fn reminders_say_what_ends_when_and_carry_the_pay_link() {
+        let trial = Reminder {
+            username: "membre",
+            days: 1,
+            status: Status::Trial,
+            ends_at: OCT22,
+            renewal_stopped: false,
+            price_text: "3,50 € / mois",
+            pay_url: PAY,
+        };
+        let r = reminder_mail(&trial);
+        assert_member_mail(&r);
+        assert_eq!(r.subject, "Ton essai se termine demain");
+        assert!(r.text.starts_with("Salut membre, ton essai se termine demain. Pour continuer sans coupure, abonne-toi : 3,50 € par mois."));
+        assert!(r.text.contains(
+            "Fin de l'essai : 22 octobre 2026\nAbonnement : 3,50 € par mois, sans engagement\n"
+        ));
+        assert!(r.text.contains(&format!("M'abonner :\n{PAY}\n")));
+        assert!(r.html.contains(&PAY.replace('&', "&amp;")));
+        assert!(r.text.contains("passe par PayPal"));
+
+        let stopped = reminder_mail(&Reminder {
+            days: 7,
+            status: Status::Active,
+            renewal_stopped: true,
+            ..trial
+        });
+        assert_member_mail(&stopped);
+        assert_eq!(stopped.subject, "Ton abonnement se termine dans 7 jours");
+        assert!(stopped
+            .text
+            .contains("se termine le 22 octobre et ne se renouvellera pas tout seul"));
+        assert!(stopped.text.contains("Accès jusqu'au : 22 octobre 2026\nRenouvellement automatique : arrêté\nAbonnement : 3,50 € par mois\n"));
+        assert!(stopped
+            .text
+            .contains(&format!("Renouveler mon abonnement :\n{PAY}")));
+        assert!(!stopped.text.contains("passe par PayPal"));
+
+        let offered = reminder_mail(&Reminder {
+            status: Status::Offered,
+            ..trial
+        });
+        assert_eq!(offered.subject, "Ton accès offert se termine demain");
+        assert!(offered.text.contains(
+            "se termine demain (22 octobre). Pour garder l'accès sans coupure, abonne-toi ici."
+        ));
+
+        // sans lien de paiement connu : pas de bouton (jamais un bouton vers « # »)
+        let nolink = reminder_mail(&Reminder {
+            pay_url: "",
+            ..trial
+        });
+        assert_member_mail(&nolink);
+        assert!(!nolink.html.contains("<a ") && !nolink.text.contains("M'abonner"));
+
+        let evil = reminder_mail(&Reminder {
+            username: "<i>x</i>",
+            ..trial
+        });
+        assert!(evil.html.contains("&lt;i&gt;x&lt;/i&gt;") && !evil.html.contains("<i>x</i>"));
+    }
+
+    #[test]
+    fn suspension_and_activation_mails() {
+        let r = suspended_mail("membre", Some(OCT22), false, "3,50 € / mois", PAY);
+        assert_member_mail(&r);
+        assert_eq!(r.subject, "Ton accès est en pause");
+        assert!(r.text.starts_with(
+            "Salut membre, ton abonnement a pris fin le 22 octobre. Ton accès est en pause.\n"
+        ));
+        assert!(r
+            .text
+            .contains(&format!("Reprendre mon abonnement :\n{PAY}")));
+        assert!(
+            r.text.contains("3,50 € par mois, sans engagement")
+                && r.text.contains("Rien n'est perdu")
+        );
+        let t = suspended_mail("membre", Some(OCT22), true, "3,50 € / mois", PAY);
+        assert_member_mail(&t);
+        assert_eq!(t.subject, "Ton essai est terminé");
+        assert!(
+            t.text.contains("ton essai a pris fin le 22 octobre") && t.text.contains("M'abonner :")
+        );
+        let n = suspended_mail("membre", None, false, "3,50 € / mois", PAY);
+        assert!(n.text.contains("ton abonnement est arrivé à échéance."));
+
+        let a = activated_mail("membre", OCT22, "https://tv.example.test");
+        assert_member_mail(&a);
+        assert_eq!(a.subject, "Ton compte Premium est actif");
+        assert!(a.text.contains("Actif jusqu'au : 22 octobre 2026\n"));
+        assert!(a
+            .text
+            .contains("Regarder maintenant :\nhttps://tv.example.test\n"));
+        assert!(!a.text.contains("/premium"));
+        assert_eq!(a.images.len(), 2, "logo et bandeau");
+    }
+
+    #[test]
+    fn price_text_gives_the_amount_and_the_monthly_price() {
+        for p in [
+            "3,50 € / mois",
+            "3,50 €/mois",
+            "3,50 € par mois",
+            " 3,50 € / mois ",
+        ] {
+            assert_eq!(
+                price_parts(p),
+                ("3,50 €".to_string(), "3,50 € par mois".to_string()),
+                "{p}"
+            );
+        }
+        assert_eq!(price_parts("5 €"), ("5 €".to_string(), "5 €".to_string()));
     }
 
     #[test]

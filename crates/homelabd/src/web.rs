@@ -15,8 +15,10 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Json, Router};
 use homelab_core::accounts::{self, Outcome};
+use homelab_core::chat;
 use homelab_core::config::Donation;
 use homelab_core::mail;
+use homelab_core::mail_samples;
 use homelab_core::subscription_ops;
 use homelab_core::subscriptions::{self, Status as SubStatus};
 use homelab_core::tasks::onboard::{self, OnboardRequest};
@@ -84,6 +86,7 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/accounts/link", post(accounts_link))
         .route("/admin/link", post(admin_link))
         .route("/admin/mail-test", post(admin_mail_test))
+        .route("/admin/mail-test/announce", post(admin_mail_test_announce))
         .route("/admin/run", post(admin_run))
         .route("/admin/accounts", post(admin_accounts))
         .route("/admin/vo-native", post(admin_vo_native))
@@ -1494,9 +1497,23 @@ async fn admin_link(
 #[derive(Deserialize)]
 struct MailTestBody {
     to: String,
+    /// Un exemple de chaque mail aux membres (`homelabctl mail-test --all`).
+    #[serde(default)]
+    all: bool,
+    /// Ces types seulement (`--kind`, voir `mail_samples::KINDS`).
+    #[serde(default)]
+    kinds: Vec<String>,
 }
 
-/// POST /admin/mail-test (jeton en en-tête) : mail de bienvenue d'exemple, lien de démonstration.
+/// `homelabctl mail-test <adresse> --announce <fichier>` : auteur déjà choisi par la CLI (`--author` ou premier
+/// modérateur), texte brut tel que `chat announce` l'enverrait.
+#[derive(Deserialize)]
+struct AnnouncePreviewBody {
+    to: String,
+    author: String,
+    body: String,
+}
+
 #[derive(Deserialize)]
 struct RunBody {
     task: String,
@@ -1636,6 +1653,11 @@ async fn admin_vo_native(
     }
 }
 
+/// `POST /admin/mail-test` (jeton en en-tête). `{to}` : mail de bienvenue d'exemple, lien de démonstration.
+/// `{to, all: true}` ou `{to, kinds: [...]}` : exemples des mails aux membres (`mail_samples`), à 2 s d'écart ;
+/// réponse `{success, results: [{kind, subject, origin, sent, error?}]}` une fois le dernier parti (une à deux
+/// minutes pour tous). Aucun compte ni abonnement touché ; seul un lien de démonstration est émis si un des mails
+/// en porte un.
 async fn admin_mail_test(
     State(st): State<AppState>,
     headers: HeaderMap,
@@ -1647,6 +1669,9 @@ async fn admin_mail_test(
     let to = b.to.trim().to_lowercase();
     if !onboard::valid_email(&to) {
         return fail(StatusCode::BAD_REQUEST, "adresse invalide").into_response();
+    }
+    if b.all || !b.kinds.is_empty() {
+        return mail_samples_send(&st.ctx, &to, b.all, &b.kinds).await;
     }
     match welcome::send(&st.ctx, "demo", "Exemple", &to, welcome::KIND_DEMO, true).await {
         Ok(sent) => {
@@ -1660,6 +1685,119 @@ async fn admin_mail_test(
         }
         Err(e) => fail(StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
     }
+}
+
+/// `POST /admin/mail-test/announce` (jeton en en-tête) `{to, author, body}` : aperçu d'une annonce, le mail exact
+/// que `POST /admin/chat/announce` avec `email_members` enverrait aux membres (même auteur, même texte, même
+/// fonction, même enveloppe), objet « [Aperçu] … », à `to` seulement. Route à part : un homelabd plus ancien répond
+/// 404 au lieu d'envoyer le mail de bienvenue d'exemple. Ce gestionnaire n'a ni la base ni l'état du tchat : il ne
+/// peut rien publier, ni dans le tchat ni sur Discord. Réponse `{success, results: [Sent], author, origin}`.
+async fn admin_mail_test_announce(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<AnnouncePreviewBody>,
+) -> Response {
+    if !accounts_allowed(&st, header_token(&headers)) {
+        return fail(StatusCode::UNAUTHORIZED, "jeton manquant ou invalide").into_response();
+    }
+    let ctx = &st.ctx;
+    let to = b.to.trim().to_lowercase();
+    if !onboard::valid_email(&to) {
+        return fail(StatusCode::BAD_REQUEST, "adresse invalide").into_response();
+    }
+    let Some(smtp) = &ctx.secrets.smtp else {
+        return fail(StatusCode::SERVICE_UNAVAILABLE, "SMTP absent de .env").into_response();
+    };
+    let author = match chat::announcement_author(ctx, &b.author).await {
+        Ok(u) => u,
+        Err(e) => {
+            if let chat::AuthorError::Jellyfin(cause) = &e {
+                warn!(
+                    task = "chat",
+                    error = format!("{cause:#}"),
+                    "announcement preview: jellyfin unreachable"
+                );
+            }
+            let status = StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::BAD_GATEWAY);
+            return fail(status, e.to_string()).into_response();
+        }
+    };
+    let sample = match mail_samples::announcement_sample(
+        &author.name,
+        &b.body,
+        &ctx.secrets.jellyfin_public_url,
+        ctx.cfg.chat.max_chars,
+    ) {
+        Ok(s) => s,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    let origin = sample.origin.clone();
+    let results: Vec<mail_samples::Sent> = if ctx.dry_run {
+        vec![mail_samples::Sent {
+            kind: sample.kind,
+            subject: sample.mail.subject.clone(),
+            origin: origin.clone(),
+            sent: false,
+            error: Some("dry-run : non envoyé".into()),
+        }]
+    } else {
+        mail_samples::send(smtp, &to, &[sample], mail_samples::SEND_GAP).await
+    };
+    let sent = results.iter().all(|r| r.sent);
+    // jamais l'adresse dans le journal
+    info!(task = "chat", author = %author.name, sent, "announcement preview mailed");
+    Json(json!({ "success": true, "results": results, "author": author.name, "origin": origin }))
+        .into_response()
+}
+
+/// Exemples des mails aux membres envoyés à `to` (voir `admin_mail_test`).
+async fn mail_samples_send(ctx: &TaskContext, to: &str, all: bool, kinds: &[String]) -> Response {
+    let kinds = match mail_samples::select(all, kinds) {
+        Ok(k) => k,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, format!("{e:#}")).into_response(),
+    };
+    let Some(smtp) = &ctx.secrets.smtp else {
+        return fail(StatusCode::SERVICE_UNAVAILABLE, "SMTP absent de .env").into_response();
+    };
+    let link = if !mail_samples::needs_link(&kinds) {
+        None
+    } else if ctx.dry_run {
+        Some(welcome::url(&welcome::link_base(ctx), "dry-run"))
+    } else {
+        match welcome::issue(ctx, "demo", mail_samples::NAME, to, welcome::KIND_DEMO).await {
+            Ok(token) => Some(welcome::url(&welcome::link_base(ctx), &token)),
+            Err(e) => {
+                return fail(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("lien de démonstration : {e:#}"),
+                )
+                .into_response()
+            }
+        }
+    };
+    let samples = mail_samples::build(ctx, &kinds, link).await;
+    let results: Vec<mail_samples::Sent> = if ctx.dry_run {
+        samples
+            .iter()
+            .map(|s| mail_samples::Sent {
+                kind: s.kind,
+                subject: s.mail.subject.clone(),
+                origin: s.origin.clone(),
+                sent: false,
+                error: Some("dry-run : non envoyé".into()),
+            })
+            .collect()
+    } else {
+        mail_samples::send(smtp, to, &samples, mail_samples::SEND_GAP).await
+    };
+    let failed = results.iter().filter(|r| !r.sent).count();
+    info!(
+        task = "onboard",
+        kinds = results.len(),
+        failed,
+        "mail-test : exemples des mails aux membres"
+    );
+    Json(json!({ "success": true, "results": results })).into_response()
 }
 
 /// POST /accounts/link : renvoie un lien de bienvenue (définir ou changer son mot de passe).
@@ -1801,6 +1939,40 @@ async fn onboard_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Un homelabctl d'avant `--all` n'envoie que `to` : mail de bienvenue d'exemple, comme avant.
+    #[test]
+    fn mail_test_body_without_kinds_is_the_welcome_sample() {
+        let b: MailTestBody = serde_json::from_value(json!({ "to": "a@example.test" })).unwrap();
+        assert!(!b.all && b.kinds.is_empty());
+        let b: MailTestBody =
+            serde_json::from_value(json!({ "to": "a@example.test", "kinds": ["demo"] })).unwrap();
+        assert!(!b.all && b.kinds == ["demo"]);
+        let b: MailTestBody =
+            serde_json::from_value(json!({ "to": "a@example.test", "all": true })).unwrap();
+        assert!(b.all);
+    }
+
+    /// Aperçu d'une annonce : les trois champs sont requis (un homelabctl qui en oublierait un est refusé).
+    #[test]
+    fn announce_preview_body_needs_address_author_and_text() {
+        let b: AnnouncePreviewBody = serde_json::from_value(
+            json!({ "to": "a@example.test", "author": "Admin", "body": "Titre\n\nTexte" }),
+        )
+        .unwrap();
+        assert_eq!(
+            (b.to.as_str(), b.author.as_str(), b.body.as_str()),
+            ("a@example.test", "Admin", "Titre\n\nTexte")
+        );
+        for missing in ["to", "author", "body"] {
+            let mut v = json!({ "to": "a@example.test", "author": "Admin", "body": "x" });
+            v.as_object_mut().unwrap().remove(missing);
+            assert!(
+                serde_json::from_value::<AnnouncePreviewBody>(v).is_err(),
+                "{missing}"
+            );
+        }
+    }
 
     #[test]
     fn premium_page_fills_every_placeholder() {

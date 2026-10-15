@@ -14,6 +14,7 @@ use crate::alerts::{self, Level};
 use crate::clients::paypal::EventFacts;
 use crate::context::TaskContext;
 use crate::mail;
+use crate::mail_layout::RenderedMail;
 use crate::state::now;
 use crate::subscriptions::{self as subs, Action, Reconcile, Status, Subscriber, DAY};
 
@@ -468,11 +469,7 @@ pub async fn on_payment(ctx: &TaskContext, facts: &EventFacts, actor: &str) -> R
                 ctx,
                 &sub.user_id,
                 &sub.username,
-                subs::activated_mail(
-                    &sub.username,
-                    &date_text(new_exp),
-                    &ctx.secrets.jellyfin_public_url,
-                ),
+                subs::activated_mail(&sub.username, new_exp, &ctx.secrets.jellyfin_public_url),
             )
             .await;
         }
@@ -667,11 +664,14 @@ pub async fn admin_extend(ctx: &TaskContext, user_id: &str, days: i64, actor: &s
     Ok(new)
 }
 
+/// Mail d'abonnement à un membre (gabarit [`crate::mail_layout`], rendu par les fonctions pures de
+/// [`crate::subscriptions`]) : rien sans SMTP ni adresse valide, journal seulement en dry-run ou
+/// `cycle_dry_run`. Sans `Reply-To` : une réponse arrive à l'adresse d'envoi.
 async fn send_member_mail(
     ctx: &TaskContext,
     user_id: &str,
     username: &str,
-    (subject, body): (String, String),
+    m: RenderedMail,
 ) -> bool {
     let Some(smtp) = &ctx.secrets.smtp else {
         return false;
@@ -684,10 +684,10 @@ async fn send_member_mail(
         }
     };
     if ctx.dry_run || ctx.cfg.subscriptions.cycle_dry_run {
-        info!(task = "subs", user = %username, subject, "dry-run: mail membre non envoyé");
+        info!(task = "subs", user = %username, subject = %m.subject, "dry-run: mail membre non envoyé");
         return false;
     }
-    match mail::send_plain(smtp, username, &to, &subject, &body).await {
+    match mail::send_rendered(smtp, username, &to, &m, None, &[]).await {
         Ok(()) => true,
         Err(e) => {
             warn!(task = "subs", user = %username, error = format!("{e:#}"), "mail membre en échec");
@@ -738,7 +738,15 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
                         ctx,
                         &s.user_id,
                         &s.username,
-                        subs::reminder_mail(&s.username, d, s.status, &pay_url(ctx, &s.username)),
+                        subs::reminder_mail(&subs::Reminder {
+                            username: &s.username,
+                            days: d,
+                            status: s.status,
+                            ends_at: s.expires_at.unwrap_or(t + d * DAY),
+                            renewal_stopped: s.paypal_sub_id.is_some() && !subs::auto_renews(&s),
+                            price_text: &cfg.price_text,
+                            pay_url: &pay_url(ctx, &s.username),
+                        }),
                     )
                     .await;
                     if !dry {
@@ -757,7 +765,7 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
                         ctx,
                         &s.user_id,
                         &s.username,
-                        subs::renewal_mail(&s.username, &on),
+                        subs::renewal_mail(&s.username, s.expires_at.unwrap_or(t)),
                     )
                     .await;
                     if !dry {
@@ -808,7 +816,13 @@ pub async fn run_cycle(ctx: &TaskContext) -> Result<(String, u32)> {
                                 let mail = if subs::auto_renews(&s) {
                                     subs::payment_failed_mail(&s.username)
                                 } else {
-                                    subs::suspended_mail(&s.username, &pay_url(ctx, &s.username))
+                                    subs::suspended_mail(
+                                        &s.username,
+                                        s.expires_at,
+                                        subs::is_trial(&s),
+                                        &cfg.price_text,
+                                        &pay_url(ctx, &s.username),
+                                    )
                                 };
                                 send_member_mail(ctx, &s.user_id, &s.username, mail).await;
                                 lines.push(format!("suspendu : {}", s.username));

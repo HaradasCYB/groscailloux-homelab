@@ -39,7 +39,7 @@ accessible à tout moment sur `https://<onboarder>/premiers-pas`, et le guide co
 | --- | --- |
 | Lien expiré ou perdu | `/accounts` → **Renvoyer** sur sa ligne, ou `homelabctl accounts link <pseudo>`. La page expirée propose aussi d'en recevoir un nouveau (3 par heure). |
 | Mot de passe oublié | Même lien (définir = changer). Connecté, il peut aussi le faire depuis **Mon compte**. |
-| Mail pas reçu | Dossier spam ; sinon « Renvoyer ». Le mail part de l'adresse `SMTP_FROM`. Tester sans toucher de compte : `homelabctl mail-test <adresse de l'expéditeur>`. |
+| Mail pas reçu | Dossier spam ; sinon « Renvoyer ». Le mail part de l'adresse `SMTP_FROM`. Tester sans toucher de compte : `homelabctl mail-test <adresse>` (bienvenue) ou `--all` (chaque mail aux membres, objet « [Exemple] ») ; `--dump <dossier>` les écrit sans rien envoyer. |
 | Connexion sur une télé | Appli **Jellyfin** du store de la télé → adresse du serveur → **Quick Connect** : un code s'affiche, le membre le valide depuis son téléphone (Jellyfin → profil → Quick Connect). Pas de clavier à taper. |
 | « Lire sur » vide | Normal si aucun autre appareil n'est ouvert **avec le même compte**. Chromecast : seulement Chrome sur ordinateur et l'appli Android du Play Store. |
 | Lecture qui saccade | Le bandeau « Réduire la qualité » apparaît au 3ᵉ blocage ; la qualité revient en Auto à la lecture suivante. |

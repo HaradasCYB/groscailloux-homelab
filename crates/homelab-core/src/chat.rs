@@ -15,6 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::config::Chat as ChatConfig;
+use crate::mail_layout::{Block, MailContent, RenderedMail};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Channel {
@@ -654,30 +655,167 @@ pub fn moderator_digest(msgs: &[Message], jellyfin_url: &str) -> (String, String
     (subject, body)
 }
 
-/// Mail d'une annonce aux membres : (sujet, corps).
-pub fn announcement_mail(author: &str, text: &str, jellyfin_url: &str) -> (String, String) {
-    let first: String = text.lines().next().unwrap_or("").chars().take(70).collect();
-    let subject = format!("Groscailloux : {first}");
-    let body = format!(
-        "{text}\n\n— {author}\n\nAnnonce publiee dans \"Aide et annonces\" sur Groscailloux : {jellyfin_url}\n\
-         (bulle en haut a droite, onglet Annonces).\n"
-    );
-    (subject, body)
+// Mails aux membres (gabarit sombre `mail_layout`, 2026-10-15) : fonctions pures. Le texte du modérateur est
+// échappé par le gabarit (ligne vide = paragraphe, retour simple = `<br>`) et repris tel quel dans le texte brut.
+
+/// Titre d'une annonce dans son mail : la première ligne si elle est courte et suivie d'autre chose.
+const ANNOUNCE_TITLE_MAX: usize = 70;
+const ANNOUNCE_REASON: &str = "Tu reçois ce mail parce que tu as un compte sur Groscailloux TV, le service de streaming privé entre amis : les annonces importantes sont aussi envoyées par mail.";
+const ANNOUNCE_CONTACT: &str =
+    "Une question ? Réponds à ce mail ou écris dans « Aide et annonces ».";
+
+/// Début de l'objet d'un aperçu d'annonce (`homelabctl mail-test --announce`) : le reste est le vrai mail.
+pub const PREVIEW_PREFIX: &str = "[Aperçu] ";
+
+/// Texte publié et envoyé d'une annonce (`POST /admin/chat/announce`, aperçu) : même nettoyage qu'un message
+/// ordinaire, sans plafond (le tchat la découpe ensuite par [`split_parts`] ; Discord et le mail l'ont entière).
+pub fn announcement_text(raw: &str) -> std::result::Result<String, &'static str> {
+    validate_body(raw, usize::MAX)
 }
 
-/// Mail d'un message privé de l'admin à un membre : (sujet, corps).
-pub fn direct_mail(author: &str, member: &str, text: &str, jellyfin_url: &str) -> (String, String) {
-    let subject = "Groscailloux : un message de l'admin pour toi".to_string();
-    let body = format!(
-        "Salut {member},\n\n{text}\n\n— {author}\n\nTu peux repondre dans \"Aide et annonces\" sur Groscailloux : {jellyfin_url}\n\
-         (bulle en haut a droite, onglet \"Ecrire a l'admin\").\n"
+/// Pourquoi l'auteur d'une annonce est refusé (403, 404, 502 pour homelabd).
+#[derive(Debug)]
+pub enum AuthorError {
+    /// Absent de `[chat] moderators` (vérifié avant tout appel à Jellyfin).
+    NotModerator,
+    /// Aucun compte Jellyfin de ce nom.
+    NotFound,
+    /// Liste des comptes Jellyfin illisible.
+    Jellyfin(anyhow::Error),
+}
+
+impl std::fmt::Display for AuthorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotModerator => "l'auteur n'est pas modérateur",
+            Self::NotFound => "compte modérateur introuvable",
+            Self::Jellyfin(_) => "Jellyfin injoignable",
+        })
+    }
+}
+
+impl std::error::Error for AuthorError {}
+
+impl AuthorError {
+    /// Code HTTP de la réponse de homelabd : 403, 404 ou 502.
+    pub fn http_status(&self) -> u16 {
+        match self {
+            Self::NotModerator => 403,
+            Self::NotFound => 404,
+            Self::Jellyfin(_) => 502,
+        }
+    }
+}
+
+/// Première condition pour l'auteur d'une annonce : être listé dans `[chat] moderators` (sans casse).
+pub fn require_moderator(
+    requested: &str,
+    moderators: &[String],
+) -> std::result::Result<(), AuthorError> {
+    if is_listed(requested, moderators) {
+        Ok(())
+    } else {
+        Err(AuthorError::NotModerator)
+    }
+}
+
+/// Auteur d'une annonce d'après le compte Jellyfin trouvé (`find_user`, sans casse) : son id normalisé et son nom
+/// tel que Jellyfin l'écrit.
+pub fn author_from_jellyfin(
+    requested: &str,
+    found: Option<&serde_json::Value>,
+) -> std::result::Result<ChatUser, AuthorError> {
+    let jf = found.ok_or(AuthorError::NotFound)?;
+    let s = |k: &str| jf.get(k).and_then(serde_json::Value::as_str);
+    Ok(ChatUser {
+        id: normalize_id(s("Id").unwrap_or("")),
+        name: s("Name").unwrap_or(requested).to_string(),
+        moderator: true,
+    })
+}
+
+/// Auteur d'une annonce : listé dans `[chat] moderators` (sinon refus, sans appeler Jellyfin), puis compte Jellyfin
+/// (lecture seule). Partagé par `POST /admin/chat/announce` et l'aperçu.
+pub async fn announcement_author(
+    ctx: &crate::context::TaskContext,
+    requested: &str,
+) -> std::result::Result<ChatUser, AuthorError> {
+    require_moderator(requested, &ctx.cfg.chat.moderators)?;
+    let found = ctx
+        .jellyfin
+        .find_user(requested)
+        .await
+        .map_err(AuthorError::Jellyfin)?;
+    author_from_jellyfin(requested, found.as_ref())
+}
+
+/// Mail d'une annonce aux membres. Objet = première ligne (70 caractères au plus) ; dans le HTML, elle sert
+/// de titre et le reste va dans la carte, sauf si l'annonce tient en une ligne (titre « Nouvelle annonce »,
+/// texte entier dans la carte). Le texte brut garde l'annonce entière.
+pub fn announcement_mail(author: &str, text: &str, jellyfin_url: &str) -> RenderedMail {
+    let text = text.replace("\r\n", "\n");
+    let text = text.trim();
+    let first = text.lines().next().unwrap_or("").trim();
+    let rest = text.split_once('\n').map(|(_, r)| r.trim()).unwrap_or("");
+    let subject = if first.is_empty() {
+        "Nouvelle annonce".to_string()
+    } else {
+        crate::mail_layout::cut(first, ANNOUNCE_TITLE_MAX)
+    };
+    let titled = !rest.is_empty() && first.chars().count() <= ANNOUNCE_TITLE_MAX;
+    let (h1, card, preheader) = if titled {
+        (first.to_string(), rest, crate::mail_layout::cut(rest, 100))
+    } else {
+        (
+            "Nouvelle annonce".to_string(),
+            text,
+            "Nouvelle annonce dans « Aide et annonces » sur Groscailloux TV.".to_string(),
+        )
+    };
+    let mut m = MailContent::new(subject, preheader);
+    m.push(Block::header(Some(jellyfin_url)))
+        .push_html_only(Block::intro("Annonce", h1))
+        .push_with_text(Block::message_card(card, author), format!("{text}\n\n— {author}"))
+        .push_with_text(
+            Block::button("Lire dans « Aide et annonces »", jellyfin_url),
+            format!("Annonce publiée dans « Aide et annonces » sur Groscailloux TV : {jellyfin_url}\n(bulle en haut à droite, onglet « Annonces »)"),
+        )
+        .push_html_only(Block::note(
+            "Sur Groscailloux TV : bulle en haut à droite, onglet « Annonces ».",
+        ))
+        .push(Block::footer(ANNOUNCE_REASON, ANNOUNCE_CONTACT, None));
+    m.render()
+}
+
+/// Mail d'un message privé de l'admin à un membre (copie de ce qui est dans son fil « Écrire à l'admin »).
+pub fn direct_mail(author: &str, member: &str, text: &str, jellyfin_url: &str) -> RenderedMail {
+    let mut m = MailContent::new(
+        "Un message de l'admin pour toi",
+        crate::mail_layout::cut(text, 100),
     );
-    (subject, body)
+    m.push(Block::header(Some(jellyfin_url)))
+        .push_html_only(Block::intro("Aide et annonces", "Un message de l'admin"))
+        .push(Block::text([format!("Salut {member},")]))
+        .push(Block::message_card(text, author).top(16))
+        .push_with_text(
+            Block::button("Répondre dans « Aide et annonces »", jellyfin_url),
+            format!("Répondre dans « Aide et annonces » : {jellyfin_url}\n(bulle en haut à droite, onglet « Écrire à l'admin »)"),
+        )
+        .push_html_only(Block::note(
+            "Sur Groscailloux TV : bulle en haut à droite, onglet « Écrire à l'admin ».",
+        ))
+        .push(Block::footer(
+            "Tu reçois ce mail parce que l'admin de Groscailloux TV t'a écrit dans « Aide et annonces ».",
+            "Tu peux aussi répondre directement à ce mail.",
+            None,
+        ));
+    m.render()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mail_layout::checks::assert_member_mail;
 
     fn cfg() -> ChatConfig {
         ChatConfig::default()
@@ -865,16 +1003,128 @@ mod tests {
         };
         let digest = moderator_digest(&[msg], "https://jf");
         assert!(digest.0.contains("Aide et annonces") && digest.1.contains("Aide et annonces"));
-        let announce = announcement_mail("Admin", "Maintenance dimanche", "https://jf");
-        assert!(announce.0.starts_with("Groscailloux : Maintenance"));
-        assert!(announce.1.contains("Aide et annonces") && announce.1.contains("onglet Annonces"));
-        let direct = direct_mail("Admin", "Nina", "salut", "https://jf");
-        assert!(direct.1.contains("Aide et annonces") && direct.1.contains("Ecrire a l'admin"));
-        for (subject, body) in [&digest, &announce, &direct] {
-            for t in [subject, body] {
+        let announce =
+            announcement_mail("Admin", "Maintenance dimanche", "https://jf.example.test");
+        assert_eq!(announce.subject, "Maintenance dimanche");
+        assert!(
+            announce.text.contains("Aide et annonces")
+                && announce.text.contains("onglet « Annonces »")
+        );
+        let direct = direct_mail("Admin", "Nina", "salut", "https://jf.example.test");
+        assert!(
+            direct.text.contains("Aide et annonces") && direct.text.contains("Écrire à l'admin")
+        );
+        for t in [&digest.0, &digest.1] {
+            assert!(!t.to_lowercase().contains("tchat"), "ancien nom : {t}");
+        }
+        for m in [&announce, &direct] {
+            for t in [&m.subject, &m.text, &m.html] {
                 assert!(!t.to_lowercase().contains("tchat"), "ancien nom : {t}");
             }
         }
+    }
+
+    /// Mails riches aux membres (2026-10-15) : texte du modérateur échappé et gardé entier, titre d'annonce.
+    #[test]
+    fn member_mails_keep_the_whole_text_escaped() {
+        let jf = "https://jf.example.test";
+        let text = "Maintenance samedi matin\n\nSamedi 17 octobre, entre 7 h et 8 h, le serveur redémarre.\nLa lecture sera coupée <b>quelques</b> minutes.\n\nMerci pour ta patience !";
+        let a = announcement_mail("L'admin", text, jf);
+        assert_member_mail(&a);
+        assert_eq!(a.subject, "Maintenance samedi matin");
+        assert!(a.text.starts_with(&format!("{text}\n\n— L'admin\n\n")));
+        assert!(a.text.contains(&format!("Groscailloux TV : {jf}\n")));
+        // titre = première ligne, carte = le reste (paragraphes et retours à la ligne gardés)
+        assert!(a.html.contains("Maintenance samedi matin</h1>"));
+        assert!(a.html.contains("redémarre.<br>La lecture"));
+        assert!(a.html.contains("&lt;b&gt;quelques&lt;/b&gt;") && !a.html.contains("<b>quelques"));
+        // une seule ligne : titre « Nouvelle annonce », texte entier dans la carte
+        let one = announcement_mail("L'admin", "Le serveur redémarre ce soir à 23 h.", jf);
+        assert_member_mail(&one);
+        assert_eq!(one.subject, "Le serveur redémarre ce soir à 23 h.");
+        assert!(one.html.contains("Nouvelle annonce</h1>"));
+        // première ligne trop longue pour un objet : coupée au mot
+        let long = format!("{} fin\n\nsuite", "mot ".repeat(30));
+        let l = announcement_mail("L'admin", &long, jf);
+        assert!(l.subject.chars().count() <= 70 && l.subject.ends_with('…'));
+        assert!(l.html.contains("Nouvelle annonce</h1>"));
+
+        let d = direct_mail(
+            "L'admin",
+            "<Nina>",
+            "Ta saison arrive samedi.\n\nÀ bientôt",
+            jf,
+        );
+        assert_member_mail(&d);
+        assert_eq!(d.subject, "Un message de l'admin pour toi");
+        assert!(d.text.starts_with(
+            "Salut <Nina>,\n\nTa saison arrive samedi.\n\nÀ bientôt\n\n— L'admin\n\n"
+        ));
+        assert!(d.html.contains("Salut &lt;Nina&gt;,") && !d.html.contains("<Nina>"));
+        assert!(d
+            .text
+            .contains(&format!("Répondre dans « Aide et annonces » : {jf}\n")));
+    }
+
+    /// Une URL du message devient un lien dans la carte des deux mails du tchat ; ni l'objet ni le titre ne sont
+    /// reliés, le texte brut garde l'URL telle quelle.
+    #[test]
+    fn announcement_and_direct_mails_link_urls() {
+        let jf = "https://jf.example.test";
+        let text = "Nouvelle adresse, rien à changer\n\nTout est dans le guide : https://o.example.test/guide#nouvelle-adresse.\n\nBon visionnage !";
+        let a = announcement_mail("Admin", text, jf);
+        assert_member_mail(&a);
+        assert_eq!(a.subject, "Nouvelle adresse, rien à changer");
+        let link = r#"<a class="gc-n" href="https://o.example.test/guide#nouvelle-adresse" style="color:#5aa6ff;text-decoration:underline;word-break:break-all;">https://o.example.test/guide#nouvelle-adresse</a>."#;
+        assert!(a.html.contains(link));
+        assert!(a.html.contains("Nouvelle adresse, rien à changer</h1>"));
+        assert!(a
+            .text
+            .contains("guide : https://o.example.test/guide#nouvelle-adresse.\n"));
+        let d = direct_mail("Admin", "Nina", text.split_once("\n\n").unwrap().1, jf);
+        assert_member_mail(&d);
+        assert!(d.html.contains(link));
+        // titre d'une annonce d'une seule ligne : pas de lien dans le h1, seulement dans la carte
+        let one = announcement_mail("Admin", "Le guide : https://o.example.test/guide", jf);
+        let h1 = &one.html[one.html.find("<h1").unwrap()..one.html.find("</h1>").unwrap()];
+        assert!(h1.ends_with(">Nouvelle annonce") && !h1.contains("<a"));
+        let titled = &a.html[a.html.find("<h1").unwrap()..a.html.find("</h1>").unwrap()];
+        assert!(!titled.contains("<a"));
+        assert!(one.html.contains(">https://o.example.test/guide</a>"));
+    }
+
+    /// Auteur d'une annonce : modérateur d'abord (sans appel Jellyfin), puis le compte tel que Jellyfin l'écrit.
+    #[test]
+    fn announcement_author_is_a_moderator_known_to_jellyfin() {
+        let mods = vec!["Admin".to_string()];
+        assert!(require_moderator("admin", &mods).is_ok());
+        let e = require_moderator("Nina", &mods).unwrap_err();
+        assert!(matches!(e, AuthorError::NotModerator));
+        assert_eq!(e.to_string(), "l'auteur n'est pas modérateur");
+        assert_eq!(e.http_status(), 403);
+        let e = author_from_jellyfin("admin", None).unwrap_err();
+        assert!(matches!(e, AuthorError::NotFound));
+        assert_eq!(e.to_string(), "compte modérateur introuvable");
+        assert_eq!(e.http_status(), 404);
+        let jf = serde_json::json!({"Name": "Admin", "Id": "AB12-CD34-EF56"});
+        assert_eq!(
+            author_from_jellyfin("admin", Some(&jf)).unwrap(),
+            ChatUser {
+                id: "ab12cd34ef56".into(),
+                name: "Admin".into(),
+                moderator: true
+            }
+        );
+        let e = AuthorError::Jellyfin(anyhow::anyhow!("délai dépassé"));
+        assert_eq!(e.to_string(), "Jellyfin injoignable");
+        assert_eq!(e.http_status(), 502);
+        // texte d'une annonce : nettoyé comme un message, sans plafond
+        assert_eq!(
+            announcement_text("  a \r\n\n\n\n\nb  ").unwrap(),
+            "a\n\n\nb"
+        );
+        assert_eq!(announcement_text(&"x".repeat(5000)).unwrap().len(), 5000);
+        assert_eq!(announcement_text(" \n ").unwrap_err(), "message vide");
     }
 
     #[test]
@@ -898,14 +1148,16 @@ mod tests {
         s.insert(&pa, &m, "rappel", 30).unwrap();
         s.insert(&pa, &a, "merci !", 40).unwrap(); // répondre = avoir lu ce qui précède
         assert!(s.latest_unread_from_moderator("a", &pa).unwrap().is_none());
-        let (subject, body) = direct_mail(
-            "Haradas",
+        let r = direct_mail(
+            "L'admin",
             "Nina",
             "ta période d'essai se termine samedi",
-            "https://jf",
+            "https://jf.example.test",
         );
         assert!(
-            subject.contains("admin") && body.starts_with("Salut Nina,") && body.contains("samedi")
+            r.subject.contains("admin")
+                && r.text.starts_with("Salut Nina,")
+                && r.text.contains("samedi")
         );
     }
 

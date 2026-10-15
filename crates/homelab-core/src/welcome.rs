@@ -8,7 +8,7 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 
 use crate::context::TaskContext;
-use crate::html::esc;
+use crate::mail_layout::{welcome_banner, Block, MailContent, Para, RenderedMail, Tone};
 use crate::state::{now, WelcomeLink};
 
 pub const KIND_WELCOME: &str = "welcome";
@@ -146,6 +146,14 @@ pub async fn consume(ctx: &TaskContext, token: &str) -> Result<()> {
 }
 
 /// URL publique de la page pour un jeton.
+/// Hôte des pages de bienvenue : `ONBOARD_PUBLIC_URL`, sinon l'adresse d'écoute de homelabd.
+pub fn link_base(ctx: &TaskContext) -> String {
+    ctx.secrets
+        .onboard_public_url
+        .clone()
+        .unwrap_or_else(|| format!("http://{}", ctx.cfg.web.listen))
+}
+
 pub fn url(base: &str, token: &str) -> String {
     format!("{}/bienvenue/{token}", base.trim_end_matches('/'))
 }
@@ -297,89 +305,202 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Mails de bienvenue / d'activation : un bouton vers la page, rien d'autre de sensible.
+// Mails de bienvenue / d'activation (gabarit sombre `mail_layout`, 2026-10-15) : un bouton vers la page du
+// lien (ou vers Jellyfin), rien d'autre de sensible. Fonctions pures : le banc d'essai les rend sans rien émettre.
 // ---------------------------------------------------------------------------------------------
 
-const MAIL_HTML: &str = include_str!("../assets/mail/welcome.html");
+const WELCOME_REASON: &str = "Tu reçois ce mail parce qu'un compte a été créé pour cette adresse sur Groscailloux TV, le service de streaming privé entre amis. Si ce n'est pas toi, ignore-le : personne ne pourra utiliser ce compte sans le lien.";
+const ACTIVATED_REASON: &str = "Tu reçois ce mail parce que ton compte vient d'être activé sur Groscailloux TV, le service de streaming privé entre amis.";
+const CONTACT_REPLY: &str = "Une question ? Réponds simplement à ce mail.";
+/// « Sur quel écran ? » : quoi installer, sans identifiant ; le détail est sur `/premiers-pas`.
+const SCREENS: [(&str, &str); 3] = [
+    ("Télé", "L'appli « Jellyfin » du store de la télé (ou d'une clé Fire TV / Google TV). Connexion par un code « Quick Connect » validé depuis ton téléphone."),
+    ("Téléphone", "« Jellyfin Mobile » sur iPhone, « Jellyfin » sur le Play Store."),
+    ("Ordinateur", "Ton navigateur, ou l'appli « Jellyfin Desktop »."),
+];
 
-/// Texte d'un mail de lien : sujet, version texte, version HTML.
-pub struct Rendered {
-    pub subject: String,
-    pub text: String,
-    pub html: String,
+/// Encadré du mail de bienvenue, sous le lien.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WelcomeNotice {
+    /// Compte déjà actif (démo, compte que la suspension n'a pas pu mettre en pause) : pas d'encadré.
+    None,
+    /// Compte créé suspendu : « sera activé par l'administrateur… tu recevras un mail ».
+    Activation,
+    /// Inscription avec essai gratuit de `days` jours (prêt pour le jour où l'inscription saura qu'un essai
+    /// démarre avant d'envoyer le mail ; pas encore utilisé par l'envoi).
+    Trial { days: u32 },
 }
 
-/// Contenu du mail selon le type de lien. `premium` = compte déjà actif.
-pub fn render(kind: &str, username: &str, link: &str, ttl_mins: u64, premium: bool) -> Rendered {
-    let (subject, heading, intro, button, outro) = match kind {
-        KIND_ACTIVATED => (
-            "Ton compte Groscailloux est actif".to_string(),
-            format!("C'est bon, {username} !"),
-            "Ton compte vient d'être activé : tu peux regarder films et séries dès maintenant.".to_string(),
-            "Ouvrir Groscailloux".to_string(),
-            "Si tu n'as pas encore choisi ton mot de passe, le bouton t'amène d'abord sur la page pour le définir. Une question ? Réponds simplement à ce mail.".to_string(),
-        ),
-        _ => (
-            "Bienvenue sur Groscailloux : définis ton mot de passe".to_string(),
-            format!("Bienvenue, {username} !"),
-            "Ton compte est créé. Il ne reste qu'à choisir ton mot de passe, et tu retrouveras ensuite tes accès sur la même page.".to_string(),
-            "Définir mon mot de passe".to_string(),
-            if premium {
-                "Une question ? Réponds simplement à ce mail.".to_string()
-            } else {
-                "Ton compte sera activé par l'administrateur sous peu : tu recevras un mail à ce moment-là. Une question ? Réponds simplement à ce mail.".to_string()
+/// Où mène le bouton du mail « ton compte est actif ».
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivatedButton<'a> {
+    /// Mot de passe déjà choisi (dernier lien consommé) : Jellyfin directement, aucun lien émis.
+    Jellyfin(&'a str),
+    /// Pas encore de mot de passe : nouveau lien de bienvenue, valable `ttl_mins` minutes.
+    Link { url: &'a str, ttl_mins: u64 },
+}
+
+/// Page des premiers pas (`<base>/premiers-pas`), sur l'hôte de la page de bienvenue.
+pub fn steps_url(base: &str) -> String {
+    format!("{}/premiers-pas", base.trim_end_matches('/'))
+}
+
+fn validity(ttl_mins: u64) -> String {
+    format!("Ce lien est valable {ttl_mins} minutes et ne sert qu'une fois. Passé ce délai, la page te proposera d'en recevoir un nouveau.")
+}
+
+/// « Sur quel écran ? », la carte des trois écrans et le lien vers les premiers pas.
+fn push_screens(m: &mut MailContent, steps_url: &str) {
+    m.push(Block::h2("Sur quel écran ?"))
+        .push(Block::list_card(SCREENS))
+        .glue()
+        .push_with_text(
+            Block::small([Para::new()
+                .text("Tout est expliqué pas à pas : ")
+                .link("les premiers pas", steps_url)
+                .text(".")])
+            .top(12),
+            format!("Tout est expliqué pas à pas : {steps_url}"),
+        )
+        .glue();
+}
+
+/// Mail de bienvenue (et de démonstration) : un bouton vers la page où le membre choisit son mot de passe,
+/// le lien de secours, l'encadré éventuel, les écrans. Le lien apparaît 3 fois dans le HTML (bouton, lien de
+/// secours en `href` et en texte), une fois dans le texte.
+pub fn welcome_mail(
+    username: &str,
+    link: &str,
+    steps_url: &str,
+    ttl_mins: u64,
+    notice: WelcomeNotice,
+) -> RenderedMail {
+    let mut m = MailContent::new(
+        "Bienvenue sur Groscailloux TV : définis ton mot de passe",
+        format!("Choisis ton mot de passe pour ouvrir ton compte : le lien est valable {ttl_mins} minutes."),
+    );
+    m.push(Block::header(None))
+        .push(Block::banner(welcome_banner()))
+        .push(Block::intro("Ton compte est créé", format!("Bienvenue, {username} !")).top(8))
+        .push(Block::text(["Il ne reste qu'à choisir ton mot de passe. Tu retrouveras ensuite tes accès sur la même page."]))
+        .push_with_text(
+            Block::button("Définir mon mot de passe", link).top(24),
+            format!("Définir mon mot de passe : {link}"),
+        )
+        .push(Block::note(validity(ttl_mins)))
+        .push(Block::fallback_link(link));
+    match notice {
+        WelcomeNotice::None => {}
+        WelcomeNotice::Activation => {
+            m.push(Block::notice(
+                Tone::Info,
+                "Activation",
+                "Ton compte sera activé par l'administrateur sous peu. Tu recevras un mail à ce moment-là.",
+            ));
+        }
+        WelcomeNotice::Trial { days } => {
+            m.push(Block::notice(
+                Tone::Success,
+                format!("Ton essai de {days} jours a commencé"),
+                "Dès que ton mot de passe est choisi, films et séries sont à toi.",
+            ));
+        }
+    }
+    push_screens(&mut m, steps_url);
+    m.push(Block::footer(WELCOME_REASON, CONTACT_REPLY, None));
+    m.render()
+}
+
+/// Mail « ton compte est actif » : bouton vers Jellyfin si le mot de passe est déjà choisi (logo cliquable,
+/// ni validité ni lien de secours), sinon vers un nouveau lien de bienvenue (3 fois dans le HTML, comme la
+/// bienvenue).
+pub fn activated_mail(username: &str, steps_url: &str, button: ActivatedButton) -> RenderedMail {
+    let mut m;
+    match button {
+        ActivatedButton::Jellyfin(home) => {
+            m = MailContent::new(
+                "Ton compte Groscailloux TV est actif",
+                "Films et séries t'attendent : ouvre Groscailloux TV quand tu veux.",
+            );
+            m.push(Block::header(Some(home)))
+                .push(Block::banner(welcome_banner()))
+                .push(Block::intro("Compte activé", format!("C'est bon, {username} !")).top(8))
+                .push(Block::text(["Ton compte vient d'être activé : tu peux regarder films et séries dès maintenant, avec ton mot de passe habituel."]))
+                .push_with_text(
+                    Block::button("Ouvrir Groscailloux TV", home).top(24),
+                    format!("Ouvrir Groscailloux TV : {home}"),
+                );
+        }
+        ActivatedButton::Link { url, ttl_mins } => {
+            m = MailContent::new(
+                "Ton compte Groscailloux TV est actif",
+                "Tu peux regarder films et séries dès maintenant.",
+            );
+            m.push(Block::header(None))
+                .push(Block::banner(welcome_banner()))
+                .push(Block::intro("Compte activé", format!("C'est bon, {username} !")).top(8))
+                .push(Block::text(["Ton compte vient d'être activé : tu peux regarder films et séries dès maintenant."]))
+                .push_with_text(
+                    Block::button("Ouvrir Groscailloux TV", url).top(24),
+                    format!("Ouvrir Groscailloux TV : {url}"),
+                )
+                .push(Block::note(format!(
+                    "Pas encore de mot de passe ? Le bouton t'amène d'abord sur la page pour le choisir. Sinon, connecte-toi avec ton mot de passe habituel. {}",
+                    validity(ttl_mins)
+                )))
+                .push(Block::fallback_link(url));
+        }
+    }
+    push_screens(&mut m, steps_url);
+    m.push(Block::footer(ACTIVATED_REASON, CONTACT_REPLY, None));
+    m.render()
+}
+
+/// Contenu du mail d'un lien selon son type : bienvenue et démo (`premium` = compte déjà actif, sans encadré
+/// « activation »), ou activation d'un compte sans mot de passe. Les premiers pas sont sur l'hôte du lien.
+pub fn render(
+    kind: &str,
+    username: &str,
+    link: &str,
+    ttl_mins: u64,
+    premium: bool,
+) -> RenderedMail {
+    let steps = steps_url(link.split("/bienvenue/").next().unwrap_or(link));
+    match kind {
+        KIND_ACTIVATED => activated_mail(
+            username,
+            &steps,
+            ActivatedButton::Link {
+                url: link,
+                ttl_mins,
             },
         ),
-    };
-    let validity = format!("Ce lien est valable {ttl_mins} minutes et ne sert qu'une fois. Passé ce délai, la page te proposera d'en recevoir un nouveau.");
-    // « Sur quel écran ? » : quoi installer, sans identifiant ; le détail est sur /premiers-pas (même hôte que le lien)
-    let steps_url = format!(
-        "{}/premiers-pas",
-        link.split("/bienvenue/")
-            .next()
-            .unwrap_or(link)
-            .trim_end_matches('/')
-    );
-    let screens = [
-        ("Télé", "l'appli « Jellyfin » du store de la télé (ou d'une clé Fire TV / Google TV) ; connexion par un code « Quick Connect » validé depuis ton téléphone."),
-        ("Téléphone", "« Jellyfin Mobile » sur iPhone, « Jellyfin » sur le Play Store."),
-        ("Ordinateur", "ton navigateur, ou l'appli « Jellyfin Desktop »."),
-    ];
-    let screens_text = screens
-        .iter()
-        .map(|(k, v)| format!("- {k} : {v}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let screens_html = screens
-        .iter()
-        .map(|(k, v)| {
-            format!(
-                r#"<li style="margin:0 0 6px;"><b>{}</b> : {}</li>"#,
-                esc(k),
-                esc(v)
+        _ => welcome_mail(
+            username,
+            link,
+            &steps,
+            ttl_mins,
+            if premium {
+                WelcomeNotice::None
+            } else {
+                WelcomeNotice::Activation
+            },
+        ),
+    }
+}
+
+/// Mot de passe déjà choisi : le dernier lien du compte (hors démo) a été consommé. Un compte sans lien connu
+/// (lien purgé, compte d'avant les liens) n'est pas présumé en avoir un : il reçoit un nouveau lien, comme avant.
+async fn password_chosen(ctx: &TaskContext, user_id: &str) -> bool {
+    let t = now();
+    ctx.state
+        .read(|st| {
+            matches!(
+                status_for(st.welcome_links.values(), user_id, t),
+                LinkStatus::Used { .. }
             )
         })
-        .collect::<String>();
-    let footer = "Tu reçois ce mail parce qu'un compte a été créé pour cette adresse sur Groscailloux, un service privé de streaming entre amis. Si ce n'est pas toi, ignore-le : rien ne sera activé sans le lien.";
-    let text = format!(
-        "{heading}\n\n{intro}\n\n{button} : {link}\n\n{validity}\n\nSur quel écran ?\n{screens_text}\nTout est expliqué pas à pas : {steps_url}\n\n{outro}\n\n— Groscailloux\n{footer}\n"
-    );
-    let html = MAIL_HTML
-        .replace("{{title}}", &esc(&subject))
-        .replace("{{heading}}", &esc(&heading))
-        .replace("{{intro}}", &esc(&intro))
-        .replace("{{button}}", &esc(&button))
-        .replace("{{validity}}", &esc(&validity))
-        .replace("{{outro}}", &esc(&outro))
-        .replace("{{screens}}", &screens_html)
-        .replace("{{steps_url}}", &esc(&steps_url))
-        .replace("{{footer}}", footer)
-        .replace("{{link}}", &esc(link));
-    Rendered {
-        subject,
-        text,
-        html,
-    }
+        .await
 }
 
 /// Ce que renvoie l'émission d'un lien : l'URL (à ne jamais journaliser) et l'échéance.
@@ -391,6 +512,8 @@ pub struct Sent {
 
 /// Émet un lien pour ce compte et envoie le mail correspondant. Sans SMTP, le lien est émis quand même
 /// (l'admin peut le transmettre à la main). En dry-run : rien n'est écrit ni envoyé, l'URL est factice.
+/// Activation d'un compte dont le mot de passe est déjà choisi : aucun lien émis, le bouton mène à Jellyfin
+/// (l'URL renvoyée est alors celle de Jellyfin).
 pub async fn send(
     ctx: &TaskContext,
     user_id: &str,
@@ -400,10 +523,7 @@ pub async fn send(
     premium: bool,
 ) -> Result<Sent> {
     let s = &ctx.secrets;
-    let base = s
-        .onboard_public_url
-        .clone()
-        .unwrap_or_else(|| format!("http://{}", ctx.cfg.web.listen));
+    let base = link_base(ctx);
     let ttl = ctx.cfg.onboard.link_ttl_mins;
     if ctx.dry_run {
         return Ok(Sent {
@@ -412,9 +532,21 @@ pub async fn send(
             mail_sent: false,
         });
     }
-    let token = issue(ctx, user_id, username, email, kind).await?;
-    let link = url(&base, &token);
-    let expires_at = now() + (ttl as i64) * 60;
+    let to_jellyfin = kind == KIND_ACTIVATED && password_chosen(ctx, user_id).await;
+    let (link, expires_at, mail) = if to_jellyfin {
+        let home = s.jellyfin_public_url.clone();
+        let mail = activated_mail(
+            username,
+            &steps_url(&base),
+            ActivatedButton::Jellyfin(&home),
+        );
+        (home, now(), mail)
+    } else {
+        let token = issue(ctx, user_id, username, email, kind).await?;
+        let link = url(&base, &token);
+        let mail = render(kind, username, &link, ttl, premium);
+        (link, now() + (ttl as i64) * 60, mail)
+    };
     let Some(smtp) = &s.smtp else {
         return Ok(Sent {
             url: link,
@@ -422,21 +554,30 @@ pub async fn send(
             mail_sent: false,
         });
     };
-    let r = render(kind, username, &link, ttl, premium);
+    // `GUIDE_CONTACT_EMAIL` en `Reply-To` seulement s'il est sur le domaine d'envoi (`mail::reply_to_kept`) : sinon
+    // une réponse arrive à l'adresse d'envoi
     let reply_to = s.guide_contact_email.as_deref();
-    let mail_sent = match crate::mail::send_html(
-        smtp, username, email, &r.subject, &r.text, &r.html, reply_to,
-    )
-    .await
+    let mail_sent = match crate::mail::send_rendered(smtp, username, email, &mail, reply_to, &[])
+        .await
     {
         Ok(()) => true,
         Err(e) => {
             tracing::warn!(task = "onboard", username = %username, error = format!("{e:#}"), "link mail failed");
+            let what = if crate::mail::maybe_sent(&e) {
+                "est peut-être parti (réponse du serveur perdue : demander au membre avant de transmettre quoi que ce soit)"
+            } else {
+                "n'est pas parti"
+            };
+            let body = if to_jellyfin {
+                format!("Le mail ({kind}) pour {username} {what} ({e:#}). Aucun lien à transmettre : son mot de passe est déjà choisi.")
+            } else {
+                format!("Le mail ({kind}) pour {username} {what} ({e:#}). Lien à transmettre à la main : {link}")
+            };
             crate::alerts::admin(
                 ctx,
                 crate::alerts::Level::Error,
                 &format!("Mail de bienvenue non parti : {username}"),
-                &format!("Le mail ({kind}) pour {username} n'est pas parti ({e}). Lien à transmettre à la main : {link}"),
+                &body,
             )
             .await;
             false
@@ -452,46 +593,92 @@ pub async fn send(
 #[cfg(test)]
 mod mail_tests {
     use super::*;
+    use crate::mail_layout::checks::assert_member_mail;
+
+    const LINK: &str = "https://x.test/bienvenue/Xq3vN8pL2rT6yW0aZ4cE7gJ1kM5oR9sU2wY6bD8fH0j";
 
     #[test]
     fn welcome_mail_has_one_link_and_no_credentials() {
-        let r = render(
-            KIND_WELCOME,
-            "léa",
-            "https://x.test/bienvenue/abc",
-            60,
-            false,
-        );
+        let r = render(KIND_WELCOME, "léa", LINK, 60, false);
+        assert_member_mail(&r);
         assert_eq!(
             r.subject,
-            "Bienvenue sur Groscailloux : définis ton mot de passe"
+            "Bienvenue sur Groscailloux TV : définis ton mot de passe"
         );
-        assert!(r.text.contains("https://x.test/bienvenue/abc"));
+        assert!(r
+            .text
+            .contains(&format!("Définir mon mot de passe : {LINK}")));
         assert!(r.text.contains("activé par l'administrateur"));
-        assert_eq!(r.html.matches("https://x.test/bienvenue/abc").count(), 3); // bouton + lien de secours (href + texte)
+        assert_eq!(r.html.matches(LINK).count(), 3); // bouton + lien de secours (href + texte)
+        assert_eq!(r.text.matches(LINK).count(), 1);
         for bad in ["Password", "Username :", "spam", "duckdns", "Reset"] {
             assert!(!r.text.contains(bad) && !r.html.contains(bad), "{bad}");
         }
-        assert!(!r.html.contains("{{"));
         // quoi installer, avec le lien vers les premiers pas (même hôte que le lien)
         assert!(
             r.text.contains("Sur quel écran ?") && r.text.contains("https://x.test/premiers-pas")
         );
         assert!(r.html.contains("Quick Connect") && r.html.contains("https://x.test/premiers-pas"));
+        assert!(r.text.contains("valable 60 minutes"));
+        // logo et bandeau joints, rien d'autre
+        assert_eq!(r.images.len(), 2);
+        // compte déjà actif (ou démo) : pas d'encadré « activation »
+        let demo = render(KIND_DEMO, "Exemple", LINK, 60, true);
+        assert_member_mail(&demo);
+        assert!(demo.text.starts_with("Bienvenue, Exemple !"));
+        assert!(
+            !demo.text.contains("activé par l'administrateur") && !demo.html.contains("Activation")
+        );
     }
 
     #[test]
     fn activated_mail_for_premium_account() {
-        let r = render(
-            KIND_ACTIVATED,
-            "bob",
-            "https://x.test/bienvenue/t",
-            60,
-            true,
-        );
-        assert_eq!(r.subject, "Ton compte Groscailloux est actif");
+        // pas encore de mot de passe : nouveau lien, comme la bienvenue
+        let r = render(KIND_ACTIVATED, "bob", LINK, 60, true);
+        assert_member_mail(&r);
+        assert_eq!(r.subject, "Ton compte Groscailloux TV est actif");
         assert!(r.html.contains("Ouvrir Groscailloux"));
         assert!(!r.text.contains("activé par l'administrateur"));
+        assert_eq!(r.html.matches(LINK).count(), 3);
+        // mot de passe peut-être déjà choisi (lien purgé après 7 jours) : texte conditionnel
+        assert!(
+            r.text.contains("Pas encore de mot de passe ?")
+                && r.text.contains("ton mot de passe habituel")
+                && r.text.contains("valable 60 minutes")
+        );
+        assert!(!r.text.contains("Il ne reste qu'à choisir"));
+        // mot de passe déjà choisi : Jellyfin, sans lien de bienvenue ni validité
+        let jf = activated_mail(
+            "bob",
+            "https://x.test/premiers-pas",
+            ActivatedButton::Jellyfin("https://tv.x.test"),
+        );
+        assert_member_mail(&jf);
+        assert_eq!(jf.subject, r.subject);
+        assert!(jf.html.contains("Ouvrir Groscailloux"));
+        assert!(jf
+            .text
+            .contains("Ouvrir Groscailloux TV : https://tv.x.test\n"));
+        assert!(!jf.html.contains("/bienvenue/") && !jf.text.contains("/bienvenue/"));
+        assert!(!jf.text.contains("valable"));
+        assert!(jf.html.contains("https://x.test/premiers-pas"));
+    }
+
+    #[test]
+    fn trial_notice_replaces_the_activation_promise() {
+        let r = welcome_mail(
+            "léa",
+            LINK,
+            "https://x.test/premiers-pas",
+            60,
+            WelcomeNotice::Trial { days: 7 },
+        );
+        assert_member_mail(&r);
+        assert!(r
+            .text
+            .contains("Ton essai de 7 jours a commencé : dès que ton mot de passe est choisi"));
+        assert!(!r.text.contains("activé par l'administrateur"));
+        assert_eq!(r.html.matches(LINK).count(), 3);
     }
 
     #[test]
@@ -499,5 +686,33 @@ mod mail_tests {
         let r = render(KIND_WELCOME, "<b>x</b>", "https://x.test/b/t", 60, true);
         assert!(r.html.contains("&lt;b&gt;x&lt;/b&gt;"));
         assert!(!r.html.contains("<b>x</b>"));
+    }
+
+    #[test]
+    fn only_a_consumed_last_link_means_the_password_is_chosen() {
+        let l = |kind: &str, used: Option<i64>| WelcomeLink {
+            user_id: "a".into(),
+            username: "a".into(),
+            email: "a@example.test".into(),
+            kind: kind.into(),
+            created_at: 10,
+            expires_at: 20,
+            used_at: used,
+        };
+        let used = [l(KIND_WELCOME, Some(15))];
+        assert!(matches!(
+            status_for(&used, "a", 30),
+            LinkStatus::Used { .. }
+        ));
+        for links in [
+            vec![l(KIND_WELCOME, None)],
+            vec![l(KIND_DEMO, Some(15))],
+            vec![],
+        ] {
+            assert!(!matches!(
+                status_for(&links, "a", 30),
+                LinkStatus::Used { .. }
+            ));
+        }
     }
 }

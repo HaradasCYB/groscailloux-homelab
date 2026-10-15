@@ -12,7 +12,7 @@ fait quoi, par où passent les fichiers et ce qui se passe quand un élément to
 | Rôle | diffusion, recherche, automatisation, bibliothèque historique | tous les téléchargements, stockage des nouveautés |
 | Machine | VPS dédié · Ubuntu 26.04 · 6 vCPU · 17 Go + swap 4 Go · pas de GPU | seedbox partagée (plateforme Ultra.cc) · pas de root |
 | Stockage | 969 Go ext4 (médias historiques, état des services) | quota de 3,7 To (l'espace libre est celui du quota, pas du disque partagé) |
-| Services | 21 conteneurs Docker + `homelabd` (Rust, 31 tâches) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Bazarr, Unpackerr, Jackett, FlareSolverr (conteneurs) |
+| Services | 21 conteneurs Docker + `homelabd` (Rust, 33 tâches) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Bazarr, Unpackerr, Jackett, FlareSolverr (conteneurs) |
 
 Lien entre les deux : latence ~97 ms, 8 à 10 Mo/s par connexion (~30 Mo/s à quatre) ; API en HTTPS, fichiers en
 SFTP (lecture + suppression, aucune écriture).
@@ -27,7 +27,7 @@ flowchart LR
   subgraph VPS
     direction TB
     subgraph host[Hôte · systemd]
-      homelabd["homelabd<br/>31 tâches + watcher<br/>pages membres et admin"]
+      homelabd["homelabd<br/>33 tâches + watcher<br/>pages membres et admin"]
       rclone["rclone mount<br/>SFTP · cache 120 Go"]
       stack["homelab-stack · backup hebdo<br/>purge transcodes (1 min)"]
     end

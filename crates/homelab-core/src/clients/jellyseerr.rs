@@ -173,9 +173,15 @@ impl JellyseerrClient {
 
     /// Toutes les fiches média (paginé par 100) : un média sans demande = demande retirée par l'admin.
     pub async fn all_media(&self) -> Result<Vec<Value>> {
+        Ok(self.all_media_counted().await?.0)
+    }
+
+    /// Comme [`Self::all_media`], avec le total annoncé par Jellyseerr (`pageInfo.results` de la dernière page lue) :
+    /// une liste qui en compte moins est incomplète. Chaque fiche porte ses saisons (`seasons[].status`).
+    pub async fn all_media_counted(&self) -> Result<(Vec<Value>, u64)> {
         let mut out = Vec::new();
         let mut skip = 0u32;
-        loop {
+        let announced = loop {
             let resp = self
                 .req(Method::GET, "api/v1/media")
                 .query(&[
@@ -193,23 +199,42 @@ impl JellyseerrClient {
                 .unwrap_or_default();
             let n = page.len() as u32;
             out.extend(page);
-            let total = v
+            let announced = v
                 .pointer("/pageInfo/results")
                 .and_then(Value::as_u64)
-                .unwrap_or(0) as u32;
+                .unwrap_or(0);
             skip += n;
-            if n == 0 || skip >= total {
-                break;
+            if n == 0 || u64::from(skip) >= announced {
+                break announced;
             }
+        };
+        Ok((out, announced))
+    }
+
+    /// Une demande par son id ; `None` si Jellyseerr répond 404 (demande retirée). Sert à confirmer qu'une demande
+    /// absente de la liste paginée n'existe vraiment plus (une suppression pendant la lecture fait glisser les pages).
+    pub async fn request_by_id(&self, id: i64) -> Result<Option<Value>> {
+        let resp = self
+            .req(Method::GET, &format!("api/v1/request/{id}"))
+            .send_retry()
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
         }
-        Ok(out)
+        Ok(Some(json(resp, "jellyseerr request/{id}").await?))
     }
 
     /// Toutes les requêtes (paginé par 100), tous statuts confondus.
     pub async fn all_requests(&self) -> Result<Vec<Value>> {
+        Ok(self.all_requests_counted().await?.0)
+    }
+
+    /// Comme [`Self::all_requests`], avec le total annoncé par Jellyseerr (`pageInfo.results` de la dernière page
+    /// lue) : une liste qui en compte moins (demande ajoutée ou retirée pendant la lecture) est incomplète.
+    pub async fn all_requests_counted(&self) -> Result<(Vec<Value>, u64)> {
         let mut out = Vec::new();
         let mut skip = 0u32;
-        loop {
+        let announced = loop {
             let resp = self
                 .req(Method::GET, "api/v1/request")
                 .query(&[
@@ -227,16 +252,34 @@ impl JellyseerrClient {
                 .unwrap_or_default();
             let n = page.len() as u32;
             out.extend(page);
-            let total = v
+            let announced = v
                 .pointer("/pageInfo/results")
                 .and_then(Value::as_u64)
-                .unwrap_or(0) as u32;
+                .unwrap_or(0);
             skip += n;
-            if n == 0 || skip >= total {
-                break;
+            if n == 0 || u64::from(skip) >= announced {
+                break announced;
             }
-        }
-        Ok(out)
+        };
+        Ok((out, announced))
+    }
+
+    /// Types de notifications par mail choisis par un compte Jellyseerr (`notificationTypes.email`, masque de bits :
+    /// 8 = « disponible ») ; `None` quand le compte n'a jamais rien choisi (Jellyseerr envoie alors tout). La réponse
+    /// porte d'autres réglages du compte (identifiants Discord, Telegram…) : seul ce champ en est lu, rien n'est
+    /// journalisé.
+    pub async fn email_notification_types(&self, user_id: i64) -> Result<Option<i64>> {
+        let resp = self
+            .req(
+                Method::GET,
+                &format!("api/v1/user/{user_id}/settings/notifications"),
+            )
+            .send_retry()
+            .await?;
+        Ok(json(resp, "jellyseerr user/{id}/settings/notifications")
+            .await?
+            .pointer("/notificationTypes/email")
+            .and_then(Value::as_i64))
     }
 }
 
@@ -266,5 +309,37 @@ mod tests {
         );
         assert_eq!(original_language_of(&json!({"title": "x"})), "");
         assert_eq!(original_language_of(&json!({"originalLanguage": null})), "");
+    }
+
+    /// Une demande retirée (404) n'est pas une erreur ; une panne, si.
+    #[tokio::test]
+    async fn request_by_id_tells_gone_from_failing() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/request/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 7})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/request/8"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/request/9"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let c = JellyseerrClient::new(
+            &format!("{}/", server.uri()),
+            Secret::new("k"),
+            reqwest::Client::new(),
+        )
+        .unwrap();
+        assert_eq!(c.request_by_id(7).await.unwrap().unwrap()["id"], 7);
+        assert!(c.request_by_id(8).await.unwrap().is_none());
+        assert!(c.request_by_id(9).await.is_err());
     }
 }

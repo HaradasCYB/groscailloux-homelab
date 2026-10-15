@@ -560,6 +560,8 @@ pub struct Tasks {
     pub backup_watch: BackupWatch,
     #[serde(default)]
     pub diun_watch: Interval86400,
+    #[serde(default)]
+    pub media_mail: MediaMail,
 }
 
 /// Certificat TLS des hôtes publics et chaîne NPM → Jellyfin (voir `tasks::cert_watch`).
@@ -1088,6 +1090,52 @@ impl Default for OriginalLanguage {
     }
 }
 
+/// Mails « ta demande est disponible » aux membres (`tasks::media_mail`, 2026-10-15), en remplacement de ceux de
+/// Jellyseerr : un film, une saison ou plusieurs titres d'un coup, avec affiche et fond.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct MediaMail {
+    pub interval_secs: u64,
+    /// `false` = rien n'est envoyé aux membres : chaque mail qui serait parti est journalisé (et copié à
+    /// `MEDIA_MAIL_PREVIEW_TO` si `.env` le donne), puis noté comme traité. Passer à `true` n'envoie donc jamais
+    /// l'arriéré, seulement ce qui devient disponible ensuite.
+    pub send_to_members: bool,
+    /// Mails au plus par passage (les suivants attendent le passage d'après).
+    pub max_mails_per_run: usize,
+    /// Regroupement par membre : un titre attend que plus rien de neuf ne soit arrivé pour ce membre depuis
+    /// `settle_mins`, sans jamais attendre plus de `max_hold_mins` (saisons d'une intégrale, films demandés ensemble).
+    pub settle_mins: i64,
+    pub max_hold_mins: i64,
+    /// Devenu disponible (selon Jellyseerr) il y a plus longtemps : jamais envoyé (daemon arrêté, état restauré).
+    pub max_age_hours: i64,
+    /// Plus de N minutes sans passage noté dans l'état (état restauré d'une sauvegarde, daemon longtemps arrêté) : ce
+    /// qui est devenu disponible pendant l'écart est noté `stale`, jamais envoyé (l'état perdu l'avait peut-être
+    /// envoyé), et ce qui attendait avant lui passe en `sent_uncertain`. Un redémarrage ou une installation ne dure que
+    /// quelques minutes. Doit rester bien au-dessus de `interval_secs` : `validate` refuse une valeur qui ne dépasse
+    /// pas `interval_secs` + la durée maximale d'un passage (`RUN_TIMEOUT`, 10 min).
+    pub max_gap_mins: i64,
+    /// Après un envoi en échec, nouvel essai au bout de ces délais successifs (minutes), puis abandon et alerte admin.
+    pub retry_mins: Vec<i64>,
+    /// Une clé dont la demande a disparu de Jellyseerr est oubliée au bout de ce délai.
+    pub keep_days: i64,
+}
+
+impl Default for MediaMail {
+    fn default() -> Self {
+        Self {
+            interval_secs: 300,
+            send_to_members: false,
+            max_mails_per_run: 5,
+            settle_mins: 10,
+            max_hold_mins: 60,
+            max_age_hours: 48,
+            max_gap_mins: 120,
+            retry_mins: vec![15, 60, 240],
+            keep_days: 90,
+        }
+    }
+}
+
 /// Remise en service des indexeurs mis en pause par Sonarr/Radarr après des échecs.
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields, default)]
@@ -1612,11 +1660,62 @@ fn d_backups() -> PathBuf {
 /// Charge `.env` dans l'environnement du processus, sans écraser une variable déjà définie (`EnvironmentFile` de
 /// systemd). Fichier absent : rien à faire, l'environnement suffit. À appeler AVANT [`Config::load`] : les valeurs de
 /// `homelab.toml` peuvent citer des variables de `.env` (`${SEEDBOX_HOME}`…).
+///
+/// Une ligne mal formée n'est jamais citée dans l'erreur (l'erreur de `dotenvy` contient la ligne entière, donc un
+/// secret, qui finissait dans journald) : seulement son numéro.
 pub fn load_env_file(p: &Path) -> Result<()> {
-    if p.is_file() {
-        dotenvy::from_path(p).with_context(|| format!("lecture de {}", p.display()))?;
+    if !p.is_file() {
+        return Ok(());
     }
-    Ok(())
+    let raw = std::fs::read_to_string(p).with_context(|| format!("lecture de {}", p.display()))?;
+    load_env_text(&raw).with_context(|| format!("lecture de {}", p.display()))
+}
+
+/// Charge le contenu d'un `.env` (mêmes règles que `dotenvy::from_path`) ; erreur sans contenu de ligne.
+fn load_env_text(raw: &str) -> Result<()> {
+    let text = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+    match dotenvy::from_read(text.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(dotenvy::Error::LineParse(..)) => match env_error_line(text) {
+            Some(n) => bail!("ligne {n} de .env mal formée (contenu masqué)"),
+            None => bail!("une ligne de .env est mal formée (contenu masqué)"),
+        },
+        // une erreur d'entrée-sortie ne cite pas le fichier ; les autres variantes pourraient citer une valeur
+        Err(dotenvy::Error::Io(e)) => Err(anyhow::Error::new(e)),
+        Err(_) => bail!(".env illisible (contenu masqué)"),
+    }
+}
+
+/// Première erreur de syntaxe de `text` (ligne logique fautive, position), sans toucher à l'environnement.
+fn env_first_error(text: &str) -> Option<(String, usize)> {
+    for item in dotenvy::from_read_iter(text.as_bytes()) {
+        match item {
+            Ok(_) => {}
+            Err(dotenvy::Error::LineParse(line, at)) => return Some((line, at)),
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// Numéro (à partir de 1) de la ligne où commence l'entrée mal formée. `dotenvy` ne le donne pas : la ligne de
+/// fin est la plus petite telle que les lignes 1 à N donnent la même erreur que le fichier entier (une valeur
+/// entre guillemets peut courir sur plusieurs lignes), puis on remonte d'autant de lignes que l'entrée en compte.
+fn env_error_line(text: &str) -> Option<usize> {
+    let target = env_first_error(text)?;
+    let mut end = 0;
+    for (i, line) in text.split_inclusive('\n').enumerate() {
+        end += line.len();
+        if env_first_error(&text[..end]).as_ref() == Some(&target) {
+            let inner = target
+                .0
+                .trim_end_matches(['\n', '\r'])
+                .matches('\n')
+                .count();
+            return Some(i + 1 - inner.min(i));
+        }
+    }
+    None
 }
 
 /// Variable d'environnement utilisable dans `homelab.toml` : définie et non vide (espaces retirés).
@@ -1793,6 +1892,23 @@ impl Config {
                 "seuils d'alerte de capacité : un pourcentage (0 à 100, 0 = désactivé) est attendu"
             );
         }
+        // `media_mail` : deux passages normaux sont espacés d'au plus `interval_secs` plus un passage au plafond
+        // (`RUN_TIMEOUT`) ; en deçà, chaque passage serait un « écart » et plus aucun mail ne partirait, sans erreur
+        let mm = &self.tasks.media_mail;
+        let spacing = mm
+            .interval_secs
+            .saturating_add(crate::state::RUN_TIMEOUT.as_secs());
+        let gap = u64::try_from(mm.max_gap_mins)
+            .unwrap_or(0)
+            .saturating_mul(60);
+        if gap <= spacing {
+            bail!(
+                "[tasks.media_mail] max_gap_mins ({}) doit dépasser interval_secs + la durée maximale d'un passage \
+                 ({spacing} s, soit {} min) : sinon chaque passage serait un écart de l'état et aucun mail ne partirait",
+                mm.max_gap_mins,
+                spacing.div_ceil(60)
+            );
+        }
         if self.tasks.catalogue_report.min_age_days < 0 {
             bail!("[tasks.catalogue_report] min_age_days ne peut pas être négatif");
         }
@@ -1957,6 +2073,13 @@ pub struct Secrets {
     /// Adresse publique de la page `/premium` (`PREMIUM_PUBLIC_URL`, repli `ONBOARD_PUBLIC_URL`) :
     /// liens de paiement dans les mails et « Mon compte ».
     pub premium_public_url: Option<String>,
+    /// Copie des mails « disponible » tant que `[tasks.media_mail] send_to_members = false`
+    /// (`MEDIA_MAIL_PREVIEW_TO`, adresse de test de l'admin, hors dépôt). Absente = journal seulement.
+    pub media_mail_preview_to: Option<String>,
+    /// Comptes qui ne veulent plus des mails « disponible » (`MEDIA_MAIL_OPTOUT`, adresses, pseudos Jellyfin ou ids,
+    /// virgules, sans casse) : réponse « stop » d'un membre, en plus de sa case Jellyseerr. Hors dépôt (adresses,
+    /// pseudos).
+    pub media_mail_optout: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2116,6 +2239,15 @@ impl Secrets {
             premium_public_url: opt("PREMIUM_PUBLIC_URL")
                 .or_else(|| opt("ONBOARD_PUBLIC_URL"))
                 .map(|u| u.trim_end_matches('/').to_string()),
+            media_mail_preview_to: opt("MEDIA_MAIL_PREVIEW_TO"),
+            media_mail_optout: opt("MEDIA_MAIL_OPTOUT")
+                .map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().to_lowercase())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
             smtp: match (opt("SMTP_HOST"), opt("SMTP_USER"), opt("SMTP_PASS")) {
                 (Some(host), Some(user), Some(pass)) => Some(Smtp {
                     port: opt("SMTP_PORT").and_then(|p| p.parse().ok()).unwrap_or(465),
@@ -2149,6 +2281,41 @@ fn req_secret(key: &str) -> Result<Secret> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_file_errors_never_show_the_faulty_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join(".env");
+        // commentaires et ligne vide seulement avant la faute : rien n'est chargé dans l'environnement du test
+        std::fs::write(
+            &p,
+            "# secrets\n\n# SMTP\nSMTP_PASS=s3cr3t-FAKE-0b9e trailing words\nAUTRE=1\n",
+        )
+        .unwrap();
+        let e = format!("{:#}", load_env_file(&p).unwrap_err());
+        assert!(e.contains("ligne 4 de .env mal formée"), "{e}");
+        for leak in ["s3cr3t", "FAKE", "0b9e", "trailing", "SMTP_PASS"] {
+            assert!(!e.contains(leak), "{leak} dans « {e} »");
+        }
+        // le Debug (anyhow `{:?}`) ne cite pas plus la ligne
+        let d = format!("{:?}", load_env_file(&p).unwrap_err());
+        assert!(!d.contains("s3cr3t") && !d.contains("trailing"), "{d}");
+    }
+
+    #[test]
+    fn env_error_line_points_at_the_entry_that_starts_the_fault() {
+        // valeur à plusieurs lignes valide, puis faute sur une ligne simple
+        assert_eq!(env_error_line("A=1\nB=\"x\ny\"\nC=2 3\n"), Some(4));
+        // faute après une valeur entre guillemets sur deux lignes : on compte depuis son début
+        assert_eq!(env_error_line("A=1\nB=\"x\ny\" z\nC=2\n"), Some(2));
+        // guillemet jamais fermé : la ligne qui l'ouvre
+        assert_eq!(env_error_line("A=1\nB=\"oops\nC=2\n"), Some(2));
+        // clé invalide, dernière ligne sans saut de ligne
+        assert_eq!(env_error_line("A=1\n# c\n9X=1"), Some(3));
+        assert_eq!(env_error_line("A=1\nB=2\n"), None);
+        // un fichier correct se charge toujours
+        assert!(load_env_text("# rien\n\n").is_ok());
+    }
 
     #[test]
     fn minimal_toml_parses_with_defaults() {
@@ -2256,6 +2423,20 @@ jellyseerr = "http://js"
             .validate()
             .is_err());
         parse("[tasks.catalogue_report]\nmin_age_days = 0\n")
+            .validate()
+            .unwrap();
+        // `media_mail` : l'écart doit rester bien au-dessus de l'espacement des passages (intervalle + plafond 10 min)
+        let err = parse("[tasks.media_mail]\nmax_gap_mins = 15\n")
+            .validate()
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("max_gap_mins (15)"), "{err:#}");
+        assert!(parse("[tasks.media_mail]\ninterval_secs = 7200\n")
+            .validate()
+            .is_err());
+        assert!(parse("[tasks.media_mail]\nmax_gap_mins = -1\n")
+            .validate()
+            .is_err());
+        parse("[tasks.media_mail]\nmax_gap_mins = 16\n")
             .validate()
             .unwrap();
         // 0 = contrôle de capacité désactivé
@@ -2508,6 +2689,36 @@ mod toml_matches_defaults {
             _ if f != d => out.push(format!("{path} : homelab.toml = {f}, code = {d}")),
             _ => {}
         }
+    }
+
+    /// `[tasks.media_mail]` est livré **commenté** (`#clé = valeur`) tant que les binaires qui le connaissent ne sont
+    /// pas installés (`deny_unknown_fields`) : décommenté, il doit redonner exactement les défauts du code. Une fois
+    /// décommenté, `homelab_toml_equals_code_defaults` le couvre.
+    #[test]
+    fn commented_media_mail_block_equals_code_defaults() {
+        let raw =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../homelab.toml"))
+                .expect("homelab.toml");
+        let Some(start) = raw.find("\n#[tasks.media_mail]\n") else {
+            assert!(
+                raw.contains("\n[tasks.media_mail]\n"),
+                "bloc media_mail absent"
+            );
+            return;
+        };
+        let mut block = String::new();
+        for line in raw[start + 1..].lines() {
+            let Some(rest) = line.strip_prefix('#') else {
+                break;
+            };
+            if !rest.starts_with(' ') {
+                block.push_str(rest);
+                block.push('\n');
+            }
+        }
+        let file: toml::Value = toml::from_str(&block).unwrap();
+        let def = toml::Value::try_from(super::MediaMail::default()).unwrap();
+        assert_eq!(file["tasks"]["media_mail"], def, "{block}");
     }
 
     #[test]

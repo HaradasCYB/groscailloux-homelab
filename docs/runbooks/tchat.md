@@ -17,6 +17,25 @@
 - Mails : récapitulatif à `CHAT_ADMIN_EMAIL` (repli `GUIDE_CONTACT_EMAIL`) ; annonces aux comptes actifs ayant une adresse
   **valide** dans Jellyseerr (le compte principal de l'admin n'y a pas d'adresse valide).
 - Annonce depuis la CLI : `homelabctl chat announce [fichier] [--author <modérateur>] [--mail] [--no-discord]`.
+- **Aperçu avant `--mail`** (15/10) : `homelabctl mail-test --announce <fichier> --dump <dossier>` (rendu ici même,
+  sans homelabd, comptes Jellyfin lus seulement), puis `homelabctl mail-test <adresse> --announce <fichier>
+  [--author <modérateur>]` : le mail exact que les membres recevraient (même texte nettoyé, même auteur, même fonction,
+  ni `Reply-To` ni autre en-tête), objet « [Aperçu] … », à cette adresse seulement. Rien n'est publié : la route
+  `POST /admin/mail-test/announce` n'a accès ni au tchat ni à Discord, et un homelabd plus ancien répond 404 (installer
+  homelabd et homelabctl ensemble). Ensuite `homelabctl --dry-run chat announce <fichier> --mail`, puis l'envoi.
+- **Condition avant `chat announce --mail`** quand l'annonce renvoie vers une page de homelabd (ex. le guide,
+  `/guide#nouvelle-adresse`) : le guide est compilé dans le binaire, et `chat announce --mail` marche déjà avec un
+  homelabd plus ancien, qui enverrait un lien vers une ancre absente. Donc homelabd installé d'abord, puis
+  `curl -s 127.0.0.1:8766/guide | grep -c 'id="nouvelle-adresse"'` doit répondre 1 (même contrôle pour toute autre
+  ancre citée). Le guide se garde une heure en cache (`max-age=3600`) : envoyer au moins une heure après
+  l'installation.
+- **Emoji** : dans Gmail en mode sombre, l'encre qui protège la carte du message (double `mix-blend-mode:difference`,
+  voir `mail_layout`) inverse aussi les couleurs d'un emoji, dans toute annonce ou tout message privé envoyé par
+  mail : il sort en couleurs inversées. Les éviter dans un texte qui part par mail.
+- **Liens dans les mails** : une URL `http(s)://` d'une annonce ou d'un message privé devient un lien dans la carte du
+  mail (même règle que le tchat : ponctuation finale laissée hors du lien ; ni `www.` ni domaine nu), coupable n'importe
+  où pour ne pas élargir le mail sur un téléphone ; le texte brut la garde telle quelle. La première ligne d'une
+  annonce sert d'objet et de titre, jamais reliés : ne pas y mettre d'URL.
 
 ## 2. Salons et nom (lot 4, 08/10)
 

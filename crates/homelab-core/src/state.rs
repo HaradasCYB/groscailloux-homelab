@@ -136,6 +136,67 @@ pub struct State {
     /// même défaut (voir `alerts::watch_due`). L'entrée disparaît au retour à la normale.
     #[serde(default)]
     pub watch_alerts: BTreeMap<String, WatchAlert>,
+    /// media_mail : mails « disponible » des demandes Jellyseerr, clé `r<id demande>` (film) ou
+    /// `r<id demande>:s<saison>` (série) → suite donnée (2026-10-15). Une clé présente n'est jamais réévaluée, sauf
+    /// en attente (`pending`) ou en échec d'envoi (`error`) : c'est ce qui empêche un second mail.
+    #[serde(default)]
+    pub media_mail: BTreeMap<String, MediaMailRecord>,
+    /// media_mail : date du premier passage. Ce passage-là note tout ce qui était déjà disponible (`baseline`) et
+    /// n'envoie rien ; absent = le prochain passage fait la référence.
+    #[serde(default)]
+    pub media_mail_baseline_at: Option<i64>,
+    /// media_mail : dernier passage du daemon sur cet état (date, notée même si Jellyseerr ne répond pas) et envoi aux
+    /// membres ou non (noté avec les nouvelles clés). Un écart trop long (état restauré, daemon longtemps arrêté) et la
+    /// bascule vers l'envoi se lisent ici.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_mail_last_pass: Option<MediaMailPass>,
+    /// media_mail : lignes de l'alerte admin « mails abandonnés » pas encore parties, clé(s) abandonnée(s) → ligne
+    /// (2026-10-15). Notées dans la même écriture que l'abandon (`gave_up`), effacées seulement quand l'alerte est
+    /// partie (`alerts::retry_later`) : un échec d'envoi, un passage interrompu ou un redémarrage ne la perdent pas.
+    /// Absent tant que rien n'attend (un ancien binaire ignore le champ : aucun `deny_unknown_fields`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub media_mail_alerts: BTreeMap<String, String>,
+}
+
+/// Dernier passage de `media_mail` (voir `tasks::media_mail::continuity`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MediaMailPass {
+    pub at: i64,
+    /// `send_to_members` valait `true` au dernier passage qui a noté de nouvelles clés.
+    pub send: bool,
+}
+
+/// Une demande (film) ou une saison demandée, devenue disponible, et la suite donnée (`tasks::media_mail`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MediaMailRecord {
+    /// Dernier changement de `outcome`.
+    pub at: i64,
+    /// Premier passage qui l'a vue disponible (horloge de homelabd) : sert au regroupement.
+    pub seen_at: i64,
+    /// Passage à « disponible » selon Jellyseerr (fin de la demande, ou de la saison).
+    pub ready_at: i64,
+    /// Demandeur : id du compte Jellyseerr.
+    pub user: i64,
+    /// `movie` ou `tv`.
+    pub kind: String,
+    pub tmdb: i64,
+    /// En cours : `pending` (à envoyer), `error` (envoi en échec, nouvel essai à `next_at`), `sending` (envoi parti,
+    /// réponse pas encore notée). Définitifs : `baseline` (déjà disponible au premier passage), `stale` (disponible
+    /// depuis plus de `max_age_hours`), `logged` (envoi aux membres coupé : noté, jamais envoyé), `sent`,
+    /// `sent_uncertain` (passage interrompu pendant l'envoi, ou en attente avant un écart de l'état : jamais renvoyé),
+    /// `no_email`, `no_account`, `suspended`, `opted_out`, `not_visible` (le compte ne voit pas le titre dans
+    /// Jellyfin), `gone` (demande retirée), `gave_up` (échecs d'envoi répétés, ou plus de `max_age_hours` sans pouvoir partir : alerte admin
+    /// gardée dans `State::media_mail_alerts` jusqu'à ce qu'elle parte).
+    pub outcome: String,
+    /// Échecs d'envoi.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tries: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_at: Option<i64>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Dernière alerte d'une surveillance quotidienne : date et empreinte du défaut signalé (`alerts::fingerprint`).

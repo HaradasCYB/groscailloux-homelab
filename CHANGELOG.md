@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.27.0](#1270--14102026--nouveau-domaine-principal)** | 14/10/2026 | **Nouveau domaine principal** |
+| **[1.28.0](#1280--15102026--mails-aux-couleurs-de-groscailloux-tv)** | 15/10/2026 | **Mails aux couleurs de Groscailloux TV** |
+| [1.27.0](#1270--14102026--nouveau-domaine-principal) | 14/10/2026 | Nouveau domaine principal |
 | [1.26.0](#1260--10102026--syncplay-après-un-saut-films-guettés-avant-leur-sortie-et-lot-3-jour-2) | 10/10/2026 | SyncPlay après un saut, films guettés avant leur sortie et lot 3, jour 2 |
 | [1.25.0](#1250--09102026--téléchargements-expliqués-et-lot-3-jour-1) | 09/10/2026 | Téléchargements expliqués et lot 3, jour 1 |
 | [1.24.0](#1240--09102026--seedbox-hors-du-dépôt-mode-vo-natif-préparé-et-releases-publiques) | 09/10/2026 | Seedbox hors du dépôt, mode VO natif préparé et releases publiques |
@@ -38,6 +39,90 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 ---
 
+## 1.28.0 — 15/10/2026 — Mails aux couleurs de Groscailloux TV
+
+Tous les mails qu'un membre peut recevoir changent d'habit : sombres, au logo de Groscailloux TV, un seul gros bouton,
+en vrai français. Nouveau : le mail « ta demande est disponible » avec l'affiche du film ou de la série, prêt à
+remplacer celui de Jellyseerr dès que l'admin l'aura validé. L'admin peut recevoir un exemple de chaque mail dans sa
+propre boîte avant de valider.
+
+### Pour les membres
+
+- **Des mails à l'image du service.** Bienvenue, compte activé, abonnement, messages et annonces d'« Aide et
+  annonces » : même présentation sombre, logo Groscailloux TV, un seul bouton bien visible, accents et espaces à la
+  française, et une version texte complète pour les messageries qui n'affichent pas les images. Les objets perdent le
+  préfixe « Groscailloux : » (le nom de l'expéditeur suffit) et vont droit au but : « Ton essai se termine demain »,
+  « Ton accès est en pause », « Ton essai est terminé » après un essai (au lieu de « ton abonnement est arrivé à
+  échéance »).
+- **« Ton compte est actif » mène directement à Groscailloux TV** quand le lien de bienvenue a servi dans les 7 derniers
+  jours (mot de passe choisi), sans nouveau lien inutile ; sinon, le bouton propose de choisir le mot de passe, ou de se
+  connecter avec son mot de passe habituel.
+- **Bientôt : « ta demande est disponible », avec l'affiche.** Quand un film ou une saison demandés arrivent, un mail
+  en français avec l'image du titre, l'affiche, l'année, la durée, la note, la langue (VF · VO, VOSTFR) et un bouton
+  « Regarder » qui ouvre la fiche dans Jellyfin. Une saison arrivée est annoncée sans attendre les autres saisons de la
+  même demande ; plusieurs titres arrivés ensemble donnent un seul mail. Il remplacera celui de Jellyseerr (moitié en
+  anglais, logo cassé dans Gmail, bouton vers Jellyseerr) une fois validé ; d'ici là, rien ne change.
+- **Liens cliquables dans les annonces et les messages de l'admin.** Une adresse écrite dans une annonce ou un message
+  d'« Aide et annonces » devient un lien dans le mail, et une longue adresse passe à la ligne au lieu d'élargir le mail
+  sur un téléphone.
+- **Guide : « Nouvelle adresse ».** En tête du guide, un encart résume le changement : rien à changer, tout se fait
+  dans Jellyfin (regarder, et demander un film ou une série dans l'onglet *Découvrir*, comme le dit aussi l'accroche du
+  guide), et nos mails arrivent d'une adresse à ajouter aux contacts. La partie « Tu utilisais déjà l'ancienne adresse ? » explique comment passer une
+  appli sur la nouvelle adresse, se reconnecter et retrouver son mot de passe.
+
+### Pour l'administrateur
+
+- **Gabarit commun `mail_layout`** : logo, fond, affiche et puces, bouton, cartes d'infos, encadrés, carte de message,
+  pied ; tout texte échappé, typographie française dans le HTML seulement, HTML sous 40 Ko (Gmail coupe vers 102 Ko),
+  mode sombre déclaré, aucun `token=`. Chaque mail aux membres est une fonction pure (`welcome`, `subscriptions`,
+  `chat`, `available_mail`). Images **jointes au mail** (`multipart/related`, `cid:`) : logo et bandeau embarqués,
+  affiches et fonds lus dans Jellyfin (`format=Jpg`) ou chez TMDB en secours, PNG ou JPEG vérifiés à leurs premiers
+  octets, 400 Ko et 10 s au plus chacune. Un objet long est plié en plusieurs mots RFC 2047. Mails d'admin inchangés
+  (texte). Prix des mails d'abonnement tiré de `[subscriptions] price_text` (il était écrit en dur).
+- **Nouvelle tâche `media_mail`** (5 min, 33 tâches) : mails « disponible » à partir de toutes les demandes Jellyseerr
+  (film disponible, saison terminée **et** disponible : Jellyseerr termine aussi une saison supprimée ; saison 0 et 4K
+  ignorées), premier passage = référence sans mail, jamais deux fois
+  ni l'arriéré (plus de 48 h : jamais envoyé), titres d'un même membre regroupés (10 min sans nouvelle arrivée, 1 h au
+  plus), titre relu dans Jellyfin **comme le membre**, choix de notifications de Jellyseerr respecté, envoi noté avant
+  `curl` (au plus un mail). **Livrée sans envoi aux membres** (`send_to_members = false` : journal, état `logged`, copie
+  facultative à `MEDIA_MAIL_PREVIEW_TO`) ; bloc `[tasks.media_mail]` commenté dans `homelab.toml` jusqu'à l'installation
+  de homelabd **et** homelabctl ; `MEDIA_MAIL_OPTOUT` (adresse, pseudo ou id) pour un membre qui répond « stop ».
+  Mail abandonné (échecs répétés, attente de plus de 48 h) : alerte admin gardée dans l'état jusqu'à ce qu'elle parte,
+  une par passage ; écart de l'état au-delà duquel rien n'est envoyé, ni ce qui attendait avant lui, réglable
+  (`max_gap_mins`, 120 ; refusé au démarrage s'il ne dépasse pas `interval_secs` + 10 min). Bascule (passer à `true`,
+  puis arrêter les mails « disponible » de Seerr dans la même minute ; Seerr 3.5 n'a pas de types de notification pour
+  l'e-mail, voie par défaut : couper son agent e-mail) : [comptes-et-abonnements.md § 2](docs/runbooks/comptes-et-abonnements.md#2-onboarding-et-mails),
+  [AUTOMATION.md](docs/AUTOMATION.md#media_mail--5-min-2026-10-15).
+- **`homelabctl mail-test` montre chaque mail** : `--all` envoie un exemple de chacun des 17 mails aux membres (compte
+  fictif « Exemple », objet « [Exemple] … », 2 s d'écart, vrais titres arrivés pour « disponible »), `--kind <type>` un
+  seul ; `--dump <dossier>` les écrit en `.html` (images à côté), `.eml` et `.txt` sans homelabd ni envoi. Sans option,
+  toujours le mail de bienvenue d'exemple. Aucun compte ni abonnement touché.
+- **En-têtes plus sûrs pour Gmail** : `Reply-To` posé seulement s'il est sur le domaine d'envoi (une adresse de
+  réponse sur une messagerie gratuite à côté d'un expéditeur sur le domaine du service est un signal d'hameçonnage :
+  les mails de bienvenue n'en portent plus tant que `GUIDE_CONTACT_EMAIL` n'est pas sur ce domaine, une réponse arrive
+  à l'adresse d'envoi) ; nom du destinataire mis entre guillemets ou encodé selon la norme (une virgule dans un nom
+  Jellyseerr cassait l'en-tête `To`) ; adresse refusée si ce n'est pas une adresse simple ; en-têtes longs pliés.
+- **Aperçu d'une annonce par mail** : `homelabctl mail-test <adresse> --announce <fichier> [--author <modérateur>]`
+  envoie à cette adresse seulement le mail exact que `chat announce <fichier> --mail` enverrait aux membres (même
+  auteur, même texte nettoyé, même fonction, même enveloppe), objet « [Aperçu] … ». Rien dans le tchat, sur Discord ni
+  aux membres : route à part `POST /admin/mail-test/announce`, sans accès au tchat (un homelabd plus ancien répond 404
+  au lieu d'envoyer le mail de bienvenue d'exemple). `--dump <dossier>` le rend sans homelabd.
+  [tchat.md](docs/runbooks/tchat.md).
+- **Jellyseerr envoie aussi par Proton** (15/10), depuis la même adresse `contact@` que homelabd : le 14/10, seuls les
+  mails de homelabd avaient quitté Gmail. Le jeton SMTP est donc aussi enregistré dans Jellyseerr (Paramètres →
+  Notifications → E-mail) : une rotation met à jour les deux ([SECRETS.md](docs/SECRETS.md)).
+- **Guide** : marqueur `{{MAIL_FROM}}` (expéditeur `SMTP_FROM`, échappé ; formule neutre sans SMTP), encart
+  `#nouvelle-adresse` et partie `#changer-adresse`, sans adresse en dur (dépôt public).
+- **Échec d'envoi mieux expliqué** : quand le serveur SMTP refuse avant le message (authentification, destinataire),
+  un mail à images (plus de 64 Kio) ne remonte plus une « Broken pipe » trompeuse mais le vrai motif de `curl` ; l'alerte
+  d'un mail de bienvenue en échec distingue « n'est pas parti » de « est peut-être parti » (réponse du serveur perdue :
+  demander au membre avant de transmettre le lien).
+- **`.env` mal formé : l'erreur ne cite plus la ligne.** L'erreur de `dotenvy` contenait la ligne fautive entière (donc
+  un secret), qui finissait dans le journal de homelabd ou à l'écran de homelabctl ; désormais « ligne N de .env mal
+  formée (contenu masqué) ».
+
+---
+
 ## 1.27.0 — 14/10/2026 — Nouveau domaine principal
 
 Le serveur a un vrai nom de domaine, plus court, chez Cloudflare. L'ancienne adresse DuckDNS reste servie à
@@ -48,7 +133,8 @@ l'identique : rien à changer dans les applis déjà réglées, et les liens des
 - **Nouvelle adresse principale** : le domaine nu ouvre Jellyfin (le plus simple à taper sur une télé) ; les demandes,
   « Mon compte », l'abonnement et le guide sont sur le même domaine. Les mails, le guide et Discord donnent désormais
   ces adresses. **L'ancienne adresse marche toujours**, pour tout.
-- **Les mails arrivent de l'adresse du domaine** (`contact@`) et non plus d'une adresse Gmail.
+- **Les mails arrivent de l'adresse du domaine** (`contact@`) et non plus d'une adresse Gmail : ceux du service le
+  14/10, ceux de Jellyseerr (« ta demande est disponible ») le 15/10 ([1.28.0](#1280--15102026--mails-aux-couleurs-de-groscailloux-tv)).
 
 ### Pour l'administrateur
 
@@ -65,8 +151,9 @@ l'identique : rien à changer dans les applis déjà réglées, et les liens des
 - **Homarr : sessions Jellyfin plus lisibles sans connexion.** Le widget « Nouveautés » du tableau public était relié à
   l'intégration Jellyfin, ce qui ouvrait aux anonymes la liste des sessions en cours (trouvé par le point complet du
   14/10) ; lien retiré, deux contrôles anonymes dans [homarr.md](docs/runbooks/homarr.md).
-- **Mails envoyés par Proton** depuis l'adresse `contact@` du domaine (SPF, DKIM et DMARC publiés chez Cloudflare) au
-  lieu de Gmail ; port 465 en TLS direct, donc aucun changement de code ni de diun. [SECRETS.md](docs/SECRETS.md).
+- **Mails de homelabd envoyés par Proton** depuis l'adresse `contact@` du domaine (SPF, DKIM et DMARC publiés chez
+  Cloudflare) au lieu de Gmail ; port 465 en TLS direct, donc aucun changement de code ni de diun. Jellyseerr est resté
+  sur Gmail jusqu'au 15/10 (1.28.0). [SECRETS.md](docs/SECRETS.md).
 
 ---
 

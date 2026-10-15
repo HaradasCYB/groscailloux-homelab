@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use homelab_core::accounts::{self, Outcome};
+use homelab_core::mail_samples;
 use homelab_core::tasks::{self, backup, vpn};
 use homelab_core::vo_native;
 use homelab_core::{Config, Secrets, TaskContext};
@@ -62,10 +63,32 @@ enum Cmd {
         #[arg(long)]
         no_discord: bool,
     },
-    /// Envoie le mail de bienvenue en exemple (lien de démonstration, aucun compte touché)
+    /// Mails d'exemple, compte fictif « Exemple », aucun compte ni abonnement touché. Sans option : le mail de
+    /// bienvenue (lien de démonstration). --all : un exemple de chaque mail qu'un membre peut recevoir, objet
+    /// « [Exemple] … », à 2 s d'écart, par homelabd (une à deux minutes) ; --kind : ceux-là. --announce <fichier> :
+    /// aperçu d'une annonce, le mail exact que `chat announce <fichier> --mail` enverrait aux membres, objet
+    /// « [Aperçu] … », à <adresse> seulement (ni tchat, ni Discord, ni membres). --dump <dossier> : rien n'est
+    /// envoyé, chaque mail est écrit en <type>.html (images dans img/), .eml et .txt, sans homelabd
     MailTest {
-        /// Adresse destinataire
-        to: String,
+        /// Adresse destinataire (avec --dump : facultative, en-tête To des .eml)
+        #[arg(required_unless_present = "dump")]
+        to: Option<String>,
+        /// Tous les mails aux membres
+        #[arg(long, conflicts_with = "kind")]
+        all: bool,
+        /// Ce mail seulement (répétable)
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(mail_samples::ids()))]
+        kind: Vec<String>,
+        /// Écrit les mails dans ce dossier au lieu de les envoyer (tous, ceux de --kind, ou l'aperçu de --announce)
+        #[arg(long, value_name = "DOSSIER")]
+        dump: Option<PathBuf>,
+        /// Aperçu d'une annonce : le mail que `chat announce <FICHIER> --mail` enverrait aux membres, objet
+        /// « [Aperçu] … », à <adresse> seulement ; ni tchat, ni Discord, ni membres
+        #[arg(long, value_name = "FICHIER", conflicts_with_all = ["all", "kind"])]
+        announce: Option<PathBuf>,
+        /// Auteur de l'aperçu (défaut : le premier de `[chat] moderators`, comme `chat announce`)
+        #[arg(long, requires = "announce")]
+        author: Option<String>,
     },
     /// Comptes Jellyfin : list ; on|off <compte> (premium ou suspendu) ; delete <compte> --yes ;
     /// limits (applique `max_devices_per_user`, appareils connectés par compte ; 0 = illimité) ;
@@ -226,19 +249,9 @@ async fn main() -> Result<()> {
             mail,
             no_discord,
         } => {
-            let text = match file {
-                Some(f) => std::fs::read_to_string(&f)
-                    .with_context(|| format!("lecture de {}", f.display()))?,
-                None => {
-                    let mut s = String::new();
-                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
-                        .context("lecture de l'entrée standard")?;
-                    s
-                }
-            };
-            let author = author
-                .or_else(|| ctx.cfg.chat.moderators.first().cloned())
-                .context("aucun modérateur dans [chat] moderators : préciser --author")?;
+            // mêmes texte et auteur que l'aperçu (`mail-test --announce`)
+            let text = read_announcement(file)?;
+            let author = announcement_author(&ctx.cfg.chat.moderators, author)?;
             let parts = homelab_core::chat::split_parts(text.trim(), ctx.cfg.chat.max_chars);
             if parts.is_empty() {
                 bail!("annonce vide");
@@ -276,7 +289,25 @@ async fn main() -> Result<()> {
                     .unwrap_or(false)
             );
         }
-        Cmd::MailTest { to } => {
+        Cmd::MailTest {
+            to,
+            all,
+            kind,
+            dump,
+            announce,
+            author,
+        } => {
+            if let Some(file) = announce {
+                return announce_preview_cmd(&ctx, to, file, author, dump).await;
+            }
+            if dump.is_some() || all || !kind.is_empty() {
+                return mail_samples_cmd(&ctx, to, all, &kind, dump).await;
+            }
+            let to = to.context("préciser l'adresse : homelabctl mail-test <adresse>")?;
+            if ctx.dry_run {
+                println!("DRY-RUN : mail de bienvenue (démo) vers {to}, non envoyé (--all ou --dump pour voir les rendus)");
+                return Ok(());
+            }
             let v = daemon_post(&ctx, "/admin/mail-test", json!({ "to": to })).await?;
             println!(
                 "mail de bienvenue (démo) {} → {to}\n  lien : {}",
@@ -938,6 +969,221 @@ async fn daemon_post_with(
     Ok(v)
 }
 
+/// Texte d'une annonce : le fichier, sinon l'entrée standard (`chat announce` et `mail-test --announce`).
+fn read_announcement(file: Option<PathBuf>) -> Result<String> {
+    match file {
+        Some(f) => {
+            std::fs::read_to_string(&f).with_context(|| format!("lecture de {}", f.display()))
+        }
+        None => {
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+                .context("lecture de l'entrée standard")?;
+            Ok(s)
+        }
+    }
+}
+
+/// Auteur d'une annonce : `--author`, sinon le premier de `[chat] moderators` (`chat announce` et
+/// `mail-test --announce`). homelabd vérifie ensuite qu'il est modérateur et connu de Jellyfin.
+fn announcement_author(moderators: &[String], author: Option<String>) -> Result<String> {
+    author
+        .or_else(|| moderators.first().cloned())
+        .context("aucun modérateur dans [chat] moderators : préciser --author")
+}
+
+/// `mail-test [<adresse>] --announce <fichier>` : aperçu d'une annonce, le mail exact que `chat announce <fichier>
+/// --mail` enverrait aux membres, objet « [Aperçu] … », à `<adresse>` seulement. `--dump` et `--dry-run` le rendent
+/// ici même, sans homelabd (lecture des comptes Jellyfin seulement, rien d'écrit dans l'état) ; l'envoi passe par
+/// homelabd (`POST /admin/mail-test/announce`), qui ne publie rien dans le tchat ni sur Discord.
+async fn announce_preview_cmd(
+    ctx: &TaskContext,
+    to: Option<String>,
+    file: PathBuf,
+    author: Option<String>,
+    dump: Option<PathBuf>,
+) -> Result<()> {
+    let text = read_announcement(Some(file))?;
+    let author = announcement_author(&ctx.cfg.chat.moderators, author)?;
+    let to = to.map(|t| t.trim().to_lowercase());
+    if let Some(t) = &to {
+        if !homelab_core::tasks::onboard::valid_email(t) {
+            bail!("adresse invalide : {t}");
+        }
+    }
+    if let Some(dir) = dump {
+        let sample = mail_samples::announcement(ctx, &author, &text).await?;
+        let placeholder = mail_samples::placeholder_smtp();
+        let smtp = ctx.secrets.smtp.as_ref().unwrap_or(&placeholder);
+        let out = mail_samples::dump(
+            &dir,
+            smtp,
+            to.as_deref().unwrap_or(mail_samples::DUMP_TO),
+            &[sample],
+        )?;
+        for d in &out {
+            println!(
+                "{}  ({}) → {} (HTML {} Ko, .eml {} Ko, {} image(s))",
+                d.subject,
+                d.origin,
+                d.html.display(),
+                d.html_bytes.div_ceil(1024),
+                d.eml_bytes.div_ceil(1024),
+                d.images
+            );
+        }
+        println!(
+            "aperçu écrit dans {} : {k}.html, {k}.eml, {k}.txt ; rien n'a été envoyé ni publié",
+            dir.display(),
+            k = mail_samples::ANNOUNCE_KIND
+        );
+        return Ok(());
+    }
+    let to =
+        to.context("préciser l'adresse : homelabctl mail-test <adresse> --announce <fichier>")?;
+    if ctx.dry_run {
+        let s = mail_samples::announcement(ctx, &author, &text).await?;
+        println!(
+            "DRY-RUN : aperçu « {} » ({}) → {to}, non envoyé",
+            s.mail.subject, s.origin
+        );
+        return Ok(());
+    }
+    // un seul mail, mais homelabd lit Jellyfin puis lance curl SMTP (jusqu'à 60 s) : la CLI attend plus longtemps
+    let v = daemon_post_with(
+        ctx,
+        "/admin/mail-test/announce",
+        json!({ "to": to, "author": author, "body": text }),
+        std::time::Duration::from_secs(90),
+    )
+    .await
+    .map_err(|e| {
+        // homelabd d'avant `--announce` : route inconnue, 404 sans message
+        if format!("{e:#}").ends_with("404 Not Found : ?") {
+            anyhow::anyhow!(
+                "homelabd ne connaît pas --announce : installer homelabd et homelabctl ensemble"
+            )
+        } else {
+            e
+        }
+    })?;
+    let r = v
+        .get("results")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let s = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    if r.get("sent").and_then(Value::as_bool) != Some(true) {
+        bail!("aperçu non envoyé à {to} : {}", s("error"));
+    }
+    println!(
+        "aperçu envoyé → {to} : « {} » ({}) ; rien n'a été publié",
+        s("subject"),
+        s("origin")
+    );
+    Ok(())
+}
+
+/// `mail-test --all | --kind | --dump` : exemples des mails aux membres. `--dump` (et `--dry-run`) les rend ici même,
+/// sans homelabd et sans rien écrire dans l'état (lectures Jellyseerr et Jellyfin seulement, lien de bienvenue
+/// factice) ; l'envoi passe par homelabd, qui émet le lien de démonstration.
+async fn mail_samples_cmd(
+    ctx: &TaskContext,
+    to: Option<String>,
+    all: bool,
+    kinds: &[String],
+    dump: Option<PathBuf>,
+) -> Result<()> {
+    let selected = mail_samples::select(all || kinds.is_empty(), kinds)?;
+    let to = to.map(|t| t.trim().to_lowercase());
+    if let Some(t) = &to {
+        if !homelab_core::tasks::onboard::valid_email(t) {
+            bail!("adresse invalide : {t}");
+        }
+    }
+    if let Some(dir) = dump {
+        let samples = mail_samples::build(ctx, &selected, None).await;
+        let placeholder = mail_samples::placeholder_smtp();
+        let smtp = ctx.secrets.smtp.as_ref().unwrap_or(&placeholder);
+        let out = mail_samples::dump(
+            &dir,
+            smtp,
+            to.as_deref().unwrap_or(mail_samples::DUMP_TO),
+            &samples,
+        )?;
+        for d in &out {
+            println!(
+                "{:<20} {}  ({}) → {} (HTML {} Ko, .eml {} Ko, {} image(s))",
+                d.kind,
+                d.subject,
+                d.origin,
+                d.html.display(),
+                d.html_bytes.div_ceil(1024),
+                d.eml_bytes.div_ceil(1024),
+                d.images
+            );
+        }
+        println!(
+            "{} mail(s) écrits dans {} : <type>.html, .eml, .txt ; rien n'a été envoyé",
+            out.len(),
+            dir.display()
+        );
+        return Ok(());
+    }
+    let to = to.context("préciser l'adresse : homelabctl mail-test <adresse> --all")?;
+    if ctx.dry_run {
+        for s in mail_samples::build(ctx, &selected, None).await {
+            println!(
+                "DRY-RUN : {:<20} {}  ({}) → {to}",
+                s.kind, s.mail.subject, s.origin
+            );
+        }
+        return Ok(());
+    }
+    let body = if all {
+        json!({ "to": to, "all": true })
+    } else {
+        json!({ "to": to, "kinds": selected })
+    };
+    let v = daemon_post_long(ctx, "/admin/mail-test", body).await?;
+    let Some(results) = v.get("results").and_then(Value::as_array) else {
+        // homelabd d'avant `--all` : il a ignoré les types et envoyé le mail de bienvenue d'exemple
+        bail!(
+            "homelabd ne connaît pas encore --all/--kind (seul le mail de bienvenue d'exemple est parti) : \
+             installer homelabd et homelabctl ensemble"
+        );
+    };
+    let mut failed = 0;
+    for r in results {
+        let s = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("");
+        let sent = r.get("sent").and_then(Value::as_bool).unwrap_or(false);
+        if !sent {
+            failed += 1;
+        }
+        println!(
+            "{:<20} {:<8} {}  ({}){}",
+            s("kind"),
+            if sent { "envoyé" } else { "ÉCHEC" },
+            s("subject"),
+            s("origin"),
+            if sent {
+                String::new()
+            } else {
+                format!(" : {}", s("error"))
+            }
+        );
+    }
+    if failed > 0 {
+        bail!(
+            "{failed} mail(s) d'exemple non envoyé(s) sur {}",
+            results.len()
+        );
+    }
+    println!("{} mail(s) d'exemple envoyés à {to}", results.len());
+    Ok(())
+}
+
 async fn subs_cmd(
     ctx: &homelab_core::TaskContext,
     action: &str,
@@ -1125,6 +1371,84 @@ async fn subs_cmd(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mail_test_sends_one_kind_all_kinds_or_writes_them() {
+        let parse = |a: &[&str]| Args::try_parse_from([&["homelabctl", "mail-test"], a].concat());
+        assert!(parse(&["--dump", "/tmp/x"]).is_ok(), "--dump sans adresse");
+        assert!(parse(&[]).is_err(), "adresse requise sans --dump");
+        assert!(parse(&["a@example.test", "--all", "--kind", "demo"]).is_err());
+        assert!(parse(&["a@example.test", "--kind", "spam"]).is_err());
+        let a = parse(&["a@example.test", "--kind", "demo", "--kind", "media_movie"]).unwrap();
+        match a.cmd {
+            Cmd::MailTest {
+                to,
+                kind,
+                all,
+                dump,
+                announce,
+                author,
+            } => {
+                assert_eq!(to.as_deref(), Some("a@example.test"));
+                assert_eq!(kind, ["demo", "media_movie"]);
+                assert!(!all && dump.is_none() && announce.is_none() && author.is_none());
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Aperçu d'une annonce : sous `mail-test` (jamais `chat`), sans --all ni --kind, auteur seulement avec lui.
+    #[test]
+    fn mail_test_previews_an_announcement() {
+        let parse = |a: &[&str]| Args::try_parse_from([&["homelabctl", "mail-test"], a].concat());
+        let a = parse(&["a@example.test", "--announce", "f.txt", "--author", "Admin"]).unwrap();
+        match a.cmd {
+            Cmd::MailTest {
+                to,
+                announce,
+                author,
+                all,
+                kind,
+                dump,
+            } => {
+                assert_eq!(to.as_deref(), Some("a@example.test"));
+                assert_eq!(announce, Some(PathBuf::from("f.txt")));
+                assert_eq!(author.as_deref(), Some("Admin"));
+                assert!(!all && kind.is_empty() && dump.is_none());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(parse(&["a@example.test", "--announce", "f.txt", "--all"]).is_err());
+        assert!(parse(&["a@example.test", "--announce", "f.txt", "--kind", "demo"]).is_err());
+        assert!(parse(&["--announce", "f.txt", "--dump", "/tmp/x"]).is_ok());
+        assert!(
+            parse(&["--announce", "f.txt"]).is_err(),
+            "adresse requise sans --dump"
+        );
+        assert!(parse(&["a@example.test", "--author", "Admin"]).is_err());
+        // `chat announce` inchangé
+        let c =
+            Args::try_parse_from(["homelabctl", "chat", "announce", "f.txt", "--mail"]).unwrap();
+        assert!(matches!(c.cmd, Cmd::Chat { mail: true, .. }));
+    }
+
+    /// `chat announce` et `mail-test --announce` lisent le même texte et prennent le même auteur.
+    #[test]
+    fn announcement_text_and_author_are_shared() {
+        let f = std::env::temp_dir().join(format!("homelabctl-annonce-{}.txt", std::process::id()));
+        std::fs::write(&f, "Titre\r\n\r\nTexte").unwrap();
+        let read = read_announcement(Some(f.clone()));
+        std::fs::remove_file(&f).unwrap();
+        assert_eq!(read.unwrap(), "Titre\r\n\r\nTexte");
+        assert!(read_announcement(Some(f)).is_err(), "fichier absent");
+        let mods = vec!["Admin".to_string(), "Autre".to_string()];
+        assert_eq!(announcement_author(&mods, None).unwrap(), "Admin");
+        assert_eq!(
+            announcement_author(&mods, Some("Autre".into())).unwrap(),
+            "Autre"
+        );
+        assert!(announcement_author(&[], None).is_err());
+    }
 
     #[test]
     fn a_system_file_is_rewritten_only_when_it_differs() {

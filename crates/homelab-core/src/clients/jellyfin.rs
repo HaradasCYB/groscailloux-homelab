@@ -361,6 +361,66 @@ impl JellyfinClient {
         Ok(out)
     }
 
+    /// Fiche complète d'un élément **si ce compte la voit** (`GET /Items/{id}?userId=`), `None` quand Jellyfin répond
+    /// 404 (élément inconnu, ou dans une bibliothèque que le compte n'a pas). `GET /Items?Ids=…&UserId=` ne suffit pas
+    /// à le savoir : Jellyfin 12.1 y renvoie aussi les éléments des bibliothèques non partagées (vérifié le 2026-10-15
+    /// sur une bibliothèque de séries non partagée : liste 1 élément, fiche 404).
+    pub async fn item_visible_to(&self, item_id: &str, user_id: &str) -> Result<Option<Value>> {
+        let resp = self
+            .req(Method::GET, &format!("Items/{item_id}"))
+            .query(&[("userId", user_id)])
+            .send_retry()
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        json(resp, "jellyfin Items/{id}").await.map(Some)
+    }
+
+    /// Saisons d'une série vues par un compte (`GET /Shows/{id}/Seasons`, avec leurs `ImageTags`).
+    pub async fn seasons_as(&self, series_id: &str, user_id: &str) -> Result<Vec<Value>> {
+        let resp = self
+            .req(Method::GET, &format!("Shows/{series_id}/Seasons"))
+            .query(&[("UserId", user_id), ("EnableUserData", "false")])
+            .send_retry()
+            .await?;
+        Ok(json(resp, "jellyfin Shows/{id}/Seasons")
+            .await?
+            .get("Items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Premiers épisodes d'une saison vus par un compte, avec leurs pistes (`GET /Shows/{id}/Episodes`,
+    /// `Fields=MediaStreams`).
+    pub async fn season_episodes_as(
+        &self,
+        series_id: &str,
+        user_id: &str,
+        season: u32,
+        limit: u32,
+    ) -> Result<Vec<Value>> {
+        let resp = self
+            .req(Method::GET, &format!("Shows/{series_id}/Episodes"))
+            .query(&[
+                ("UserId", user_id),
+                ("Season", &season.to_string()),
+                ("Limit", &limit.to_string()),
+                ("Fields", "MediaStreams"),
+                ("EnableImages", "false"),
+                ("EnableUserData", "false"),
+            ])
+            .send_retry()
+            .await?;
+        Ok(json(resp, "jellyfin Shows/{id}/Episodes")
+            .await?
+            .get("Items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
     /// Collection (BoxSet) par nom exact, vue par `user_id`.
     pub async fn find_collection(&self, user_id: &str, name: &str) -> Result<Option<String>> {
         let resp = self
@@ -874,4 +934,47 @@ pub fn non_admin_policy(libraries: &[String], max_streams: u32) -> Value {
         "PasswordResetProviderId": "Jellyfin.Server.Implementations.Users.DefaultPasswordResetProvider",
         "SyncPlayAccess": "CreateAndJoinGroups"
     })
+}
+
+#[cfg(test)]
+mod visible_tests {
+    use super::*;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Un élément que le compte ne voit pas (404) n'est pas une erreur ; une panne, si.
+    #[tokio::test]
+    async fn item_visible_to_tells_hidden_from_failing() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Items/vu"))
+            .and(query_param("userId", "membre"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"Id": "vu"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Items/cache"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Items/panne"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let c = JellyfinClient::new(
+            &format!("{}/", server.uri()),
+            Secret::new("k"),
+            reqwest::Client::new(),
+        )
+        .unwrap();
+        let v = c.item_visible_to("vu", "membre").await.unwrap();
+        assert_eq!(v.unwrap()["Id"], "vu");
+        assert!(c
+            .item_visible_to("cache", "membre")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(c.item_visible_to("panne", "membre").await.is_err());
+    }
 }

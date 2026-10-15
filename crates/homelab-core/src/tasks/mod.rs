@@ -15,6 +15,7 @@ pub mod hls_loop_watch;
 pub mod id_match_import;
 pub mod identity_check;
 pub mod indexer_unblock;
+pub mod media_mail;
 pub mod monitor_sync;
 pub mod movie_search;
 pub mod onboard;
@@ -126,6 +127,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(subscription_reconcile::SubscriptionReconcile),
         Box::new(monitor_sync::MonitorSync),
         Box::new(user_poller::UserPoller),
+        Box::new(media_mail::MediaMail),
         Box::new(cleanup::Cleanup),
     ]
 }

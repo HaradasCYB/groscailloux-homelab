@@ -174,7 +174,7 @@ Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la
 | Langue d'origine | films ; séries à partir du 10/10 07:05 (minuteur `lot4-ol-series`) ; 07:30–11:30 | `[tasks.original_language]` |
 | Mode VO | `jpn` ; « Langue d'origine » native préparée, **coupée** | `[accounts]` `vo_audio_language`, `vo_native`, `vo_native_clients`, `vo_native_ignored_clients`, `vo_native_days` |
 | Tchat | annonces de plus de 14 j lues d'office pour un compte neuf | `[chat] new_member_read_days` |
-| Tâches de homelabd | 32 (dont `tba_bypass`, désactivée, et `vo_native_guard`, inactive tant que `vo_native = false`) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
+| Tâches de homelabd | 33 (dont `tba_bypass`, désactivée, `vo_native_guard`, inactive tant que `vo_native = false`, et `media_mail`, sans envoi aux membres tant que `send_to_members = false`) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
 | Domaines | principal (Cloudflare, DNS only, Jellyfin = domaine nu) depuis le 14/10 ; ancien DuckDNS en secours, mêmes hôtes | `.env` `*_PUBLIC_URL`, `ONBOARD_FALLBACK_URL` ; NPM (2 noms par hôte) |
 | Ports ouverts à Internet | 80/443 (NPM), 6881 (BitTorrent), 81 (admin NPM) ; le reste sur 127.0.0.1 | `docker-compose.yml` |
 
@@ -218,10 +218,10 @@ lien seedbox ~8–10 Mo/s par connexion — voir [lecture-et-transcodage.md](doc
   depuis le 19/09) à supprimer ensuite.
 - En attente du propriétaire : import CSV des abonnés historiques ; reste du lot 4.
 - **Domaine principal (14/10)** : DNS, certificats, NPM, homelabd, Seerr, Home Screen Sections et Homarr basculés ;
-  `PublishedServerUrl` de Jellyfin au passage hors pic `jf-published-url` (15/10 04:30) ; mails par Proton depuis
-  l'adresse `contact@` du domaine (Gmail en commentaire dans `.env`, à retirer et révoquer vers le 21/10) ;
-  certificat joker DuckDNS (`npm-1`) à supprimer vers le 21/10 ; webhook PayPal laissé sur l'ancien nom (URL
-  modifiable dans PayPal, même identifiant).
+  `PublishedServerUrl` de Jellyfin au passage hors pic `jf-published-url` (15/10 04:30) ; mails de homelabd et de
+  Jellyseerr (15/10) par Proton depuis l'adresse `contact@` du domaine (Gmail en commentaire dans `.env`, à retirer et
+  révoquer vers le 21/10) ; certificat joker DuckDNS (`npm-1`) à supprimer vers le 21/10 ; webhook PayPal laissé sur
+  l'ancien nom (URL modifiable dans PayPal, même identifiant).
 - À valider en séance réelle : Chromecast `high10` → `high`, compression des listes HLS, `gc-syncplay.js` VERSION 2
   (10/10 : arrivée lue sur l'élément vidéo du lecteur web, attente maximale 10 s / 5 s ; lire les `upload_*.log`
   « gc-syncplay » après une séance avec Jellyfin Desktop 2.x).

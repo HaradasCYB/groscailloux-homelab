@@ -7,6 +7,7 @@
 pub mod accounts;
 pub mod alerts;
 pub mod anime;
+pub mod available_mail;
 pub mod chat;
 pub mod classify;
 pub mod clients;
@@ -19,6 +20,8 @@ pub mod docker;
 pub mod html;
 pub mod indexer;
 pub mod mail;
+pub mod mail_layout;
+pub mod mail_samples;
 pub mod manual_search;
 pub mod matching;
 pub mod net;

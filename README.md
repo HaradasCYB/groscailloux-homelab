@@ -75,7 +75,7 @@ flowchart LR
     npm[🔒 Nginx Proxy Manager]
     jellyfin[🎬 Jellyfin]
     seerr[🙋 Jellyseerr]
-    homelabd[🦀 homelabd<br/>31 tâches · pages membres et admin]
+    homelabd[🦀 homelabd<br/>33 tâches · pages membres et admin]
     prowlarr[🔎 Prowlarr<br/>C411 · secours publics]
     obs[📈 Telegraf · InfluxDB · Grafana]
     rclone[🔗 rclone mount]

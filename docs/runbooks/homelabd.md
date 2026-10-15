@@ -18,11 +18,15 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   valeur). Un binaire d'avant 9c9075f lit ces chaînes telles quelles : installer homelabd ET homelabctl. Le lien du mail
   d'activation vient de `ONBOARD_PUBLIC_URL`. Un script qui lit `homelab.toml` par `tomllib` sans `hlconf` voit `${…}`.
 - Les valeurs par défaut du code restent égales à celles du TOML : test `config::toml_matches_defaults` (seuls `paths`,
-  `urls`, `seedbox.*` et `tasks.disabled` sont exemptés).
+  `urls`, `seedbox.*` et `tasks.disabled` sont exemptés). Exception : `[tasks.media_mail]` est livré **commenté**
+  (2026-10-15, les binaires installés refusent une clé inconnue) ; le test `commented_media_mail_block_equals_code_defaults`
+  décommente le bloc et le compare aux valeurs du code. Le décommenter dans la fenêtre où homelabd et homelabctl sont
+  installés ensemble.
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans `registry()`, section
   `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run respecté, tests unitaires de la décision, paragraphe dans
-  [AUTOMATION.md](../AUTOMATION.md). Au 09/10 : 32 tâches dans `registry()` (dont `tba_bypass`, dans `tasks.disabled`,
-  et `vo_native_guard`) + l'observateur `auto_import`.
+  [AUTOMATION.md](../AUTOMATION.md). Au 15/10 : 33 tâches dans `registry()` (dont `tba_bypass`, dans `tasks.disabled`,
+  `vo_native_guard`, et `media_mail`, sans envoi aux membres tant que `send_to_members = false`) + l'observateur
+  `auto_import`.
 - **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans `ReadWritePaths`
   de `systemd/homelabd.service` (sinon « Read-only file system »).
 - **Journaliser une erreur = `error = format!("{e:#}")`**, jamais `%e` (premier niveau seulement ; depuis le 08/10,
@@ -60,7 +64,9 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   `homelabctl run <tâche>` demande le passage au daemon (`POST /admin/run`, jeton d'onboarding en en-tête, 409 si la
   tâche tourne déjà) ; `--dry-run` reste local et n'écrit rien ; `accounts on|off|delete` (`POST /admin/accounts` : les
   droits Jellyseerr à restaurer sont dans l'état), `onboard`, `accounts link`,
-  `mail-test`, `chat announce` passent aussi par l'API locale du daemon. Une tâche ne tourne jamais deux fois en même
+  `mail-test`, `mail-test --announce` (aperçu d'une annonce, `POST /admin/mail-test/announce`), `chat announce` passent
+  aussi par l'API locale du daemon (sauf `mail-test --dump` et `mail-test --dry-run`, `--announce` compris, rendus dans
+  homelabctl avec l'état en lecture seule, sans daemon). Une tâche ne tourne jamais deux fois en même
   temps (verrou dans `scheduler::run_once`).
 - **Écriture de l'état** : sérialisé en mémoire puis écrit en **un** appel par un écrivain unique numéroté (jamais un état
   plus ancien après un plus récent ; fichier temporaire, `fsync`, renommage). `state.update` = durable (rend la main une

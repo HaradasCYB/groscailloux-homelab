@@ -41,6 +41,63 @@ des abonnements. Procédure admin pas à pas : [ONBOARDING.md](../ONBOARDING.md)
   d'état serait invisible du daemon et écrasé.
 - **Tester sans polluer** : compte temporaire dont l'adresse est **celle de l'expéditeur** (`SMTP_FROM`, aucun rebond) ;
   jamais d'adresse inventée (rebonds = réputation Gmail). Jetons et mots de passe jamais journalisés.
+- **Habillage des mails aux membres (15/10)** : un seul gabarit sombre aux couleurs de Groscailloux TV
+  (`homelab_core::mail_layout`) pour la bienvenue, l'activation, l'abonnement, « Aide et annonces » et « disponible » :
+  logo, un seul bouton, vraie version texte à côté (`multipart/alternative`), HTML sous 40 Ko (Gmail coupe vers 102 Ko).
+  Logo, bandeau, affiches et fonds voyagent **dans le mail** (`multipart/related`, `cid:`), lus dans Jellyfin
+  (`format=Jpg`) ou chez TMDB en secours. Jamais le nom, le logo ni le rouge d'un service commercial. Chaque mail est
+  rendu par une fonction pure (`welcome`, `subscriptions`, `chat`, `available_mail`) ; les mails d'admin restent en texte.
+- **Voir chaque mail avant de le valider** : `homelabctl mail-test <adresse> --all` fait envoyer par homelabd un exemple de
+  **chaque** mail qu'un membre peut recevoir (17 types : `homelabctl mail-test --help`), compte fictif « Exemple »,
+  objet « [Exemple] … », à 2 s d'écart (une à deux minutes) ; `--kind <type>` (répétable) pour un seul. Pour le
+  placement Gmail (Principale, Promotions ou spam ; « Afficher l'original » : SPF, DKIM, DMARC), l'adresse est une boîte
+  Gmail de l'admin, donnée sur la ligne de commande et jamais écrite dans le dépôt. Les mails « disponible » prennent de
+  vrais titres arrivés (Jellyseerr, images comprises) ; Jellyseerr injoignable : titres d'exemple sans image. Aucun compte
+  ni abonnement touché ; seul un lien de démonstration est émis (comme `mail-test` sans option, qui envoie toujours le
+  mail de bienvenue d'exemple). **Sans rien envoyer** : `homelabctl mail-test --dump <dossier>` (sans homelabd, état
+  jamais écrit, lien de bienvenue factice) écrit `<type>.html` (images dans `img/`, à ouvrir dans un navigateur),
+  `<type>.eml` (message complet) et `<type>.txt`. `--all`/`--kind` demandent un homelabd installé avec la même version.
+- **Gmail sombre sur iPhone : à contrôler en premier**. La toile du mail doit rester sombre : c'est la preuve que les
+  dégradés du bloc `<style>` réservé à Gmail (`STYLE_GMAIL` de `mail_layout`) survivent au mode sombre (les sources
+  n'ont testé que des dégradés en ligne). Si elle devient claire, retirer l'encre du bouton principal (`ink_button`,
+  classe `gc-o`) : son libellé blanc serait alors simplement inversé par Gmail, sombre sur bleu clair (5,5:1), au lieu
+  de rester clair sur un bleu devenu clair.
+- **Mails « disponible »** (tâche `media_mail`, 2026-10-15) : remplacent ceux de Jellyseerr. Livrés **sans envoi aux
+  membres** (`[tasks.media_mail] send_to_members = false`, bloc commenté dans `homelab.toml` jusqu'à l'installation de
+  homelabd **et** homelabctl) : journal, état `logged`, copie à `MEDIA_MAIL_PREVIEW_TO` si `.env` la donne. Bascule,
+  référence du premier passage et garde-fous : [AUTOMATION.md](../AUTOMATION.md#media_mail--5-min-2026-10-15). Un membre
+  qui répond « stop » (ou clique « Se désabonner » dans Gmail, qui envoie un mail depuis son adresse) : son adresse,
+  son pseudo ou son id Jellyfin dans `MEDIA_MAIL_OPTOUT` (`.env`), puis redémarrage de homelabd.
+- **Bascule, une fois les exemples validés** (dans une fenêtre d'installation) :
+  1. `homelab.toml` : décommenter **tout** le bloc `[tasks.media_mail]` et y passer `send_to_members = true` ; même
+     valeur pour le défaut du code (`MediaMail::default` dans `config.rs`) : une fois le bloc décommenté,
+     `homelab_toml_equals_code_defaults` compare tout le fichier aux défauts du code, et `cargo test` doit passer ;
+  2. installer **homelabd et homelabctl ensemble**, depuis l'arbre de travail de `/opt/homelab` (`deny_unknown_fields` :
+     un binaire d'avant refuse le bloc), redémarrer homelabd, puis les contrôles d'après redémarrage
+     ([homelabd.md](homelabd.md)) et `homelabctl run media_mail --dry-run`. Si la tâche n'avait jamais tourné, son
+     premier passage est la référence (tout ce qui est déjà disponible est noté sans mail) ; sinon il note sans mail
+     ce qui attendait encore (déjà annoncé par Seerr) ;
+  3. **dans la même minute**, arrêter les mails « Média disponible » de Seerr. **À trancher avant la bascule** : Seerr
+     3.5 n'a **pas** de types de notification pour son agent e-mail (vérifié dans le code de la 3.5.0 le 15/10 ;
+     Discord, Slack… en ont, l'e-mail non), donc pas de case « Média disponible » à décocher pour tout le monde dans
+     Paramètres → Notifications → E-mail. Deux voies :
+     - **couper l'agent e-mail** (même écran, décocher l'activation), **voie par défaut** : marche avec le code actuel
+       et ne change rien à la connexion ni au mot de passe des membres. Leurs comptes sont des comptes Jellyfin : le
+       « Mot de passe oublié ? » de Seerr, qui disparaît avec l'agent, ne leur a jamais servi (mot de passe oublié =
+       lien de bienvenue, ou « Mon compte »). Côté admin, « Add User » dans Seerr demande alors un mot de passe : en
+       saisir un quelconque, `user_poller` supprime ce compte local et lance l'onboarding (lien de bienvenue). Seerr
+       n'envoie plus aucun mail (demande approuvée, refusée, en échec, mot de passe généré ; mails de demandes à
+       l'admin, que le salon Discord admin garde). Les membres ne voient plus l'onglet E-mail de leurs notifications ;
+       le choix déjà enregistré reste lu par `media_mail`, et `MEDIA_MAIL_OPTOUT` prend le relais pour un « stop » ;
+     - **garder l'agent**, seulement si le propriétaire tient aux mails de statut de Seerr (approuvée, refusée, en
+       échec), et décocher « Média disponible » **compte par compte** (`notificationTypes.email` de chaque membre) :
+       bien plus risqué, demande d'abord un changement de `media_mail`, qui lit aujourd'hui cette case comme un refus
+       du membre (`opted_out` : plus aucun mail « disponible » pour personne), le report dans `MEDIA_MAIL_OPTOUT` des
+       membres qui l'avaient décochée eux-mêmes, et l'onboarding (Seerr coche tout pour un compte neuf) ; écriture
+       compte par compte, comptée et vérifiée avant et après.
+
+  Au pire un titre reçu deux fois, pour ce qui arrive dans les 5 min qui précèdent l'arrêt des mails de Seerr. Tant
+  que Seerr n'est pas arrêté, il envoie toujours son propre mail (anglais mêlé de français).
 - Demandes Jellyseerr validées d'office et droits « voir les demandes » posés à la création et à l'activation :
   [arrs-et-indexeurs.md](arrs-et-indexeurs.md#7-jellyseerr). Langue et saut posés à l'onboarding :
   [lecture-et-transcodage.md](lecture-et-transcodage.md#7-langue-audio-et-sous-titres-des-comptes).
