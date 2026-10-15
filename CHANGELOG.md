@@ -44,7 +44,7 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 Tous les mails qu'un membre peut recevoir changent d'habit : sombres, au logo de Groscailloux TV, un seul gros bouton,
 en vrai français. Nouveau : le mail « ta demande est disponible » avec l'affiche du film ou de la série, prêt à
 remplacer celui de Jellyseerr dès que l'admin l'aura validé. L'admin peut recevoir un exemple de chaque mail dans sa
-propre boîte avant de valider.
+propre boîte avant de valider (8550908).
 
 ### Pour les membres
 
