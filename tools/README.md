@@ -60,6 +60,10 @@ est une erreur franche (code 2, bilan Discord), jamais « un autre travail tourn
 ```bash
 tools/bench/bench.sh tools/bench/scenarios/header.js desktop phone          # banc de fumée de l'en-tête
 tools/bench/bench.sh tools/bench/scenarios/candidats.js desktop             # l'injection de candidats marche-t-elle ?
+tools/bench/bench.sh --timeout 600 --candidate DIR tools/bench/scenarios/quota.js desktop phone tv
+                     # quota de demandes Seerr (compte sans limite, ligne, pastille, message, refus de saisons et de
+                     # film, TVDB, fenêtre rouverte pendant le message) ; proxy Seerr de JE simulé dans le navigateur
+                     # (aucune vraie demande) ; contre-épreuve : compte.js d'avant le quota doit échouer
 tools/bench/bench.sh --accounts 2 --prefix zz_sp --item <id> --env ITEM2=<id> --timeout 1500 \
   tools/bench/scenarios/syncplay.js desktop                                  # SyncPlay : reprise après un saut (~12 min)
 tools/bench/bench.sh --candidate /chemin/candidats tools/bench/scenarios/header.js desktop-legacy tv

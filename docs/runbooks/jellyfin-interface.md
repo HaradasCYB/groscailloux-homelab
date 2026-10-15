@@ -259,3 +259,29 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
   badge de statut prend le libellé de homelabd (texte d'origine gardé dans `data-gc-orig`, rendu dès que l'élément n'est
   plus expliqué) et une ligne `.gc-dl` s'ajoute sous `.je-download-meta`. Données : `GET /compte/api/downloads`
   ([arrs-et-indexeurs.md](arrs-et-indexeurs.md#10-avertissements-de-la-file-onglet-téléchargements)).
+- **Quota de demandes** (15/10) : même script, autour de l'API de Jellyfin Enhanced (quota de Seerr : 10 films et 10
+  saisons par 7 jours glissants, [arrs-et-indexeurs.md](arrs-et-indexeurs.md#7-jellyseerr)). Rien pour un compte sans
+  limite (admin, `limit` 0).
+  - **Ligne `.gc-quota`** sous le titre de la section Seerr des résultats de recherche (seulement là : les fiches
+    utilisent `.jellyseerr-details-section`) : places restantes, et date de la prochaine place quand un côté est épuisé.
+    Quota lu par `fetchUserQuota({ skipCache: true })` (le cache de JE dure 30 min) et gardé 60 s, une lecture en vol au
+    plus, relu aussitôt après chaque demande ou refus.
+  - **Message « Demande envoyée. Il te reste… »** après une demande réussie (7 s) : ne capte aucun toucher
+    (`pointer-events: none`), caché tant qu'une fenêtre de demande de JE (`.jellyseerr-season-modal.show`) ou un
+    dialogue Jellyfin (`.dialogContainer`) est ouvert, posé au-dessus du message de JE d'après la hauteur réelle de
+    celui-ci (un titre long le met sur 3 lignes). Avant le 15/10, il couvrait sur téléphone « Annuler » et « Demander »
+    de la fenêtre suivante.
+  - **Piège de JE 12.10** : le plugin remplace la réponse 403 de Seerr (« Quota exceeded ») par une erreur générique en
+    anglais (« Seerr declined the request… ») pour tout compte non admin, et sa fenêtre « Limite de demandes atteinte »
+    (`isQuotaError` : 403 et `/quota\s+exceeded/i` dans `responseJSON.message`) ne s'ouvre plus jamais. L'enveloppe de
+    `requestMedia` / `requestTvSeasons` relit le quota au 403 et réécrit le message en français, suffixé « (Quota
+    exceeded) » pour JE, seulement si le quota explique le refus : côté épuisé, ou plus de saisons demandées qu'il n'en
+    reste. Série entière (`requestMedia(…, 'tv', …)`, nombre de saisons inconnu) : seulement côté épuisé. Tout autre 403
+    (droits, compte bloqué) reste celui de JE.
+  - **Tous les arguments passent** à JE (12.10 a ajouté en 6e le TVDB saisi à la main, obligatoire quand TMDB n'en a
+    pas) ; seuls les réglages avancés (3e) sont remplacés ([voie-russe.md](voie-russe.md#le-choix-côté-membre-mon-compte)).
+    Deux appels de `jellyseerr.js` gardent la fonction d'origine (prise à l'initialisation) : le film demandé sans
+    fenêtre et le film en 4K, tous deux seulement quand `JellyseerrShowAdvanced = false` (il vaut `true`, voie russe ;
+    `JellyseerrEnable4KRequests = false`). Le repasser à `false` laisserait ces demandes sans ligne mise à jour ni refus
+    en français. `JellyseerrShowQuotaInfo = false` couperait la fenêtre de quota de JE (son `isQuotaError` répond non).
+  - Banc : `tools/bench/scenarios/quota.js` ([outils-bancs-et-hors-pic.md](outils-bancs-et-hors-pic.md)).

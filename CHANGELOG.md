@@ -71,9 +71,23 @@ mail dans sa propre boîte avant de valider (8550908).
   appli sur la nouvelle adresse, se reconnecter et retrouver son mot de passe.
 - **Guide : plus de mail « Reset password » de Jellyseerr à ignorer.** Jellyseerr n'envoie plus aucun mail, la
   consigne de « Ton mail de bienvenue » disparaît.
+- **Le quota de demandes se voit avant, pendant et après.** Dans la recherche, une ligne sous « Découvrir sur Seerr »
+  dit combien de films et de saisons il reste à demander sur 7 jours glissants, et quand une place se libère ; après une
+  demande, un court message redonne le compte ; une demande refusée pour quota ouvre de nouveau la fenêtre « Limite de
+  demandes atteinte », avec la raison en français (depuis Jellyfin Enhanced 12.10, elle ne s'ouvrait plus : le refus
+  arrivait en anglais, sans explication). Une série que TMDB ne relie à aucune fiche TVDB se demande de nouveau avec la
+  fiche TVDB choisie à la main (le choix se perdait en route).
 
 ### Pour l'administrateur
 
+- **Mon compte enveloppe toujours les demandes de Jellyfin Enhanced, quota compris** : tous les arguments passent
+  (JE 12.10 a ajouté en 6e le TVDB saisi à la main) ; le 403 générique de JE 12.10 est réécrit en refus « Quota
+  exceeded » français seulement quand le quota l'explique (côté épuisé, ou plus de saisons demandées qu'il n'en reste ;
+  série entière : côté épuisé seulement), tout autre 403 reste celui de JE ; quota relu sans le cache de 30 min de JE,
+  gardé 60 s ; le message d'après demande ne capte aucun toucher, se cache sous une fenêtre ou un dialogue et se pose
+  au-dessus de celui de JE. Rien pour un compte sans limite. Banc `tools/bench/scenarios/quota.js` (proxy Seerr simulé
+  dans le navigateur, aucune vraie demande ; bureau, téléphone et télé ; contre-épreuve)
+  ([jellyfin-interface.md § 10](docs/runbooks/jellyfin-interface.md#10-vue-densemble-des-membres)).
 - **Gabarit commun `mail_layout`** : logo, fond, affiche et puces, bouton, cartes d'infos, encadrés, carte de message,
   pied ; tout texte échappé, typographie française dans le HTML seulement, HTML sous 40 Ko (Gmail coupe vers 102 Ko),
   mode sombre déclaré, aucun `token=`. Chaque mail aux membres est une fonction pure (`welcome`, `subscriptions`,

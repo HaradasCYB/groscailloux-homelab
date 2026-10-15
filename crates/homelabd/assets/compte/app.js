@@ -829,19 +829,207 @@
   function keepSettings(settings) {
     return !!(settings && ROUTE.allowed && /Ru$/.test(kindOfFolder(settings.rootFolder) || ''));
   }
+  // Quota de demandes de Seerr (films et saisons par 7 jours glissants) : visible avant la demande (ligne sous le titre
+  // des résultats Seerr de la recherche), après (message) et au refus (fenêtre « Limite de demandes atteinte » de JE).
+  // JE 12.10 remplace la réponse 403 de Seerr (« Quota exceeded ») par une erreur générique en anglais : sans la
+  // réécriture ci-dessous, sa fenêtre de quota ne s'ouvre jamais (14/10). Rien pour un compte sans limite (admin).
+  // Une lecture en vol au plus (hors relecture « fraîche » après une demande), gardée 60 s ; seule la DERNIÈRE lecture
+  // lancée fait foi (une lecture ordinaire partie juste avant une demande ne remet pas l'ancien compte) ; vidé quand
+  // la session change (autre compte dans le même onglet). Toujours lu SANS le cache de JE (30 min, vidé seulement
+  // après une demande réussie faite ici) : sinon une demande faite ailleurs (Seerr, autre appareil) ou un refus
+  // laissaient la ligne sur l'ancien compte jusqu'à 30 min (banc tools/bench/scenarios/quota.js, 15/10).
+  var QUOTA = { q: null, at: 0, p: null, n: 0, who: null };
+  function quotaFetch(fresh) {
+    var api = window.JellyfinEnhanced && window.JellyfinEnhanced.jellyseerrAPI;
+    if (!api || typeof api.fetchUserQuota !== 'function') return Promise.resolve(null);
+    var who = token();
+    if (who !== QUOTA.who) { QUOTA.who = who; QUOTA.q = null; QUOTA.at = 0; QUOTA.p = null; QUOTA.n += 1; }
+    if (!fresh && QUOTA.p) return QUOTA.p;
+    if (!fresh && QUOTA.at && Date.now() - QUOTA.at < 60000) return Promise.resolve(QUOTA.q);
+    var n = (QUOTA.n += 1), p;
+    try { p = Promise.resolve(api.fetchUserQuota({ skipCache: true })); } catch (e) { p = Promise.resolve(null); }
+    p = p.catch(function () { return null; }).then(function (q) {
+      if (n === QUOTA.n) { QUOTA.q = q; QUOTA.at = Date.now(); QUOTA.p = null; }
+      return q;
+    });
+    QUOTA.p = p;
+    return p;
+  }
+  function quotaLimited(side) { return !!(side && Number(side.limit) > 0); }
+  function quotaLeft(side) { return Math.max(0, Number(side.remaining) || 0); }
+  function quotaDays(side) { var d = Number(side && side.days); return d > 0 ? d : 0; }
+  function quotaCount(n, one, many) { return n + ' ' + (n > 1 ? many : one); }
+  function quotaWindow(d) { return d ? ' (sur ' + quotaCount(d, 'jour glissant', 'jours glissants') + ')' : ''; }
+  function quotaWhen(iso) {
+    var d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d.getTime()) || d.getTime() <= Date.now()) return '';
+    return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + ' à ' +
+      d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  }
+  function quotaText(q) {
+    var parts = [], days = [], next = [];
+    [['movie', 'film', 'films'], ['tv', 'saison', 'saisons']].forEach(function (k) {
+      var s = q && q[k[0]];
+      if (!quotaLimited(s)) return;
+      var left = quotaLeft(s);
+      parts.push(quotaCount(left, k[1], k[2]) + ' sur ' + Number(s.limit));
+      days.push(quotaDays(s));
+      var when = left === 0 ? quotaWhen(s.nextResetAt) : '';
+      if (when) next.push('nouvelle demande de ' + k[1] + ' possible le ' + when);
+    });
+    if (!parts.length) return '';
+    // fenêtres différentes (réglage par compte dans Seerr) : chacune après son compte
+    var same = days.length < 2 || days[0] === days[1];
+    if (!same) parts = parts.map(function (p, i) { return p + quotaWindow(days[i]); });
+    return 'Il te reste ' + parts.join(' et ') + ' à demander' + (same ? quotaWindow(days[0]) : '') +
+      (next.length ? ' — ' + next.join(' ; ') : '') + '.';
+  }
+  function quotaPaint() {
+    if (document.hidden) return; // onglet ou appli en arrière-plan
+    // sections réellement affichées seulement : la recherche cachée derrière le lecteur garde la sienne dans le DOM
+    var secs = Array.prototype.filter.call(document.querySelectorAll('.jellyseerr-section'), function (s) { return s.offsetParent !== null; });
+    if (!secs.length) return;
+    quotaFetch(false).then(function (q) {
+      var txt = quotaText(q);
+      secs.forEach(function (sec) {
+        var line = sec.querySelector('.gc-quota');
+        if (!txt) { if (line) line.remove(); return; }
+        if (!line) {
+          line = h('div', { class: 'gc-quota padded-left padded-right' });
+          line.style.cssText = 'margin:-.2em 0 .6em;font-size:.9em;line-height:1.4;color:#c9d4df';
+          var title = sec.querySelector('.sectionTitle');
+          if (title) title.insertAdjacentElement('afterend', line); else sec.insertBefore(line, sec.firstChild);
+        }
+        if (line.textContent !== txt) line.textContent = txt;
+      });
+    });
+  }
+  // Un seul message à la fois (une collection demande ses films un par un : le dernier compte remplace le précédent).
+  // Jamais un obstacle (15/10, revue) : il ne capte aucun toucher, il est caché tant qu'une fenêtre de demande de JE ou
+  // un dialogue Jellyfin est ouvert (sur téléphone, il couvrait « Annuler » et « Demander » de la fenêtre suivante), et
+  // il se pose au-dessus du message de JE (en bas à droite, 20 px du bord) d'après la hauteur RÉELLE de celui-ci (un
+  // titre long le met sur 3 lignes ou plus) ; il ne redescend pas pendant son affichage. Relu à chaque changement de
+  // la page tant qu'il est là (fenêtre ouverte ou fermée, message de JE ajouté), sans attendre : un relevé toutes les
+  // 250 ms le laissait par-dessus une fenêtre qui venait de s'ouvrir (banc télé, 15/10).
+  var quotaToastTimer = null, quotaToastStop = null;
+  function quotaWindowOpen() {
+    if (document.querySelector('.jellyseerr-season-modal.show')) return true;
+    var dc = document.querySelectorAll('.dialogContainer');
+    for (var i = 0; i < dc.length; i++) {
+      var r = dc[i].getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return true;
+    }
+    return false;
+  }
+  function quotaToastPlace(t) {
+    // hauteur relue seulement quand les messages de JE changent (une mesure force la mise en page : la page bouge
+    // beaucoup pendant les 7 s, surtout sur télé)
+    var ts = document.querySelectorAll('.jellyfin-enhanced-toast');
+    if (ts.length !== t.gcJeCount) {
+      t.gcJeCount = ts.length;
+      var je = 0;
+      for (var i = 0; i < ts.length; i++) je = Math.max(je, ts[i].offsetHeight || 0);
+      var bottom = je ? 20 + je + 8 : 20;
+      if (bottom > (t.gcBottom || 0)) { t.gcBottom = bottom; t.style.bottom = bottom + 'px'; }
+    }
+    var display = quotaWindowOpen() ? 'none' : '';
+    if (t.style.display !== display) t.style.display = display;
+  }
+  function quotaToastWatch(t) {
+    if (quotaToastStop) quotaToastStop();
+    if (window.MutationObserver) {
+      // ses propres changements (style) ne sont pas observés : pas de boucle
+      var mo = new MutationObserver(function () { quotaToastPlace(t); });
+      mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+      quotaToastStop = function () { mo.disconnect(); quotaToastStop = null; };
+    } else {
+      var iv = setInterval(function () { quotaToastPlace(t); }, 250);
+      quotaToastStop = function () { clearInterval(iv); quotaToastStop = null; };
+    }
+  }
+  function quotaToast(text) {
+    var t = document.getElementById('gc-quota-toast');
+    if (!t) {
+      t = h('div', { id: 'gc-quota-toast', class: 'gc-quota-toast', role: 'status' });
+      // min() ignoré par un vieux navigateur de télé : la largeur fixe d'avant reste alors
+      t.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:99999;pointer-events:none;max-width:360px;' +
+        'max-width:min(80vw,360px);padding:10px 14px;border-radius:8px;background:rgba(20,24,30,.94);color:#fff;' +
+        'font-size:clamp(13px,2vw,16px);line-height:1.4;box-shadow:0 4px 20px rgba(0,0,0,.3);' +
+        'border:1px solid rgba(255,255,255,.12)';
+      document.body.appendChild(t);
+    }
+    t.textContent = text;
+    quotaToastPlace(t);
+    quotaToastWatch(t);
+    clearTimeout(quotaToastTimer);
+    quotaToastTimer = setTimeout(function () { if (quotaToastStop) quotaToastStop(); t.remove(); }, 7000);
+  }
+  // `asked` : nombre de saisons demandées, 'all' (série entière, nombre inconnu ici) ou 1 (film)
+  function quotaRefusal(side, kind, asked) {
+    var left = quotaLeft(side), limit = Number(side.limit), d = quotaDays(side);
+    var span = d > 1 ? ' ces ' + d + ' derniers jours' : (d === 1 ? ' ces dernières 24 heures' : '');
+    var msg;
+    if (kind === 'movie') {
+      msg = 'Tu as déjà demandé ' + quotaCount(limit, 'film', 'films') + ' sur ' + limit + span + '.';
+    } else if (left === 0 || side.restricted || typeof asked !== 'number') {
+      msg = 'Tu as déjà demandé ' + quotaCount(limit, 'saison', 'saisons') + ' sur ' + limit + span + '.';
+    } else {
+      msg = 'Tu demandes ' + quotaCount(asked, 'saison', 'saisons') + ', il t\'en reste ' + left + ' sur ' + limit +
+        quotaWindow(d) + ' : demande moins de saisons, ou attends qu\'une place se libère.';
+    }
+    return msg + ' (Quota exceeded)'; // reconnu par JE (isQuotaError) : sa fenêtre affiche l'usage et la date de libération
+  }
+  function quotaGuard(p, kind, asked) {
+    return p.then(function (res) {
+      if (res) quotaFetch(true).then(function (q) {
+        var txt = quotaText(q);
+        if (txt) quotaToast('Demande envoyée. ' + txt);
+        quotaPaint();
+      });
+      return res;
+    }, function (err) {
+      if (!err || err.status !== 403) throw err;
+      return quotaFetch(true).then(function (q) {
+        var side = q && q[kind];
+        // Série entière ('all') : le nombre de saisons est inconnu ici, seul un quota épuisé prouve un refus de quota
+        // (un 403 d'une autre cause, droits ou compte bloqué, reste celui de JE).
+        var over = quotaLimited(side) && (side.restricted || (typeof asked === 'number' && quotaLeft(side) < asked));
+        if (over) {
+          // JE lit `status === 403` et /quota\s+exceeded/i dans `responseJSON.message` ; le reste du corps est gardé
+          var src = err.responseJSON || {}, body = {};
+          for (var k in src) if (Object.prototype.hasOwnProperty.call(src, k)) body[k] = src[k];
+          body.message = quotaRefusal(side, kind, asked);
+          err.responseJSON = body;
+        }
+        quotaPaint();
+        throw err;
+      });
+    });
+  }
   function wrapRequests() {
     var api = window.JellyfinEnhanced && window.JellyfinEnhanced.jellyseerrAPI;
     if (!api || api.__gcRu) return;
     var rm = api.requestMedia, rt = api.requestTvSeasons;
-    // l'autorisation est relue avant l'envoi (elle ne dépend pas de l'ouverture de la fenêtre)
-    if (typeof rm === 'function') api.requestMedia = function (tmdbId, mediaType, adv, is4k, media) {
-      return routeFetch().then(function () { return rm.call(api, tmdbId, mediaType, keepSettings(adv) ? adv : {}, is4k, media); });
+    // Tous les arguments passent (JE 12.10 a ajouté `tvdbId` en 6e) ; seuls les réglages avancés (3e) sont remplacés.
+    // L'autorisation est relue avant l'envoi (elle ne dépend pas de l'ouverture de la fenêtre).
+    if (typeof rm === 'function') api.requestMedia = function (tmdbId, mediaType, adv) {
+      var a = Array.prototype.slice.call(arguments);
+      return routeFetch().then(function () {
+        a[2] = keepSettings(adv) ? adv : {};
+        var tv = mediaType === 'tv';
+        return quotaGuard(rm.apply(api, a), tv ? 'tv' : 'movie', tv ? 'all' : 1);
+      });
     };
-    if (typeof rt === 'function') api.requestTvSeasons = function (tmdbId, seasons, adv, media, is4k) {
-      return routeFetch().then(function () { return rt.call(api, tmdbId, seasons, keepSettings(adv) ? adv : {}, media, is4k); });
+    if (typeof rt === 'function') api.requestTvSeasons = function (tmdbId, seasons, adv) {
+      var a = Array.prototype.slice.call(arguments);
+      return routeFetch().then(function () {
+        a[2] = keepSettings(adv) ? adv : {};
+        return quotaGuard(rt.apply(api, a), 'tv', Array.isArray(seasons) ? seasons.length : 'all');
+      });
     };
     api.__gcRu = true;
   }
   setInterval(wrapRequests, 2000);
+  setInterval(quotaPaint, TV ? 6000 : 2000);
   if (!TV) setInterval(adaptRequestModal, 1000);
 })();

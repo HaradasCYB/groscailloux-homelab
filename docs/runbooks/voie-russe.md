@@ -62,7 +62,9 @@ membre ; c'est la seule exception à « C411 seul » et à « aucune recherche d
   (global) ; le script Mon compte **cache le bloc** à tous (CSS `gc-ru-css`) sauf au compte autorisé, pour qui il ne reste
   qu'un choix « Version » (Classique / Russe) ; il **enveloppe `JE.jellyseerrAPI.requestMedia/requestTvSeasons`** : les
   réglages avancés ne partent QUE pour un dossier russe choisi par un compte autorisé, sinon la demande part sans réglages
-  (profil et dossier Anime automatiques). Sauvegarde de la config du plugin :
+  (profil et dossier Anime automatiques). Tous les autres arguments passent tels quels (JE 12.10 a ajouté en 6e le TVDB
+  saisi à la main) ; la même enveloppe gère le quota de demandes
+  ([jellyfin-interface.md § 10](jellyfin-interface.md#10-vue-densemble-des-membres)). Sauvegarde de la config du plugin :
   `backups/russe-20260926/jellyfin-enhanced-config-before.json`.
 - Tests : banc de non-régression versionné `tools/tests/compte-russe/` (26 contrôles, contre-épreuve `--env MUTATE=1`,
   voir [tools/README.md](../../tools/README.md)) ; ancien banc `backups/russe-20260926/ru_filter_test.js`.

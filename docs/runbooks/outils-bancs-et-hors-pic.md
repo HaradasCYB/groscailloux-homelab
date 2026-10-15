@@ -46,9 +46,15 @@ Ces outils remplacent les copies de `backups/` (8 variantes d'« appliquer hors 
     `backups/` a pour `/out` son propre dossier. Non repris : `CANDIDATE=0/1`, `PW1`/`PW2`, `/work`, `--user root`.
   - Les anciens scénarios (`modern_ui.js`, `airplay_flow.js`, `lg_audio.js`, `t6_subs.js`, `t8_quality.js`,
     `syncplay_menu.sh`, `chatshots.js`…) restent dans `backups/` et tournent tels quels par `bench.sh` ; seuls
-    `header.js` et `candidats.js` sont versionnés.
+    `header.js`, `candidats.js`, `syncplay.js` et `quota.js` sont versionnés (`tools/bench/scenarios/`).
   - Banc de l'en-tête à relancer après chaque montée de Jellyfin ou d'ElegantFin, hors pointe :
     `tools/bench/bench.sh tools/bench/scenarios/header.js desktop phone` (`--env WIDTH=800` pour ☰ sur bureau étroit).
+  - Banc du quota de demandes (15/10) à relancer après chaque montée de Jellyfin Enhanced et avant d'installer un
+    `app.js` de Mon compte qui touche aux demandes : `tools/bench/bench.sh --timeout 600 --candidate DIR
+    tools/bench/scenarios/quota.js desktop phone tv` (`DIR/compte.js` = copie de l'`app.js` à éprouver). Le proxy Seerr de
+    Jellyfin Enhanced est servi **dans le navigateur** (aucune demande ne part ; toute écriture vers `/JellyfinEnhanced/`,
+    `/gc-compte/` et `/gc-chat/` est bloquée). Contre-épreuve : l'`app.js` d'avant le quota doit échouer. Ce qu'il
+    garantit : [jellyfin-interface.md § 10](jellyfin-interface.md#10-vue-densemble-des-membres).
 - **Tests de non-régression** : `python3 tools/lib/test_hl.py` (24), `bash tools/lib/test_common.sh` (17),
   `tools/bench/bench.sh --offline tools/tests/compte-russe/compte-russe.js` (26, contre-épreuve `--env MUTATE=1`).
 - Non fait (lot 4) : `tools/ops/` pour les outils d'application et de retour arrière (`apply_npm_hss.py`, `freeze.py`,
