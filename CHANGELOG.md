@@ -80,7 +80,7 @@ mail dans sa propre boîte avant de valider (8550908).
 - **Un lien vers Groscailloux TV s'affiche en aperçu** (17/10). Collé dans Discord, WhatsApp, iMessage, Signal ou
   Telegram, le lien montre le nom, une phrase de présentation et une grande image au logo, au lieu d'un lien nu. Rien
   ne change en ouvrant le lien : seuls les robots d'aperçu de ces messageries reçoivent la carte
-  ([npm.md § 2](docs/runbooks/npm.md#aperçu-des-liens-open-graph-1710)).
+  ([npm.md § 2](docs/runbooks/npm.md#aperçu-des-liens-open-graph-1710)) (e65502a).
 
 ### Pour l'administrateur
 
