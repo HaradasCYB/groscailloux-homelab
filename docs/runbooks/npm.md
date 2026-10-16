@@ -66,6 +66,30 @@ Tout ce qui suit est dans la configuration avancée de l'hôte 1, **en base et d
 - Outils et sauvegarde : `backups/npm-20261005-014624-hss/` (`apply_npm_hss.py --check|--apply|--remove`,
   `test_hss_guard.sh` : 19/20, l'écart étant le cas encodé). **À retirer quand l'auteur publiera un correctif.**
 
+### Aperçu des liens (Open Graph, 17/10)
+
+- Un lien vers Jellyfin collé dans Discord, WhatsApp, iMessage, Signal, Telegram… affiche titre, texte et grande image
+  (`twitter:card` `summary_large_image`, barre `theme-color` bleue). Jellyfin n'a aucune balise `og:` et le
+  `<title>` seul ne suffit pas à Discord.
+- **Robots seulement** : au niveau server, un agent qui contient `Discordbot`, `Twitterbot`, `facebookexternalhit`,
+  `Facebot`, `WhatsApp` (Signal envoie `WhatsApp/2`), `TelegramBot`, `Slackbot`, `SkypeUriPreview`, `Mastodon` ou
+  `LinkedInBot` voit `/` et `/web/` réécrits vers `location = /__gc_og` (interne : page de balises en `return 200`,
+  `$host` dans les adresses). Membres et applis : 302 et interface inchangées, `location /` intacte. Jamais `discord`
+  seul (l'appli de bureau envoie `discord/1.0.x … Electron`). `/web/index.html` n'est jamais intercepté : c'est le lien
+  de repli de la page, sans boucle si un navigateur était pris pour un robot.
+- **Image** : `npm/data/og/groscailloux-tv-1.png` (root 644), servie par `location ^~ /og/` (sinon la regex
+  d'`assets.conf` l'enverrait à Jellyfin, et son 404 resterait 30 min en cache). Source
+  `branding/jellyfin/logo/og-card.html`, rendu par `og-card-render.js` (même dossier). **Changer d'image = changer de
+  nom** (`-2.png`, dans le bloc et le fichier) : Discord garde les images en cache.
+- Texte du `return` : aucun `$` littéral (`nginx -t` refuse), attributs entre guillemets doubles (`property="og:…"`,
+  lu ainsi par Signal), titre ≤ 70 octets et description ≤ 350 octets (Discord coupe au-delà).
+- Tester : coller le lien avec `?v=2`, `?v=3`… (Discord garde un aperçu ~30 min par adresse) ; en local,
+  `curl -A Discordbot …/` → 200 avec `og:image`, sans agent → 302.
+- Outils et sauvegarde : `backups/npm-20261017-og/` (`apply_npm_og.py --check|--apply <snippet> <png>|--remove
+  <snippet>` : base **et** fichier, image, `nginx -t`, reload, contrôle 2 s après ; bloc dans `og.snippet`).
+- **robots.txt** inchangé (celui de Jellyfin, `Disallow: /`) : Discord, WhatsApp, iMessage, Signal, Slack et Mastodon
+  ne le lisent pas ; X et Facebook le respectent et n'affichent donc pas d'aperçu.
+
 ## 3. Autres hôtes
 
 - **Hôte 20** (page publique `/premium` et webhook PayPal) : **sans liste d'accès** (PayPal doit joindre

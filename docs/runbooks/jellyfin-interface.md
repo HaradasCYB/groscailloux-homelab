@@ -59,6 +59,8 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
   `POST /JellyfinEnhanced/UploadBrandingImage` (`banner-light.png`, `banner-dark.png`, `icon-transparent.png`,
   `favicon.ico`, `apple-touch-icon.png`). Jellyfin Enhanced sert nos images pour tout nom `banner-light.<x>.png` sous
   `/web/` (adresse fixe `/web/banner-light.gc.png` utilisée par `gc-header.js`).
+- **Image d'aperçu des liens** (Discord, WhatsApp…) : `og-card.html` → `og-card.png` (1200×630) du même dossier,
+  servie par NPM et non par Jellyfin ([npm.md § 2](npm.md#aperçu-des-liens-open-graph-1710)).
 - **Onglets Découvrir / Demandes / Calendrier** = pages natives de Jellyfin Enhanced, renommées en français dans le
   calque (`#je-native-tab-btn-*`) ; les anciens onglets venaient de SeerrFin (retiré). `ThemeSelectorEnabled = false`.
 - **Accueil** (configurations hors git, sauvegardées dans `backups/jellyfin-ui-*`) : Home Screen Sections (16 rangées,

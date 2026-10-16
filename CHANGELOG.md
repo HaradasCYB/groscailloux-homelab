@@ -77,6 +77,10 @@ mail dans sa propre boîte avant de valider (8550908).
   demandes atteinte », avec la raison en français (depuis Jellyfin Enhanced 12.10, elle ne s'ouvrait plus : le refus
   arrivait en anglais, sans explication). Une série que TMDB ne relie à aucune fiche TVDB se demande de nouveau avec la
   fiche TVDB choisie à la main (le choix se perdait en route) (7d2ebdd).
+- **Un lien vers Groscailloux TV s'affiche en aperçu** (17/10). Collé dans Discord, WhatsApp, iMessage, Signal ou
+  Telegram, le lien montre le nom, une phrase de présentation et une grande image au logo, au lieu d'un lien nu. Rien
+  ne change en ouvrant le lien : seuls les robots d'aperçu de ces messageries reçoivent la carte
+  ([npm.md § 2](docs/runbooks/npm.md#aperçu-des-liens-open-graph-1710)).
 
 ### Pour l'administrateur
 
