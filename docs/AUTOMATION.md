@@ -156,7 +156,13 @@ Jellyseerr. Pour chaque torrent terminé pas encore jugé (`state.torrent_import
    (liste vide pour un téléchargement non suivi), candidats filtrés sur le **chemin du torrent**, rejets
    d'identification ignorés (`Unknown Movie/Series`, `matched … by ID`). Épisodes : **ceux de l'Arr quand il a
    reconnu cette fiche** (il connaît saisons et numérotation absolue), sinon `parse` du nom de fichier →
-   `map_episodes`, puis la numérotation fansub (`Erased S01 - 06`). En dernier recours, et seulement si
+   `map_episodes`, puis la numérotation fansub (`Erased S01 - 06`). **Animé pris pour une saison** (étiquette
+   `season=`) : un `SxxEnnn` dont le couple saison/épisode n'existe pas dans la fiche, mais dont `nnn` est le numéro
+   absolu d'un seul épisode de **cette** saison, est rattaché par l'absolu (`sxxe_absolute_episodes`). Le 2026-10-18,
+   18 des 25 fichiers d'un pack de One Piece S23 (`S01E1156`, absolu 1156 = S23E01) étaient restés « Invalid season or
+   episode ». Ce refus de Sonarr cède alors devant notre correspondance, seulement quand Sonarr a reconnu cette fiche
+   sans proposer d'épisode. Un absolu hors de la saison de l'étiquette reste refusé (Black Clover S02, 2026-10-03 :
+   `S02E73` = S01E73). En dernier recours, et seulement si
    l'étiquette nomme une saison (`homelab:series=<id>:season=<n>`, posée par `series_search`), un **numéro nu**
    (`Angels of Death - 07 (…).mkv` → S01E07, `bare_episode`) est lu dans cette saison. Sonarr ne lit cette forme
    que pour un animé : *Angels of Death* (2021), une série classique, était restée « téléchargée mais pas rangée »
@@ -167,7 +173,8 @@ Jellyseerr. Pour chaque torrent terminé pas encore jugé (`state.torrent_import
    aucun nom du torrent** (`sonarr_read_something`), décidé pour le torrent entier et refusé en bloc au moindre doute
    (forme mixte, doublon, trou, numéro hors saison, suite qui ne commence pas à 1 après une autre saison) ; un titre qui
    contient un autre nombre (`Show 13`, `E13`) reste du ressort de Sonarr. **Jamais de remplacement** : un fichier dont
-   un épisode (ou le film) a déjà un fichier est écarté (« déjà présent »). Le 2026-09-17, « The.Final.Season.E01 », sans saison, a été lu S01E01 et la
+   un épisode (ou le film) a déjà un fichier est écarté (« déjà présent »), et deux fichiers du torrent ne visent jamais
+   le même épisode : le premier est importé, le second écarté (« déjà pris »). Le 2026-09-17, « The.Final.Season.E01 », sans saison, a été lu S01E01 et la
    saison 1 d'une série écrasée (réparée en réimportant ses fichiers d'origine). Puis `ManualImport` en
    **`importMode: copy`** (= hardlink). Jamais `auto` : pour un téléchargement non suivi, `auto` = déplacement.
 Rien d'importable ⇒ `nothing_importable`. Erreur (Arr injoignable…) ⇒ `retry`, `error` après `max_attempts`.

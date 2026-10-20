@@ -266,6 +266,83 @@ pub fn map_episodes(parse: &Value, episodes: &[Value]) -> Vec<i64> {
     vec![]
 }
 
+/// Numéro **absolu** écrit à la place du numéro d'épisode d'un `SxxEyy` :
+/// `One Piece S01E1156 VOSTFR 1080p WEB x264 AAC -Tsundere-Raws (CR).mkv` = absolu 1156 = S23E01.
+///
+/// Sonarr v4 lit ce motif comme l'épisode 1156 de la saison 1, sans numéro absolu (`parse` sur le Sonarr de la
+/// seedbox, 2026-10-20). La saison 1 de la fiche n'a que 8 épisodes, `manualimport` répond « Invalid season or
+/// episode » et ne propose rien. Le 2026-10-18, 18 des 25 fichiers d'un pack de la saison 23 de One Piece sont restés
+/// ainsi sur le carreau ; les 7 « EP1174 » … « EP1180 », lus en absolu par Sonarr, sont passés.
+///
+/// Épisodes rendus seulement si **tout** tient, sinon aucun pour ce fichier :
+/// - la fiche est un animé (numérotation absolue) ;
+/// - l'étiquette nomme une saison (`season=`, posée par `series_search`) : la saison ne se devine jamais ;
+/// - Sonarr n'attribue pas le fichier à une autre fiche ;
+/// - Sonarr a lu une saison (jamais `S00`, un spécial) et des numéros d'épisode, sans numéro absolu ;
+/// - aucun de ces couples saison/épisode n'existe dans la fiche : quand la lecture de Sonarr est possible, elle fait foi ;
+/// - chaque numéro est l'absolu d'**un seul** épisode de la fiche, et cet épisode est dans la saison de l'étiquette.
+///   Black Clover, 2026-10-03 : `S02E73` d'un pack à l'ancienne numérotation pris pour la saison 2 (absolus 171…183) ;
+///   l'absolu 73 est en saison 1, déjà pourvu, et le refus était juste.
+pub fn sxxe_absolute_episodes(
+    parse: &Value,
+    episodes: &[Value],
+    series_id: i64,
+    anime: bool,
+    tag_season: Option<i64>,
+) -> Vec<i64> {
+    let Some(season) = tag_season.filter(|s| *s > 0) else {
+        return vec![];
+    };
+    let other = parse
+        .pointer("/series/id")
+        .and_then(Value::as_i64)
+        .is_some_and(|s| s != series_id);
+    if !anime || other {
+        return vec![];
+    }
+    let Some(pei) = parse.get("parsedEpisodeInfo") else {
+        return vec![];
+    };
+    let nums = |k: &str| -> Vec<i64> {
+        pei.get(k)
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_i64).collect())
+            .unwrap_or_default()
+    };
+    let (eps, abs) = (nums("episodeNumbers"), nums("absoluteEpisodeNumbers"));
+    let Some(read) = pei.get("seasonNumber").and_then(Value::as_i64) else {
+        return vec![];
+    };
+    if read < 1 || eps.is_empty() || !abs.is_empty() {
+        return vec![];
+    }
+    let field = |e: &Value, k: &str| e.get(k).and_then(Value::as_i64);
+    if episodes.iter().any(|e| {
+        field(e, "seasonNumber") == Some(read)
+            && field(e, "episodeNumber").is_some_and(|n| eps.contains(&n))
+    }) {
+        return vec![];
+    }
+    let mut out = Vec::with_capacity(eps.len());
+    for n in &eps {
+        let hits: Vec<&Value> = episodes
+            .iter()
+            .filter(|e| field(e, "absoluteEpisodeNumber") == Some(*n))
+            .collect();
+        let [e] = hits[..] else {
+            return vec![];
+        };
+        let (Some(id), Some(s)) = (field(e, "id"), field(e, "seasonNumber")) else {
+            return vec![];
+        };
+        if s != season {
+            return vec![];
+        }
+        out.push(id);
+    }
+    out
+}
+
 /// D'où viennent les épisodes d'un fichier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EpisodeSource {
@@ -289,6 +366,16 @@ pub fn is_wrong_season_rejection(reason: &str) -> bool {
     ]
     .iter()
     .any(|k| r.contains(k))
+}
+
+/// Rejet de `manualimport` quand l'Arr a reconnu la fiche mais n'y trouve pas l'épisode qu'il a lu dans le nom
+/// (« Invalid season or episode » : `S01E1156`, épisode 1156 d'une saison 1 qui en a 8). Il ne cède que devant
+/// **notre** correspondance, quand l'Arr a reconnu cette fiche-là et n'y propose aucun épisode (`fresh_files`).
+/// Sans elle le fichier reste écarté (Black Clover `S02E73`, 2026-10-03).
+pub fn is_invalid_episode_rejection(reason: &str) -> bool {
+    reason
+        .to_ascii_lowercase()
+        .contains("invalid season or episode")
 }
 
 /// Épisode visé par chaque fichier d'un pack décalé. `Err(raison)` au moindre écart : **tout** le pack est
@@ -607,7 +694,8 @@ pub fn numbered_pack(
 
 /// Fichiers importables dans une fiche : aperçu sans id, fiche fournie par nous ; les rejets
 /// d'identification sont ignorés, les autres (sample…) excluent le fichier. `has_file` : épisodes (ou le
-/// film) qui ont déjà un fichier — jamais remplacés.
+/// film) qui ont déjà un fichier — jamais remplacés. Deux fichiers du torrent ne visent jamais le même
+/// épisode : le premier est gardé, le second écarté.
 pub fn fresh_files(
     candidates: &[Value],
     movie: bool,
@@ -618,6 +706,7 @@ pub fn fresh_files(
     source: EpisodeSource,
 ) -> (Vec<Value>, Vec<String>) {
     let (mut files, mut skipped) = (Vec::new(), Vec::new());
+    let mut claimed: HashSet<i64> = HashSet::new();
     for c in candidates {
         let path = c.get("path").and_then(Value::as_str).unwrap_or("");
         let rel = c
@@ -625,6 +714,15 @@ pub fn fresh_files(
             .and_then(Value::as_str)
             .unwrap_or(path)
             .to_string();
+        // l'Arr a reconnu CETTE fiche sans y trouver l'épisode qu'il a lu et n'en propose aucun, alors que nous
+        // en avons un (`S01E1156` lu comme l'absolu 1156, One Piece 2026-10-18) : son « Invalid season or
+        // episode » cède devant notre correspondance. Pour une autre fiche, il reste bloquant.
+        let ours = !movie
+            && c.pointer("/series/id").and_then(Value::as_i64) == Some(id)
+            && c.get("episodes")
+                .and_then(Value::as_array)
+                .is_none_or(|e| e.is_empty())
+            && episodes_by_path.get(path).is_some_and(|e| !e.is_empty());
         let blocking: Vec<&str> = c
             .get("rejections")
             .and_then(Value::as_array)
@@ -635,6 +733,7 @@ pub fn fresh_files(
                     // pack de cours : l'Arr voit la saison qu'il a cru lire, déjà pourvue, et répond
                     // « not an upgrade ». Notre correspondance explicite prime sur ce seul motif.
                     .filter(|r| source != EpisodeSource::OursOnly || !is_wrong_season_rejection(r))
+                    .filter(|r| !(ours && is_invalid_episode_rejection(r)))
                     .collect()
             })
             .unwrap_or_default();
@@ -689,6 +788,15 @@ pub fn fresh_files(
                 skipped.push(format!("{rel}: épisode non identifié"));
                 continue;
             }
+            // 3. jamais deux fichiers du torrent sur un même épisode : pendant l'import, le second remplacerait le
+            //    premier (une version VOSTFR et une SUBFRENCH, ou un « EP1174 » lu par l'Arr et un « S01E1174 » par nous)
+            if eps.iter().any(|e| claimed.contains(e)) {
+                skipped.push(format!(
+                    "{rel}: épisode déjà pris par un autre fichier du torrent, pas de remplacement"
+                ));
+                continue;
+            }
+            claimed.extend(eps.iter().copied());
             f["releaseType"] = json!(if eps.len() > 1 {
                 "multiEpisode"
             } else {
@@ -1025,6 +1133,7 @@ async fn examine(
                 Some(TagTarget::Series { season, .. }) => *season,
                 _ => None,
             };
+            let anime = crate::tasks::series_search::is_anime(&m.hit);
             let mut bare: Vec<(String, String, i64)> = Vec::new();
             // ce que Sonarr a lu dans chaque nom : tant qu'il a lu quelque chose, pas de lecture « NN. Titre »
             let mut parses: Vec<Value> = Vec::with_capacity(candidates.len());
@@ -1066,6 +1175,20 @@ async fn examine(
                             // sur la sienne pour tout ce torrent.
                             source = EpisodeSource::OursOnly;
                         }
+                    }
+                }
+                // toujours rien : animé pris pour une saison, numéro absolu écrit en `SxxEnnn` (« One Piece
+                // S01E1156 », 2026-10-18), où Sonarr lit un épisode 1156 de la saison 1 qui n'existe pas
+                if eps.is_empty() {
+                    eps = sxxe_absolute_episodes(&parse, &episodes, id, anime, tag_season);
+                    if !eps.is_empty() {
+                        info!(
+                            task = "torrent_import",
+                            side = side.name,
+                            file = base,
+                            season = tag_season.unwrap_or_default(),
+                            "numéro absolu lu dans SxxEnnn"
+                        );
                     }
                 }
                 // toujours rien : numéro nu, jamais pour un fichier que Sonarr attribue à une AUTRE fiche
@@ -2348,5 +2471,397 @@ mod tests {
         let bad = incomplete_paths(&files, "/dl/");
         assert_eq!(bad.len(), 1);
         assert!(bad.contains(&fate_path(5)));
+    }
+
+    /// Pack réel du 2026-10-18 (seedbox), pris par `series_search` avec l'étiquette `homelab:series=121:season=23`.
+    const OP_DIR: &str = "/dl/One.Piece.S23.VOSTFR.1080p.WEB.CR.AAC.2.0.x264-TsundereRaws";
+
+    /// Les 18 noms écartés en « Invalid season or episode » (journal du 2026-10-18) : 17 VOSTFR, absolus 1156…1172,
+    /// puis un SUBFRENCH, absolu 1173.
+    fn op_sxxe_paths() -> Vec<(String, i64)> {
+        let mut v: Vec<(String, i64)> = (1156..=1172)
+            .map(|n| {
+                (
+                    format!("{OP_DIR}/One Piece S01E{n} VOSTFR 1080p WEB x264 AAC -Tsundere-Raws (CR).mkv"),
+                    n,
+                )
+            })
+            .collect();
+        v.push((
+            format!("{OP_DIR}/One Piece S01E1173 SUBFRENCH 1080p CR WEB-DL AAC2.0 H.264-Tsundere-Raws.mkv"),
+            1173,
+        ));
+        v
+    }
+
+    /// Les 7 fichiers « EP » que Sonarr a lus en absolu et importés (le journal ne garde pas leurs noms : seul le début
+    /// « One Piece EP11NN SUBFRENCH » est sûr, la suite est reprise du SUBFRENCH écarté).
+    fn op_ep_path(n: i64) -> String {
+        format!("{OP_DIR}/One Piece EP{n} SUBFRENCH 1080p CR WEB-DL AAC2.0 H.264-Tsundere-Raws.mkv")
+    }
+
+    /// Fiche Sonarr de One Piece (1999), réduite : saison 1 de 8 épisodes (absolus 1…8), 4 épisodes d'une saison 22
+    /// (absolus 1152…1155), saison 23 de 25 épisodes (ids 23001…23025, absolus 1156…1180), 2 spéciaux sans absolu.
+    fn one_piece() -> Vec<Value> {
+        let mut v: Vec<Value> = (1..=8)
+            .map(|n| json!({"id": 1000 + n, "seasonNumber": 1, "episodeNumber": n, "absoluteEpisodeNumber": n}))
+            .collect();
+        v.extend((1..=4).map(|n| {
+            json!({"id": 22000 + n, "seasonNumber": 22, "episodeNumber": n, "absoluteEpisodeNumber": 1151 + n})
+        }));
+        v.extend((1..=25).map(|n| {
+            json!({"id": 23000 + n, "seasonNumber": 23, "episodeNumber": n, "absoluteEpisodeNumber": 1155 + n})
+        }));
+        v.extend((1..=2).map(|n| json!({"id": 9000 + n, "seasonNumber": 0, "episodeNumber": n})));
+        v
+    }
+
+    /// `parse` réel de « One Piece S01E1156 … » (Sonarr de la seedbox, 2026-10-20) : saison 1, épisode 1156, aucun absolu.
+    fn op_parse_sxxe(n: i64) -> Value {
+        json!({"series": {"id": 121},
+               "parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": [n], "absoluteEpisodeNumbers": [],
+                                     "isAbsoluteNumbering": false},
+               "episodes": []})
+    }
+
+    /// `parse` réel de « One Piece EP1174 … » : saison 0, absolu 1174, numérotation absolue.
+    fn op_parse_ep(n: i64) -> Value {
+        json!({"series": {"id": 121},
+               "parsedEpisodeInfo": {"seasonNumber": 0, "episodeNumbers": [], "absoluteEpisodeNumbers": [n],
+                                     "isAbsoluteNumbering": true}})
+    }
+
+    /// Ligne `manualimport` réelle d'un `S01E11NN` : la fiche est reconnue, aucun épisode proposé.
+    fn op_invalid_row(path: &str) -> Value {
+        json!({"path": path, "relativePath": path.rsplit('/').next().unwrap_or(path),
+               "rejections": [{"reason": "Invalid season or episode"}],
+               "series": {"id": 121}, "episodes": []})
+    }
+
+    #[test]
+    fn sonarr_reads_a_long_sxxe_as_an_impossible_episode() {
+        let eps = one_piece();
+        // le défaut : épisode 1156 de la saison 1, qui n'en a que 8, et aucun absolu
+        assert!(
+            map_episodes(&op_parse_sxxe(1156), &eps).is_empty(),
+            "Sonarr ne lit pas d'absolu dans S01E1156"
+        );
+        // le chemin qui a marché : « EP1174 » lu en absolu → S23E19
+        assert_eq!(map_episodes(&op_parse_ep(1174), &eps), vec![23019]);
+    }
+
+    #[test]
+    fn an_absolute_sxxe_number_lands_in_the_tagged_season() {
+        let eps = one_piece();
+        let paths = op_sxxe_paths();
+        assert_eq!(paths.len(), 18);
+        for (path, n) in &paths {
+            let base = path.rsplit('/').next().unwrap();
+            assert_eq!(
+                sxxe_absolute_episodes(&op_parse_sxxe(*n), &eps, 121, true, Some(23)),
+                vec![23000 + n - 1155],
+                "{base} : absolu {n} dans la saison 23"
+            );
+        }
+        assert_eq!(
+            sxxe_absolute_episodes(&op_parse_sxxe(1156), &eps, 121, true, Some(23)),
+            vec![23001]
+        );
+        assert_eq!(
+            sxxe_absolute_episodes(&op_parse_sxxe(1173), &eps, 121, true, Some(23)),
+            vec![23018]
+        );
+        // `parse.series` absent : le fichier n'est pas attribué à une autre fiche, il est lu
+        let no_series = json!({"parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": [1160], "absoluteEpisodeNumbers": []}});
+        assert_eq!(
+            sxxe_absolute_episodes(&no_series, &eps, 121, true, Some(23)),
+            vec![23005]
+        );
+    }
+
+    #[test]
+    fn an_absolute_sxxe_number_is_refused_when_unsure() {
+        let eps = one_piece();
+        let read = |p: &Value, anime: bool, season: Option<i64>| {
+            sxxe_absolute_episodes(p, &eps, 121, anime, season)
+        };
+        let p = op_parse_sxxe(1156);
+        // l'étiquette ne nomme pas de saison (ajout à la main, ancienne étiquette) : la saison ne se devine jamais
+        assert!(read(&p, true, None).is_empty(), "sans saison d'étiquette");
+        assert!(read(&p, true, Some(0)).is_empty(), "saison 0 d'étiquette");
+        // la fiche n'est pas un animé : pas de numérotation absolue
+        assert!(read(&p, false, Some(23)).is_empty(), "série ordinaire");
+        // l'absolu n'est pas dans la saison de l'étiquette
+        assert!(read(&p, true, Some(22)).is_empty(), "absolu hors saison");
+        // Sonarr attribue le fichier à une autre fiche
+        let other = json!({"series": {"id": 999},
+                           "parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": [1156], "absoluteEpisodeNumbers": []}});
+        assert!(read(&other, true, Some(23)).is_empty(), "autre fiche");
+        // absolu inconnu de la fiche
+        assert!(
+            read(&op_parse_sxxe(9999), true, Some(23)).is_empty(),
+            "absolu inconnu"
+        );
+        // le couple saison/épisode existe : la lecture de Sonarr fait foi (S01E05 reste S01E05)
+        assert!(
+            read(&op_parse_sxxe(5), true, Some(23)).is_empty(),
+            "S01E05 existe"
+        );
+        // Sonarr a lu un absolu : `map_episodes` s'en charge, pas cette lecture
+        let with_abs = json!({"series": {"id": 121},
+                              "parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": [1156], "absoluteEpisodeNumbers": [1156]}});
+        assert!(read(&with_abs, true, Some(23)).is_empty(), "absolu déjà lu");
+        // un spécial (S00), une saison absente, aucun numéro, aucune information
+        let special = json!({"parsedEpisodeInfo": {"seasonNumber": 0, "episodeNumbers": [1156], "absoluteEpisodeNumbers": []}});
+        assert!(read(&special, true, Some(23)).is_empty(), "S00 = spécial");
+        let no_season =
+            json!({"parsedEpisodeInfo": {"episodeNumbers": [1156], "absoluteEpisodeNumbers": []}});
+        assert!(
+            read(&no_season, true, Some(23)).is_empty(),
+            "sans saison lue"
+        );
+        let season_only = json!({"parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": [], "fullSeason": true}});
+        assert!(
+            read(&season_only, true, Some(23)).is_empty(),
+            "saison seule"
+        );
+        assert!(read(&json!({"parsedEpisodeInfo": null}), true, Some(23)).is_empty());
+        assert!(read(&json!({}), true, Some(23)).is_empty());
+        // multi-épisode dont un numéro sort de la saison : rien, jamais à moitié
+        let multi = json!({"series": {"id": 121},
+                           "parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": [1180, 1181], "absoluteEpisodeNumbers": []}});
+        assert!(read(&multi, true, Some(23)).is_empty(), "1181 hors saison");
+        let multi_ok = json!({"series": {"id": 121},
+                              "parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": [1179, 1180], "absoluteEpisodeNumbers": []}});
+        assert_eq!(read(&multi_ok, true, Some(23)), vec![23024, 23025]);
+        // absolu en double dans la fiche : on ne choisit pas
+        let mut dup = one_piece();
+        dup.push(json!({"id": 24001, "seasonNumber": 23, "episodeNumber": 26, "absoluteEpisodeNumber": 1156}));
+        assert!(
+            sxxe_absolute_episodes(&p, &dup, 121, true, Some(23)).is_empty(),
+            "absolu 1156 en double"
+        );
+    }
+
+    #[test]
+    fn black_clover_old_numbering_stays_refused() {
+        // Cas réel du 2026-10-03 (seedbox) : pack « Black.Clover.S02.VOSTFR.WebRip.1080p.H265.AAC2.0-LTFR » à
+        // l'ancienne numérotation, pris pour la saison 2. Fiche : saison 1 de 170 épisodes (absolus 1…170, déjà
+        // pourvus), saison 2 de 13 (absolus 171…183). S02E73 = absolu 73 = S01E73 : hors de la saison de l'étiquette.
+        let mut eps: Vec<Value> = (1..=170)
+            .map(|n| json!({"id": 7000 + n, "seasonNumber": 1, "episodeNumber": n, "absoluteEpisodeNumber": n}))
+            .collect();
+        eps.extend((1..=13).map(|n| {
+            json!({"id": 8000 + n, "seasonNumber": 2, "episodeNumber": n, "absoluteEpisodeNumber": 170 + n})
+        }));
+        let parse = json!({"series": {"id": 79},
+                           "parsedEpisodeInfo": {"seasonNumber": 2, "episodeNumbers": [73], "absoluteEpisodeNumbers": []},
+                           "episodes": []});
+        assert!(map_episodes(&parse, &eps).is_empty());
+        let m = sxxe_absolute_episodes(&parse, &eps, 79, true, Some(2));
+        assert!(m.is_empty(), "S02E73 ne va jamais sur S01E73 : {m:?}");
+        // sans notre correspondance, le refus de Sonarr reste bloquant
+        let path = "/dl/Black.Clover.S02.VOSTFR.WebRip.1080p.H265.AAC2.0-LTFR/Black Clover S02E73.VOSTFR.WebRip.1080p.10Bit.x265.AAC-LTFR.mkv";
+        let row = json!({"path": path, "relativePath": path.rsplit('/').next().unwrap(),
+                         "rejections": [{"reason": "Invalid season or episode"}], "series": {"id": 79}, "episodes": []});
+        let by: HashMap<String, Vec<i64>> = [(path.to_string(), m)].into();
+        let has_file: HashSet<i64> = (7001..=7170).collect();
+        let (files, skipped) = fresh_files(
+            &[row],
+            false,
+            79,
+            "H",
+            &by,
+            &has_file,
+            EpisodeSource::ArrFirst,
+        );
+        assert!(files.is_empty());
+        assert!(
+            skipped[0].ends_with(": Invalid season or episode"),
+            "{skipped:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_season_rejection_yields_only_to_our_mapping() {
+        assert!(is_invalid_episode_rejection("Invalid season or episode"));
+        assert!(is_invalid_episode_rejection("INVALID SEASON OR EPISODE"));
+        assert!(!is_invalid_episode_rejection(
+            "Not an upgrade for existing episode file(s)"
+        ));
+        assert!(!is_invalid_episode_rejection("Sample"));
+        let (path, n) = op_sxxe_paths().remove(0);
+        let row = op_invalid_row(&path);
+        let ours = sxxe_absolute_episodes(&op_parse_sxxe(n), &one_piece(), 121, true, Some(23));
+        let by: HashMap<String, Vec<i64>> = [(path.clone(), ours)].into();
+        let run = |rows: &[Value], by: &HashMap<String, Vec<i64>>, have: &HashSet<i64>| {
+            fresh_files(rows, false, 121, "H", by, have, EpisodeSource::ArrFirst)
+        };
+
+        // notre correspondance : le rejet cède
+        let (files, skipped) = run(std::slice::from_ref(&row), &by, &HashSet::new());
+        assert_eq!(files.len(), 1, "{skipped:?}");
+        assert_eq!(files[0]["episodeIds"], json!([23001]));
+        assert_eq!(files[0]["seriesId"], json!(121));
+        assert_eq!(files[0]["releaseType"], "singleEpisode");
+        assert!(skipped.is_empty());
+
+        // sans elle : écarté comme avant
+        let (files, skipped) = run(std::slice::from_ref(&row), &HashMap::new(), &HashSet::new());
+        assert!(files.is_empty());
+        assert_eq!(
+            skipped,
+            vec![format!(
+                "{}: Invalid season or episode",
+                path.rsplit('/').next().unwrap()
+            )]
+        );
+
+        // l'épisode a déjà un fichier : jamais remplacé
+        let (files, skipped) = run(
+            std::slice::from_ref(&row),
+            &by,
+            &[23001].into_iter().collect(),
+        );
+        assert!(files.is_empty() && skipped[0].contains("déjà présent"));
+
+        // un autre refus en plus (extrait) reste bloquant
+        let mut sample = row.clone();
+        sample["rejections"] =
+            json!([{"reason": "Invalid season or episode"}, {"reason": "Sample"}]);
+        let (files, skipped) = run(&[sample], &by, &HashSet::new());
+        assert!(
+            files.is_empty() && skipped[0].ends_with(": Sample"),
+            "{skipped:?}"
+        );
+
+        // Sonarr rattache le fichier à une AUTRE fiche : son refus reste bloquant
+        let mut elsewhere = row.clone();
+        elsewhere["series"] = json!({"id": 999});
+        let (files, _) = run(&[elsewhere], &by, &HashSet::new());
+        assert!(files.is_empty(), "refus d'une autre fiche");
+    }
+
+    #[test]
+    fn the_real_one_piece_pack_imports_all_25_files() {
+        let eps = one_piece();
+        // 7 « EP » : Sonarr les lit en absolu et propose l'épisode (S23E19…E25)
+        let mut rows: Vec<Value> = (1174..=1180)
+            .map(|n| {
+                let p = op_ep_path(n);
+                json!({"path": p, "relativePath": p.rsplit('/').next().unwrap(), "rejections": [],
+                       "series": {"id": 121}, "episodes": [{"id": 23000 + n - 1155}]})
+            })
+            .collect();
+        // 18 « S01E11NN » : « Invalid season or episode », aucun épisode proposé
+        let mut by_path: HashMap<String, Vec<i64>> = HashMap::new();
+        for n in 1174..=1180 {
+            // ce que `examine` range pour les « EP » : `map_episodes` du parse réel
+            by_path.insert(op_ep_path(n), map_episodes(&op_parse_ep(n), &eps));
+        }
+        for (path, n) in op_sxxe_paths() {
+            let parse = op_parse_sxxe(n);
+            let mut m = map_episodes(&parse, &eps);
+            assert!(m.is_empty());
+            m = sxxe_absolute_episodes(&parse, &eps, 121, true, Some(23));
+            by_path.insert(path.clone(), m);
+            rows.push(op_invalid_row(&path));
+        }
+        let (files, skipped) = fresh_files(
+            &rows,
+            false,
+            121,
+            "H",
+            &by_path,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert!(skipped.is_empty(), "rien d'écarté : {skipped:?}");
+        assert_eq!(files.len(), 25);
+        let mut ids: Vec<i64> = files
+            .iter()
+            .flat_map(|f| f["episodeIds"].as_array().unwrap().clone())
+            .map(|v| v.as_i64().unwrap())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            (23001..=23025).collect::<Vec<i64>>(),
+            "chaque épisode de la saison 23 une seule fois"
+        );
+        assert!(files.iter().all(|f| f["seriesId"] == json!(121)));
+    }
+
+    #[test]
+    fn two_files_never_claim_the_same_episode() {
+        // deux versions du même épisode dans le torrent : la première est importée, la seconde écartée
+        let vostfr = format!(
+            "{OP_DIR}/One Piece S01E1160 VOSTFR 1080p WEB x264 AAC -Tsundere-Raws (CR).mkv"
+        );
+        let subfrench = format!(
+            "{OP_DIR}/One Piece S01E1160 SUBFRENCH 1080p CR WEB-DL AAC2.0 H.264-Tsundere-Raws.mkv"
+        );
+        let by: HashMap<String, Vec<i64>> = [
+            (vostfr.clone(), vec![23005]),
+            (subfrench.clone(), vec![23005]),
+        ]
+        .into();
+        let rows = vec![op_invalid_row(&vostfr), op_invalid_row(&subfrench)];
+        let (files, skipped) = fresh_files(
+            &rows,
+            false,
+            121,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert_eq!(files.len(), 1, "{skipped:?}");
+        assert_eq!(files[0]["path"], json!(vostfr));
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].contains("déjà pris"), "{skipped:?}");
+
+        // un « EP1174 » proposé par Sonarr et un « S01E1174 » lu par nous : même règle
+        let ep = op_ep_path(1174);
+        let sxxe = format!(
+            "{OP_DIR}/One Piece S01E1174 VOSTFR 1080p WEB x264 AAC -Tsundere-Raws (CR).mkv"
+        );
+        let rows = vec![
+            json!({"path": ep, "rejections": [], "series": {"id": 121}, "episodes": [{"id": 23019}]}),
+            op_invalid_row(&sxxe),
+        ];
+        let by: HashMap<String, Vec<i64>> = [(sxxe, vec![23019])].into();
+        let (files, skipped) = fresh_files(
+            &rows,
+            false,
+            121,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["path"], json!(ep));
+        assert!(skipped[0].contains("déjà pris"), "{skipped:?}");
+
+        // un multi-épisode puis un fichier qui recoupe l'un de ses épisodes : écarté aussi
+        let rows = vec![
+            json!({"path": "/dl/S/E01E02.mkv", "rejections": [], "series": {"id": 5}, "episodes": [{"id": 1}, {"id": 2}]}),
+            json!({"path": "/dl/S/E02.mkv", "rejections": [], "series": {"id": 5}, "episodes": [{"id": 2}]}),
+            json!({"path": "/dl/S/E03.mkv", "rejections": [], "series": {"id": 5}, "episodes": [{"id": 3}]}),
+        ];
+        let (files, skipped) = fresh_files(
+            &rows,
+            false,
+            5,
+            "H",
+            &HashMap::new(),
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[1]["path"], "/dl/S/E03.mkv");
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].starts_with("/dl/S/E02.mkv: épisode déjà pris"));
     }
 }
