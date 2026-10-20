@@ -117,9 +117,16 @@ pub struct Title {
     pub russian: bool,
     /// Dossier de la fiche tel que Jellyfin le voit (chemin de l'Arr passé par `map_path`).
     pub jf_path: Option<String>,
+    /// Identifiant de la fiche dans l'Arr de ce côté, et son dossier tel que l'Arr le voit (liste rouge).
+    pub arr_id: i64,
+    pub path: String,
+    /// Séries : dernière diffusion passée selon Sonarr (`previousAiring`) et dernière diffusion connue (`lastAired`,
+    /// parfois à venir). Lues par la liste rouge (« sans nouvel épisode »), pas par ce rapport.
+    pub previous_airing: Option<i64>,
+    pub last_aired: Option<i64>,
 }
 
-fn parse_date(d: &str) -> Option<i64> {
+pub(crate) fn parse_date(d: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(d)
         .ok()
         .map(|d| d.timestamp())
@@ -182,6 +189,10 @@ pub fn movie_title(side: &str, v: &Value, roots: &Roots, jf_path: Option<String>
         episodes: 0,
         russian: roots.russian.iter().any(|r| under(r, path)),
         jf_path,
+        arr_id: number(v, "/id"),
+        path: path.to_string(),
+        previous_airing: None,
+        last_aired: None,
     })
 }
 
@@ -218,6 +229,13 @@ pub fn series_title(
         episodes: number(v, "/statistics/episodeFileCount").max(0) as u32,
         russian: roots.russian.iter().any(|r| under(r, path)),
         jf_path,
+        arr_id: number(v, "/id"),
+        path: path.to_string(),
+        // Sonarr 4 la donne sur la fiche ; `statistics` par prudence (autre version)
+        previous_airing: ["/previousAiring", "/statistics/previousAiring"]
+            .into_iter()
+            .find_map(|p| v.pointer(p).and_then(Value::as_str).and_then(parse_date)),
+        last_aired: parse_date(text(v, "lastAired")),
     })
 }
 
@@ -312,34 +330,90 @@ fn push_id(m: &mut HashMap<i64, Vec<String>>, key: i64, id: &str) {
     }
 }
 
-/// Ce qu'au moins un compte a vu ou commencé : films, et épisodes regroupés par série Jellyfin.
+/// Ce qu'au moins un compte a vu ou commencé : films, et épisodes regroupés par série Jellyfin. Depuis le 2026-10-20,
+/// aussi **quand** (liste rouge) : dernière lecture datée par film ou série, et éléments vus sans aucune date.
 #[derive(Debug, Default)]
 pub struct Seen {
     movies: HashSet<String>,
     episodes: HashMap<String, HashSet<String>>,
-    /// Tout identifiant déjà rangé (film ou épisode), pour ne résoudre que les inconnus de Playback Reporting.
-    known: HashSet<String>,
+    /// Tout identifiant déjà rangé (film ou épisode) → le film lui-même ou la série de l'épisode : pour ne résoudre que
+    /// les inconnus de Playback Reporting, et y ramener ses dates.
+    known: HashMap<String, String>,
+    /// Dernière lecture datée par film ou série Jellyfin (secondes), tous comptes et Playback Reporting confondus.
+    last: HashMap<String, i64>,
+    /// Films et épisodes qui ont au moins une date (un compte ou Playback Reporting).
+    dated: HashSet<String>,
+    /// Films et épisodes vus ou commencés sur un compte sans `LastPlayedDate` (ou ligne de Playback Reporting à la date
+    /// illisible) → film ou série. « Vu sans date » s'ils n'ont aucune date par ailleurs.
+    marked: HashMap<String, String>,
 }
 
 impl Seen {
     /// Un film ou un épisode renvoyé par Jellyfin (les autres types sont ignorés ; un épisode sans série aussi).
     pub fn add_item(&mut self, it: &Value) {
-        let Some(id) = it.get("Id").and_then(Value::as_str).map(norm) else {
-            return;
-        };
-        match it.get("Type").and_then(Value::as_str) {
+        self.rank(it);
+    }
+
+    /// Range l'élément ; rend son identifiant et le film ou la série auquel il se rattache.
+    fn rank(&mut self, it: &Value) -> Option<(String, String)> {
+        let id = it.get("Id").and_then(Value::as_str).map(norm)?;
+        let owner = match it.get("Type").and_then(Value::as_str) {
             Some("Movie") => {
                 self.movies.insert(id.clone());
+                id.clone()
             }
             Some("Episode") => {
-                let Some(series) = it.get("SeriesId").and_then(Value::as_str).map(norm) else {
-                    return;
-                };
-                self.episodes.entry(series).or_default().insert(id.clone());
+                let series = it.get("SeriesId").and_then(Value::as_str).map(norm)?;
+                self.episodes
+                    .entry(series.clone())
+                    .or_default()
+                    .insert(id.clone());
+                series
             }
-            _ => return,
+            _ => return None,
+        };
+        self.known.insert(id.clone(), owner.clone());
+        Some((id, owner))
+    }
+
+    /// Un film ou un épisode vu ou commencé sur un compte (`IsPlayed`, `IsResumable`, avec `EnableUserData`) : rangé
+    /// comme `add_item`, avec la date de dernière lecture de ce compte (`UserData.LastPlayedDate`) ; sans elle, l'élément
+    /// est « vu sans date » tant qu'aucune autre date ne le couvre.
+    pub fn add_account_item(&mut self, it: &Value) {
+        let Some((id, owner)) = self.rank(it) else {
+            return;
+        };
+        match it
+            .pointer("/UserData/LastPlayedDate")
+            .and_then(Value::as_str)
+            .and_then(parse_date)
+        {
+            Some(at) => self.note_date(id, owner, at),
+            None => {
+                self.marked.insert(id, owner);
+            }
         }
-        self.known.insert(id);
+    }
+
+    /// Une lecture d'au moins 60 s dans Playback Reporting, datée ou non (date illisible = « vu sans date »). Un élément
+    /// que Jellyfin n'a pas su rattacher (supprimé depuis, épisode sans série) est ignoré.
+    pub fn add_play(&mut self, id: &str, at: Option<i64>) {
+        let id = norm(id);
+        let Some(owner) = self.known.get(&id).cloned() else {
+            return;
+        };
+        match at {
+            Some(at) => self.note_date(id, owner, at),
+            None => {
+                self.marked.insert(id, owner);
+            }
+        }
+    }
+
+    fn note_date(&mut self, id: String, owner: String, at: i64) {
+        let last = self.last.entry(owner).or_insert(at);
+        *last = (*last).max(at);
+        self.dated.insert(id);
     }
 
     pub fn movie_seen(&self, id: &str) -> bool {
@@ -350,12 +424,24 @@ impl Seen {
         self.episodes.get(series_id).map_or(0, HashSet::len)
     }
 
+    /// Dernière lecture datée d'un film ou d'une série (maximum sur ses épisodes).
+    pub fn last_played(&self, id: &str) -> Option<i64> {
+        self.last.get(id).copied()
+    }
+
+    /// Un film, ou un épisode de la série, est vu ou commencé sans aucune date (ni compte ni Playback Reporting).
+    pub fn seen_undated(&self, id: &str) -> bool {
+        self.marked
+            .iter()
+            .any(|(item, owner)| owner == id && !self.dated.contains(item))
+    }
+
     /// Parmi `ids` (Playback Reporting), ceux qu'aucune liste de compte n'a rangés : triés, sans doublon.
     pub fn unknown(&self, ids: &[String]) -> Vec<String> {
         let mut v: Vec<String> = ids
             .iter()
             .map(|i| norm(i))
-            .filter(|i| !self.known.contains(i))
+            .filter(|i| !self.known.contains_key(i))
             .collect();
         v.sort();
         v.dedup();
@@ -380,6 +466,50 @@ pub fn long_plays(cols: &[String], rows: &[Vec<String>]) -> Result<Vec<String>> 
             Some(norm(r.get(i)?))
         })
         .collect())
+}
+
+/// Requête Playback Reporting : par élément, la plus longue lecture (`secs`) et, depuis le 2026-10-20, la date de la
+/// dernière lecture d'au moins 60 s (`last`). `DateCreated` est un texte qui se trie comme une date.
+pub const PLAYS_SQL: &str = "SELECT ItemId, MAX(PlayDuration) AS secs, \
+     MAX(CASE WHEN PlayDuration >= 60 THEN DateCreated END) AS last \
+     FROM PlaybackActivity GROUP BY ItemId";
+
+/// Playback Reporting : (élément, date de sa dernière lecture d'au moins 60 s), `None` si la date est illisible.
+/// Colonnes `ItemId`, `secs` et `last` (une colonne absente est une erreur : rien ne passe pour « jamais lu »).
+pub fn play_dates(cols: &[String], rows: &[Vec<String>]) -> Result<Vec<(String, Option<i64>)>> {
+    let idx = |n: &str| cols.iter().position(|c| c.eq_ignore_ascii_case(n));
+    let (i, s, l) = (
+        idx("ItemId").context("colonne ItemId absente")?,
+        idx("secs").context("colonne secs absente")?,
+        idx("last").context("colonne last absente")?,
+    );
+    Ok(rows
+        .iter()
+        .filter_map(|r| {
+            let secs = r.get(s)?.parse::<f64>().ok()?;
+            if secs < MIN_PLAY_SECS {
+                return None;
+            }
+            Some((norm(r.get(i)?), r.get(l).and_then(|d| play_date(d))))
+        })
+        .collect())
+}
+
+/// Date d'une ligne de Playback Reporting : `2026-10-20 19:38:05.8431334`, heure **locale** du serveur, sans fuseau
+/// (vérifié le 2026-10-20 : la dernière ligne portait l'heure de Paris, pas l'UTC). RFC 3339 accepté aussi. Une heure
+/// sautée au passage à l'heure d'été est lue comme UTC (une heure d'écart ne change rien à 60 jours).
+pub fn play_date(d: &str) -> Option<i64> {
+    use chrono::TimeZone;
+    let d = d.trim();
+    match chrono::NaiveDateTime::parse_from_str(d, "%Y-%m-%d %H:%M:%S%.f") {
+        Ok(t) => Some(
+            chrono::Local
+                .from_local_datetime(&t)
+                .earliest()
+                .map_or_else(|| t.and_utc().timestamp(), |t| t.timestamp()),
+        ),
+        Err(_) => parse_date(d),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -604,8 +734,9 @@ pub fn summary(r: &CatalogueReport) -> String {
 // ---------------------------------------------------------------------------------------------
 
 /// Fiches des Arrs du VPS et de la seedbox. `None` si un côté est injoignable : un rapport sans la seedbox (80 % du
-/// volume) serait faux, on garde le précédent. La panne est déjà signalée par `seedbox_health`.
-async fn read_titles(ctx: &TaskContext) -> Option<Vec<Title>> {
+/// volume) serait faux, on garde le précédent. La panne est déjà signalée par `seedbox_health`. `task` : nom journalisé
+/// (ce lecteur sert aussi la liste rouge).
+pub(crate) async fn read_titles(ctx: &TaskContext, task: &'static str) -> Option<Vec<Title>> {
     let roots = Roots::from_cfg(&ctx.cfg.tasks.anime_library);
     let mut sides: Vec<(&'static str, &ArrClient, &ArrClient)> =
         vec![("vps", &ctx.radarr, &ctx.sonarr)];
@@ -617,8 +748,8 @@ async fn read_titles(ctx: &TaskContext) -> Option<Vec<Title>> {
         let maps = side_maps(ctx, side);
         let jf_path =
             |v: &Value| map_path(&maps, text(v, "path")).map(|(_, jellyfin_path)| jellyfin_path);
-        let movies = side_or_skip("catalogue_report", side, radarr.movies().await)?;
-        let series = side_or_skip("catalogue_report", side, sonarr.series().await)?;
+        let movies = side_or_skip(task, side, radarr.movies().await)?;
+        let series = side_or_skip(task, side, sonarr.series().await)?;
         out.extend(
             movies
                 .iter()
@@ -633,21 +764,70 @@ async fn read_titles(ctx: &TaskContext) -> Option<Vec<Title>> {
     Some(out)
 }
 
-/// Ce que les comptes ont vu ou commencé, plus Playback Reporting (≥ 60 s). `false` : Playback Reporting n'a pas répondu.
-/// Une erreur sur un compte fait échouer le passage : un « vu » incomplet gonflerait le « jamais vu ».
-async fn read_seen(
+/// Films et séries de Jellyfin, vus par le compte admin qui lit le catalogue (jamais sans `UserId`) ; une page de 500 :
+/// ~280 éléments aujourd'hui.
+pub(crate) async fn read_jf_index(ctx: &TaskContext, admin: &str) -> Result<JfIndex> {
+    let items = ctx
+        .jellyfin
+        .items_paged(
+            &[
+                ("UserId", admin),
+                ("Recursive", "true"),
+                ("IncludeItemTypes", "Series,Movie"),
+                ("Fields", "ProviderIds,Path"),
+                ("EnableImages", "false"),
+                ("EnableUserData", "false"),
+            ],
+            500,
+        )
+        .await?;
+    Ok(JfIndex::from_items(&items))
+}
+
+/// Sorte de demandeur d'après Jellyseerr ; « inconnu » partout s'il est injoignable.
+pub(crate) async fn read_requests(ctx: &TaskContext, task: &'static str) -> Requests {
+    match ctx.jellyseerr.all_requests().await {
+        Ok(v) => Requests::from_json(&v),
+        Err(e) => {
+            warn!(
+                task,
+                error = format!("{e:#}"),
+                "Jellyseerr injoignable : demandeur inconnu"
+            );
+            Requests::unavailable()
+        }
+    }
+}
+
+/// Résultat de [`read_seen`].
+#[derive(Debug, Default)]
+pub(crate) struct SeenRead {
+    pub seen: Seen,
+    /// Playback Reporting a répondu (requête et colonnes lisibles).
+    pub playback_reporting: bool,
+    /// Comptes dont une liste n'a pas pu être lue (toujours 0 en mode strict : l'erreur remonte).
+    pub unreadable_accounts: u32,
+}
+
+/// Ce que les comptes ont vu ou commencé, avec la date de dernière lecture de chaque compte (`EnableUserData`, aucune
+/// requête de plus), plus Playback Reporting (≥ 60 s, avec la date de la dernière). `strict` (le rapport) : une erreur
+/// sur un compte fait échouer le passage, un « vu » incomplet gonflerait le « jamais vu ». Sinon (liste rouge) le compte
+/// est compté dans `unreadable_accounts` et le calcul se dit incomplet. `pause_ms` : pause entre deux comptes.
+pub(crate) async fn read_seen(
     ctx: &TaskContext,
     users: &[Value],
     admin: &str,
-    cfg: &Cfg,
-) -> Result<(Seen, bool)> {
-    let mut seen = Seen::default();
+    pause_ms: u64,
+    task: &'static str,
+    strict: bool,
+) -> Result<SeenRead> {
+    let mut out = SeenRead::default();
     for u in users {
         let Some(uid) = u.get("Id").and_then(Value::as_str) else {
             continue;
         };
         for filter in ["IsPlayed", "IsResumable"] {
-            let items = ctx
+            let read = ctx
                 .jellyfin
                 .items_paged(
                     &[
@@ -656,46 +836,66 @@ async fn read_seen(
                         ("IncludeItemTypes", "Movie,Episode"),
                         ("Filters", filter),
                         ("EnableImages", "false"),
-                        ("EnableUserData", "false"),
+                        ("EnableUserData", "true"),
                     ],
                     1000,
                 )
                 .await
-                .with_context(|| format!("lecture des éléments {filter} d'un compte"))?;
-            for it in &items {
-                seen.add_item(it);
+                .with_context(|| format!("lecture des éléments {filter} d'un compte"));
+            match read {
+                Ok(items) => {
+                    for it in &items {
+                        out.seen.add_account_item(it);
+                    }
+                }
+                Err(e) if strict => return Err(e),
+                Err(e) => {
+                    warn!(
+                        task,
+                        error = format!("{e:#}"),
+                        "compte illisible : calcul incomplet"
+                    );
+                    out.unreadable_accounts += 1;
+                    break;
+                }
             }
         }
-        tokio::time::sleep(Duration::from_millis(cfg.user_pause_ms)).await;
+        tokio::time::sleep(Duration::from_millis(pause_ms)).await;
     }
-    let sql = "SELECT ItemId, MAX(PlayDuration) AS secs FROM PlaybackActivity GROUP BY ItemId";
-    let plays = match ctx.jellyfin.playback_query(sql).await {
-        Ok((cols, rows)) => long_plays(&cols, &rows).map(Some).unwrap_or_else(|e| {
-            warn!(
-                task = "catalogue_report",
-                error = format!("{e:#}"),
-                "Playback Reporting illisible"
-            );
-            None
-        }),
+    let plays = match ctx.jellyfin.playback_query(PLAYS_SQL).await {
+        Ok((cols, rows)) => match (long_plays(&cols, &rows), play_dates(&cols, &rows)) {
+            (Ok(ids), Ok(dates)) => Some((ids, dates)),
+            (Err(e), _) | (_, Err(e)) => {
+                warn!(
+                    task,
+                    error = format!("{e:#}"),
+                    "Playback Reporting illisible"
+                );
+                None
+            }
+        },
         Err(e) => {
             warn!(
-                task = "catalogue_report",
+                task,
                 error = format!("{e:#}"),
                 "Playback Reporting injoignable"
             );
             None
         }
     };
-    let Some(plays) = plays else {
-        return Ok((seen, false));
+    let Some((plays, dates)) = plays else {
+        return Ok(out);
     };
     // lecture d'au moins 60 s sans « vu » ni « en cours » (< 5 % d'un épisode) : on retrouve l'élément et sa série
-    let unknown = seen.unknown(&plays);
+    let unknown = out.seen.unknown(&plays);
     for it in ctx.jellyfin.items_by_ids_as(admin, &unknown).await? {
-        seen.add_item(&it);
+        out.seen.add_item(&it);
     }
-    Ok((seen, true))
+    for (id, at) in &dates {
+        out.seen.add_play(id, *at);
+    }
+    out.playback_reporting = true;
+    Ok(out)
 }
 
 #[async_trait]
@@ -716,40 +916,27 @@ impl Task for CatalogueReportTask {
         let cfg = &ctx.cfg.tasks.catalogue_report;
         let users = ctx.jellyfin.users().await?;
         let admin = pick_admin(&users).context("aucun compte admin actif")?;
-        let Some(titles) = read_titles(ctx).await else {
+        let Some(titles) = read_titles(ctx, "catalogue_report").await else {
             return Ok(Report::new(
                 "un côté Arr est injoignable : rapport précédent conservé",
                 0,
             ));
         };
-        // vue d'un compte (jamais sans `UserId`) ; une page de 500 : ~280 éléments aujourd'hui
-        let items = ctx
-            .jellyfin
-            .items_paged(
-                &[
-                    ("UserId", admin.as_str()),
-                    ("Recursive", "true"),
-                    ("IncludeItemTypes", "Series,Movie"),
-                    ("Fields", "ProviderIds,Path"),
-                    ("EnableImages", "false"),
-                    ("EnableUserData", "false"),
-                ],
-                500,
-            )
-            .await?;
-        let jf = JfIndex::from_items(&items);
-        let (seen, playback_reporting) = read_seen(ctx, &users, &admin, cfg).await?;
-        let requests = match ctx.jellyseerr.all_requests().await {
-            Ok(v) => Requests::from_json(&v),
-            Err(e) => {
-                warn!(
-                    task = "catalogue_report",
-                    error = format!("{e:#}"),
-                    "Jellyseerr injoignable : demandeur inconnu"
-                );
-                Requests::unavailable()
-            }
-        };
+        let jf = read_jf_index(ctx, &admin).await?;
+        let SeenRead {
+            seen,
+            playback_reporting,
+            ..
+        } = read_seen(
+            ctx,
+            &users,
+            &admin,
+            cfg.user_pause_ms,
+            "catalogue_report",
+            true,
+        )
+        .await?;
+        let requests = read_requests(ctx, "catalogue_report").await;
         let report = build_report(
             &Inputs {
                 titles: &titles,
@@ -825,6 +1012,10 @@ mod tests {
             episodes,
             russian: false,
             jf_path: Some(format!("/media/{name}")),
+            arr_id: 0,
+            path: String::new(),
+            previous_airing: None,
+            last_aired: None,
         }
     }
 
@@ -1293,6 +1484,111 @@ mod tests {
         ];
         assert_eq!(long_plays(&cols, &rows).unwrap(), ["abcd", "ff"]);
         assert!(long_plays(&["x".to_string()], &rows).is_err());
+    }
+
+    #[test]
+    fn playback_reporting_dates_are_read_in_local_time() {
+        let cols = vec!["ItemId".to_string(), "secs".to_string(), "last".to_string()];
+        let rows = vec![
+            vec![
+                "AB-CD".into(),
+                "60".into(),
+                "2026-10-20 19:38:05.8431334".into(),
+            ],
+            vec!["ee".into(), "59.9".into(), "null".into()],
+            vec!["ff".into(), "3600".into(), "hier".into()],
+        ];
+        let local = {
+            use chrono::TimeZone;
+            let t = chrono::NaiveDate::from_ymd_opt(2026, 10, 20)
+                .unwrap()
+                .and_hms_opt(19, 38, 5)
+                .unwrap();
+            chrono::Local
+                .from_local_datetime(&t)
+                .earliest()
+                .unwrap()
+                .timestamp()
+        };
+        assert_eq!(
+            play_dates(&cols, &rows).unwrap(),
+            [("abcd".to_string(), Some(local)), ("ff".to_string(), None)],
+            "moins de 60 s ignoré ; date illisible gardée comme « sans date »"
+        );
+        // sans fraction de seconde, ou en RFC 3339 (UTC) : lisible aussi
+        assert_eq!(play_date("2026-10-20 19:38:05"), Some(local));
+        assert_eq!(
+            play_date("2026-10-20T17:38:05Z"),
+            parse_date("2026-10-20T17:38:05Z")
+        );
+        assert_eq!(play_date("null"), None);
+        // colonne de date absente : erreur (Playback Reporting tenu pour muet), jamais « jamais lu »
+        assert!(play_dates(&cols[..2], &rows).is_err());
+        // la requête porte bien les trois colonnes lues
+        for c in ["ItemId", "AS secs", "AS last", "PlayDuration >= 60"] {
+            assert!(PLAYS_SQL.contains(c), "{c} absent de la requête");
+        }
+    }
+
+    #[test]
+    fn seen_keeps_the_latest_dated_play_and_flags_plays_without_date() {
+        let mut seen = Seen::default();
+        // film lu par deux comptes : la date la plus récente
+        for d in ["2026-08-01T10:00:00Z", "2026-09-01T10:00:00.1234567Z"] {
+            seen.add_account_item(
+                &json!({"Id": "M1", "Type": "Movie", "UserData": {"LastPlayedDate": d}}),
+            );
+        }
+        assert_eq!(seen.last_played("m1"), parse_date("2026-09-01T10:00:00Z"));
+        assert!(seen.movie_seen("m1") && !seen.seen_undated("m1"));
+        // série : maximum sur ses épisodes ; un épisode marqué vu sans date rend la série « vue sans date »
+        let ep = |id: &str, d: Option<&str>| json!({"Id": id, "Type": "Episode", "SeriesId": "S", "UserData": {"LastPlayedDate": d}});
+        seen.add_account_item(&ep("e1", Some("2026-07-01T00:00:00Z")));
+        seen.add_account_item(&ep("e2", Some("2026-07-20T00:00:00Z")));
+        seen.add_account_item(&ep("e3", None));
+        assert_eq!(seen.last_played("s"), parse_date("2026-07-20T00:00:00Z"));
+        assert!(seen.seen_undated("s"));
+        assert_eq!(
+            seen.episodes_seen("s"),
+            3,
+            "le décompte du rapport ne change pas"
+        );
+        // Playback Reporting date l'épisode : plus « sans date », et sa date compte pour la série
+        seen.add_play("E3", parse_date("2026-08-15T00:00:00Z"));
+        assert!(!seen.seen_undated("s"));
+        assert_eq!(seen.last_played("s"), parse_date("2026-08-15T00:00:00Z"));
+        // élément résolu depuis Playback Reporting (`add_item`) : pas un marqueur ; date illisible = « sans date »
+        seen.add_item(&json!({"Id": "m2", "Type": "Movie"}));
+        assert!(!seen.seen_undated("m2"));
+        seen.add_play("m2", None);
+        assert!(seen.seen_undated("m2"));
+        // identifiant inconnu de Jellyfin : ignoré
+        seen.add_play("zz", parse_date("2026-10-01T00:00:00Z"));
+        assert_eq!(seen.last_played("zz"), None);
+        // compte sans `UserData` (ancien appel) : vu sans date
+        seen.add_account_item(&json!({"Id": "m3", "Type": "Movie"}));
+        assert!(seen.seen_undated("m3") && seen.movie_seen("m3"));
+    }
+
+    #[test]
+    fn titles_carry_their_card_id_folder_and_airings() {
+        let r = roots();
+        let v = json!({"id": 42, "title": "S", "path": "/tv/S", "added": "2026-01-01T00:00:00Z",
+            "previousAiring": "2026-10-01T20:00:00Z", "lastAired": "2026-12-01T20:00:00Z",
+            "statistics": {"sizeOnDisk": 4, "episodeFileCount": 1}});
+        let t = series_title("vps", &v, &r, None).unwrap();
+        assert_eq!((t.arr_id, t.path.as_str()), (42, "/tv/S"));
+        assert_eq!(t.previous_airing, parse_date("2026-10-01T20:00:00Z"));
+        assert_eq!(t.last_aired, parse_date("2026-12-01T20:00:00Z"));
+        assert_eq!(
+            t.arrived,
+            parse_date("2026-01-01T00:00:00Z"),
+            "l'arrivée du rapport ne bouge pas"
+        );
+        let m = json!({"id": 7, "title": "F", "path": "/movies/F", "sizeOnDisk": 1});
+        let t = movie_title("vps", &m, &r, None).unwrap();
+        assert_eq!((t.arr_id, t.path.as_str()), (7, "/movies/F"));
+        assert_eq!((t.previous_airing, t.last_aired), (None, None));
     }
 
     #[test]

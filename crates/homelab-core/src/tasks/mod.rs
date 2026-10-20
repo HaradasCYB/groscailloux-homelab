@@ -22,6 +22,7 @@ pub mod onboard;
 pub mod original_language;
 pub mod playback_canary;
 pub mod playback_limit;
+pub mod red_list;
 pub mod russian_search;
 pub mod seedbox_health;
 pub mod seedbox_refresh;
@@ -102,6 +103,7 @@ pub fn registry() -> Vec<Box<dyn Task>> {
         Box::new(backup_watch::BackupWatch),
         Box::new(diun_watch::DiunWatch),
         Box::new(catalogue_report::CatalogueReportTask),
+        Box::new(red_list::RedListTask),
         Box::new(seedbox_refresh::SeedboxRefresh),
         Box::new(tracker_ratio::TrackerRatio),
         Box::new(stuck_handler::StuckHandler),
