@@ -95,6 +95,10 @@ pub struct State {
     /// Dernier rapport « catalogue jamais regardé » (`tasks::catalogue_report`), affiché sur `/status.html`.
     #[serde(default)]
     pub catalogue: Option<CatalogueReport>,
+    /// Liste rouge (`tasks::red_list`, page `/accounts/liste-rouge`, 2026-10-20) : dernier calcul, exemptions, horloges
+    /// « vu sans date », travaux « Nettoyer » et étapes à rejouer.
+    #[serde(default)]
+    pub red_list: RedListState,
     /// identity_check : dernière tentative de renommage d'une fiche au nom de release (id Jellyfin → date),
     /// pour ne pas réessayer sans fin un titre que TMDB nomme ainsi.
     #[serde(default)]
@@ -526,6 +530,215 @@ pub struct CatalogueReport {
     /// Les séries commencées qui ont le plus d'épisodes non vus (volume estimé), bornées par `max_backlog_listed`.
     #[serde(default)]
     pub backlog_listed: Vec<CatalogueEntry>,
+}
+
+/// Liste rouge (`tasks::red_list`, 2026-10-20). Tout est en `#[serde(default)]` : un état écrit avant elle se relit, et
+/// un ancien binaire ignore le champ (aucun `deny_unknown_fields`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedListState {
+    /// Dernier calcul (tâche quotidienne, « Recalculer », ou calcul complet au début d'un « Nettoyer »).
+    #[serde(default)]
+    pub report: Option<RedListReport>,
+    /// Titres exemptés par l'admin, par clé stable : permanents, jusqu'à « Retirer l'exemption ».
+    #[serde(default)]
+    pub exemptions: BTreeMap<String, Exemption>,
+    /// Vu sans date (marqué vu à la main : ni `LastPlayedDate` ni ligne datée de Playback Reporting), clé stable →
+    /// première observation. L'horloge tient lieu de date de lecture ; la clé disparaît dès qu'une date apparaît ou que
+    /// le marqueur s'en va.
+    #[serde(default)]
+    pub undated_since: BTreeMap<String, i64>,
+    /// Travaux « Nettoyer », du plus ancien au plus récent (`jobs_kept` au plus).
+    #[serde(default)]
+    pub jobs: Vec<CleanJob>,
+    /// Étapes d'un nettoyage à rejouer (corbeille de l'Arr, média Seerr), clé `<étape>:<côté>:<clé du titre>`.
+    #[serde(default)]
+    pub pending: BTreeMap<String, PendingStep>,
+}
+
+/// Exemption d'un titre de la liste rouge.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Exemption {
+    pub at: i64,
+    /// Titre au moment de l'exemption (texte brut, échappé à l'affichage) : listé même si le titre a disparu.
+    pub title: String,
+}
+
+/// Un calcul de la liste rouge (`tasks::red_list::build_red_list`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedListReport {
+    /// Date du calcul (secondes) : un titre dont `due <= at` est rouge.
+    pub at: i64,
+    pub min_idle_days: i64,
+    #[serde(default)]
+    pub soon_days: i64,
+    /// Playback Reporting a répondu et chaque compte a été lu. Sinon une lecture a pu échapper au calcul :
+    /// « Nettoyer » est refusé.
+    pub complete: bool,
+    /// Ce qui a manqué (`complete = false`), en clair.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing: Vec<String>,
+    /// Titres évalués (rapprochés de Jellyfin, avec identifiant et date d'arrivée).
+    #[serde(default)]
+    pub evaluated: u32,
+    /// Rouges et non exemptés, les plus gros d'abord.
+    #[serde(default)]
+    pub entries: Vec<RedEntry>,
+    /// Pas encore rouges, mais le deviendront dans `soon_days` jours au plus (le plus proche d'abord).
+    #[serde(default)]
+    pub soon: Vec<RedEntry>,
+    /// Exemptés présents au catalogue, rouges ou non (par titre).
+    #[serde(default)]
+    pub exempted: Vec<RedEntry>,
+    /// Non évalués, jamais rouges : absents de Jellyfin, sans identifiant TMDB/TVDB, sans date d'arrivée lisible,
+    /// fichiers d'épisodes illisibles (motif dans `reason`).
+    #[serde(default)]
+    pub unmatched: Vec<RedEntry>,
+}
+
+/// Un titre de la liste rouge (jamais de pseudo : le demandeur n'est qu'une sorte).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedEntry {
+    /// Clé stable : `movie:tmdb:<id>`, `series:tvdb:<id>`, à défaut `series:tmdb:<id>` ; vide pour un titre sans
+    /// identifiant (jamais rouge).
+    pub key: String,
+    /// Texte brut tiré de l'Arr (échappé à l'affichage), 60 caractères au plus.
+    pub title: String,
+    /// `film`, `série` ou `animé`.
+    pub kind: String,
+    pub movie: bool,
+    #[serde(default)]
+    pub tmdb: i64,
+    #[serde(default)]
+    pub tvdb: i64,
+    /// Voie russe : étiquette affichée.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub russian: bool,
+    /// Une copie par fiche d'Arr : un titre présent sur le VPS et la seedbox est une seule entrée à deux côtés.
+    pub sides: Vec<RedSide>,
+    /// Somme des copies.
+    pub bytes: u64,
+    /// Arrivée la plus tardive des copies (série : fiche, diffusions et import du dernier épisode compris).
+    #[serde(default)]
+    pub arrived: Option<i64>,
+    /// Dernière lecture datée, tous comptes et Playback Reporting confondus (série : maximum sur ses épisodes).
+    #[serde(default)]
+    pub last_played: Option<i64>,
+    /// Vu sans date : début de l'horloge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undated_since: Option<i64>,
+    /// Date où le titre devient (ou est devenu) rouge : dernière activité + `min_idle_days`. Absente si non évalué.
+    #[serde(default)]
+    pub due: Option<i64>,
+    /// Motif en clair (« jamais lu, arrivé le 12/09/2026 »), texte brut échappé à l'affichage.
+    pub reason: String,
+    /// `membre`, `admin`, `aucune` ou `inconnu`.
+    pub requester: String,
+}
+
+/// Une copie d'un titre : son côté et sa fiche d'Arr.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedSide {
+    /// `vps` ou `seedbox`.
+    pub side: String,
+    /// Identifiant de la fiche dans le Radarr ou le Sonarr de ce côté.
+    pub arr_id: i64,
+    pub bytes: u64,
+    /// Dossier de la fiche tel que l'Arr le voit.
+    pub folder: String,
+    /// Élément Jellyfin de cette copie (identifiant compact) ; vide si non rapproché.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub jf_id: String,
+    /// Arrivée de cette copie.
+    #[serde(default)]
+    pub arrived: Option<i64>,
+}
+
+/// Un clic sur « Nettoyer » (`red_list_clean`), gardé dans [`RedListState::jobs`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CleanJob {
+    pub id: String,
+    pub started: i64,
+    #[serde(default)]
+    pub ended: Option<i64>,
+    /// Simulation (`clean_dry_run`) : rien n'a été supprimé.
+    pub dry_run: bool,
+    /// Empreinte `snap` de la liste confirmée par l'admin.
+    pub snap: String,
+    /// `running`, `done`, `interrupted` (homelabd redémarré en plein travail), `refused` (calcul incomplet, liste
+    /// changée), `failed`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+    /// Clés confirmées, `max_titles_per_clean` au plus.
+    #[serde(default)]
+    pub keys: Vec<String>,
+    /// Quota de la seedbox au début du travail (`quota.json`).
+    #[serde(default)]
+    pub quota_before: Option<QuotaReading>,
+    /// Résultat titre par titre, dans l'ordre de traitement.
+    #[serde(default)]
+    pub results: Vec<CleanResult>,
+}
+
+/// Relevé de `quota.json` de la seedbox.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuotaReading {
+    pub used_kb: u64,
+    pub quota_kb: u64,
+    pub at: i64,
+}
+
+/// Ce qu'un « Nettoyer » a fait d'un titre.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CleanResult {
+    pub key: String,
+    pub title: String,
+    pub at: i64,
+    /// `deleted`, `partial` (un côté resté : fiche toujours là), `skipped` (revérification : exempté, en lecture, plus
+    /// rouge, fiche changée, déplacé récemment), `simulated`, `error`.
+    pub outcome: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+    /// Octets libérés tout de suite (taille exclusive : aucun autre lien physique).
+    #[serde(default)]
+    pub freed_now: u64,
+    /// Libérés plus tard : torrent C411 qui doit encore partager, corbeille à rejouer.
+    #[serde(default)]
+    pub freed_later: u64,
+    /// Encore liés ailleurs (autre lien physique hors du titre) : rien de libéré.
+    #[serde(default)]
+    pub shared: u64,
+    /// Étapes restées en attente (`recycle:<côté>`, `seerr`, `torrent:<côté>`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending: Vec<String>,
+}
+
+/// Étape d'un nettoyage à rejouer (quelques-unes par passage, abandonnée au bout de 14 j).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingStep {
+    /// `recycle` (dossier du titre dans la corbeille de l'Arr) ou `seerr` (média Jellyseerr à retirer).
+    pub step: String,
+    /// Clé stable du titre.
+    pub key: String,
+    pub title: String,
+    /// `vps` ou `seedbox` (vide pour `seerr`).
+    #[serde(default)]
+    pub side: String,
+    /// `recycle` : dossier vérifié à vider ; vide pour `seerr`.
+    #[serde(default)]
+    pub target: String,
+    /// `seerr` : `movie` ou `tv`, et identifiant TMDB.
+    #[serde(default)]
+    pub media_type: String,
+    #[serde(default)]
+    pub tmdb: i64,
+    pub first_at: i64,
+    #[serde(default)]
+    pub last_try: i64,
+    #[serde(default)]
+    pub tries: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub last_error: String,
 }
 
 /// Dernier passage d'une tâche. Les champs ajoutés le 2026-10-07 sont tous en `#[serde(default)]` : un état écrit par
@@ -1395,6 +1608,112 @@ mod tests {
         let back: State = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(back.watch_alerts["backup_watch"].key, "stale");
         assert_eq!(back.watch_alerts["backup_watch"].at, 1_000);
+    }
+
+    #[test]
+    fn a_state_without_red_list_still_loads_and_the_red_list_survives_both_ways() {
+        // état d'avant le 2026-10-20 : pas de `red_list`
+        let old: State = serde_json::from_str(r#"{"alerts":{"delivered":2}}"#).unwrap();
+        assert_eq!(old.red_list, RedListState::default());
+        // un `red_list` partiel (champs ajoutés plus tard absents) se relit aussi
+        let partial: State = serde_json::from_str(
+            r#"{"red_list":{"exemptions":{"movie:tmdb:1":{"at":5,"title":"X"}}}}"#,
+        )
+        .unwrap();
+        assert_eq!(partial.red_list.exemptions["movie:tmdb:1"].title, "X");
+        assert!(partial.red_list.report.is_none() && partial.red_list.jobs.is_empty());
+        // aller-retour complet
+        let side = RedSide {
+            side: "seedbox".into(),
+            arr_id: 12,
+            bytes: 3_000,
+            folder: "/media/TV Shows/Serie".into(),
+            jf_id: "abcd".into(),
+            arrived: Some(100),
+        };
+        let entry = RedEntry {
+            key: "series:tvdb:7".into(),
+            title: "Série <b>".into(),
+            kind: "série".into(),
+            movie: false,
+            tmdb: 70,
+            tvdb: 7,
+            russian: true,
+            sides: vec![side],
+            bytes: 3_000,
+            arrived: Some(100),
+            last_played: None,
+            undated_since: Some(150),
+            due: Some(5_284_150),
+            reason: "vu sans date".into(),
+            requester: "membre".into(),
+        };
+        let red_list = RedListState {
+            report: Some(RedListReport {
+                at: 6_000_000,
+                min_idle_days: 60,
+                soon_days: 14,
+                complete: false,
+                missing: vec!["Playback Reporting muet".into()],
+                evaluated: 1,
+                entries: vec![entry.clone()],
+                soon: vec![],
+                exempted: vec![],
+                unmatched: vec![],
+            }),
+            exemptions: BTreeMap::from([(
+                "movie:tmdb:1".into(),
+                Exemption {
+                    at: 5,
+                    title: "X".into(),
+                },
+            )]),
+            undated_since: BTreeMap::from([("series:tvdb:7".into(), 150)]),
+            jobs: vec![CleanJob {
+                id: "j1".into(),
+                started: 10,
+                ended: Some(20),
+                dry_run: true,
+                snap: "ab".into(),
+                status: "done".into(),
+                detail: String::new(),
+                keys: vec!["series:tvdb:7".into()],
+                quota_before: Some(QuotaReading {
+                    used_kb: 1,
+                    quota_kb: 2,
+                    at: 3,
+                }),
+                results: vec![CleanResult {
+                    key: "series:tvdb:7".into(),
+                    title: "Série <b>".into(),
+                    at: 15,
+                    outcome: "simulated".into(),
+                    freed_later: 3_000,
+                    pending: vec!["seerr".into()],
+                    ..Default::default()
+                }],
+            }],
+            pending: BTreeMap::from([(
+                "seerr::series:tvdb:7".into(),
+                PendingStep {
+                    step: "seerr".into(),
+                    key: "series:tvdb:7".into(),
+                    media_type: "tv".into(),
+                    tmdb: 70,
+                    first_at: 15,
+                    ..Default::default()
+                },
+            )]),
+        };
+        let s = State {
+            red_list,
+            ..Default::default()
+        };
+        let back: State = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(
+            back.red_list, s.red_list,
+            "la liste rouge doit survivre à l'état"
+        );
     }
 
     #[test]

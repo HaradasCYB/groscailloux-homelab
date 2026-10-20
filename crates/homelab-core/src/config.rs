@@ -549,6 +549,8 @@ pub struct Tasks {
     #[serde(default)]
     pub catalogue_report: CatalogueReport,
     #[serde(default)]
+    pub red_list: RedList,
+    #[serde(default)]
     pub subscription_cycle: Interval3600,
     #[serde(default)]
     pub subscription_reconcile: Interval86400,
@@ -691,6 +693,113 @@ impl Default for CatalogueReport {
             max_backlog_listed: 15,
             user_pause_ms: 150,
         }
+    }
+}
+
+/// Liste rouge (voir `tasks::red_list`, 2026-10-20) : titres que personne n'a lancés depuis `min_idle_days` jours,
+/// affichés sur `/accounts/liste-rouge` avec « Exempter » et « Nettoyer ». La tâche ne fait que calculer ; seul le
+/// bouton « Nettoyer » supprime, `max_titles_per_clean` titres au plus par clic.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct RedList {
+    pub interval_secs: u64,
+    /// Un titre est rouge si sa dernière activité (arrivée, dernière lecture sur un compte ou dans Playback Reporting,
+    /// horloge « vu sans date ») date d'au moins N jours. Pour une série, l'arrivée compte aussi la dernière diffusion
+    /// et l'import du dernier épisode : 60 j sans lecture **et** sans nouvel épisode.
+    pub min_idle_days: i64,
+    /// Voie russe évaluée comme le reste (avec son étiquette) ; `false` = jamais rouge.
+    pub include_russian: bool,
+    /// Titres supprimés au plus par clic sur « Nettoyer » (les plus gros d'abord).
+    pub max_titles_per_clean: usize,
+    /// `true` = « Nettoyer » ne fait que journaliser ce qu'il aurait fait (simulation) ; `false` après revue d'une
+    /// simulation et d'un essai réel sur un seul titre.
+    pub clean_dry_run: bool,
+    /// Délai de la suppression d'une fiche par l'Arr (`deleteFiles` sur la seedbox : plusieurs minutes pour une série).
+    pub arr_delete_timeout_secs: u64,
+    /// Attente après la suppression avant de vider la corbeille de l'Arr (le temps qu'il y déplace les fichiers).
+    pub recycle_wait_secs: u64,
+    /// Vider le dossier du titre dans la corbeille de l'Arr (sinon rien n'est libéré avant son ménage, 14 j).
+    pub empty_recycle: bool,
+    /// Ajouter le titre aux exclusions d'import de l'Arr (`false` : un membre peut le redemander).
+    pub add_import_exclusion: bool,
+    /// Alias ssh de la seedbox (taille exclusive, corbeille), comme `[tasks.indexer_unblock] ssh_host`.
+    pub ssh_host: String,
+    /// Travaux « Nettoyer » gardés dans l'état (les plus récents).
+    pub jobs_kept: usize,
+    /// Section « Bientôt rouges » : titres qui le deviendront dans N jours ou moins.
+    pub soon_days: i64,
+}
+
+impl Default for RedList {
+    fn default() -> Self {
+        Self {
+            interval_secs: 86_400,
+            min_idle_days: 60,
+            include_russian: true,
+            max_titles_per_clean: 50,
+            clean_dry_run: true,
+            arr_delete_timeout_secs: 300,
+            recycle_wait_secs: 90,
+            empty_recycle: true,
+            add_import_exclusion: false,
+            ssh_host: "seedbox".into(),
+            jobs_kept: 20,
+            soon_days: 14,
+        }
+    }
+}
+
+/// Plancher de `[tasks.red_list] min_idle_days` : une faute de frappe (6 pour 60) ne doit pas rendre tout le catalogue
+/// supprimable.
+pub const RED_LIST_MIN_IDLE_DAYS: i64 = 30;
+/// Plafond de `[tasks.red_list] max_titles_per_clean` (suppression plafonnée).
+pub const RED_LIST_MAX_TITLES_PER_CLEAN: usize = 200;
+
+impl RedList {
+    /// Valeurs absurdes refusées au démarrage : la liste rouge mène à des suppressions.
+    pub fn check(&self) -> Result<()> {
+        if self.interval_secs < 3_600 {
+            bail!("[tasks.red_list] interval_secs doit valoir au moins 3600 (calcul quotidien)");
+        }
+        if !(RED_LIST_MIN_IDLE_DAYS..=3_650).contains(&self.min_idle_days) {
+            bail!(
+                "[tasks.red_list] min_idle_days ({}) doit être entre {RED_LIST_MIN_IDLE_DAYS} et 3650 : en dessous, \
+                 un titre à peine arrivé deviendrait supprimable",
+                self.min_idle_days
+            );
+        }
+        if self.soon_days < 0 || self.soon_days >= self.min_idle_days {
+            bail!("[tasks.red_list] soon_days doit être entre 0 et min_idle_days - 1");
+        }
+        if !(1..=RED_LIST_MAX_TITLES_PER_CLEAN).contains(&self.max_titles_per_clean) {
+            bail!(
+                "[tasks.red_list] max_titles_per_clean doit être entre 1 et {RED_LIST_MAX_TITLES_PER_CLEAN} \
+                 (suppression plafonnée)"
+            );
+        }
+        if !(10..=3_600).contains(&self.arr_delete_timeout_secs) {
+            bail!("[tasks.red_list] arr_delete_timeout_secs doit être entre 10 et 3600");
+        }
+        if self.recycle_wait_secs > 3_600 {
+            bail!("[tasks.red_list] recycle_wait_secs ne peut pas dépasser 3600");
+        }
+        if !(1..=500).contains(&self.jobs_kept) {
+            bail!("[tasks.red_list] jobs_kept doit être entre 1 et 500");
+        }
+        // passé tel quel à ssh : un alias ou un nom d'hôte, jamais une option (`-oProxyCommand=…`)
+        let host_ok = !self.ssh_host.starts_with('-')
+            && !self.ssh_host.is_empty()
+            && self
+                .ssh_host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+        if !host_ok {
+            bail!(
+                "[tasks.red_list] ssh_host invalide : {:?} (alias ssh attendu : lettres, chiffres, « . », « - », « _ »)",
+                self.ssh_host
+            );
+        }
+        Ok(())
     }
 }
 
@@ -1916,6 +2025,7 @@ impl Config {
         if self.tasks.catalogue_report.min_age_days < 0 {
             bail!("[tasks.catalogue_report] min_age_days ne peut pas être négatif");
         }
+        self.tasks.red_list.check()?;
         if self.alerts.fail_streak == 0 {
             bail!("[alerts] fail_streak doit être au moins 1");
         }
@@ -2429,6 +2539,32 @@ jellyseerr = "http://js"
         parse("[tasks.catalogue_report]\nmin_age_days = 0\n")
             .validate()
             .unwrap();
+        // liste rouge : elle mène à des suppressions, les valeurs absurdes sont refusées
+        for bad in [
+            "min_idle_days = 6",
+            "min_idle_days = -60",
+            "soon_days = -1",
+            "soon_days = 60",
+            "max_titles_per_clean = 0",
+            "max_titles_per_clean = 5000",
+            "interval_secs = 60",
+            "arr_delete_timeout_secs = 0",
+            "recycle_wait_secs = 86400",
+            "jobs_kept = 0",
+            "ssh_host = \"\"",
+            "ssh_host = \"-oProxyCommand=x\"",
+            "ssh_host = \"seedbox; rm\"",
+        ] {
+            assert!(
+                parse(&format!("[tasks.red_list]\n{bad}\n"))
+                    .validate()
+                    .is_err(),
+                "[tasks.red_list] {bad} aurait dû être refusé"
+            );
+        }
+        parse("[tasks.red_list]\nmin_idle_days = 30\nsoon_days = 0\nssh_host = \"seed-box.x_1\"\n")
+            .validate()
+            .unwrap();
         // `media_mail` : l'écart doit rester bien au-dessus de l'espacement des passages (intervalle + plafond 10 min)
         let err = parse("[tasks.media_mail]\nmax_gap_mins = 15\n")
             .validate()
@@ -2715,6 +2851,30 @@ mod toml_matches_defaults {
             .expect("[tasks.media_mail] absent de homelab.toml");
         let def = toml::Value::try_from(super::MediaMail::default()).unwrap();
         assert_eq!(block, &def);
+    }
+
+    /// `[tasks.red_list]` (2026-10-20) : même exigence que `media_mail`, bloc actif et **complet** dans `homelab.toml`.
+    /// Une clé oubliée dans le fichier y prendrait la valeur du code sans que personne la voie ; c'est notamment là que
+    /// `clean_dry_run` passe à `false`.
+    #[test]
+    fn red_list_block_is_live_and_complete() {
+        let raw =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../homelab.toml"))
+                .expect("homelab.toml");
+        assert!(
+            !raw.contains("\n#[tasks.red_list]"),
+            "copie commentée de [tasks.red_list] restée dans homelab.toml"
+        );
+        let file: toml::Value = toml::from_str(&raw).unwrap();
+        let block = file
+            .get("tasks")
+            .and_then(|t| t.get("red_list"))
+            .expect("[tasks.red_list] absent de homelab.toml");
+        let def = toml::Value::try_from(super::RedList::default()).unwrap();
+        assert_eq!(
+            block, &def,
+            "[tasks.red_list] incomplet ou différent du code"
+        );
     }
 
     #[test]

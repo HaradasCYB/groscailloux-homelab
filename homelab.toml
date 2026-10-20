@@ -225,6 +225,30 @@ max_listed = 40             # titres gardés et affichés (les plus gros d'abord
 max_backlog_listed = 15     # séries commencées mais pas finies (volume non vu estimé)
 user_pause_ms = 150         # pause entre deux comptes Jellyfin
 
+[tasks.red_list]
+# Liste rouge (2026-10-20) : films et séries que personne n'a lancés depuis `min_idle_days` jours, sur la page d'admin
+# /accounts/liste-rouge (Exempter, Nettoyer). Rouge = dernière activité il y a au moins 60 j : la plus tardive de
+# l'arrivée (film : fiche ou fichier ; série : fiche, première et dernière diffusion, import du dernier épisode), de la
+# dernière lecture sur un compte (LastPlayedDate) ou dans Playback Reporting (≥ 60 s), et de l'horloge « vu sans date »
+# (démarrée à la première observation). Un titre des deux côtés n'est rouge que si toutes ses copies le sont ; sans
+# identifiant TMDB/TVDB, sans date d'arrivée ou absent de Jellyfin : jamais rouge (« Non évalués »). Exemption
+# permanente, jusqu'à « Retirer l'exemption ». La tâche ne fait que calculer (une fois par jour, et « Recalculer ») ;
+# seul « Nettoyer » supprime, après un nouveau calcul complet (Playback Reporting et tous les comptes lus).
+interval_secs = 86400
+min_idle_days = 60          # 30 au moins, sinon homelabd refuse de démarrer
+include_russian = true      # voie russe évaluée, étiquetée « voie russe »
+max_titles_per_clean = 50   # par clic, les plus gros d'abord (200 au plus)
+# true = « Nettoyer » journalise ce qu'il ferait sans rien supprimer. Passe à false après revue d'une simulation et d'un
+# essai réel sur un seul petit titre (installer homelabd ET homelabctl).
+clean_dry_run = true
+arr_delete_timeout_secs = 300   # DELETE de la fiche (deleteFiles) ; au-delà, la fiche est relue : un 404 vaut réussite
+recycle_wait_secs = 90      # attente avant de vider le dossier du titre dans la corbeille de l'Arr
+empty_recycle = true        # sinon rien n'est libéré avant le ménage de la corbeille (14 j)
+add_import_exclusion = false   # false : un membre peut redemander le titre
+ssh_host = "seedbox"        # alias ssh (chemins passés par l'entrée standard)
+jobs_kept = 20              # travaux « Nettoyer » gardés dans l'état
+soon_days = 14              # section « Bientôt rouges »
+
 [tasks.cert_watch]
 # Certificats TLS des hôtes NPM (Let's Encrypt, un par hôte en défi HTTP-01, domaine principal + ancien DuckDNS, depuis le
 # 14/10 ; expirent le 12/01/2027) : NPM les renouvelle seul dès J-30 mais ne remonte rien en cas d'échec, et le canari passe par localhost:8096 (ni NPM ni TLS). Une fois
