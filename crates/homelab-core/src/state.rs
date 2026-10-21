@@ -727,6 +727,9 @@ pub struct PendingStep {
     /// `recycle` : dossier vérifié à vider ; vide pour `seerr`.
     #[serde(default)]
     pub target: String,
+    /// `recycle` : dossier d'origine du titre (tant qu'il existe, l'Arr n'a pas fini de le déplacer dans sa corbeille).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub origin: String,
     /// `seerr` : `movie` ou `tv`, et identifiant TMDB.
     #[serde(default)]
     pub media_type: String,

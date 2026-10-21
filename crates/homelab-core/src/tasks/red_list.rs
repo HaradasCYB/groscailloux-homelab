@@ -1,9 +1,10 @@
 //! Liste rouge (2026-10-20, décidé par l'admin) : les films et séries que personne n'a lancés depuis `min_idle_days`
 //! jours (60), affichés sur `/accounts/liste-rouge` avec « Exempter » et « Nettoyer ».
 //!
-//! Cette tâche **ne fait que calculer** (une fois par jour, et à la demande : « Recalculer », début d'un « Nettoyer ») :
-//! elle n'écrit que `state.red_list.report` et les horloges « vu sans date ». Seul le moteur « Nettoyer » supprime, après
-//! un nouveau calcul complet ([`compute`]).
+//! Cette tâche **calcule** (une fois par jour, et à la demande : « Recalculer », début d'un « Nettoyer ») : elle n'écrit
+//! que `state.red_list.report` et les horloges « vu sans date ». Seul le moteur « Nettoyer » (`red_list_clean`)
+//! supprime, après un nouveau calcul complet ([`compute`]). À chaque passage, elle marque aussi « interrompu » un
+//! « Nettoyer » coupé par un redémarrage et rejoue quelques étapes restées en attente (corbeille d'un Arr, média Seerr).
 //!
 //! Un titre est rouge si `now − max(arrivée, dernière lecture, horloge « vu sans date ») ≥ min_idle_days` :
 //! - **arrivée** : film, la plus tardive de la fiche et du fichier (comme `catalogue_report`) ; série, la plus tardive de
@@ -539,9 +540,19 @@ impl Task for RedListTask {
     }
 
     async fn run(&self, ctx: &TaskContext) -> Result<Report> {
+        // « Nettoyer » coupé par un redémarrage, étapes en attente (corbeille, Seerr) : avant le calcul
+        let interrupted = crate::red_list_clean::mark_interrupted(ctx).await?;
+        let replayed = crate::red_list_clean::replay_pending(ctx).await?;
+        let mut extra = String::new();
+        if interrupted > 0 {
+            extra.push_str(&format!(" · {interrupted} « Nettoyer » interrompu(s)"));
+        }
+        if !replayed.is_empty() {
+            extra.push_str(&format!(" · {replayed}"));
+        }
         let Some(report) = refresh(ctx).await? else {
             return Ok(Report::new(
-                "un côté Arr est injoignable : liste précédente conservée",
+                format!("un côté Arr est injoignable : liste précédente conservée{extra}"),
                 0,
             ));
         };
@@ -552,7 +563,7 @@ impl Task for RedListTask {
                 "dry-run : liste calculée, non enregistrée"
             );
         }
-        Ok(Report::new(summary(&report), 0))
+        Ok(Report::new(format!("{}{extra}", summary(&report)), 0))
     }
 }
 

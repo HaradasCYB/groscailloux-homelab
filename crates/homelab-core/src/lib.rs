@@ -27,6 +27,7 @@ pub mod matching;
 pub mod net;
 pub mod queue_explain;
 pub mod quota;
+pub mod red_list_clean;
 pub mod requests_progress;
 pub mod secret;
 pub mod state;
