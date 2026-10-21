@@ -956,6 +956,7 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string(),
+                    ..Default::default()
                 });
         }
     }
@@ -988,17 +989,32 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
             if arr_hashes.contains(&t.hash.to_ascii_lowercase()) {
                 continue;
             }
-            let outcome = import_records
-                .get(&homelab_core::tasks::torrent_import::state_key(
-                    side, &t.hash,
-                ))
-                .map(|r| r.outcome.as_str());
-            if let Some(q) = rp::from_torrent(season, t.size, t.progress, t.eta, outcome) {
-                queues
-                    .entry((side, if movie { "movie" } else { "tv" }, id))
-                    .or_default()
-                    .push(q);
-            }
+            // demande ↔ torrent par l'étiquette, torrent ↔ décision par le hash : jamais par le nom (la release prise
+            // et le torrent arrivé ne s'appellent pas pareil, One Piece S23 le 2026-10-18)
+            let rec = import_records.get(&homelab_core::tasks::torrent_import::state_key(
+                side, &t.hash,
+            ));
+            let q = match rp::from_torrent(
+                season,
+                t.size,
+                t.progress,
+                t.eta,
+                rec.map(|r| r.outcome.as_str()),
+            ) {
+                Some(mut q) => {
+                    q.left_out = rec.map_or(0, |r| r.left_out.len());
+                    q
+                }
+                // rangé : ne compte plus dans la file, mais le téléchargement n'attend plus qBittorrent
+                None => match rec {
+                    Some(r) => rp::shelved(season, r.at),
+                    None => continue,
+                },
+            };
+            queues
+                .entry((side, if movie { "movie" } else { "tv" }, id))
+                .or_default()
+                .push(q);
         }
     }
     // fichiers déjà présents côté Arr (séries : par saison)
@@ -1227,7 +1243,9 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
             scan_delay,
             uncovered,
         );
-        if p.stage == rp::Stage::Search && queue.is_empty() && !has_file {
+        // un torrent déjà rangé (`shelved`) ne se télécharge plus : il ne retient pas ces précisions
+        let downloading = queue.iter().any(|q| q.tracked_state != "shelved");
+        if p.stage == rp::Stage::Search && !downloading && !has_file {
             if kind == "movie" {
                 match movie_info.get(&(side, ext)) {
                     None => {

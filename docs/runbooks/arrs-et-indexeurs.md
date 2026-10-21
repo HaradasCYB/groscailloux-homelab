@@ -212,7 +212,8 @@ propre runbook : [voie-russe.md](voie-russe.md).
   contains all episodes in seasons »), ou, si on ignore ce rejet, propose les 12 épisodes pour le premier fichier.
   `series_search::fansub_episode` lit le numéro, le rejet passe dans `is_identification_rejection`, et dès qu'un fichier
   est lu ainsi le torrent bascule en `EpisodeSource::OursOnly` (sinon Sonarr gagne et un fichier est rattaché à 12
-  épisodes). `no_match` et `nothing_importable` apparaissent dans « Rien ne bouge » sur `/status.html`.
+  épisodes). `no_match`, `nothing_importable` et `partial` (des vidéos laissées de côté) apparaissent dans « Rien ne
+  bouge » sur `/status.html`.
 - **Numéro nu `Titre - 07`** : Sonarr ne le lit que pour un animé. `torrent_import::bare_episode` le lit dans la saison de
   l'étiquette (`season=`, posée par `series_search`), et seulement là ; `bare_episodes` refuse tout le pack si les titres
   diffèrent, si deux fichiers ont le même numéro ou si un numéro dépasse la saison. `S01 - 06` reste à la lecture fansub.
@@ -242,6 +243,13 @@ propre runbook : [voie-russe.md](voie-russe.md).
 - **`torrent_import` examine tout torrent complet de la seedbox**, quelle que soit son étiquette : tant qu'un ancien
   fichier est là, il note le nouveau « rien à importer » pour de bon. Une entrée en `nothing_importable` est
   **définitive** (`is_final`) : un correctif ne la rouvre pas, il faut la retirer de l'état, **daemon arrêté**.
+- **Import partiel** (`partial`, 2026-10-21) : des vidéos sont restées de côté (One Piece S23, 18/10 : 7 épisodes sur 25
+  rangés sans un mot). Une alerte admin par torrent liste `fichier: raison`. Le torrent est réexaminé toutes les 6 h, 3 fois
+  au plus (`max_attempts`), puis l'entrée devient définitive comme `nothing_importable`. Pour ranger le reste à la main :
+  `ManualImport` en `importMode: copy`, `episodeIds` explicites (série : l'épisode visé par son numéro absolu pour un
+  animé), candidat choisi par **chemin exact**, après avoir vérifié que l'épisode n'a pas déjà un fichier. Le réexamen
+  suivant, s'il en reste un (≈ 18 h après la décision), voit alors les épisodes « déjà présents » et clôt l'entrée en
+  `imported` ; sinon l'entrée reste `partial` (la retirer de `state/homelabd.json`, daemon arrêté).
 - **Doublons** : rien n'est importé côté seedbox qui existe déjà sur le VPS (`dup_other_side`).
 - **Titre supprimé puis redemandé** : `deletion_cleanup` garde les torrents en partage (C411 : ratio 1 ou 7 j) alors que
   les fichiers sont supprimés ; redemandé, `torrents/add` répondait « Fails. » (déjà présent) et rien ne s'importait.

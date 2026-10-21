@@ -2,7 +2,7 @@
 //! `GUIDE_CONTACT_EMAIL`) **et** sur le salon Discord admin quand il est configuré. Jamais bloquant :
 //! les échecs sont journalisés. Appelé par `hls_loop_watch`, `indexer_unblock`, `stack_health`, l'onboarding
 //! (inscription à activer, mail de bienvenue non parti), le tchat (récapitulatif), le scheduler (tâche en
-//! échec répété), `cert_watch`, `backup_watch` et les seuils de capacité.
+//! échec répété), `cert_watch`, `backup_watch`, `torrent_import` (import partiel) et les seuils de capacité.
 //!
 //! Chaque envoi laisse une trace (2026-10-07) : une ligne `alerte envoyée` dans le journal (objet et canaux,
 //! jamais l'adresse, l'URL du webhook ni le corps) et une entrée dans `state.alerts` (affichée sur `/status.html`

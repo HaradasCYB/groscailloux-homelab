@@ -21,7 +21,8 @@ pub struct PageData<'a> {
     pub vps_disk_pct: Option<u8>,
     pub seedbox: Option<SeedboxQuota>,
     pub mount_ok: Option<bool>,
-    /// Ce qui n'avance pas : torrents terminés que personne ne rattache (`no_match` de `torrent_import`).
+    /// Ce qui n'avance pas : torrents terminés que personne ne rattache, ou rattachés en partie (`no_match`,
+    /// `nothing_importable` et `partial` de `torrent_import`, voir [`unmatched`]).
     /// Texte brut, échappé au rendu : un nom de release vient d'un tracker (Nyaa, World-torrent en secours).
     pub stuck_torrents: &'a [String],
     /// Saisons suivies dont l'indexer ne propose **rien** pour certains épisodes : la recherche
@@ -92,6 +93,8 @@ fn episode_list(eps: &[i64]) -> String {
 /// n'était importable (`nothing_importable` — nommage que ni Sonarr ni nous ne savons lire). Les deux
 /// états sont **définitifs** : sans cet affichage, les octets restent sur la seedbox sans que personne
 /// le sache (Erased, le 2026-09-18 : 2,11 Gio téléchargés, 0 importé, demande bloquée « en cours »).
+/// Les torrents rangés **en partie** (`partial`, vidéos laissées de côté) y figurent aussi : One Piece S23, le
+/// 2026-10-18, 7 épisodes rangés sur 25 et rien nulle part.
 /// Texte brut : `render` l'échappe (le nom vient du tracker).
 pub fn unmatched(
     records: &BTreeMap<String, homelab_core::state::TorrentImportRecord>,
@@ -100,19 +103,25 @@ pub fn unmatched(
 ) -> Vec<String> {
     let mut v: Vec<(i64, String)> = records
         .iter()
-        .filter(|(_, r)| matches!(r.outcome.as_str(), "no_match" | "nothing_importable"))
+        .filter(|(_, r)| {
+            matches!(
+                r.outcome.as_str(),
+                "no_match" | "nothing_importable" | "partial"
+            )
+        })
         .map(|(k, r)| {
             let side = k.split_once(':').map(|(s, _)| s).unwrap_or("?");
+            let why = match r.outcome.as_str() {
+                "nothing_importable" => "rien d'importable".to_string(),
+                "partial" if r.left_out.is_empty() => "vidéos non rangées".to_string(),
+                "partial" => format!("{} vidéo(s) non rangée(s)", r.left_out.len()),
+                _ => "aucune fiche".to_string(),
+            };
             (
                 r.at,
                 format!(
-                    "{side} · {} — {} (depuis {})",
+                    "{side} · {} — {why} (depuis {})",
                     r.name.chars().take(60).collect::<String>(),
-                    if r.outcome == "nothing_importable" {
-                        "rien d'importable"
-                    } else {
-                        "aucune fiche"
-                    },
                     ago(now, r.at)
                 ),
             )
@@ -649,6 +658,52 @@ mod tests {
         assert!(stuck[0].contains("seedbox") && stuck[0].contains("Un.Anime"));
         assert!(html.contains("jamais"));
         assert!(html.contains("74 %"));
+    }
+
+    #[test]
+    fn partial_imports_are_listed_with_their_left_out_count() {
+        use homelab_core::state::TorrentImportRecord;
+        let mut recs = BTreeMap::new();
+        // One Piece S23 (2026-10-18) : 7 épisodes rangés, 18 laissés de côté
+        recs.insert(
+            "seedbox:abc".to_string(),
+            TorrentImportRecord {
+                at: 900,
+                name: "One.Piece.S23.VOSTFR.1080p.WEB.CR.AAC.2.0.x264-TsundereRaws".into(),
+                outcome: "partial".into(),
+                left_out: (1156..=1173)
+                    .map(|n| format!("One Piece S01E{n}.mkv: Invalid season or episode"))
+                    .collect(),
+                ..Default::default()
+            },
+        );
+        recs.insert(
+            "seedbox:def".to_string(),
+            TorrentImportRecord {
+                at: 800,
+                name: "Un.Partiel.Ancien".into(),
+                outcome: "partial".into(),
+                ..Default::default()
+            },
+        );
+        recs.insert(
+            "vps:xyz".to_string(),
+            TorrentImportRecord {
+                at: 950,
+                name: "Un.Film.2024".into(),
+                outcome: "imported".into(),
+                ..Default::default()
+            },
+        );
+        let stuck = unmatched(&recs, 1000, 15);
+        assert_eq!(stuck.len(), 2, "les deux partiels, pas l'import complet");
+        assert!(
+            stuck[0].starts_with("seedbox · One.Piece.S23")
+                && stuck[0].contains("18 vidéo(s) non rangée(s)"),
+            "{}",
+            stuck[0]
+        );
+        assert!(stuck[1].contains("vidéos non rangées"), "{}", stuck[1]);
     }
 
     #[test]

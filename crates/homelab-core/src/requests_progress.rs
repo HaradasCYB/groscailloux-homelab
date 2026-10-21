@@ -34,8 +34,13 @@ pub struct QueueSummary {
     pub size: f64,
     pub size_left: f64,
     pub time_left_secs: Option<i64>,
-    /// `downloading`, `importPending`, `importing`, `imported`, `failedPending`…
+    /// `downloading`, `importPending`, `importing`, `imported`, `failedPending`… ; pour un torrent étiqueté :
+    /// `importBlocked`, `importPartial` (rangé en partie, voir `left_out`), `shelved` (rangé, jugé à `judged_at`).
     pub tracked_state: String,
+    /// `importPartial` : vidéos laissées de côté par `torrent_import`.
+    pub left_out: usize,
+    /// `shelved` : date de la décision de `torrent_import`.
+    pub judged_at: Option<i64>,
 }
 
 /// Étiquette qBittorrent posée par `series_search`/`movie_search` (`homelab:series=<id>[:season=<n>…]`,
@@ -61,7 +66,8 @@ pub fn homelab_tag(tags: &str) -> Option<(bool, i64, Option<i64>)> {
 
 /// Élément de file construit d'après un torrent étiqueté : `progress` 0–1, `eta` de qBittorrent
 /// (`ETA_UNKNOWN` = pas d'estimation), `record_outcome` = issue enregistrée par `torrent_import` pour ce torrent.
-/// `None` quand le torrent a déjà été rangé (`imported`, `arr_managed`) : les fichiers de l'Arr font foi.
+/// `None` quand le torrent a déjà été rangé (`imported`, `arr_managed`) : les fichiers de l'Arr font foi (l'appelant
+/// le garde de côté avec [`shelved`]). `partial` ⇒ `importPartial` (des vidéos sont restées de côté).
 pub fn from_torrent(
     season: Option<i64>,
     size: i64,
@@ -79,11 +85,13 @@ pub fn from_torrent(
                 .contains(&eta)
                 .then_some(eta),
             tracked_state: "downloading".into(),
+            ..Default::default()
         });
     }
     let state = match record_outcome {
         None | Some("retry") => "importPending",
         Some("imported") | Some("arr_managed") => return None,
+        Some("partial") => "importPartial",
         Some(_) => "importBlocked",
     };
     Some(QueueSummary {
@@ -92,7 +100,20 @@ pub fn from_torrent(
         size_left: 0.0,
         time_left_secs: Some(0),
         tracked_state: state.into(),
+        ..Default::default()
     })
+}
+
+/// Torrent étiqueté complet et rangé par `torrent_import` (décision à `at`) : il ne compte plus dans la file, mais
+/// prouve que le téléchargement n'attend plus qBittorrent (`progress`, branche « grabbed »). Le 2026-10-18, la carte de
+/// One Piece S23 a affiché « en attente de qBittorrent » deux jours après la fin du torrent.
+pub fn shelved(season: Option<i64>, at: i64) -> QueueSummary {
+    QueueSummary {
+        season,
+        tracked_state: "shelved".into(),
+        judged_at: Some(at),
+        ..Default::default()
+    }
 }
 
 /// `hh:mm:ss` ou `d.hh:mm:ss` (format Sonarr/Radarr) → secondes.
@@ -166,8 +187,10 @@ pub fn human_eta(secs: i64) -> String {
 }
 
 /// Décision d'étape.
-/// - `queue` : éléments de file Arr rattachés à la demande (vide si rien ne se télécharge) ;
-/// - `has_file` : l'Arr a déjà au moins un fichier pour ce qui est demandé ;
+/// - `queue` : éléments de file Arr rattachés à la demande (vide si rien ne se télécharge), dont les torrents
+///   étiquetés déjà rangés (`shelved`), qui ne servent qu'à la branche « grabbed » ;
+/// - `has_file` : l'Arr a déjà au moins un fichier pour ce qui est demandé (série : toutes les saisons demandées
+///   complètes) ; tout torrent restant alors bloqué ou rangé en partie est ignoré, les fichiers sont là ;
 /// - `available` : Jellyseerr/Jellyfin voient le titre disponible (statut média 5, ou 4 pour une
 ///   série partiellement disponible dont toutes les saisons demandées ont un fichier) ;
 /// - `search` : dernier passage de `series_search`/`movie_search` pour ce titre, si connu ;
@@ -191,16 +214,48 @@ pub fn progress(
             label: "Disponible".into(),
         };
     }
-    if !queue.is_empty() {
-        let size: f64 = queue.iter().map(|q| q.size).sum();
-        let left: f64 = queue.iter().map(|q| q.size_left).sum();
-        let importing = queue.iter().all(|q| {
+    // torrents étiquetés déjà rangés : hors file, seule la branche « grabbed » s'en sert
+    let shelved_items = || queue.iter().filter(|q| q.tracked_state == "shelved");
+    let judged_at = shelved_items().filter_map(|q| q.judged_at).max();
+    // une saison rangée sans être complète : « en partie » ; un film (pas de saison) : seulement « téléchargé »
+    let season_pack = shelved_items().any(|q| q.season.is_some());
+    let live: Vec<&QueueSummary> = queue
+        .iter()
+        .filter(|q| q.tracked_state != "shelved")
+        .collect();
+    let all_blocked = !live.is_empty()
+        && live
+            .iter()
+            .all(|q| matches!(q.tracked_state.as_str(), "importBlocked" | "importPartial"));
+    // fichiers déjà là (rangés à la main, ou par un autre torrent) : un torrent bloqué ou rangé en partie ne dit plus
+    // rien de la demande
+    if !live.is_empty() && !(has_file && all_blocked) {
+        let size: f64 = live.iter().map(|q| q.size).sum();
+        let left: f64 = live.iter().map(|q| q.size_left).sum();
+        let importing = live.iter().all(|q| {
             matches!(
                 q.tracked_state.as_str(),
-                "importPending" | "importing" | "imported" | "importBlocked"
+                "importPending" | "importing" | "imported" | "importBlocked" | "importPartial"
             )
         });
-        if queue.iter().all(|q| q.tracked_state == "importBlocked") {
+        if all_blocked {
+            // rangé en partie (One Piece S23, 2026-10-18 : 7 épisodes sur 25) : `torrent_import` a alerté l'admin
+            if live.iter().any(|q| q.tracked_state == "importPartial") {
+                let n: usize = live.iter().map(|q| q.left_out).sum();
+                return Progress {
+                    stage: Stage::Import,
+                    percent: 92,
+                    eta_secs: None,
+                    label: if n == 0 {
+                        "Téléchargé en partie : des épisodes pas rangés, l'administrateur est prévenu"
+                            .into()
+                    } else {
+                        format!(
+                            "Téléchargé en partie : {n} épisode(s) pas rangé(s), l'administrateur est prévenu"
+                        )
+                    },
+                };
+            }
             return Progress {
                 stage: Stage::Import,
                 percent: 92,
@@ -224,7 +279,7 @@ pub fn progress(
         } else {
             0.0
         };
-        let tl = queue.iter().filter_map(|q| q.time_left_secs).max();
+        let tl = live.iter().filter_map(|q| q.time_left_secs).max();
         let eta = tl.map(|t| t + import_allowance + scan_delay);
         let pct = 5 + (frac * 85.0).round() as u8;
         return Progress {
@@ -258,14 +313,51 @@ pub fn progress(
         };
     }
     match search {
-        // pris mais aucun torrent visible (qBittorrent injoignable, torrent retiré) : ce n'est pas une
-        // « prochaine tentative dans 7 j »
-        Some((rec, _, _, _)) if rec.outcome.starts_with("grabbed") => Progress {
-            stage: Stage::Download,
-            percent: 5,
-            eta_secs: None,
-            label: "Téléchargement lancé, en attente de qBittorrent".into(),
-        },
+        Some((rec, retry_h, grabbed_h, error_h)) if rec.outcome.starts_with("grabbed") => {
+            match judged_at {
+                // pris mais aucun torrent visible (qBittorrent injoignable, torrent retiré ou pas encore arrivé) : ce
+                // n'est pas une « prochaine tentative dans 7 j »
+                None => Progress {
+                    stage: Stage::Download,
+                    percent: 5,
+                    eta_secs: None,
+                    label: "Téléchargement lancé, en attente de qBittorrent".into(),
+                },
+                // torrent rangé à l'instant : l'Arr et Jellyfin n'ont pas encore vu les fichiers
+                Some(at) if now - at < import_allowance + scan_delay => {
+                    let eta = import_allowance + scan_delay - (now - at).max(0);
+                    Progress {
+                        stage: Stage::Import,
+                        percent: 95,
+                        eta_secs: Some(eta),
+                        label: format!("Téléchargé, ajout à la médiathèque ({})", human_eta(eta)),
+                    }
+                }
+                // torrent rangé, saison toujours incomplète : il ne couvrait pas tout. Après un épisode seul
+                // (`grabbed_episode`), `series_search` reprend en quelques minutes : `next_search_in` surestimerait.
+                Some(_) => {
+                    let in_secs = next_search_in(rec, now, retry_h, grabbed_h, error_h);
+                    let soon = rec.outcome == "grabbed_episode" || in_secs == 0;
+                    Progress {
+                        stage: Stage::Search,
+                        percent: 3,
+                        eta_secs: None,
+                        label: match (season_pack, soon) {
+                            (true, true) => "Téléchargé en partie : le reste est recherché".into(),
+                            (true, false) => format!(
+                                "Téléchargé en partie : le reste sera recherché dans {}",
+                                human_eta(in_secs)
+                            ),
+                            (false, true) => "Téléchargé : nouvelle recherche en cours".into(),
+                            (false, false) => format!(
+                                "Téléchargé : nouvelle recherche dans {}",
+                                human_eta(in_secs)
+                            ),
+                        },
+                    }
+                }
+            }
+        }
         Some((rec, retry_h, grabbed_h, error_h)) => {
             let in_secs = next_search_in(rec, now, retry_h, grabbed_h, error_h);
             Progress {
@@ -302,7 +394,191 @@ mod tests {
             size_left: left,
             time_left_secs: tl,
             tracked_state: st.into(),
+            ..Default::default()
         }
+    }
+
+    /// One Piece S23 (2026-10-18) : saison prise à 18:13, torrent jugé par `torrent_import` à 18:21, carte lue le 20/10.
+    const OP_GRAB: i64 = 1_792_339_980;
+    const OP_JUDGED: i64 = 1_792_340_460;
+    const OP_SEEN: i64 = 1_792_479_600;
+
+    fn grabbed(outcome: &str, at: i64) -> SeasonSearchRecord {
+        SeasonSearchRecord {
+            at,
+            outcome: outcome.into(),
+            detail: String::new(),
+            title: "One Piece".into(),
+            uncovered: vec![],
+        }
+    }
+
+    /// `progress` avec les délais de la production : recherche 24 h, reprise après une saison prise 168 h, erreur
+    /// 1 h ; import 120 s, passage de `seedbox_refresh` 300 s.
+    fn card(
+        queue: &[QueueSummary],
+        has_file: bool,
+        rec: Option<&SeasonSearchRecord>,
+        now: i64,
+    ) -> Progress {
+        progress(
+            queue,
+            has_file,
+            false,
+            rec.map(|r| (r, 24, 168, 1)),
+            now,
+            120,
+            300,
+            false,
+        )
+    }
+
+    #[test]
+    fn a_partial_import_is_not_waiting_for_qbittorrent() {
+        // torrent complet, `torrent_import` : `partial`, 18 vidéos de côté ; la recherche de la saison dit « grabbed »
+        let mut t = from_torrent(Some(23), 9_800_000_000, 1.0, 8_640_000, Some("partial")).unwrap();
+        assert_eq!(t.tracked_state, "importPartial");
+        t.left_out = 18;
+        let rec = grabbed("grabbed", OP_GRAB);
+        let p = card(&[t.clone()], false, Some(&rec), OP_SEEN);
+        assert_eq!((p.stage, p.percent, p.eta_secs), (Stage::Import, 92, None));
+        assert_eq!(
+            p.label,
+            "Téléchargé en partie : 18 épisode(s) pas rangé(s), l'administrateur est prévenu"
+        );
+        assert!(!p.label.contains("qBittorrent"), "{}", p.label);
+        // liste inconnue (ancien enregistrement) : le libellé reste juste
+        t.left_out = 0;
+        let p = card(&[t], false, Some(&rec), OP_SEEN);
+        assert!(p.label.contains("des épisodes pas rangés"), "{}", p.label);
+
+        // l'état du 18/10, avant le correctif : issue `imported` ⇒ torrent rangé, saison à 7/25
+        assert!(from_torrent(Some(23), 9_800_000_000, 1.0, 0, Some("imported")).is_none());
+        let p = card(&[shelved(Some(23), OP_JUDGED)], false, Some(&rec), OP_SEEN);
+        assert_eq!(p.stage, Stage::Search);
+        assert!(!p.label.contains("qBittorrent"), "{}", p.label);
+        assert_eq!(
+            p.label, "Téléchargé en partie : le reste sera recherché dans ~5 j",
+            "168 h après la prise du 18/10 18:13"
+        );
+    }
+
+    #[test]
+    fn files_already_there_hide_a_blocked_torrent() {
+        let blocked = q(1000.0, 0.0, Some(0), "importBlocked");
+        let mut partial = q(1000.0, 0.0, Some(0), "importPartial");
+        partial.left_out = 18;
+        // l'admin a rangé le reste à la main : les fichiers font foi
+        for t in [&blocked, &partial] {
+            let p = card(std::slice::from_ref(t), true, None, 0);
+            assert_eq!(
+                (p.stage, p.percent),
+                (Stage::Import, 95),
+                "{}",
+                t.tracked_state
+            );
+            assert!(p.label.starts_with("Ajout à la médiathèque"), "{}", p.label);
+        }
+        // sans fichier : le torrent bloqué parle
+        assert!(card(std::slice::from_ref(&blocked), false, None, 0)
+            .label
+            .contains("pas rangé"));
+        // un autre torrent encore en cours : la file reste la référence
+        let p = card(
+            &[blocked, q(1000.0, 500.0, Some(60), "downloading")],
+            true,
+            None,
+            0,
+        );
+        assert_eq!(p.stage, Stage::Download);
+        // rangé en partie et rangé en attente : l'import est en cours
+        let p = card(
+            &[partial, q(1000.0, 0.0, Some(0), "importPending")],
+            false,
+            None,
+            0,
+        );
+        assert!(p.label.starts_with("Téléchargé, ajout"), "{}", p.label);
+    }
+
+    #[test]
+    fn grabbed_waits_for_qbittorrent_only_without_a_torrent() {
+        let rec = grabbed("grabbed", OP_GRAB);
+        // aucun torrent visible : en attente de qBittorrent, comme avant
+        let p = card(&[], false, Some(&rec), OP_GRAB + 600);
+        assert_eq!((p.stage, p.percent), (Stage::Download, 5));
+        assert_eq!(p.label, "Téléchargement lancé, en attente de qBittorrent");
+        // torrent en cours : son avancement
+        let p = card(
+            &[from_torrent(Some(23), 1000, 0.4, 600, None).unwrap()],
+            false,
+            Some(&rec),
+            OP_GRAB + 600,
+        );
+        assert_eq!(p.stage, Stage::Download);
+        assert!(p.label.starts_with("Téléchargement 40 %"), "{}", p.label);
+        // torrent rangé il y a une minute : l'ajout suit
+        let fresh = shelved(Some(23), OP_JUDGED);
+        let p = card(
+            std::slice::from_ref(&fresh),
+            false,
+            Some(&rec),
+            OP_JUDGED + 60,
+        );
+        assert_eq!((p.stage, p.percent), (Stage::Import, 95));
+        assert_eq!(p.eta_secs, Some(360));
+        assert_eq!(p.label, "Téléchargé, ajout à la médiathèque (~6 min)");
+        // rangé depuis longtemps et saison incomplète : le reste sera recherché
+        let p = card(
+            std::slice::from_ref(&fresh),
+            false,
+            Some(&rec),
+            OP_JUDGED + 3600,
+        );
+        assert_eq!((p.stage, p.percent), (Stage::Search, 3));
+        assert!(
+            p.label
+                .starts_with("Téléchargé en partie : le reste sera recherché dans"),
+            "{}",
+            p.label
+        );
+        // après un épisode seul, `series_search` reprend en quelques minutes : pas de délai de 7 j
+        let ep = grabbed("grabbed_episode", OP_GRAB);
+        let p = card(
+            std::slice::from_ref(&fresh),
+            false,
+            Some(&ep),
+            OP_JUDGED + 3600,
+        );
+        assert_eq!(p.label, "Téléchargé en partie : le reste est recherché");
+        // délai de reprise écoulé
+        let p = card(&[fresh], false, Some(&rec), OP_GRAB + 200 * 3600);
+        assert_eq!(p.label, "Téléchargé en partie : le reste est recherché");
+        // un film (étiquette sans saison) rangé sans fichier côté Radarr : pas de « en partie »
+        let p = card(
+            &[shelved(None, OP_JUDGED)],
+            false,
+            Some(&rec),
+            OP_JUDGED + 3600,
+        );
+        assert!(
+            p.label.starts_with("Téléchargé : nouvelle recherche dans"),
+            "{}",
+            p.label
+        );
+        // un torrent rangé n'empêche pas une autre recherche d'afficher son délai
+        let none = grabbed("none", OP_GRAB);
+        let p = card(
+            &[shelved(Some(23), OP_JUDGED)],
+            false,
+            Some(&none),
+            OP_GRAB + 3600,
+        );
+        assert!(
+            p.label.starts_with("Recherche : prochaine tentative"),
+            "{}",
+            p.label
+        );
     }
 
     #[test]

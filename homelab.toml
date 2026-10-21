@@ -127,7 +127,7 @@ interval_secs = 300
 # Rien si la fiche a déjà des fichiers sur l'autre machine (doublon Jellyfin).
 interval_secs = 120
 max_per_run = 10            # torrents examinés (parse/recherche/import) par passage
-max_attempts = 3            # erreurs avant abandon (état : homelabctl status / state/homelabd.json)
+max_attempts = 3            # erreurs avant abandon ; aussi : réexamens d'un import partiel, toutes les 6 h (état : homelabctl status / state/homelabd.json)
 series_ready_secs = 90      # attente des épisodes d'une série tout juste ajoutée
 
 [tasks.deletion_cleanup]

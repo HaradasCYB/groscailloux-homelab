@@ -327,12 +327,20 @@ pub struct TorrentImportRecord {
     pub at: i64,
     pub name: String,
     /// `imported`, `arr_managed`, `already_linked`, `no_video`, `no_match`, `dup_other_side`,
-    /// `nothing_importable`, `error` (définitifs) ; `retry` (nouvel essai au passage suivant).
+    /// `nothing_importable`, `error` (définitifs) ; `retry` (nouvel essai au passage suivant) ; `partial` (des vidéos
+    /// laissées de côté, réexaminé toutes les 6 h tant que `attempts < max_attempts`, puis définitif).
     pub outcome: String,
     #[serde(default)]
     pub detail: String,
     #[serde(default)]
     pub attempts: u32,
+    /// Vidéos laissées de côté d'un import `partial` (« fichier: raison », 40 au plus), hors extraits, bonus et
+    /// épisodes déjà présents. Absent de l'état quand la liste est vide : un ancien binaire relit l'état sans peine.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_out: Vec<String>,
+    /// Alerte « import partiel » pas encore partie : redonnée à chaque passage tant qu'aucun canal ne l'a prise.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub alert_pending: bool,
 }
 
 impl TorrentImportRecord {
@@ -1437,6 +1445,7 @@ mod tests {
                     outcome: "imported".into(),
                     detail: "3 fichier(s) importé(s) en lien physique vers la fiche 1234".into(),
                     attempts: 1,
+                    ..Default::default()
                 },
             );
         }
@@ -1716,6 +1725,35 @@ mod tests {
         assert_eq!(
             back.red_list, s.red_list,
             "la liste rouge doit survivre à l'état"
+        );
+    }
+
+    #[test]
+    fn old_torrent_import_records_still_load_and_new_fields_are_omitted() {
+        // enregistrement d'avant le 2026-10-21 (One Piece S23, 18/10) : ni `left_out` ni `alert_pending`
+        let old = r#"{"at":1792000000,"name":"One.Piece.S23.VOSTFR.1080p.WEB.CR.AAC.2.0.x264-TsundereRaws","outcome":"imported","detail":"One Piece (1999) : 7 fichier(s)","attempts":0}"#;
+        let r: TorrentImportRecord = serde_json::from_str(old).unwrap();
+        assert_eq!(r.outcome, "imported");
+        assert!(r.left_out.is_empty() && !r.alert_pending);
+        // sans vidéo de côté ni alerte en attente, l'état écrit garde la forme d'avant (retour arrière sans surprise)
+        let back = serde_json::to_string(&r).unwrap();
+        assert!(
+            !back.contains("left_out") && !back.contains("alert_pending"),
+            "champs vides omis : {back}"
+        );
+        // un partiel garde sa liste et son alerte en attente d'un passage à l'autre
+        let partial = TorrentImportRecord {
+            outcome: "partial".into(),
+            left_out: vec!["One Piece S01E1156 VOSTFR.mkv: Invalid season or episode".into()],
+            alert_pending: true,
+            ..r
+        };
+        let back: TorrentImportRecord =
+            serde_json::from_str(&serde_json::to_string(&partial).unwrap()).unwrap();
+        assert_eq!(back.left_out.len(), 1);
+        assert!(
+            back.alert_pending,
+            "l'alerte en attente survit au rechargement"
         );
     }
 
