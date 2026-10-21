@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.28.0](#1280--15102026--mails-aux-couleurs-de-groscailloux-tv)** | 15/10/2026 | **Mails aux couleurs de Groscailloux TV** |
+| **[1.29.0](#1290--21102026--liste-rouge-et-imports-partiels-signalés)** | 21/10/2026 | **Liste rouge et imports partiels signalés** |
+| [1.28.0](#1280--15102026--mails-aux-couleurs-de-groscailloux-tv) | 15/10/2026 | Mails aux couleurs de Groscailloux TV |
 | [1.27.0](#1270--14102026--nouveau-domaine-principal) | 14/10/2026 | Nouveau domaine principal |
 | [1.26.0](#1260--10102026--syncplay-après-un-saut-films-guettés-avant-leur-sortie-et-lot-3-jour-2) | 10/10/2026 | SyncPlay après un saut, films guettés avant leur sortie et lot 3, jour 2 |
 | [1.25.0](#1250--09102026--téléchargements-expliqués-et-lot-3-jour-1) | 09/10/2026 | Téléchargements expliqués et lot 3, jour 1 |
@@ -38,6 +39,40 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.29.0 — 21/10/2026 — Liste rouge et imports partiels signalés
+
+L'admin a une page pour libérer de l'espace sans script : la **liste rouge** des films et séries que personne n'a lancés
+depuis 60 jours, avec « Exempter » et « Nettoyer » (3f10a8b, 69bec12, cea9866, 1768505, 7744508). Côté téléchargements,
+un pack d'animé numéroté en absolu n'est plus importé à moitié en silence (c7c3401, 37e5c2e, c74f8c7).
+
+### Pour les membres
+
+- **Saisons d'animé complètes.** Un pack dont les épisodes portent leur numéro absolu sous la forme « S01E1156 » est
+  maintenant importé en entier (le 18/10, 18 épisodes sur 25 d'une saison étaient restés de côté).
+- **Carte de demande juste après l'import** : elle n'affiche plus « en attente de qBittorrent » une fois les épisodes
+  arrivés.
+
+### Pour l'administrateur
+
+- **Liste rouge (`/accounts/liste-rouge`)**, nouvelle tâche `red_list` (24 h, 34 tâches) : rouge = aucune activité
+  (arrivée, dernière diffusion ou dernier épisode, lecture d'un compte ou de Playback Reporting) depuis 60 j ; un titre
+  présent des deux côtés n'est rouge que si toutes ses copies le sont ; sans identifiant ou absent de Jellyfin, jamais
+  rouge. Sections « Bientôt rouges », « Exemptés », « Non évalués ». Page sans JavaScript, formulaires en POST, liens
+  depuis `/accounts` et la section catalogue de `/status.html` ; tuile prévue sur le tableau privé de Homarr
+  ([homarr.md](docs/runbooks/homarr.md)).
+- **« Nettoyer »** (50 titres par clic, les plus gros d'abord, ou un titre seul) : confirmation de la liste exacte,
+  un seul travail à la fois, nouveau calcul complet, revérification de chaque titre (exemption, lecture en cours, fiche
+  inchangée), fiche sauvegardée, `DELETE` jamais rejoué, corbeille de l'Arr vidée sous gardes, torrents, montage
+  seedbox, média Seerr, alerte récapitulative. **Simulation tant que `[tasks.red_list] clean_dry_run = true`, « Nettoyer
+  ce titre » compris.** Travail coupé par un redémarrage marqué « interrompu » ; étapes en échec rejouées par la tâche
+  ([AUTOMATION.md](docs/AUTOMATION.md), [seedbox-et-rclone.md § 7](docs/runbooks/seedbox-et-rclone.md#7-supprimer-faire-le-ménage-remplacer)).
+- **`torrent_import` : numéro absolu écrit SxxEnnn** dans un pack d'animé de saison, rapproché par son numéro absolu
+  seulement si chaque numéro désigne un seul épisode de la saison visée (sinon refusé, comme avant) ; deux fichiers ne
+  visent jamais le même épisode (c7c3401, c74f8c7).
+- **Imports partiels signalés** : nouvelle issue « partiel » quand des vidéos utiles restent de côté (échantillons,
+  bonus et épisodes déjà présents exclus), liste gardée dans l'état, une alerte admin par torrent, réexamen borné toutes
+  les 6 h ; toujours `ManualImport` en copie, par chemin exact, sans remplacement (37e5c2e, c74f8c7).
 
 ## 1.28.0 — 15/10/2026 — Mails aux couleurs de Groscailloux TV
 

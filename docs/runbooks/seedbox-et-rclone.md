@@ -115,12 +115,16 @@ place et arrêt de la seedbox : [DEPLOY.md](../DEPLOY.md#seedbox-optionnelle). S
 
 ## 7. Supprimer, faire le ménage, remplacer
 
-- **Supprimer des titres pour de vrai** (modèle `backups/seedbox-cleanup-20260925/delete.py`, `--dry-run` d'abord, fiches
-  sauvegardées) : fiche Radarr/Sonarr **avec** fichiers, torrents liés (par inode, sauf délai C411), **dossier du titre
+- **Supprimer des titres : la voie normale est la page `/accounts/liste-rouge`** (« Exempter », « Nettoyer », « Nettoyer
+  ce titre » ; simulation tant que `[tasks.red_list] clean_dry_run = true`) : elle refait le calcul, revérifie chaque
+  titre (exemption, lecture en cours, fiche inchangée), sauvegarde les fiches et enchaîne les étapes ci-dessous. Détail :
+  [AUTOMATION.md](../AUTOMATION.md) (`red_list`).
+- **Secours, à la main** (titre hors liste rouge, homelabd indisponible ; modèle
+  `backups/seedbox-cleanup-20260925/delete.py`, `--dry-run` d'abord, fiches sauvegardées) : fiche Radarr/Sonarr **avec** fichiers, torrents liés (par inode, sauf délai C411), **dossier du titre
   dans la corbeille de l'Arr** (sinon rien n'est libéré avant 14 j), fiche média Jellyseerr, puis `vfs/refresh` et
   `Library/Media/Updated`. « Jamais regardé » = ni `PlaybackActivity` ni `Played`/`IsResumable` d'aucun compte ; la date
   d'ajout de Jellyfin n'est pas fiable (éléments recréés par les déménagements) : prendre `added` de l'Arr. Le rapport
-  `catalogue_report` de `/status.html` donne la liste (lecture seule, l'admin tranche).
+  `catalogue_report` de `/status.html` donne la vue d'ensemble (lecture seule) ; la liste rouge, ce qu'on peut supprimer.
 - **Ménage des torrents sans catégorie** (`scripts/seedbox-cleanup.py`) : repérés par inode ; un torrent dont **aucun**
   fichier n'est relié à `media/` (hors `.recycle`) est retiré avec ses fichiers, un torrent partiellement relié est laissé,
   jamais un torrent de catégorie `sonarr`/`radarr`. Règle C411 : fini depuis moins de 7 j et ratio < 1 = **reporté**

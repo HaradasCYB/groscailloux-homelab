@@ -116,11 +116,6 @@ pub fn check_start(
     Ok((keys, snap))
 }
 
-/// Simulation demandée par la page : la liste suit `clean_dry_run` ; un titre seul (`?key=`) est l'essai réel.
-fn requested_dry(single: bool, clean_dry_run: bool) -> bool {
-    !single && clean_dry_run
-}
-
 // ---------------------------------------------------------------------------------------------
 // Rendu
 // ---------------------------------------------------------------------------------------------
@@ -272,7 +267,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
     if d.global_dry {
         out.push_str(r#"<p class="flash info"><span class="badge sim">Simulation</span> homelabd tourne en dry-run : rien n'est supprimé, même un titre seul.</p>"#);
     } else if d.clean_dry_run {
-        out.push_str(r#"<p class="flash info"><span class="badge sim">Simulation</span> <code>clean_dry_run = true</code> : « Nettoyer » sur la liste ne supprime rien. Seul « Nettoyer ce titre » (un titre, sa propre confirmation) supprime pour de vrai : c'est l'essai réel.</p>"#);
+        out.push_str(r#"<p class="flash info"><span class="badge sim">Simulation</span> <code>clean_dry_run = true</code> : « Nettoyer » et « Nettoyer ce titre » ne suppriment rien, ils disent seulement ce qu'ils feraient.</p>"#);
     }
     let running = d.jobs.iter().rev().find(|j| j.status == "running");
     if d.busy || running.is_some() {
@@ -504,7 +499,7 @@ pub fn render_confirm(d: &ConfirmData<'_>) -> String {
     let mode = if d.dry {
         r#"<p class="flash info"><span class="badge sim">Simulation</span> Rien ne sera supprimé : le travail dit seulement ce qu'il ferait.</p>"#
     } else if d.key.is_some() {
-        r#"<p class="flash err"><b>Essai réel</b> sur ce seul titre : la suppression est définitive.</p>"#
+        r#"<p class="flash err"><b>Suppression réelle</b> de ce seul titre, définitive.</p>"#
     } else {
         r#"<p class="flash err"><b>Suppression réelle</b> et définitive.</p>"#
     };
@@ -842,12 +837,7 @@ async fn confirm(
     };
     let keys: Vec<String> = entries.iter().map(|e| e.key.clone()).collect();
     let snap = red_list_clean::snap(r, &keys);
-    let dry = red_list_clean::effective_dry(
-        requested_dry(key.is_some(), cfg.clean_dry_run),
-        cfg.clean_dry_run,
-        st.ctx.dry_run,
-        keys.len(),
-    );
+    let dry = red_list_clean::effective_dry(false, cfg.clean_dry_run, st.ctx.dry_run);
     let total_red = red_list_clean::proposed(r, &exemptions, usize::MAX).len();
     page(render_confirm(&ConfirmData {
         entries: &entries,
@@ -892,7 +882,7 @@ async fn start_clean(State(st): State<PageState>, Form(f): Form<CleanForm>) -> R
             return back(code, key.unwrap_or(""));
         }
     };
-    let dry = requested_dry(key.is_some(), cfg.clean_dry_run);
+    let dry = cfg.clean_dry_run;
     let id = red_list_clean::new_job_id();
     info!(task = TASK, job = %id, titles = keys.len(), "clean started via web");
     let (ctx, jid) = (st.ctx.clone(), id.clone());
@@ -1093,7 +1083,7 @@ mod tests {
         assert!(html.contains(&format!(r#"name="snap" value="{snap}""#)));
         assert!(html.contains("Lancer la simulation") && html.contains("1 titre(s) suivant(s)"));
         assert!(!html.contains(r#"name="key""#));
-        // un titre seul : sa clé part avec le formulaire, essai réel
+        // un titre seul : sa clé part avec le formulaire (réel si clean_dry_run = false)
         let one = selection(Some(&r), &ex, Some("movie:tmdb:3"), 2).unwrap();
         let html = render_confirm(&ConfirmData {
             entries: &one,
@@ -1103,7 +1093,7 @@ mod tests {
             dry: false,
             total_red: 3,
         });
-        assert!(html.contains("Essai réel") && html.contains("Supprimer définitivement"));
+        assert!(html.contains("de ce seul titre") && html.contains("Supprimer définitivement"));
         assert!(html.contains(r#"name="key" value="movie:tmdb:3""#));
         assert_eq!(
             selection(Some(&r), &ex, Some("movie:tmdb:4"), 2),
@@ -1159,22 +1149,22 @@ mod tests {
     }
 
     #[test]
-    fn single_title_is_the_real_trial_list_follows_dry_run() {
-        assert!(requested_dry(false, true));
-        assert!(!requested_dry(true, true));
-        assert!(!requested_dry(false, false));
-        assert!(!red_list_clean::effective_dry(
-            requested_dry(true, true),
-            true,
-            false,
-            1
-        ));
-        assert!(red_list_clean::effective_dry(
-            requested_dry(false, true),
-            true,
-            false,
-            1
-        ));
+    fn single_title_confirm_shows_simulation_under_clean_dry_run() {
+        let r = report();
+        let one = selection(Some(&r), &BTreeMap::new(), Some("movie:tmdb:3"), 2).unwrap();
+        let dry = red_list_clean::effective_dry(true, true, false);
+        let html = render_confirm(&ConfirmData {
+            entries: &one,
+            snap: "s",
+            token: "t",
+            key: Some("movie:tmdb:3"),
+            dry,
+            total_red: 3,
+        });
+        assert!(html.contains("Simulation") && html.contains("Lancer la simulation"));
+        assert!(!html.contains("Suppression réelle") && !html.contains("Supprimer définitivement"));
+        let html = list_html(Some(&r), &BTreeMap::new(), false);
+        assert!(!html.contains("supprime pour de vrai") && html.contains("ne suppriment rien"));
     }
 
     #[test]

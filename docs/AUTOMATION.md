@@ -557,6 +557,42 @@ que dans `state.catalogue` (4 à 11 Ko : `catalogue`, `unmatched`, `never_all`, 
   qu'à partir du 11/11/2026. Au 08/10, la liste de décision ne contient que 6 films du VPS (22 Go) ; premier calcul :
   277 titres (2,29 To), 165 jamais commencés (0,84 To), arriéré de 29 séries (0,71 To), voie russe 120 épisodes
   disponibles, 0 lu. Pas d'historique : seul le dernier rapport est gardé.
+- Pour **agir** sur ce rapport (exempter, supprimer), voir `red_list` ci-dessous et la page `/accounts/liste-rouge`.
+
+### red_list — 24 h (2026-10-20)
+
+Liste rouge : films et séries que personne n'a lancés depuis `min_idle_days` (60 j), sur la page d'admin
+`/accounts/liste-rouge` (lien depuis `/accounts` et la section catalogue de `/status.html`). Même lecteurs que
+`catalogue_report` (Arrs, tous les comptes Jellyfin avec `UserId`, Playback Reporting).
+
+- **Rouge** = dernière activité il y a au moins `min_idle_days` jours ; l'activité est la plus tardive de l'arrivée (film :
+  fiche ou fichier ; série : fiche, première et dernière diffusion, import du dernier épisode), de la dernière lecture
+  d'un compte (`LastPlayedDate`) ou de Playback Reporting (≥ 60 s), et de l'horloge « vu sans date » (`undated_since`,
+  démarrée à la première observation). Un titre présent sur le VPS et la seedbox n'est rouge que si **toutes** ses copies
+  le sont ; sans identifiant TMDB/TVDB, sans date d'arrivée ou absent de Jellyfin : jamais rouge (« Non évalués »). Voie
+  russe évaluée et étiquetée (`include_russian`). Sections « Bientôt rouges » (`soon_days`, 14) et « Exemptés ».
+- **La tâche ne fait que calculer** (une fois par jour, ou « Recalculer » sur la page) ; elle marque aussi « interrompu »
+  un travail coupé par un redémarrage et rejoue les étapes en attente (corbeille de l'Arr, média Seerr : 5 par passage,
+  abandonnées après 14 j ; le média Seerr est gardé si le titre est revenu dans un Arr).
+- **Exempter** : permanent, jusqu'à « Retirer l'exemption ».
+- **Nettoyer** (liste : les `max_titles_per_clean` plus gros, 50 ; ou « Nettoyer ce titre ») : page de confirmation avec
+  la liste exacte et son empreinte (refus si la liste a changé entre-temps), un seul travail à la fois (verrou partagé avec
+  « Recalculer »), suivi sur `…/travail?id=`. Le travail lit le quota de la seedbox, refait un **calcul complet** (refus
+  si un côté Arr est injoignable ou si le calcul est incomplet) et ne garde que les titres confirmés, rouges maintenant et
+  non exemptés. Par titre : revérifications (exemption, lecture en cours, rangement par `anime_library` depuis moins de
+  6 h, fiche inchangée : même identifiant et même dossier), fiche sauvegardée (`backups/liste-rouge-<date>/`, 600),
+  tailles exclusives mesurées (`nlink` sur le VPS ; script python fixe par ssh sur la seedbox, chemins par l'entrée
+  standard), `DELETE` de la fiche avec `deleteFiles` **jamais rejoué** (délai `arr_delete_timeout_secs` ; après une erreur
+  la fiche est relue, un 404 vaut réussite, sinon ce côté s'arrête), dossier du titre vidé de la corbeille de l'Arr après
+  `recycle_wait_secs` (gardes : chemin absolu sans `..`, strictement sous une corbeille connue, jamais un lien), torrents
+  d'origine (sauf encore utilisés ; délai C411 respecté), `vfs/forget` + `vfs/refresh` sur la seedbox, média Seerr retiré
+  quand plus aucune copie ne reste. À la fin : un seul `Library/Media/Updated` « Deleted » (jamais `DELETE /Items`) et une
+  alerte admin récapitulative.
+- **Simulation** tant que `clean_dry_run = true`, **titre seul compris** : rien n'est supprimé ni écrit hors de l'état,
+  le travail dit ce qu'il ferait. `--dry-run` de homelabd l'emporte toujours.
+- Réglages `[tasks.red_list]` : `min_idle_days` (60, 30 au moins), `include_russian`, `max_titles_per_clean` (50, 200 au
+  plus), `clean_dry_run`, `arr_delete_timeout_secs` (300), `recycle_wait_secs` (90), `empty_recycle`,
+  `add_import_exclusion` (false : un membre peut redemander le titre), `ssh_host`, `jobs_kept` (20), `soon_days` (14).
 
 ### deletion_cleanup — 5 min
 

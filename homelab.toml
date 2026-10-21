@@ -238,8 +238,8 @@ interval_secs = 86400
 min_idle_days = 60          # 30 au moins, sinon homelabd refuse de démarrer
 include_russian = true      # voie russe évaluée, étiquetée « voie russe »
 max_titles_per_clean = 50   # par clic, les plus gros d'abord (200 au plus)
-# true = « Nettoyer » journalise ce qu'il ferait sans rien supprimer. Passe à false après revue d'une simulation et d'un
-# essai réel sur un seul petit titre (installer homelabd ET homelabctl).
+# true = « Nettoyer » et « Nettoyer ce titre » journalisent ce qu'ils feraient sans rien supprimer. Passe à false après
+# revue d'une simulation, puis commencer par « Nettoyer ce titre » sur un petit titre.
 clean_dry_run = true
 arr_delete_timeout_secs = 300   # DELETE de la fiche (deleteFiles) ; au-delà, la fiche est relue : un 404 vaut réussite
 recycle_wait_secs = 90      # attente avant de vider le dossier du titre dans la corbeille de l'Arr

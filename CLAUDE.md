@@ -67,6 +67,7 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 - Import d'un téléchargement non demandé par l'Arr : `ManualImport` en `importMode: copy`, **jamais `auto`** ; candidat choisi par **chemin exact** ; `torrent_import` ne remplace jamais un fichier et n'importe jamais un fichier incomplet.
 - **`homelabctl` n'écrit jamais l'état** ; toute modification manuelle de `state/homelabd.json` se fait **daemon arrêté**.
 - Mesurer « exclusif / partagé » (inodes) avant d'annoncer un gain d'espace.
+- **Suppression en masse de titres seulement par `/accounts/liste-rouge`** (revérifications, plafond, fiches sauvegardées) ; le script manuel de [seedbox-et-rclone.md § 7](docs/runbooks/seedbox-et-rclone.md#7-supprimer-faire-le-ménage-remplacer) reste un secours.
 
 ### Docker, VPN, système
 - `docker compose config --quiet` avant tout `up -d`.
@@ -166,6 +167,7 @@ Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la
 | Jellyfin | 12.1 | `docker-compose.yml`, image du service `jellyfin` |
 | Tmpfs de transcodage | 4 Go, `mem_limit` 6g ; purge chaque minute, urgence à 85 % | `docker-compose.yml` (`jellyfin`) ; `systemd/jellyfin-transcodes-purge.timer` |
 | Montage seedbox | cache 120G (dossier `seedbox{9oylk}`), 80G libres gardés, blocs 4M, 32 connexions | `systemd/homelab-seedbox-mount.service` ; modèle `rclone/rclone.conf` + `.env` `SEEDBOX_SFTP_HOST`, `SEEDBOX_USER` |
+| Liste rouge | rouge = aucune activité depuis 60 j ; 50 titres par clic sur « Nettoyer » ; simulation tant que `clean_dry_run = true` (titre seul compris) | `[tasks.red_list]` `min_idle_days`, `max_titles_per_clean`, `clean_dry_run` |
 | Disque du VPS | alerte 85 %, suppression 95 %, journal seul 98 % | `[tasks.disk_pressure]` `alert_pct`, `hard_pct`, `crit_pct` |
 | Quota seedbox | alerte 85 % | `[tasks.seedbox_health] quota_alert_pct` |
 | Tâche en échec | alerte après 6 échecs de suite et 30 min | `[alerts]` `fail_streak`, `fail_minutes` |
@@ -174,7 +176,7 @@ Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la
 | Langue d'origine | films ; séries à partir du 10/10 07:05 (minuteur `lot4-ol-series`) ; 07:30–11:30 | `[tasks.original_language]` |
 | Mode VO | `jpn` ; « Langue d'origine » native préparée, **coupée** | `[accounts]` `vo_audio_language`, `vo_native`, `vo_native_clients`, `vo_native_ignored_clients`, `vo_native_days` |
 | Tchat | annonces de plus de 14 j lues d'office pour un compte neuf | `[chat] new_member_read_days` |
-| Tâches de homelabd | 33 (dont `tba_bypass`, désactivée, `vo_native_guard`, inactive tant que `vo_native = false`, et `media_mail`, mails « disponible » envoyés aux membres depuis le 15/10, agent e-mail de Seerr coupé) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
+| Tâches de homelabd | 34 (dont `red_list`, liste rouge calculée chaque jour, `tba_bypass`, désactivée, `vo_native_guard`, inactive tant que `vo_native = false`, et `media_mail`, mails « disponible » envoyés aux membres depuis le 15/10, agent e-mail de Seerr coupé) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
 | Domaines | principal (Cloudflare, DNS only, Jellyfin = domaine nu) depuis le 14/10 ; ancien DuckDNS en secours, mêmes hôtes | `.env` `*_PUBLIC_URL`, `ONBOARD_FALLBACK_URL` ; NPM (2 noms par hôte) |
 | Ports ouverts à Internet | 80/443 (NPM), 6881 (BitTorrent), 81 (admin NPM) ; le reste sur 127.0.0.1 | `docker-compose.yml` |
 

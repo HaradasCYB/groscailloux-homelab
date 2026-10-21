@@ -137,16 +137,10 @@ pub fn new_job_id() -> String {
     )
 }
 
-/// Simulation ou non. `--dry-run` l'emporte toujours ; `clean_dry_run` vaut pour tout travail de plus d'un titre. Un
-/// titre seul, confirmé sur sa propre page (`…/nettoyer?key=`), passe en réel si l'appelant le demande (`requested =
-/// false`) : c'est l'essai réel du plan, avant la mise en service (`clean_dry_run = false`).
-pub fn effective_dry(
-    requested: bool,
-    clean_dry_run: bool,
-    global_dry: bool,
-    titles: usize,
-) -> bool {
-    requested || global_dry || (clean_dry_run && titles != 1)
+/// Simulation ou non : demandée par l'appelant, `--dry-run` ou `clean_dry_run`. Aucune exception, pas même pour un
+/// titre seul (`…/nettoyer?key=`) : l'essai réel exige `clean_dry_run = false`.
+pub fn effective_dry(requested: bool, clean_dry_run: bool, global_dry: bool) -> bool {
+    requested || global_dry || clean_dry_run
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -983,7 +977,7 @@ pub async fn clean(
         }
     }
     wanted.truncate(cfg.max_titles_per_clean);
-    let dry = effective_dry(dry, cfg.clean_dry_run, ctx.dry_run, wanted.len());
+    let dry = effective_dry(dry, cfg.clean_dry_run, ctx.dry_run);
     let mut job = CleanJob {
         id: job_id.to_string(),
         started: now(),
@@ -1987,17 +1981,14 @@ mod tests {
     }
 
     #[test]
-    fn simulation_unless_a_single_title_is_asked_for_real() {
+    fn simulation_follows_clean_dry_run_even_for_one_title() {
         // --dry-run l'emporte toujours
-        assert!(effective_dry(false, false, true, 1));
-        // clean_dry_run : tout travail de plusieurs titres est simulé, même demandé en réel
-        assert!(effective_dry(false, true, false, 2));
-        assert!(effective_dry(false, true, false, 0));
-        // essai réel d'un seul titre avant la mise en service
-        assert!(!effective_dry(false, true, false, 1));
-        assert!(effective_dry(true, true, false, 1), "simulation demandée");
+        assert!(effective_dry(false, false, true));
+        // clean_dry_run : tout travail est simulé, un titre seul compris, même demandé en réel
+        assert!(effective_dry(false, true, false));
+        assert!(effective_dry(true, false, false), "simulation demandée");
         // après la mise en service
-        assert!(!effective_dry(false, false, false, 50));
+        assert!(!effective_dry(false, false, false));
     }
 
     #[test]

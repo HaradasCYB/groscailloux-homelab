@@ -132,3 +132,13 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   ni l'hôte de `ONBOARD_PUBLIC_URL` ni une adresse locale (l'hôte premium envoyait tout à homelabd) ; `/admin/*` (CLI) :
   appel local sans `X-Forwarded-For` seulement ; `POST /onboard` fermé sans jeton configuré.
 - `/accounts` et `/recherche` gardent **en plus** l'auth HTTP NPM « admin-outils ».
+- **Liste rouge** (`/accounts/liste-rouge`, `crates/homelabd/src/red_list_page.rs`, moteur
+  `crates/homelab-core/src/red_list_clean.rs`) : HTML rendu par le serveur, sans JavaScript, formulaires en POST avec
+  jeton de formulaire. « Nettoyer » passe par une page de confirmation (liste exacte et empreinte `snap`, refusée si la
+  liste a changé) puis suit le travail sur `…/travail?id=` (rafraîchie toutes les 5 s tant qu'il tourne). **Un seul
+  travail à la fois** : « Nettoyer » et « Recalculer » partagent un verrou en mémoire (`reserve`, `reserve_recompute`) ;
+  un second clic est refusé. État : `state.red_list` (`report` = dernier calcul, `exemptions`, `undated_since`, `jobs`
+  = `jobs_kept` derniers travaux enregistrés après chaque titre, `pending` = étapes à rejouer). Un travail coupé par un
+  redémarrage reste « en cours » dans l'état : la tâche `red_list` le marque **« interrompu »** à son passage suivant
+  (`homelabctl run red_list`) ; relire alors le travail (titres déjà traités) et relancer « Nettoyer » sur le reste, les
+  revérifications écartant ce qui a déjà disparu. Simulation tant que `clean_dry_run = true`, titre seul compris.

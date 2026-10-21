@@ -711,8 +711,8 @@ pub struct RedList {
     pub include_russian: bool,
     /// Titres supprimés au plus par clic sur « Nettoyer » (les plus gros d'abord).
     pub max_titles_per_clean: usize,
-    /// `true` = « Nettoyer » ne fait que journaliser ce qu'il aurait fait (simulation) ; `false` après revue d'une
-    /// simulation et d'un essai réel sur un seul titre.
+    /// `true` = « Nettoyer » (liste ou titre seul) ne fait que journaliser ce qu'il aurait fait (simulation) ; `false`
+    /// après revue d'une simulation.
     pub clean_dry_run: bool,
     /// Délai de la suppression d'une fiche par l'Arr (`deleteFiles` sur la seedbox : plusieurs minutes pour une série).
     pub arr_delete_timeout_secs: u64,

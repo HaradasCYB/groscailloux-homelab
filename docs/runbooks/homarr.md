@@ -34,6 +34,19 @@
 - **Session de test** : `HOMARR_ADMIN_PASSWORD` (compte admin dédié) par `/api/auth/callback/credentials`, puis
   `/api/auth/signout`. Le compte propriétaire existe aussi.
 
+## Tuile « Liste rouge » (tableau privé « Operations »)
+
+Tuile vers la page d'admin de la liste rouge, **jamais sur le tableau public**. Procédure (règles ci-dessus : Homarr
+arrêté, base sauvegardée, tout en une commande) :
+
+1. Arrêt de Homarr, sauvegarde `backups/homarr-db-<date>-liste-rouge.sqlite` (`chmod o-rwx`).
+2. Script modelé sur `backups/lot1-20261007/homarr/apply.py` : dans la section « Accès & docs », copier l'app
+   « Comptes » (même hôte, même `ping_url`) en une app « Liste rouge » dont le `href` finit par `/accounts/liste-rouge`,
+   puis créer l'item et ses 3 `item_layout` (un par taille d'écran) à côté de « Comptes ». Garder un `rollback.py` qui
+   retire l'app, l'item et ses positions.
+3. Démarrage de Homarr ; contrôler la tuile connecté (elle ouvre la page, l'auth NPM « admin-outils » est demandée comme
+   pour « Comptes ») et l'absence de la tuile sur le tableau public.
+
 ## Lot 3 (en cours jusqu'au 12/10)
 
 Le lot 3 prépare Homarr 1.77.2 (`backups/lot3-20261008/homarr/`) : plus de tâches de fond par widget, télémétrie coupée,
