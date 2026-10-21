@@ -137,8 +137,13 @@ header{display:flex;justify-content:space-between;align-items:flex-start;gap:12p
 @media (prefers-reduced-motion:reduce){.sw i,.sw i::after{transition:none}}"#;
 
 fn shell(title: &str, body: &str) -> String {
+    shell_with(title, "", body)
+}
+
+/// Même gabarit, avec des balises en plus dans `<head>` (style propre à une page, `meta refresh`) : la liste rouge.
+pub(crate) fn shell_with(title: &str, head: &str, body: &str) -> String {
     format!(
-        r#"<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>{title}</title><style>{CSS}</style></head><body><main>{body}</main></body></html>"#
+        r#"<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>{title}</title><style>{CSS}</style>{head}</head><body><main>{body}</main></body></html>"#
     )
 }
 
@@ -268,7 +273,7 @@ pub fn render(d: &PageData<'_>) -> String {
     shell(
         "Comptes Groscailloux",
         &format!(
-            r#"<header><div><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><a class="new" href="/">Créer un compte</a></header>
+            r#"<header><div><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><nav class="row"><a class="btn ghost" href="/accounts/liste-rouge">Liste rouge</a><a class="new" href="/">Créer un compte</a></nav></header>
 <section class="cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} lectures simultanées par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
 {flash}
 <div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th>Abonnement</th><th>Lien de bienvenue</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>

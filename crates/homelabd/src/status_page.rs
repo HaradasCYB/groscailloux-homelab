@@ -177,9 +177,14 @@ fn alerts_section(a: &AlertStats, now: i64) -> String {
 /// « Catalogue jamais regardé » : totaux, détail, voie russe et liste des plus gros titres jamais commencés (2026-10-08).
 /// **Lecture seule** : un tableau, aucun formulaire ni bouton, rien qui supprime ; l'admin tranche à la main. Tout texte
 /// venu des Arrs (titres) passe par `esc`. Avant le premier calcul (`None`), une ligne le dit.
+/// Lien vers la liste rouge (`/accounts/liste-rouge`, session admin) : ce qu'on peut supprimer, titre par titre.
+const RED_LIST_LINK: &str = r#"<p class="gd" style="margin:6px 0"><a href="/accounts/liste-rouge" style="color:#93c5fd">Liste rouge</a> : titres que personne n'a lancés depuis longtemps, à exempter ou à nettoyer.</p>"#;
+
 fn catalogue_section(r: Option<&CatalogueReport>, now: i64) -> String {
     let Some(r) = r else {
-        return r#"<h1 style="margin:14px 0 6px">Catalogue jamais regardé</h1><p class="gd">pas encore calculé (une fois par jour)</p>"#.into();
+        return format!(
+            r#"<h1 style="margin:14px 0 6px">Catalogue jamais regardé</h1><p class="gd">pas encore calculé (une fois par jour)</p>{RED_LIST_LINK}"#
+        );
     };
     let share = |b: &CatalogueBucket| percent(b.bytes, r.catalogue.bytes);
     let card = |title: &str, value: String, detail: String, pct: f64| {
@@ -358,7 +363,7 @@ fn catalogue_section(r: Option<&CatalogueReport>, now: i64) -> String {
         true,
     );
     format!(
-        r#"<h1 style="margin:14px 0 6px">Catalogue jamais regardé · calculé {at}</h1><div class="gs" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">{cards}</div>{notes}{listed}{backlog}"#,
+        r#"<h1 style="margin:14px 0 6px">Catalogue jamais regardé · calculé {at}</h1><div class="gs" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">{cards}</div>{RED_LIST_LINK}{notes}{listed}{backlog}"#,
         at = esc(&ago(now, r.at)),
     )
 }
@@ -859,10 +864,13 @@ mod tests {
         );
     }
 
-    /// Consultation seule : ni formulaire, ni bouton, ni lien, ni script — rien qui puisse supprimer quoi que ce soit.
+    /// Consultation seule : ni formulaire, ni bouton, ni script — rien qui puisse supprimer quoi que ce soit. Seul lien :
+    /// la liste rouge (page d'admin à part, qui confirme avant toute suppression).
     #[test]
     fn catalogue_report_has_nothing_to_click() {
         let html = catalogue_section(Some(&catalogue_sample()), 1_000_000);
+        assert_eq!(html.matches(RED_LIST_LINK).count(), 1);
+        let html = html.replace(RED_LIST_LINK, "");
         for forbidden in [
             "<form", "<button", "<a ", "<input", "<script", "onclick", "method=", "href=",
         ] {
@@ -916,6 +924,10 @@ mod tests {
     fn catalogue_report_before_the_first_run_and_without_candidates() {
         let waiting = catalogue_section(None, 1_000_000);
         assert!(waiting.contains("pas encore calculé"), "{waiting}");
+        assert!(
+            waiting.contains(r#"href="/accounts/liste-rouge""#),
+            "{waiting}"
+        );
         // catalogue vide ou rien à examiner : ni division par zéro, ni tableau vide
         let empty = catalogue_section(
             Some(&CatalogueReport {

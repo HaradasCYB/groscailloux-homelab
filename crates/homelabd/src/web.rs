@@ -58,6 +58,7 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
     let listen = ctx.cfg.web.listen.clone();
     let chat = crate::chat_api::router(ctx.clone())?;
     let search = crate::search_page::router(ctx.clone());
+    let red_list = crate::red_list_page::router(ctx.clone());
     let subs = crate::subs_api::router(ctx.clone());
     let auth = crate::admin_auth::AdminAuth::new(ctx.clone());
     let login = Router::new()
@@ -107,6 +108,7 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .with_state(state)
         .merge(chat)
         .merge(search)
+        .merge(red_list)
         .merge(subs)
         .merge(login)
         .layer(axum::middleware::from_fn_with_state(

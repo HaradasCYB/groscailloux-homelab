@@ -110,9 +110,22 @@ fn reserve(job_id: &str) -> Option<Running> {
     Some(Running { _guard: guard })
 }
 
-/// Un « Nettoyer » tourne dans ce processus (la page refuse d'en lancer un second).
+/// Un « Nettoyer » (ou un « Recalculer » de la page) tient la place dans ce processus : la page refuse d'en lancer un
+/// second.
 pub fn busy() -> bool {
     slot().try_lock().is_err()
+}
+
+/// La place de l'unique travail tenue par un « Recalculer » de la page : jamais pendant un « Nettoyer », ni l'inverse.
+/// Ce n'est pas un travail : aucun « en cours » dans l'état, rien à marquer « interrompu ». Rendue quand elle tombe.
+pub struct Slot {
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+/// Réserve la place pour un recalcul ; `None` si un « Nettoyer » ou un autre recalcul la tient.
+pub fn reserve_recompute() -> Option<Slot> {
+    let guard = slot().clone().try_lock_owned().ok()?;
+    Some(Slot { _guard: guard })
 }
 
 /// Identifiant d'un nouveau travail : date locale et suffixe aléatoire (`20261021-101500-3fa2`).
@@ -982,7 +995,7 @@ pub async fn clean(
     };
     let Some(_running) = reserve(job_id) else {
         job.status = "refused".into();
-        job.detail = "un autre « Nettoyer » est en cours".into();
+        job.detail = "un autre « Nettoyer » ou un recalcul est en cours".into();
         job.ended = Some(now());
         record_job(ctx, &job).await?;
         return Ok(job);
@@ -2549,9 +2562,24 @@ mod tests {
         assert!(busy());
         assert!(reserve("t2").is_none(), "second travail refusé");
         assert_eq!(current().lock().unwrap().as_deref(), Some("t1"));
+        assert!(
+            reserve_recompute().is_none(),
+            "pas de recalcul pendant un travail"
+        );
         drop(first);
         assert!(!busy());
         assert_eq!(current().lock().unwrap().as_deref(), None);
+        // un « Recalculer » tient la même place, sans se faire passer pour un travail
+        let recompute = reserve_recompute().expect("place libre");
+        assert!(busy());
+        assert!(
+            reserve("t3").is_none(),
+            "pas de « Nettoyer » pendant un recalcul"
+        );
+        assert!(reserve_recompute().is_none(), "un seul recalcul");
+        assert_eq!(current().lock().unwrap().as_deref(), None);
+        drop(recompute);
+        assert!(!busy());
         let id = new_job_id();
         assert_eq!(id.len(), "20261021-101500-3fa2".len(), "{id}");
     }

@@ -6,6 +6,7 @@ mod admin_auth;
 mod chat_api;
 mod client_addr;
 mod guide;
+mod red_list_page;
 mod scheduler;
 mod search_page;
 mod status_page;
