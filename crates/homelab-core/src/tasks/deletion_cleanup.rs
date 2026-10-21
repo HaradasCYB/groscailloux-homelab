@@ -164,30 +164,30 @@ pub fn plan_series(missing: &BTreeSet<i64>, episodes: &[Value], total_files: usi
     }
 }
 
-/// Un fichier de titre, tel que l'Arr le connaît.
+/// Un fichier de titre, tel que l'Arr le connaît (aussi lu par le moteur « Nettoyer » de la liste rouge).
 #[derive(Debug, Clone)]
-struct FileRef {
-    id: i64,
-    key: String,
-    host: PathBuf,
-    jellyfin: String,
-    original: Option<String>,
-    scene: Option<String>,
+pub(crate) struct FileRef {
+    pub(crate) id: i64,
+    pub(crate) key: String,
+    pub(crate) host: PathBuf,
+    pub(crate) jellyfin: String,
+    pub(crate) original: Option<String>,
+    pub(crate) scene: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-enum Kind {
+pub(crate) enum Kind {
     Movie,
     Series { tvdb: i64, total_files: usize },
 }
 
 #[derive(Debug, Clone)]
-struct Title {
-    kind: Kind,
-    id: i64,
-    tmdb: i64,
-    name: String,
-    files: Vec<FileRef>,
+pub(crate) struct Title {
+    pub(crate) kind: Kind,
+    pub(crate) id: i64,
+    pub(crate) tmdb: i64,
+    pub(crate) name: String,
+    pub(crate) files: Vec<FileRef>,
 }
 
 /// Fiche déplacée par `anime_library` depuis moins de `MOVE_GRACE_SECS`.
@@ -444,6 +444,29 @@ pub(crate) async fn rclone_refresh(ctx: &TaskContext, host: &std::path::Path) {
     }
 }
 
+/// Fait oublier au cache de répertoires rclone un dossier supprimé sur la seedbox (`vfs/forget`, relatif au montage),
+/// pour qu'il disparaisse du montage sans attendre l'expiration du cache (1 h). Même style que [`rclone_refresh`] : un
+/// échec est sans conséquence, le cache expire de lui-même.
+pub(crate) async fn rclone_forget(ctx: &TaskContext, host_dir: &std::path::Path) {
+    let Ok(rel) = host_dir.strip_prefix(&ctx.cfg.seedbox.mount_point) else {
+        return;
+    };
+    if rel.as_os_str().is_empty() {
+        return; // jamais la racine du montage
+    }
+    let rc = format!(
+        "{}/vfs/forget",
+        ctx.cfg.seedbox.rclone_rc.trim_end_matches('/')
+    );
+    let _ = ctx
+        .http
+        .post(&rc)
+        .json(&json!({ "dir": rel.to_string_lossy() }))
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await;
+}
+
 /// Fiches média Jellyseerr **en attente (2) ou en cours (3)** sans demande : l'admin a retiré la demande,
 /// le titre n'est plus voulu. Renvoie (`movie`/`tv`, identifiant TMDB, id du média).
 ///
@@ -476,7 +499,7 @@ async fn drop_title(
     media_id: i64,
 ) -> Result<String> {
     let torrents = side.qbit.torrents().await.unwrap_or_default();
-    let hashes = source_hashes(side, t, None, &torrents).await;
+    let hashes = source_hashes(side, t, None, &torrents, "deletion_cleanup").await;
     let (arr, path, params) = match t.kind {
         Kind::Movie => (
             side.radarr,
@@ -498,7 +521,7 @@ async fn drop_title(
     let mut notes = Vec::new();
     for h in &hashes {
         if let Some(tor) = torrents.iter().find(|x| x.hash.eq_ignore_ascii_case(h)) {
-            notes.push(handle_torrent(ctx, side, tor).await);
+            notes.push(handle_torrent(ctx, side, tor, ctx.dry_run, "deletion_cleanup").await);
         }
     }
     if let Err(e) = ctx.jellyseerr.delete_media(media_id).await {
@@ -514,6 +537,98 @@ async fn drop_title(
             format!(", {}", notes.join(" "))
         }
     ))
+}
+
+/// Titre entier (fiche et tous ses fichiers rattachés à une racine connue, sans filtre d'âge) à partir d'une fiche
+/// Radarr (`movieFile` compris) ou d'une fiche Sonarr et de ses fichiers d'épisodes (`episodefile`).
+pub(crate) fn title_from_arr(
+    side: &str,
+    maps: &[PathMap],
+    movie: bool,
+    fiche: &Value,
+    episode_files: &[Value],
+) -> Title {
+    let id = fiche.get("id").and_then(Value::as_i64).unwrap_or(0);
+    let tmdb = fiche.get("tmdbId").and_then(Value::as_i64).unwrap_or(0);
+    let name = str_of(fiche, "title").unwrap_or_default();
+    if movie {
+        let file = fiche.get("movieFile");
+        let files = file
+            .and_then(|f| str_of(f, "path"))
+            .and_then(|path| map_path(maps, &path).map(|(host, jf)| (f_id(file), path, host, jf)))
+            .map(|(id, path, host, jellyfin)| {
+                vec![FileRef {
+                    id,
+                    key: format!("{side}:{path}"),
+                    host,
+                    jellyfin,
+                    original: file.and_then(|f| str_of(f, "originalFilePath")),
+                    scene: file.and_then(|f| str_of(f, "sceneName")),
+                }]
+            })
+            .unwrap_or_default();
+        return Title {
+            kind: Kind::Movie,
+            id,
+            tmdb,
+            name,
+            files,
+        };
+    }
+    let files: Vec<FileRef> = episode_files
+        .iter()
+        .filter_map(|f| {
+            let path = str_of(f, "path")?;
+            let (host, jellyfin) = map_path(maps, &path)?;
+            Some(FileRef {
+                id: f.get("id").and_then(Value::as_i64)?,
+                key: format!("{side}:{path}"),
+                host,
+                jellyfin,
+                original: str_of(f, "originalFilePath"),
+                scene: str_of(f, "sceneName"),
+            })
+        })
+        .collect();
+    Title {
+        kind: Kind::Series {
+            tvdb: fiche.get("tvdbId").and_then(Value::as_i64).unwrap_or(0),
+            total_files: files.len(),
+        },
+        id,
+        tmdb,
+        name,
+        files,
+    }
+}
+
+/// Fiche d'un côté par son identifiant d'Arr, avec tous ses fichiers : (titre, fiche brute) ; `None` si l'Arr répond
+/// 404 (fiche déjà supprimée). Fichiers d'épisodes illisibles : erreur (un titre privé de ses fichiers perdrait la
+/// trace de ses torrents).
+pub(crate) async fn arr_title_by_id(
+    ctx: &TaskContext,
+    side: &Side<'_>,
+    movie: bool,
+    id: i64,
+) -> Result<Option<(Title, Value)>> {
+    let (arr, path) = if movie {
+        (side.radarr, format!("api/v3/movie/{id}"))
+    } else {
+        (side.sonarr, format!("api/v3/series/{id}"))
+    };
+    let Some(fiche) = arr.get_opt(&path).await? else {
+        return Ok(None);
+    };
+    let files = if movie {
+        Vec::new()
+    } else {
+        side.sonarr.episode_files(id).await?
+    };
+    let maps = side_maps(ctx, side.name);
+    Ok(Some((
+        title_from_arr(side.name, &maps, movie, &fiche, &files),
+        fiche,
+    )))
 }
 
 /// Fiches de cette machine correspondant à des demandes retirées, avec tous leurs fichiers.
@@ -535,33 +650,7 @@ async fn dropped_titles(
             else {
                 continue;
             };
-            let file = m.get("movieFile");
-            let files = file
-                .and_then(|f| str_of(f, "path"))
-                .and_then(|path| {
-                    map_path(&maps, &path).map(|(host, jf)| (f_id(file), path, host, jf))
-                })
-                .map(|(id, path, host, jellyfin)| {
-                    vec![FileRef {
-                        id,
-                        key: format!("{}:{path}", side.name),
-                        host,
-                        jellyfin,
-                        original: file.and_then(|f| str_of(f, "originalFilePath")),
-                        scene: file.and_then(|f| str_of(f, "sceneName")),
-                    }]
-                })
-                .unwrap_or_default();
-            out.push((
-                Title {
-                    kind: Kind::Movie,
-                    id: m.get("id").and_then(Value::as_i64).unwrap_or(0),
-                    tmdb: *tmdb,
-                    name: str_of(&m, "title").unwrap_or_default(),
-                    files,
-                },
-                *media_id,
-            ));
+            out.push((title_from_arr(side.name, &maps, true, &m, &[]), *media_id));
         } else {
             let Some(sr) = side
                 .sonarr
@@ -573,36 +662,9 @@ async fn dropped_titles(
                 continue;
             };
             let id = sr.get("id").and_then(Value::as_i64).unwrap_or(0);
-            let files: Vec<FileRef> = side
-                .sonarr
-                .episode_files(id)
-                .await
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|f| {
-                    let path = str_of(f, "path")?;
-                    let (host, jellyfin) = map_path(&maps, &path)?;
-                    Some(FileRef {
-                        id: f.get("id").and_then(Value::as_i64)?,
-                        key: format!("{}:{path}", side.name),
-                        host,
-                        jellyfin,
-                        original: str_of(f, "originalFilePath"),
-                        scene: str_of(f, "sceneName"),
-                    })
-                })
-                .collect();
+            let files = side.sonarr.episode_files(id).await.unwrap_or_default();
             out.push((
-                Title {
-                    kind: Kind::Series {
-                        tvdb: sr.get("tvdbId").and_then(Value::as_i64).unwrap_or(0),
-                        total_files: files.len(),
-                    },
-                    id,
-                    tmdb: *tmdb,
-                    name: str_of(&sr, "title").unwrap_or_default(),
-                    files,
-                },
+                title_from_arr(side.name, &maps, false, &sr, &files),
                 *media_id,
             ));
         }
@@ -767,12 +829,13 @@ async fn titles_with_missing_files(
 }
 
 /// Hashes (minuscules) des torrents d'où viennent ces fichiers. Séries : seulement les évènements
-/// des épisodes concernés (`episodes`).
-async fn source_hashes(
+/// des épisodes concernés (`episodes`). `task` : nom journalisé.
+pub(crate) async fn source_hashes(
     side: &Side<'_>,
     t: &Title,
     episodes: Option<&BTreeSet<i64>>,
     torrents: &[Torrent],
+    task: &'static str,
 ) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let (arr, key) = match t.kind {
@@ -782,7 +845,7 @@ async fn source_hashes(
     match arr.title_history(t.id).await {
         Ok(records) => out.extend(hashes_from_history(&records, key, t.id, episodes)),
         Err(e) => {
-            warn!(task = "deletion_cleanup", title = %t.name, error = format!("{e:#}"), "history unreadable")
+            warn!(task, title = %t.name, error = format!("{e:#}"), "history unreadable")
         }
     }
     for tor in torrents {
@@ -797,7 +860,7 @@ async fn source_hashes(
 }
 
 /// Le torrent sert-il encore à un fichier de la bibliothèque (pack) ?
-async fn still_used(
+pub(crate) async fn still_used(
     side: &Side<'_>,
     t: &Title,
     hash: &str,
@@ -877,15 +940,22 @@ async fn still_used(
     false
 }
 
-/// Retire le torrent maintenant ou le met en attente (C411). Renvoie une étiquette pour le résumé.
-async fn handle_torrent(ctx: &TaskContext, side: &Side<'_>, tor: &Torrent) -> &'static str {
+/// Retire le torrent maintenant ou le met en attente (C411). Renvoie une étiquette pour le résumé. `dry` : rien n'est
+/// écrit (ni qBittorrent ni l'état), seulement journalisé ; `task` : nom journalisé.
+pub(crate) async fn handle_torrent(
+    ctx: &TaskContext,
+    side: &Side<'_>,
+    tor: &Torrent,
+    dry: bool,
+    task: &'static str,
+) -> &'static str {
     let dc = &ctx.cfg.tasks.deletion_cleanup;
     let unlimited = &ctx.cfg.tasks.tracker_ratio.unlimited;
     let key = format!("{}:{}", side.name, tor.hash.to_lowercase());
     match torrent_action(tor, unlimited, dc) {
         TorrentAction::DeleteNow => {
-            if ctx.dry_run {
-                info!(task = "deletion_cleanup", side = side.name, torrent = %tor.name, "dry-run: would delete torrent and files");
+            if dry {
+                info!(task, side = side.name, torrent = %tor.name, "dry-run: would delete torrent and files");
                 return "torrent_deleted";
             }
             let _lock = ctx.qbit_lock.lock().await;
@@ -895,7 +965,7 @@ async fn handle_torrent(ctx: &TaskContext, side: &Side<'_>, tor: &Torrent) -> &'
                 .await
             {
                 Ok(()) => {
-                    info!(task = "deletion_cleanup", side = side.name, torrent = %tor.name, ratio = tor.ratio, "torrent deleted with files");
+                    info!(task, side = side.name, torrent = %tor.name, ratio = tor.ratio, "torrent deleted with files");
                     let _ = ctx
                         .state
                         .update(|s| {
@@ -905,13 +975,13 @@ async fn handle_torrent(ctx: &TaskContext, side: &Side<'_>, tor: &Torrent) -> &'
                     "torrent_deleted"
                 }
                 Err(e) => {
-                    warn!(task = "deletion_cleanup", side = side.name, torrent = %tor.name, error = format!("{e:#}"), "torrent delete failed");
+                    warn!(task, side = side.name, torrent = %tor.name, error = format!("{e:#}"), "torrent delete failed");
                     "torrent_error"
                 }
             }
         }
         TorrentAction::Wait => {
-            if !ctx.dry_run {
+            if !dry {
                 let _ = ctx
                     .state
                     .update(|s| {
@@ -925,14 +995,15 @@ async fn handle_torrent(ctx: &TaskContext, side: &Side<'_>, tor: &Torrent) -> &'
                     })
                     .await;
             }
-            info!(task = "deletion_cleanup", side = side.name, torrent = %tor.name, ratio = tor.ratio, seeding_days = tor.seeding_time / 86_400, "private tracker: torrent kept until seed threshold");
+            info!(task, side = side.name, torrent = %tor.name, ratio = tor.ratio, seeding_days = tor.seeding_time / 86_400, "private tracker: torrent kept until seed threshold");
             "torrent_pending"
         }
     }
 }
 
-/// Le titre a-t-il encore des fichiers sur une autre machine ? (Jellyseerr n'est libéré que sinon)
-async fn present_elsewhere(ctx: &TaskContext, here: &str, t: &Title) -> bool {
+/// Le titre a-t-il encore des fichiers sur une autre machine ? (Jellyseerr n'est libéré que sinon) `here` : côté
+/// exclu de la recherche (vide : tous les côtés sont lus).
+pub(crate) async fn present_elsewhere(ctx: &TaskContext, here: &str, t: &Title) -> bool {
     for other in ctx.sides().into_iter().filter(|s| s.name != here) {
         let found = match t.kind {
             Kind::Movie => other.radarr.movies().await.map(|l| {
@@ -992,7 +1063,7 @@ async fn clean_title(ctx: &TaskContext, side: &Side<'_>, t: &Title) -> Result<St
     let what = match t.kind {
         Kind::Movie => {
             // relevé avant la suppression : l'historique de la fiche part avec elle
-            hashes = source_hashes(side, t, None, &torrents).await;
+            hashes = source_hashes(side, t, None, &torrents, "deletion_cleanup").await;
             if dry {
                 info!(task = "deletion_cleanup", side = side.name, title = %t.name, "dry-run: would delete radarr movie");
             } else {
@@ -1012,7 +1083,14 @@ async fn clean_title(ctx: &TaskContext, side: &Side<'_>, t: &Title) -> Result<St
             let missing: BTreeSet<i64> = t.files.iter().map(|f| f.id).collect();
             let plan = plan_series(&missing, &episodes, total_files);
             exclude_episodes.extend(plan.episodes.iter().copied());
-            hashes = source_hashes(side, t, Some(&exclude_episodes), &torrents).await;
+            hashes = source_hashes(
+                side,
+                t,
+                Some(&exclude_episodes),
+                &torrents,
+                "deletion_cleanup",
+            )
+            .await;
             if plan.whole {
                 if dry {
                     info!(task = "deletion_cleanup", side = side.name, title = %t.name, "dry-run: would delete sonarr series");
@@ -1082,7 +1160,7 @@ async fn clean_title(ctx: &TaskContext, side: &Side<'_>, t: &Title) -> Result<St
             torrent_notes.push("torrent_kept");
             continue;
         }
-        torrent_notes.push(handle_torrent(ctx, side, tor).await);
+        torrent_notes.push(handle_torrent(ctx, side, tor, dry, "deletion_cleanup").await);
     }
     Ok(format!(
         "{} « {} » ({}{})",
@@ -1135,7 +1213,8 @@ async fn process_pending(ctx: &TaskContext, side: &Side<'_>) -> u32 {
                 let unlimited = &ctx.cfg.tasks.tracker_ratio.unlimited;
                 if torrent_action(t, unlimited, &ctx.cfg.tasks.deletion_cleanup)
                     == TorrentAction::DeleteNow
-                    && handle_torrent(ctx, side, t).await == "torrent_deleted"
+                    && handle_torrent(ctx, side, t, ctx.dry_run, "deletion_cleanup").await
+                        == "torrent_deleted"
                 {
                     done += 1;
                 }
@@ -1417,6 +1496,44 @@ mod tests {
         assert_eq!(j, "/seedbox/media/Movies/Y/y.mkv");
         assert!(map_path(&maps(), "/moviesX/a.mkv").is_none());
         assert!(map_path(&maps(), "/tv/a.mkv").is_none());
+    }
+
+    #[test]
+    fn whole_titles_are_built_from_their_arr_card() {
+        let m = json!({"id": 12, "tmdbId": 100, "title": "A",
+            "movieFile": {"id": 5, "path": "/movies/A (2020)/a.mkv", "sceneName": "A.2020.1080p"}});
+        let t = title_from_arr("vps", &maps(), true, &m, &[]);
+        assert!(matches!(t.kind, Kind::Movie));
+        assert_eq!((t.id, t.tmdb, t.name.as_str()), (12, 100, "A"));
+        assert_eq!(t.files.len(), 1);
+        assert_eq!(t.files[0].key, "vps:/movies/A (2020)/a.mkv");
+        assert_eq!(t.files[0].host, PathBuf::from("/h/movies/A (2020)/a.mkv"));
+        assert_eq!(t.files[0].scene.as_deref(), Some("A.2020.1080p"));
+        // fichier hors des racines connues, ou fiche sans fichier : aucun fichier
+        let elsewhere = json!({"id": 1, "movieFile": {"id": 5, "path": "/ailleurs/a.mkv"}});
+        assert!(title_from_arr("vps", &maps(), true, &elsewhere, &[])
+            .files
+            .is_empty());
+        assert!(title_from_arr("vps", &maps(), true, &json!({"id": 1}), &[])
+            .files
+            .is_empty());
+        // série : tous les fichiers, sans filtre d'âge
+        let s = json!({"id": 7, "tmdbId": 70, "tvdbId": 700, "title": "S"});
+        let files = [
+            json!({"id": 1, "path": "/home/u/media/TV/S/e1.mkv", "dateAdded": "2099-01-01T00:00:00Z"}),
+            json!({"id": 2, "path": "/home/u/media/TV/S/e2.mkv"}),
+            json!({"id": 3, "path": "/ailleurs/e3.mkv"}),
+        ];
+        let t = title_from_arr("seedbox", &maps(), false, &s, &files);
+        assert!(matches!(
+            t.kind,
+            Kind::Series {
+                tvdb: 700,
+                total_files: 2
+            }
+        ));
+        assert_eq!(t.files.len(), 2);
+        assert_eq!(t.files[1].jellyfin, "/seedbox/media/TV/S/e2.mkv");
     }
 
     #[test]

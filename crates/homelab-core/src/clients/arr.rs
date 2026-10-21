@@ -3,7 +3,7 @@ use reqwest::{Client, Method, RequestBuilder, Url};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::{check, json, SendRetry};
+use super::{cause_chain, check, json, SendRetry};
 use crate::secret::Secret;
 
 /// Sonarr et Radarr partagent l'API v3 ; `name` sert aux logs et à l'état.
@@ -60,6 +60,28 @@ impl ArrClient {
             .send_retry()
             .await?;
         json(resp, &format!("{} GET {path}", self.name)).await
+    }
+
+    /// `GET` d'une fiche : `None` si l'Arr répond 404 (fiche supprimée), une erreur pour toute autre panne.
+    pub async fn get_opt(&self, path: &str) -> Result<Option<Value>> {
+        let resp = self.req(Method::GET, path).send_retry().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        json(resp, &format!("{} GET {path}", self.name))
+            .await
+            .map(Some)
+    }
+
+    /// Corbeille de l'Arr (`config/mediamanagement`, champ `recycleBin`), telle que l'Arr la voit ; `None` si aucune
+    /// n'est réglée (les fichiers supprimés le sont pour de bon).
+    pub async fn recycle_bin(&self) -> Result<Option<String>> {
+        let v = self.get("api/v3/config/mediamanagement", &[]).await?;
+        Ok(v.get("recycleBin")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string))
     }
 
     pub async fn post(&self, path: &str, body: &Value) -> Result<Value> {
@@ -386,6 +408,27 @@ impl ArrClient {
         self.get(&format!("api/v3/qualityprofile/{id}"), &[]).await
     }
 
+    /// `DELETE` d'une fiche avec ses fichiers, **jamais rejoué** et avec un délai réglable (`deleteFiles` d'une série sur
+    /// la seedbox : plusieurs minutes). Un délai dépassé ou une coupure ne disent pas si l'Arr a supprimé : l'appelant
+    /// relit la fiche ([`Self::get_opt`]). Réponse ignorée.
+    pub async fn delete_timeout(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        let resp = self
+            .req(Method::DELETE, path)
+            .query(query)
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("{} DELETE {path} : {}", self.name, cause_chain(e)))?;
+        check(resp, &format!("{} DELETE {path}", self.name))
+            .await
+            .map(|_| ())
+    }
+
     /// `DELETE` avec paramètres (fiche film / série). Réponse ignorée.
     pub async fn delete(&self, path: &str, query: &[(&str, &str)]) -> Result<()> {
         let resp = self
@@ -479,7 +522,10 @@ impl ArrClient {
 
 #[cfg(test)]
 mod tests {
-    use super::more_pages;
+    use super::*;
+    use crate::secret::Secret;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn queue_pages_until_everything_is_read() {
@@ -487,5 +533,93 @@ mod tests {
         assert!(more_pages(500, 730, 500));
         assert!(!more_pages(730, 730, 230));
         assert!(!more_pages(500, 900, 0)); // page vide : on s'arrête même si le total annonce plus
+    }
+
+    async fn client(server: &MockServer) -> ArrClient {
+        ArrClient::new(
+            "radarr",
+            &format!("{}/", server.uri()),
+            Secret::new("k"),
+            reqwest::Client::new(),
+        )
+        .unwrap()
+    }
+
+    /// Une fiche supprimée (404) n'est pas une erreur ; une panne, si.
+    #[tokio::test]
+    async fn get_opt_tells_a_deleted_card_from_a_failure() {
+        let server = MockServer::start().await;
+        for (p, code) in [
+            ("/api/v3/movie/1", 200),
+            ("/api/v3/movie/2", 404),
+            ("/api/v3/movie/3", 500),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(p))
+                .respond_with(ResponseTemplate::new(code).set_body_json(json!({"id": 1})))
+                .mount(&server)
+                .await;
+        }
+        let c = client(&server).await;
+        assert_eq!(c.get_opt("api/v3/movie/1").await.unwrap().unwrap()["id"], 1);
+        assert!(c.get_opt("api/v3/movie/2").await.unwrap().is_none());
+        assert!(c.get_opt("api/v3/movie/3").await.is_err());
+    }
+
+    /// Un `DELETE` trop long échoue sans être rejoué : l'appelant relit la fiche.
+    #[tokio::test]
+    async fn a_slow_delete_times_out_and_is_never_replayed() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/v3/movie/7"))
+            .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(3)))
+            .mount(&server)
+            .await;
+        let c = client(&server).await;
+        let r = c
+            .delete_timeout(
+                "api/v3/movie/7",
+                &[("deleteFiles", "true")],
+                std::time::Duration::from_millis(300),
+            )
+            .await;
+        assert!(r.is_err(), "délai dépassé");
+        let deletes = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.method.as_str() == "DELETE")
+            .count();
+        assert_eq!(deletes, 1, "jamais rejoué");
+    }
+
+    #[tokio::test]
+    async fn the_recycle_bin_is_read_from_media_management() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v3/config/mediamanagement"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"recycleBin": "/data/media/movies/.recycle"})),
+            )
+            .mount(&server)
+            .await;
+        let c = client(&server).await;
+        assert_eq!(
+            c.recycle_bin().await.unwrap().as_deref(),
+            Some("/data/media/movies/.recycle")
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v3/config/mediamanagement"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"recycleBin": " "})))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            client(&server).await.recycle_bin().await.unwrap(),
+            None,
+            "aucune corbeille réglée"
+        );
     }
 }

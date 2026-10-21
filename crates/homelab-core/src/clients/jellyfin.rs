@@ -848,9 +848,15 @@ impl JellyfinClient {
 
     /// Signale des fichiers nouveaux : Jellyfin ne scanne que leurs dossiers, pas la bibliothèque.
     pub async fn media_updated(&self, paths: &[String]) -> Result<()> {
+        self.media_updated_as(paths, "Created").await
+    }
+
+    /// Comme [`Self::media_updated`], avec la sorte de changement : `Created`, `Modified` ou `Deleted` (dossiers
+    /// supprimés par la liste rouge : Jellyfin retire leurs éléments par une analyse ciblée, jamais `DELETE /Items`).
+    pub async fn media_updated_as(&self, paths: &[String], update_type: &str) -> Result<()> {
         let updates: Vec<Value> = paths
             .iter()
-            .map(|p| json!({ "Path": p, "UpdateType": "Created" }))
+            .map(|p| json!({ "Path": p, "UpdateType": update_type }))
             .collect();
         let resp = self
             .req(Method::POST, "Library/Media/Updated")
@@ -939,8 +945,49 @@ pub fn non_admin_policy(libraries: &[String], max_streams: u32) -> Value {
 #[cfg(test)]
 mod visible_tests {
     use super::*;
-    use wiremock::matchers::{method, path, query_param};
+    use wiremock::matchers::{body_json, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Un seul appel pour tous les dossiers, avec la sorte demandée ; `media_updated` reste en `Created`.
+    #[tokio::test]
+    async fn media_updates_carry_their_kind() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/Library/Media/Updated"))
+            .and(body_json(json!({"Updates": [
+                {"Path": "/seedbox/media/Movies/A (2020)", "UpdateType": "Deleted"},
+                {"Path": "/media/tvshows/B", "UpdateType": "Deleted"}
+            ]})))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/Library/Media/Updated"))
+            .and(body_json(
+                json!({"Updates": [{"Path": "/media/movies/C", "UpdateType": "Created"}]}),
+            ))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = JellyfinClient::new(
+            &format!("{}/", server.uri()),
+            Secret::new("k"),
+            reqwest::Client::new(),
+        )
+        .unwrap();
+        c.media_updated_as(
+            &[
+                "/seedbox/media/Movies/A (2020)".into(),
+                "/media/tvshows/B".into(),
+            ],
+            "Deleted",
+        )
+        .await
+        .unwrap();
+        c.media_updated(&["/media/movies/C".into()]).await.unwrap();
+    }
 
     /// Un élément que le compte ne voit pas (404) n'est pas une erreur ; une panne, si.
     #[tokio::test]
