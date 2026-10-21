@@ -184,6 +184,16 @@ pub fn is_candidate(
         })
 }
 
+/// Un partiel dont le torrent attend son retrait par `deletion_cleanup` (`deletions.pending_torrents`, même clé) : le
+/// titre a été supprimé, le réexamen le réimporterait. Jamais réexaminé.
+pub fn partial_after_deletion(
+    record: Option<&TorrentImportRecord>,
+    key: &str,
+    pending: &HashSet<String>,
+) -> bool {
+    record.is_some_and(|r| r.outcome == "partial") && pending.contains(key)
+}
+
 /// Chemins (vus par l'Arr, qui partage les chemins de qBittorrent) des fichiers du torrent **pas entièrement
 /// téléchargés** : désélectionnés ou incomplets. Un torrent « terminé » peut en contenir (fichiers désélectionnés
 /// après le début du téléchargement) : ils ne sont jamais importés.
@@ -202,14 +212,16 @@ pub fn video_files(files: &[TorrentFile]) -> Vec<&TorrentFile> {
         .iter()
         .filter(|f| {
             let base = f.name.rsplit('/').next().unwrap_or(&f.name);
-            is_video(base)
-                && !f
-                    .name
-                    .to_ascii_lowercase()
-                    .split(['/', '.', '-', '_', ' '])
-                    .any(|w| w == "sample")
+            is_video(base) && !is_sample_path(&f.name)
         })
         .collect()
+}
+
+/// Extrait repéré par le mot « sample » dans le nom ou le dossier.
+pub fn is_sample_path(path: &str) -> bool {
+    path.to_ascii_lowercase()
+        .split(['/', '.', '-', '_', ' '])
+        .any(|w| w == "sample")
 }
 
 /// Libellés à soumettre au parse : le nom du torrent, puis le premier fichier vidéo (ordre alphabétique).
@@ -305,7 +317,9 @@ pub fn map_episodes(parse: &Value, episodes: &[Value]) -> Vec<i64> {
 /// - aucun de ces couples saison/épisode n'existe dans la fiche : quand la lecture de Sonarr est possible, elle fait foi ;
 /// - chaque numéro est l'absolu d'**un seul** épisode de la fiche, et cet épisode est dans la saison de l'étiquette.
 ///   Black Clover, 2026-10-03 : `S02E73` d'un pack à l'ancienne numérotation pris pour la saison 2 (absolus 171…183) ;
-///   l'absolu 73 est en saison 1, déjà pourvu, et le refus était juste.
+///   l'absolu 73 est en saison 1, déjà pourvu, et le refus était juste ;
+/// - chaque numéro dépasse le dernier épisode de la saison de l'étiquette : sinon il peut aussi être un numéro dans la
+///   saison, et la lecture est ambiguë.
 pub fn sxxe_absolute_episodes(
     parse: &Value,
     episodes: &[Value],
@@ -344,6 +358,17 @@ pub fn sxxe_absolute_episodes(
         field(e, "seasonNumber") == Some(read)
             && field(e, "episodeNumber").is_some_and(|n| eps.contains(&n))
     }) {
+        return vec![];
+    }
+    // un numéro qui peut aussi être un épisode de la saison de l'étiquette est ambigu (« S02E03 » d'un cours rangé par
+    // TVDB en saison 1 de 24 épisodes : absolu 3 ou épisode 15 ?) : jamais lu en absolu
+    let season_len = episodes
+        .iter()
+        .filter(|e| field(e, "seasonNumber") == Some(season))
+        .filter_map(|e| field(e, "episodeNumber"))
+        .max()
+        .unwrap_or(0);
+    if eps.iter().any(|n| *n <= season_len) {
         return vec![];
     }
     let mut out = Vec::with_capacity(eps.len());
@@ -718,7 +743,10 @@ pub fn numbered_pack(
 /// Fichiers importables dans une fiche : aperçu sans id, fiche fournie par nous ; les rejets
 /// d'identification sont ignorés, les autres (sample…) excluent le fichier. `has_file` : épisodes (ou le
 /// film) qui ont déjà un fichier — jamais remplacés. Deux fichiers du torrent ne visent jamais le même
-/// épisode : le premier est gardé, le second écarté.
+/// épisode : ceux dont l'Arr propose les épisodes passent d'abord, quel que soit l'ordre du disque, puis le
+/// premier est gardé et le second écarté. `invalid_lifted` : chemins lus par [`sxxe_absolute_episodes`], seuls
+/// à pouvoir lever « Invalid season or episode ».
+#[allow(clippy::too_many_arguments)]
 pub fn fresh_files(
     candidates: &[Value],
     movie: bool,
@@ -727,10 +755,23 @@ pub fn fresh_files(
     episodes_by_path: &HashMap<String, Vec<i64>>,
     has_file: &HashSet<i64>,
     source: EpisodeSource,
+    invalid_lifted: &HashSet<String>,
 ) -> (Vec<Value>, Vec<String>) {
     let (mut files, mut skipped) = (Vec::new(), Vec::new());
     let mut claimed: HashSet<i64> = HashSet::new();
-    for c in candidates {
+    let arr_proposes = |c: &Value| {
+        !movie
+            && source != EpisodeSource::OursOnly
+            && c.pointer("/series/id").and_then(Value::as_i64) == Some(id)
+            && c.get("episodes")
+                .and_then(Value::as_array)
+                .is_some_and(|e| !e.is_empty())
+    };
+    let ordered = candidates
+        .iter()
+        .filter(|c| arr_proposes(c))
+        .chain(candidates.iter().filter(|c| !arr_proposes(c)));
+    for c in ordered {
         let path = c.get("path").and_then(Value::as_str).unwrap_or("");
         let rel = c
             .get("relativePath")
@@ -739,13 +780,20 @@ pub fn fresh_files(
             .to_string();
         // l'Arr a reconnu CETTE fiche sans y trouver l'épisode qu'il a lu et n'en propose aucun, alors que nous
         // en avons un (`S01E1156` lu comme l'absolu 1156, One Piece 2026-10-18) : son « Invalid season or
-        // episode » cède devant notre correspondance. Pour une autre fiche, il reste bloquant.
+        // episode » cède devant notre correspondance, et seulement celle de `sxxe_absolute_episodes` (jamais un
+        // numéro nu). Pour une autre fiche, il reste bloquant.
         let ours = !movie
+            && invalid_lifted.contains(path)
             && c.pointer("/series/id").and_then(Value::as_i64) == Some(id)
             && c.get("episodes")
                 .and_then(Value::as_array)
                 .is_none_or(|e| e.is_empty())
             && episodes_by_path.get(path).is_some_and(|e| !e.is_empty());
+        // sur ce refus, Sonarr s'arrête avant ses contrôles (extrait…) : l'extrait est écarté ici
+        if ours && is_sample_path(path) {
+            skipped.push(format!("{rel}: Sample"));
+            continue;
+        }
         let blocking: Vec<&str> = c
             .get("rejections")
             .and_then(Value::as_array)
@@ -879,7 +927,7 @@ fn is_bonus(name: &str) -> bool {
 ///
 /// Gardé : tout le reste, dont « Invalid season or episode » (One Piece S23, 2026-10-18), « épisode non identifié » et
 /// un spécial refusé (« Episode 0x01 was unexpected… »). Nom réduit au fichier (jamais le chemin de la seedbox),
-/// [`LEFT_OUT_MAX`] entrées de 160 caractères au plus. Découpé au premier « : » : un nom qui en contient un est mal
+/// entrées de 160 caractères au plus, toutes rendues (`examine` en garde [`LEFT_OUT_MAX`] et compte le reste). Découpé au premier « : » : un nom qui en contient un est mal
 /// coupé, ce qui ne touche que le repérage des bonus.
 pub fn left_out(skipped: &[String]) -> Vec<String> {
     skipped
@@ -890,14 +938,32 @@ pub fn left_out(skipped: &[String]) -> Vec<String> {
             let covered = r.contains("déjà présent")
                 || r.contains("déjà pris")
                 || is_wrong_season_rejection(reason);
-            if r.contains("sample") || covered || is_bonus(name) {
+            // « Sample » exact : « Unable to determine if file is a sample » vise un vrai épisode
+            let sample = r.split(", ").any(|x| x.trim() == "sample");
+            let base = name.rsplit('/').next().unwrap_or(name);
+            // un marqueur d'épisode l'emporte sur un mot de bonus du titre (« Trailer.Park.Boys.S07E03 »)
+            if sample || covered || (is_bonus(name) && !has_episode_marker(base)) {
                 return None;
             }
-            let base = name.rsplit('/').next().unwrap_or(name);
             Some(truncate(&format!("{base}: {reason}"), 160))
         })
-        .take(LEFT_OUT_MAX)
         .collect()
+}
+
+/// `SxxEyy` dans un nom de fichier.
+fn has_episode_marker(name: &str) -> bool {
+    name.to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|w| {
+            w.strip_prefix('s')
+                .and_then(|r| r.split_once('e'))
+                .is_some_and(|(s, e)| {
+                    !s.is_empty()
+                        && !e.is_empty()
+                        && s.chars().all(|c| c.is_ascii_digit())
+                        && e.chars().all(|c| c.is_ascii_digit())
+                })
+        })
 }
 
 /// Issue d'un examen qui est allé jusqu'au choix des fichiers. `imported` : fichiers envoyés à `ManualImport` ;
@@ -1222,6 +1288,13 @@ async fn examine(
         .as_ref()
         .map(|i| has_files(movie, i))
         .unwrap_or(false);
+    // réexamen d'un partiel dont la fiche a disparu (supprimée entre-temps) : jamais recréée
+    if prev_partial && existing.is_none() {
+        return Ok(Outcome::costly(
+            "nothing_importable",
+            format!("{title} : fiche absente au réexamen, rien n'est recréé"),
+        ));
+    }
     let id = match existing {
         Some(item) => item
             .get("id")
@@ -1270,7 +1343,16 @@ async fn examine(
                 keep
             })
             .collect();
+    // réexamen d'un partiel : l'Arr ne liste plus rien (fichiers effacés, dossier invisible), rien n'est vérifié et
+    // le partiel reste tel quel
+    if prev_partial && candidates.is_empty() {
+        return Ok(Outcome::costly(
+            "nothing_importable",
+            format!("{title} : aucun fichier proposé au réexamen"),
+        ));
+    }
     let mut by_path: HashMap<String, Vec<i64>> = HashMap::new();
+    let mut sxxe_paths: HashSet<String> = HashSet::new();
     let mut has_file: HashSet<i64> = HashSet::new();
     let mut source = EpisodeSource::ArrFirst;
     if movie {
@@ -1370,6 +1452,7 @@ async fn examine(
                 if eps.is_empty() {
                     eps = sxxe_absolute_episodes(&parse, &episodes, id, anime, tag_season);
                     if !eps.is_empty() {
+                        sxxe_paths.insert(path.to_string());
                         info!(
                             task = "torrent_import",
                             side = side.name,
@@ -1420,6 +1503,7 @@ async fn examine(
             };
             if let Some(m) = numbered {
                 by_path = m;
+                sxxe_paths.clear();
             } else if let (Some(season), false) = (tag_season, bare.is_empty()) {
                 match bare_episodes(&bare, season, &episodes) {
                     Ok(m) => {
@@ -1435,15 +1519,26 @@ async fn examine(
             }
         }
     }
-    let (files, skipped) = fresh_files(&candidates, movie, id, &hash, &by_path, &has_file, source);
+    let (files, skipped) = fresh_files(
+        &candidates,
+        movie,
+        id,
+        &hash,
+        &by_path,
+        &has_file,
+        source,
+        &sxxe_paths,
+    );
     for s in &skipped {
         info!(task = "torrent_import", side = side.name, torrent = %t.name, file = %s, "file skipped");
     }
     // vidéos qui comptent restées de côté : sans elles, un import à 7 fichiers sur 25 était noté « imported » sans un
     // mot (One Piece S23, 2026-10-18)
-    let left = left_out(&skipped);
+    let mut left = left_out(&skipped);
+    let left_total = left.len();
+    left.truncate(LEFT_OUT_MAX);
     let n = files.len() as u32;
-    let outcome = import_outcome(n, left.len(), prev_partial);
+    let outcome = import_outcome(n, left_total, prev_partial);
     if outcome == "nothing_importable" {
         let why = skipped
             .first()
@@ -1462,12 +1557,12 @@ async fn examine(
         info!(task = "torrent_import", side = side.name, torrent = %t.name, %title, files = n, cmd_id, "manual import (hardlink) triggered");
     }
     if outcome == "partial" {
-        warn!(task = "torrent_import", side = side.name, torrent = %t.name, %title, files = n, left_out = left.len(),
+        warn!(task = "torrent_import", side = side.name, torrent = %t.name, %title, files = n, left_out = left_total,
               "import partiel : vidéos laissées de côté");
     }
     Ok(Outcome {
         outcome,
-        detail: import_detail(&title, outcome, n, left.len()),
+        detail: import_detail(&title, outcome, n, left_total),
         files: n,
         costly: true,
         left_out: left,
@@ -1513,6 +1608,10 @@ async fn process_side(
     let max_attempts = ctx.cfg.tasks.torrent_import.max_attempts;
     let torrents = side.qbit.torrents().await?;
     let records = ctx.state.read(|s| s.torrent_import.clone()).await;
+    let deleted: HashSet<String> = ctx
+        .state
+        .read(|s| s.deletions.pending_torrents.keys().cloned().collect())
+        .await;
 
     if !ctx.dry_run {
         let prefix = format!("{}:", side.name);
@@ -1532,12 +1631,10 @@ async fn process_side(
     let mut cands: Vec<&Torrent> = torrents
         .iter()
         .filter(|t| {
-            is_candidate(
-                t,
-                records.get(&state_key(side.name, &t.hash)),
-                started,
-                max_attempts,
-            )
+            let key = state_key(side.name, &t.hash);
+            let rec = records.get(&key);
+            is_candidate(t, rec, started, max_attempts)
+                && !partial_after_deletion(rec, &key, &deleted)
         })
         .collect();
     cands.sort_by_key(|t| Reverse(t.completion_on));
@@ -1820,6 +1917,7 @@ mod tests {
             &HashMap::new(),
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["movieId"], 68);
@@ -1839,6 +1937,7 @@ mod tests {
             &by,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["episodeIds"], json!([10, 11]));
@@ -2069,6 +2168,7 @@ mod tests {
             &by,
             &HashSet::new(),
             EpisodeSource::OursOnly,
+            &HashSet::new(),
         );
         assert_eq!(ours.len(), 1, "le rejet de saison ne bloque pas ce chemin");
         assert_eq!(
@@ -2086,6 +2186,7 @@ mod tests {
             &by,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert!(normal.is_empty() && !skipped.is_empty());
     }
@@ -2105,6 +2206,7 @@ mod tests {
             &empty,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["episodeIds"], json!([9027]));
@@ -2118,6 +2220,7 @@ mod tests {
             &empty,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert!(files.is_empty() && skipped.len() == 1);
     }
@@ -2138,6 +2241,7 @@ mod tests {
             &by,
             &s1_present,
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!(files[0]["episodeIds"], json!([4001]));
         // l'Arr ne l'a pas reconnue et notre analyse vise un épisode qui a déjà un fichier : rien
@@ -2150,6 +2254,7 @@ mod tests {
             &by,
             &s1_present,
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert!(files.is_empty());
         assert!(skipped[0].contains("déjà présent"));
@@ -2164,6 +2269,7 @@ mod tests {
             &HashMap::new(),
             &present,
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert!(files.is_empty());
     }
@@ -2284,6 +2390,7 @@ mod tests {
             &m,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!(files.len(), 1, "{skipped:?}");
         assert_eq!(files[0]["episodeIds"], json!([1007]));
@@ -2297,6 +2404,7 @@ mod tests {
             &m,
             &[1007].into_iter().collect(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert!(files.is_empty() && skipped.len() == 1);
     }
@@ -2486,6 +2594,7 @@ mod tests {
             &by_path,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!(files.len(), 12, "{skipped:?}");
         assert_eq!(files[0]["episodeIds"], json!([3013]));
@@ -2502,6 +2611,7 @@ mod tests {
             &by_path,
             &has_file,
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!(files.len(), 12, "{skipped:?}");
         assert_eq!(files[11]["episodeIds"], json!([3024]));
@@ -2664,6 +2774,7 @@ mod tests {
             &m,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!(files.len(), 24, "{skipped:?}");
         for (n, f) in files.iter().enumerate() {
@@ -2681,6 +2792,7 @@ mod tests {
             &m,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert!(files.is_empty() && skipped[0].contains("Sample"));
         // épisode déjà pourvu : jamais remplacé
@@ -2692,6 +2804,7 @@ mod tests {
             &m,
             &[3005].into_iter().collect(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert!(files.is_empty() && skipped[0].contains("déjà présent"));
     }
@@ -2925,6 +3038,7 @@ mod tests {
             &by,
             &has_file,
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert!(files.is_empty());
         assert!(
@@ -2946,7 +3060,16 @@ mod tests {
         let ours = sxxe_absolute_episodes(&op_parse_sxxe(n), &one_piece(), 121, true, Some(23));
         let by: HashMap<String, Vec<i64>> = [(path.clone(), ours)].into();
         let run = |rows: &[Value], by: &HashMap<String, Vec<i64>>, have: &HashSet<i64>| {
-            fresh_files(rows, false, 121, "H", by, have, EpisodeSource::ArrFirst)
+            fresh_files(
+                rows,
+                false,
+                121,
+                "H",
+                by,
+                have,
+                EpisodeSource::ArrFirst,
+                &by.keys().cloned().collect(),
+            )
         };
 
         // notre correspondance : le rejet cède
@@ -2994,6 +3117,83 @@ mod tests {
     }
 
     #[test]
+    fn an_sxxe_number_that_fits_the_tagged_season_is_ambiguous() {
+        // TVDB : deux cours fusionnés en une saison 1 de 24 épisodes ; le groupe nomme le second cours « S02E01… »
+        let eps: Vec<Value> = (1..=24)
+            .map(|n| json!({"id": 100 + n, "seasonNumber": 1, "episodeNumber": n, "absoluteEpisodeNumber": n}))
+            .collect();
+        let parse = json!({"series": {"id": 7},
+            "parsedEpisodeInfo": {"seasonNumber": 2, "episodeNumbers": [3], "absoluteEpisodeNumbers": []}});
+        assert!(
+            sxxe_absolute_episodes(&parse, &eps, 7, true, Some(1)).is_empty(),
+            "3 est aussi l'épisode 3 de la saison 1 : ambigu, refusé"
+        );
+        // One Piece : 1156 dépasse les 25 épisodes de la saison 23
+        assert_eq!(
+            sxxe_absolute_episodes(&op_parse_sxxe(1156), &one_piece(), 121, true, Some(23)),
+            vec![23001]
+        );
+    }
+
+    #[test]
+    fn invalid_season_yields_only_to_the_sxxe_reading() {
+        let (path, _) = op_sxxe_paths().remove(0);
+        let row = op_invalid_row(&path);
+        // correspondance d'une autre lecture (numéro nu) : le refus reste bloquant
+        let by: HashMap<String, Vec<i64>> = [(path.clone(), vec![23001])].into();
+        let (files, skipped) = fresh_files(
+            std::slice::from_ref(&row),
+            false,
+            121,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+            &HashSet::new(),
+        );
+        assert!(files.is_empty(), "numéro nu : jamais levé");
+        assert!(skipped[0].ends_with("Invalid season or episode"));
+
+        // extrait avec ce seul refus (Sonarr s'arrête avant ses contrôles) : écarté en « Sample », ignoré par left_out
+        let sample = format!("{OP_DIR}/One Piece S01E1156 VOSTFR sample.mkv");
+        let by: HashMap<String, Vec<i64>> = [(sample.clone(), vec![23001])].into();
+        let (files, skipped) = fresh_files(
+            &[op_invalid_row(&sample)],
+            false,
+            121,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+            &by.keys().cloned().collect(),
+        );
+        assert!(files.is_empty(), "un extrait n'est jamais rangé");
+        assert!(skipped[0].ends_with(": Sample"), "{skipped:?}");
+        assert!(left_out(&skipped).is_empty());
+    }
+
+    #[test]
+    fn a_partial_whose_title_was_deleted_is_never_reexamined() {
+        let key = state_key("seedbox", "ABC");
+        let pending: HashSet<String> = [key.clone()].into();
+        assert!(partial_after_deletion(
+            Some(&rec("partial")),
+            &key,
+            &pending
+        ));
+        assert!(!partial_after_deletion(
+            Some(&rec("partial")),
+            &key,
+            &HashSet::new()
+        ));
+        assert!(
+            !partial_after_deletion(Some(&rec("retry")), &key, &pending),
+            "seul un partiel est concerné"
+        );
+        assert!(!partial_after_deletion(None, &key, &pending));
+    }
+
+    #[test]
     fn the_real_one_piece_pack_imports_all_25_files() {
         let eps = one_piece();
         // 7 « EP » : Sonarr les lit en absolu et propose l'épisode (S23E19…E25)
@@ -3026,6 +3226,7 @@ mod tests {
             &by_path,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &by_path.keys().cloned().collect(),
         );
         assert!(skipped.is_empty(), "rien d'écarté : {skipped:?}");
         assert_eq!(files.len(), 25);
@@ -3066,6 +3267,7 @@ mod tests {
             &by,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &by.keys().cloned().collect(),
         );
         assert_eq!(files.len(), 1, "{skipped:?}");
         assert_eq!(files[0]["path"], json!(vostfr));
@@ -3090,9 +3292,25 @@ mod tests {
             &by,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &by.keys().cloned().collect(),
         );
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["path"], json!(ep));
+        assert!(skipped[0].contains("déjà pris"), "{skipped:?}");
+        // ordre du disque inverse : la correspondance de Sonarr gagne quand même
+        let reversed: Vec<Value> = rows.iter().rev().cloned().collect();
+        let (files, skipped) = fresh_files(
+            &reversed,
+            false,
+            121,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+            &by.keys().cloned().collect(),
+        );
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["path"], json!(ep), "celle de Sonarr d'abord");
         assert!(skipped[0].contains("déjà pris"), "{skipped:?}");
 
         // un multi-épisode puis un fichier qui recoupe l'un de ses épisodes : écarté aussi
@@ -3109,6 +3327,7 @@ mod tests {
             &HashMap::new(),
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!(files.len(), 2);
         assert_eq!(files[1]["path"], "/dl/S/E03.mkv");
@@ -3150,6 +3369,7 @@ mod tests {
             &by_path,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &HashSet::new(),
         );
         assert_eq!((files.len(), skipped.len()), (7, 18));
         let left = left_out(&skipped);
@@ -3190,6 +3410,7 @@ mod tests {
             &by_path,
             &HashSet::new(),
             EpisodeSource::ArrFirst,
+            &by_path.keys().cloned().collect(),
         );
         assert_eq!(
             import_outcome(files.len() as u32, left_out(&skipped).len(), false),
@@ -3227,12 +3448,22 @@ mod tests {
             "Mushoku.Tensei.Jobless.Reincarnation.S00E01.CUSTOM.MULTi.1080p.BluRay.x264-T3KASHi.mkv: Episode 0x01 was unexpected considering the Mushoku.Tensei.Jobless.Reincarnation.S01.CUSTOM.MULTi.1080p.BluRay.x264-T3KASHi folder name",
             "Ed, Edd n Eddy S01E01.mkv: épisode non identifié",
             "/home/x/downloads/Show/Show.S01E04.mkv: Invalid season or episode",
+            "Show.S01E05.mkv: Unable to determine if file is a sample",
+            "Trailer.Park.Boys.S07E03.mkv: Invalid season or episode",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect();
         let left = left_out(&skipped);
-        assert_eq!(left.len(), 4, "{left:#?}");
+        assert_eq!(left.len(), 6, "{left:#?}");
+        assert!(
+            left[4].ends_with("Unable to determine if file is a sample"),
+            "extrait indéterminé = vrai épisode, gardé"
+        );
+        assert!(
+            left[5].starts_with("Trailer.Park.Boys.S07E03"),
+            "titre de série, pas un bonus"
+        );
         assert!(
             left[0].starts_with("Fate.Strange.Fake.S01E00"),
             "spécial refusé gardé"
@@ -3248,11 +3479,11 @@ mod tests {
         );
         assert!(left.iter().all(|l| l.chars().count() <= 160));
 
-        // au plus LEFT_OUT_MAX entrées
+        // toutes rendues : `examine` compte le total et n'en garde que LEFT_OUT_MAX
         let many: Vec<String> = (1..=60)
             .map(|n| format!("Show.S01E{n:02}.mkv: épisode non identifié"))
             .collect();
-        assert_eq!(left_out(&many).len(), LEFT_OUT_MAX);
+        assert_eq!(left_out(&many).len(), 60);
         assert!(left_out(&[]).is_empty());
     }
 

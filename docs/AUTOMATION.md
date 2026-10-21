@@ -188,7 +188,12 @@ qBittorrent ». Désormais : détail « 7 fichier(s) rangé(s), 18 vidéo(s) de 
 écrit avec la décision ; noté parti seulement si `!alerts::retry_later`, sinon redonné au passage suivant). Le torrent est
 **réexaminé** toutes les 6 h (`PARTIAL_RETRY_SECS`) tant que `attempts < max_attempts` (3 fois), toujours en `copy`, par
 chemin exact, sans remplacement : un correctif de correspondance installé entre-temps range seul le reste, et un partiel
-fini à la main passe en `imported`. Un réexamen en échec (Arr injoignable) laisse le partiel tel quel. Retour à un ancien
+fini à la main **pendant ces réexamens** (≈ 18 h) passe en `imported` ; après, l'entrée reste `partial` (la retirer de
+l'état, daemon arrêté). Un réexamen en échec (Arr injoignable, aucun fichier proposé, fiche disparue : jamais recréée)
+laisse le partiel tel quel ; un partiel dont le torrent attend son retrait par `deletion_cleanup`
+(`deletions.pending_torrents`) n'est plus réexaminé. Seul `sxxe_absolute_episodes` lève « Invalid season or episode »
+(jamais un numéro nu), sans extrait (`sample`), et jamais pour un numéro qui tient aussi dans la saison de l'étiquette.
+Une ligne proposée par l'Arr passe avant les nôtres pour un même épisode, quel que soit l'ordre du disque. Retour à un ancien
 binaire : `partial` y est lu comme définitif et affiché « pas rangé ».
 Au plus `max_per_run` torrents coûteux par passage, les plus récents d'abord. Aucune modification des
 torrents. Jellyfin : LibraryMonitor (VPS) ou `seedbox_refresh` (seedbox). Le watcher `auto_import` ignore les

@@ -248,7 +248,8 @@ propre runbook : [voie-russe.md](voie-russe.md).
   au plus (`max_attempts`), puis l'entrée devient définitive comme `nothing_importable`. Pour ranger le reste à la main :
   `ManualImport` en `importMode: copy`, `episodeIds` explicites (série : l'épisode visé par son numéro absolu pour un
   animé), candidat choisi par **chemin exact**, après avoir vérifié que l'épisode n'a pas déjà un fichier. Le réexamen
-  suivant voit alors les épisodes « déjà présents » et clôt l'entrée en `imported`.
+  suivant, s'il en reste un (≈ 18 h après la décision), voit alors les épisodes « déjà présents » et clôt l'entrée en
+  `imported` ; sinon l'entrée reste `partial` (la retirer de `state/homelabd.json`, daemon arrêté).
 - **Doublons** : rien n'est importé côté seedbox qui existe déjà sur le VPS (`dup_other_side`).
 - **Titre supprimé puis redemandé** : `deletion_cleanup` garde les torrents en partage (C411 : ratio 1 ou 7 j) alors que
   les fichiers sont supprimés ; redemandé, `torrents/add` répondait « Fails. » (déjà présent) et rien ne s'importait.
