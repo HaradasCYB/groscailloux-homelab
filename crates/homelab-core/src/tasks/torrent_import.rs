@@ -10,6 +10,10 @@
 //! Jamais `importMode: auto` : pour un téléchargement que l'Arr n'a pas demandé, `auto` déplace
 //! le fichier et casse le seed. Aucune modification des torrents (catégorie, chemin).
 //! Jellyfin : le LibraryMonitor voit les imports du VPS ; `seedbox_refresh` ceux de la seedbox.
+//!
+//! Import **partiel** (2026-10-21) : des vidéos qui comptent sont restées de côté (`left_out`) ⇒ issue `partial`, une
+//! alerte admin par torrent, réexamen toutes les [`PARTIAL_RETRY_SECS`] tant que `attempts < max_attempts`. Le
+//! 2026-10-18, 7 épisodes de One Piece S23 sur 25 avaient été rangés et le torrent noté `imported` sans un mot.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -23,6 +27,7 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use super::{Report, Task};
+use crate::alerts::{self, Level};
 use crate::classify::{classify, is_video, MediaKind};
 use crate::clients::{ArrClient, Torrent, TorrentFile};
 use crate::config::Config;
@@ -40,6 +45,8 @@ pub struct Outcome {
     pub files: u32,
     /// L'examen a coûté des appels lourds (parse, recherche, import) : compte dans le budget.
     pub costly: bool,
+    /// Vidéos laissées de côté qui comptent (`left_out`) : non vide seulement pour `partial`.
+    pub left_out: Vec<String>,
 }
 
 impl Outcome {
@@ -49,6 +56,7 @@ impl Outcome {
             detail: detail.into(),
             files: 0,
             costly: false,
+            left_out: Vec::new(),
         }
     }
     fn costly(outcome: &'static str, detail: impl Into<String>) -> Self {
@@ -156,9 +164,24 @@ pub fn state_key(side: &str, hash: &str) -> String {
     format!("{side}:{}", hash.to_ascii_lowercase())
 }
 
-/// Terminé, chemin connu, et pas encore jugé définitivement.
-pub fn is_candidate(t: &Torrent, record: Option<&TorrentImportRecord>) -> bool {
-    t.progress >= 1.0 && !t.content_path.is_empty() && record.map(|r| !r.is_final()).unwrap_or(true)
+/// Délai avant de réexaminer un torrent `partial` (2026-10-21) : de quoi laisser l'Arr finir l'import précédent, et
+/// un correctif de correspondance installé entre-temps range seul ce qui était resté de côté.
+pub const PARTIAL_RETRY_SECS: i64 = 6 * 3600;
+
+/// Terminé, chemin connu, et pas encore jugé définitivement. Un `partial` est réexaminé toutes les
+/// [`PARTIAL_RETRY_SECS`] tant que `attempts < max_attempts`, puis il est définitif.
+pub fn is_candidate(
+    t: &Torrent,
+    record: Option<&TorrentImportRecord>,
+    now: i64,
+    max_attempts: u32,
+) -> bool {
+    t.progress >= 1.0
+        && !t.content_path.is_empty()
+        && record.is_none_or(|r| match r.outcome.as_str() {
+            "partial" => now - r.at >= PARTIAL_RETRY_SECS && r.attempts < max_attempts,
+            _ => !r.is_final(),
+        })
 }
 
 /// Chemins (vus par l'Arr, qui partage les chemins de qBittorrent) des fichiers du torrent **pas entièrement
@@ -810,6 +833,169 @@ pub fn fresh_files(
     (files, skipped)
 }
 
+/// Nombre maximal de vidéos laissées de côté gardées par torrent (état, alerte, carte de suivi).
+pub const LEFT_OUT_MAX: usize = 40;
+
+/// Bonus repéré dans le nom ou le dossier d'un fichier : génériques sans texte (`NCOP1`, `NCED`, `OP2`, `ED1`,
+/// `creditless`), bandes-annonces, featurettes, bonus et extras (nom ou dossier), menus, `PV`. Jamais « ed » seul
+/// (*Ed, Edd n Eddy*) ni « op » seul.
+fn is_bonus(name: &str) -> bool {
+    let numbered = |w: &str, p: &str| {
+        w.strip_prefix(p)
+            .is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()))
+    };
+    name.to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|w| {
+            w.starts_with("ncop")
+                || w.starts_with("nced")
+                || w == "pv"
+                || ["pv", "op", "ed"].iter().any(|p| numbered(w, p))
+                || matches!(
+                    w,
+                    "creditless"
+                        | "trailer"
+                        | "trailers"
+                        | "teaser"
+                        | "teasers"
+                        | "featurette"
+                        | "featurettes"
+                        | "bonus"
+                        | "extra"
+                        | "extras"
+                        | "menu"
+                        | "menus"
+                        | "preview"
+                        | "previews"
+                )
+        })
+}
+
+/// Vidéos laissées de côté **qui comptent**, d'après les refus de `fresh_files` (`fichier: raison`). Écartés :
+/// - les extraits (raison « Sample ») ;
+/// - les épisodes déjà couverts : « déjà présent », « déjà pris » par un autre fichier du torrent, et les refus de
+///   [`is_wrong_season_rejection`] (« Not an upgrade », « existing file »…) ;
+/// - les bonus repérés dans le nom ou le dossier (`is_bonus`).
+///
+/// Gardé : tout le reste, dont « Invalid season or episode » (One Piece S23, 2026-10-18), « épisode non identifié » et
+/// un spécial refusé (« Episode 0x01 was unexpected… »). Nom réduit au fichier (jamais le chemin de la seedbox),
+/// [`LEFT_OUT_MAX`] entrées de 160 caractères au plus. Découpé au premier « : » : un nom qui en contient un est mal
+/// coupé, ce qui ne touche que le repérage des bonus.
+pub fn left_out(skipped: &[String]) -> Vec<String> {
+    skipped
+        .iter()
+        .filter_map(|s| {
+            let (name, reason) = s.split_once(": ").unwrap_or((s.as_str(), ""));
+            let r = reason.to_lowercase();
+            let covered = r.contains("déjà présent")
+                || r.contains("déjà pris")
+                || is_wrong_season_rejection(reason);
+            if r.contains("sample") || covered || is_bonus(name) {
+                return None;
+            }
+            let base = name.rsplit('/').next().unwrap_or(name);
+            Some(truncate(&format!("{base}: {reason}"), 160))
+        })
+        .take(LEFT_OUT_MAX)
+        .collect()
+}
+
+/// Issue d'un examen qui est allé jusqu'au choix des fichiers. `imported` : fichiers envoyés à `ManualImport` ;
+/// `left_out` : vidéos qui comptent restées de côté ; `prev_partial` : réexamen d'un torrent déjà `partial`.
+/// - des vidéos de côté ⇒ `partial` (même si rien de neuf n'est rangé au réexamen) ;
+/// - rien de côté ⇒ `imported`, y compris au réexamen d'un partiel que l'admin a fini à la main ;
+/// - rien à ranger au premier examen ⇒ `nothing_importable`, comme avant.
+pub fn import_outcome(imported: u32, left_out: usize, prev_partial: bool) -> &'static str {
+    if left_out > 0 && (imported > 0 || prev_partial) {
+        "partial"
+    } else if imported == 0 && !prev_partial {
+        "nothing_importable"
+    } else {
+        "imported"
+    }
+}
+
+/// Détail enregistré (et journalisé) d'un examen qui a rangé ou réexaminé.
+pub fn import_detail(title: &str, outcome: &str, imported: u32, left_out: usize) -> String {
+    match outcome {
+        "partial" => {
+            format!("{title} : {imported} fichier(s) rangé(s), {left_out} vidéo(s) de côté")
+        }
+        _ if imported == 0 => format!("{title} : plus aucune vidéo de côté"),
+        _ => format!("{title} : {imported} fichier(s)"),
+    }
+}
+
+/// L'alerte « import partiel » est-elle due ? Oui quand le torrent devient `partial`, et tant que l'alerte n'est pas
+/// partie (`alert_pending` du passage précédent). Un partiel déjà signalé ne l'est plus au réexamen.
+pub fn alert_due(prev: Option<&TorrentImportRecord>, outcome: &str) -> bool {
+    outcome == "partial" && prev.is_none_or(|p| p.outcome != "partial" || p.alert_pending)
+}
+
+/// Enregistrement écrit après un examen, dans la même mise à jour d'état que la décision. `prev` : décision
+/// précédente du torrent ; `attempts` : compte déjà calculé pour un `retry` ou une erreur.
+/// - un torrent qui devient `partial` repart de zéro essai : il est réexaminé `max_attempts` fois (`is_candidate`) ;
+/// - chaque réexamen d'un partiel compte un essai ; s'il ne conclut ni `imported` ni `partial` (Arr injoignable, pack
+///   d'un cours refusé maintenant que ses premiers épisodes ont leur fichier), le partiel reste tel quel ;
+/// - `alert_pending` suit [`alert_due`].
+pub fn record_after(
+    prev: Option<&TorrentImportRecord>,
+    at: i64,
+    name: &str,
+    outcome: &'static str,
+    detail: String,
+    attempts: u32,
+    left_out: Vec<String>,
+) -> TorrentImportRecord {
+    let (outcome, detail, attempts, left_out) = match prev.filter(|p| p.outcome == "partial") {
+        Some(p) if matches!(outcome, "nothing_importable" | "retry" | "error") => (
+            "partial",
+            p.detail.clone(),
+            p.attempts + 1,
+            p.left_out.clone(),
+        ),
+        Some(p) => (outcome, detail, p.attempts + 1, left_out),
+        None if outcome == "partial" => (outcome, detail, 0, left_out),
+        None => (outcome, detail, attempts, left_out),
+    };
+    TorrentImportRecord {
+        at,
+        name: name.to_string(),
+        outcome: outcome.to_string(),
+        detail,
+        attempts,
+        alert_pending: alert_due(prev, outcome),
+        left_out,
+    }
+}
+
+/// Objet et corps de l'alerte « import partiel » d'un torrent : le détail, la liste `fichier: raison` et la recette
+/// pour ranger à la main. Ni URL, ni hash, ni chemin de la seedbox.
+pub fn partial_alert(side: &str, rec: &TorrentImportRecord, max_attempts: u32) -> (String, String) {
+    let subject = format!("Import partiel : {}", truncate(&rec.name, 120));
+    let mut body = format!(
+        "{side} · {}\n\nVidéos laissées de côté ({}{}) :\n",
+        rec.detail,
+        rec.left_out.len(),
+        if rec.left_out.len() >= LEFT_OUT_MAX {
+            ", liste limitée"
+        } else {
+            ""
+        }
+    );
+    for l in &rec.left_out {
+        body.push_str(&format!("- {l}\n"));
+    }
+    body.push_str(&format!(
+        "\nRanger à la main : ManualImport en importMode copy, episodeIds explicites, chemin exact \
+         (docs/runbooks/arrs-et-indexeurs.md, § 6). Le torrent est réexaminé toutes les {} h ({} fois au plus) ; \
+         il reste listé dans « Rien ne bouge » sur /status.html.",
+        PARTIAL_RETRY_SECS / 3600,
+        max_attempts
+    ));
+    (subject, body)
+}
+
 /// La fiche de l'autre machine a-t-elle déjà des fichiers ?
 pub fn has_files(movie: bool, item: &Value) -> bool {
     if movie {
@@ -890,11 +1076,13 @@ fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
+/// `prev_partial` : réexamen d'un torrent déjà `partial` (voir [`import_outcome`]).
 async fn examine(
     ctx: &TaskContext,
     side: &Side<'_>,
     others: &[&Side<'_>],
     t: &Torrent,
+    prev_partial: bool,
 ) -> Result<Outcome> {
     let hash = t.hash.to_ascii_uppercase();
     let managed = side.radarr.history_count_for_download(&hash).await?
@@ -1251,7 +1439,12 @@ async fn examine(
     for s in &skipped {
         info!(task = "torrent_import", side = side.name, torrent = %t.name, file = %s, "file skipped");
     }
-    if files.is_empty() {
+    // vidéos qui comptent restées de côté : sans elles, un import à 7 fichiers sur 25 était noté « imported » sans un
+    // mot (One Piece S23, 2026-10-18)
+    let left = left_out(&skipped);
+    let n = files.len() as u32;
+    let outcome = import_outcome(n, left.len(), prev_partial);
+    if outcome == "nothing_importable" {
         let why = skipped
             .first()
             .cloned()
@@ -1261,17 +1454,23 @@ async fn examine(
             format!("{title} : {}", truncate(&why, 160)),
         ));
     }
-    let n = files.len() as u32;
-    let cmd = arr
-        .command(json!({ "name": "ManualImport", "files": files, "importMode": "copy" }))
-        .await?;
-    let cmd_id = cmd.get("id").and_then(Value::as_i64).unwrap_or(0);
-    info!(task = "torrent_import", side = side.name, torrent = %t.name, %title, files = n, cmd_id, "manual import (hardlink) triggered");
+    if !files.is_empty() {
+        let cmd = arr
+            .command(json!({ "name": "ManualImport", "files": files, "importMode": "copy" }))
+            .await?;
+        let cmd_id = cmd.get("id").and_then(Value::as_i64).unwrap_or(0);
+        info!(task = "torrent_import", side = side.name, torrent = %t.name, %title, files = n, cmd_id, "manual import (hardlink) triggered");
+    }
+    if outcome == "partial" {
+        warn!(task = "torrent_import", side = side.name, torrent = %t.name, %title, files = n, left_out = left.len(),
+              "import partiel : vidéos laissées de côté");
+    }
     Ok(Outcome {
-        outcome: "imported",
-        detail: format!("{title} : {n} fichier(s)"),
+        outcome,
+        detail: import_detail(&title, outcome, n, left.len()),
         files: n,
         costly: true,
+        left_out: left,
     })
 }
 
@@ -1329,9 +1528,17 @@ async fn process_side(
             .await?;
     }
 
+    let started = now();
     let mut cands: Vec<&Torrent> = torrents
         .iter()
-        .filter(|t| is_candidate(t, records.get(&state_key(side.name, &t.hash))))
+        .filter(|t| {
+            is_candidate(
+                t,
+                records.get(&state_key(side.name, &t.hash)),
+                started,
+                max_attempts,
+            )
+        })
         .collect();
     cands.sort_by_key(|t| Reverse(t.completion_on));
 
@@ -1342,17 +1549,26 @@ async fn process_side(
             continue;
         }
         let key = state_key(side.name, &t.hash);
-        let prev = records.get(&key).map(|r| r.attempts).unwrap_or(0);
-        let (outcome, detail, attempts, costly) = match examine(ctx, side, others, t).await {
+        let prev_rec = records.get(&key);
+        let prev = prev_rec.map(|r| r.attempts).unwrap_or(0);
+        let prev_partial = prev_rec.is_some_and(|r| r.outcome == "partial");
+        let examined = examine(ctx, side, others, t, prev_partial).await;
+        let (outcome, detail, attempts, costly, left) = match examined {
             Ok(o) => {
                 imported += o.files;
                 let attempts = if o.outcome == "retry" { prev + 1 } else { prev };
-                (o.outcome, o.detail, attempts, o.costly)
+                (o.outcome, o.detail, attempts, o.costly, o.left_out)
             }
             Err(e) => {
                 let (outcome, attempts) = after_error(prev, max_attempts);
                 warn!(task = "torrent_import", side = side.name, torrent = %t.name, error = format!("{e:#}"), attempts, "examine failed");
-                (outcome, truncate(&format!("{e:#}"), 200), attempts, true)
+                (
+                    outcome,
+                    truncate(&format!("{e:#}"), 200),
+                    attempts,
+                    true,
+                    Vec::new(),
+                )
             }
         };
         // un « retry » qui a épuisé ses essais devient définitif
@@ -1364,25 +1580,67 @@ async fn process_side(
         if costly {
             *budget -= 1;
         }
+        // réexamen d'un partiel, alerte due : décidés ici, écrits avec la décision
+        let rec = record_after(prev_rec, now(), &t.name, outcome, detail, attempts, left);
+        let outcome = if rec.outcome == "partial" {
+            "partial"
+        } else {
+            outcome
+        };
         *counts.entry(outcome).or_default() += 1;
         if !matches!(outcome, "arr_managed" | "already_linked" | "no_video") {
-            info!(task = "torrent_import", side = side.name, torrent = %t.name, outcome, %detail, "decision");
+            info!(task = "torrent_import", side = side.name, torrent = %t.name, outcome, detail = %rec.detail, "decision");
         }
         if ctx.dry_run || outcome == "dry_run" {
             continue;
         }
-        let rec = TorrentImportRecord {
-            at: now(),
-            name: t.name.clone(),
-            outcome: outcome.to_string(),
-            detail,
-            attempts,
-        };
         ctx.state
             .update(|s| s.torrent_import.insert(key, rec))
             .await?;
     }
+    send_partial_alerts(ctx, side.name, max_attempts).await;
     Ok(imported)
+}
+
+/// Alerte « import partiel » des torrents de ce côté qui l'attendent (`alert_pending`), une par torrent. Notée partie
+/// seulement si un canal l'a prise ou si aucun n'est configuré (`alerts::retry_later`) ; sinon redonnée au passage
+/// suivant. Jamais en dry-run.
+async fn send_partial_alerts(ctx: &TaskContext, side: &str, max_attempts: u32) {
+    if ctx.dry_run {
+        return;
+    }
+    let prefix = format!("{side}:");
+    let pending: Vec<(String, TorrentImportRecord)> = ctx
+        .state
+        .read(|s| {
+            s.torrent_import
+                .iter()
+                .filter(|(k, r)| k.starts_with(&prefix) && r.alert_pending)
+                .map(|(k, r)| (k.clone(), r.clone()))
+                .collect()
+        })
+        .await;
+    for (key, rec) in pending {
+        let (subject, body) = partial_alert(side, &rec, max_attempts);
+        let sent = alerts::admin(ctx, Level::Warn, &subject, &body).await;
+        if alerts::retry_later(sent, alerts::configured(ctx)) {
+            warn!(task = "torrent_import", side, torrent = %rec.name,
+                  "alerte d'import partiel NON livrée : nouvel essai au passage suivant");
+            continue;
+        }
+        if let Err(e) = ctx
+            .state
+            .update(|s| {
+                if let Some(r) = s.torrent_import.get_mut(&key) {
+                    r.alert_pending = false;
+                }
+            })
+            .await
+        {
+            warn!(task = "torrent_import", side, torrent = %rec.name, error = format!("{e:#}"),
+                  "alerte d'import partiel partie mais non notée : elle repartira au passage suivant");
+        }
+    }
 }
 
 #[async_trait]
@@ -1453,6 +1711,7 @@ mod tests {
             outcome: outcome.into(),
             detail: String::new(),
             attempts: 1,
+            ..Default::default()
         }
     }
 
@@ -1476,21 +1735,13 @@ mod tests {
 
     #[test]
     fn candidates_are_complete_and_not_yet_final() {
-        assert!(is_candidate(&torrent(1.0, "/downloads/x"), None));
-        assert!(!is_candidate(&torrent(0.99, "/downloads/x"), None));
-        assert!(!is_candidate(&torrent(1.0, ""), None));
-        assert!(!is_candidate(
-            &torrent(1.0, "/downloads/x"),
-            Some(&rec("imported"))
-        ));
-        assert!(!is_candidate(
-            &torrent(1.0, "/downloads/x"),
-            Some(&rec("no_match"))
-        ));
-        assert!(is_candidate(
-            &torrent(1.0, "/downloads/x"),
-            Some(&rec("retry"))
-        ));
+        let cand = |t: &Torrent, r: Option<&TorrentImportRecord>| is_candidate(t, r, 1_000, 3);
+        assert!(cand(&torrent(1.0, "/downloads/x"), None));
+        assert!(!cand(&torrent(0.99, "/downloads/x"), None));
+        assert!(!cand(&torrent(1.0, ""), None));
+        assert!(!cand(&torrent(1.0, "/downloads/x"), Some(&rec("imported"))));
+        assert!(!cand(&torrent(1.0, "/downloads/x"), Some(&rec("no_match"))));
+        assert!(cand(&torrent(1.0, "/downloads/x"), Some(&rec("retry"))));
     }
 
     #[test]
@@ -2863,5 +3114,340 @@ mod tests {
         assert_eq!(files[1]["path"], "/dl/S/E03.mkv");
         assert_eq!(skipped.len(), 1);
         assert!(skipped[0].starts_with("/dl/S/E02.mkv: épisode déjà pris"));
+    }
+
+    /// Les 25 lignes `manualimport` du pack One Piece S23 et ce que `examine` savait lire le 2026-10-18 (avant la
+    /// lecture des absolus `SxxEnnn`) : les 7 « EP » lus par Sonarr, rien pour les 18 « S01E11NN ».
+    fn op_pack_as_on_18_10() -> (Vec<Value>, HashMap<String, Vec<i64>>) {
+        let eps = one_piece();
+        let mut rows: Vec<Value> = (1174..=1180)
+            .map(|n| {
+                let p = op_ep_path(n);
+                json!({"path": p, "relativePath": p.rsplit('/').next().unwrap(), "rejections": [],
+                       "series": {"id": 121}, "episodes": [{"id": 23000 + n - 1155}]})
+            })
+            .collect();
+        let mut by_path: HashMap<String, Vec<i64>> = HashMap::new();
+        for n in 1174..=1180 {
+            by_path.insert(op_ep_path(n), map_episodes(&op_parse_ep(n), &eps));
+        }
+        for (path, n) in op_sxxe_paths() {
+            by_path.insert(path.clone(), map_episodes(&op_parse_sxxe(n), &eps));
+            rows.push(op_invalid_row(&path));
+        }
+        (rows, by_path)
+    }
+
+    #[test]
+    fn a_pack_with_left_out_videos_is_partial_not_imported() {
+        // l'incident du 2026-10-18 : 7 fichiers rangés, 18 « Invalid season or episode », noté « imported » sans un mot
+        let (rows, by_path) = op_pack_as_on_18_10();
+        let (files, skipped) = fresh_files(
+            &rows,
+            false,
+            121,
+            "H",
+            &by_path,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert_eq!((files.len(), skipped.len()), (7, 18));
+        let left = left_out(&skipped);
+        assert_eq!(left.len(), 18, "les 18 vidéos comptent : {left:?}");
+        assert!(left
+            .iter()
+            .all(|l| l.ends_with(": Invalid season or episode")));
+        assert!(
+            left[0].starts_with("One Piece S01E1156 VOSTFR"),
+            "nom réduit au fichier : {}",
+            left[0]
+        );
+        assert!(
+            left.iter().all(|l| !l.contains('/')),
+            "jamais le chemin du torrent"
+        );
+        let outcome = import_outcome(files.len() as u32, left.len(), false);
+        assert_eq!(outcome, "partial", "7 sur 25 n'est pas « imported »");
+        assert_eq!(
+            import_detail("One Piece (1999)", outcome, 7, left.len()),
+            "One Piece (1999) : 7 fichier(s) rangé(s), 18 vidéo(s) de côté"
+        );
+
+        // avec la lecture des absolus `SxxEnnn` (c7c3401), plus rien de côté : « imported » comme avant
+        let eps = one_piece();
+        let mut by_path = by_path;
+        for (path, n) in op_sxxe_paths() {
+            by_path.insert(
+                path,
+                sxxe_absolute_episodes(&op_parse_sxxe(n), &eps, 121, true, Some(23)),
+            );
+        }
+        let (files, skipped) = fresh_files(
+            &rows,
+            false,
+            121,
+            "H",
+            &by_path,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+        );
+        assert_eq!(
+            import_outcome(files.len() as u32, left_out(&skipped).len(), false),
+            "imported"
+        );
+        assert_eq!(
+            import_detail("One Piece (1999)", "imported", 25, 0),
+            "One Piece (1999) : 25 fichier(s)",
+            "détail inchangé pour un import complet"
+        );
+    }
+
+    #[test]
+    fn left_out_ignores_samples_extras_and_covered_episodes() {
+        let skipped: Vec<String> = [
+            // Community S02 (journal du 2026-10-0x) : un extrait, à juste titre écarté
+            "A Regarder Après l'Episode 19/Abed.mkv: Episode 1x19 was unexpected considering the Community.S02.Multi.Web-DL.1080p.x265-SN2P folder name, Sample",
+            // épisodes déjà couverts
+            "Show.S01E02.mkv: épisode déjà présent, pas de remplacement",
+            "Un.Film.2024.mkv: film déjà présent, pas de remplacement",
+            "One Piece S01E1160 SUBFRENCH.mkv: épisode déjà pris par un autre fichier du torrent, pas de remplacement",
+            "Show.S01E03.mkv: Not an upgrade for existing episode file(s)",
+            // bonus, par le nom ou le dossier
+            "Extras/Making of.mkv: épisode non identifié",
+            "[Grp] Show - NCOP1 [1080p].mkv: épisode non identifié",
+            "Show - NCED.mkv: épisode non identifié",
+            "Show - OP2.mkv: épisode non identifié",
+            "Show ED1.mkv: épisode non identifié",
+            "Show.Creditless.Ending.mkv: épisode non identifié",
+            "Show.Trailer.mkv: épisode non identifié",
+            "Bonus/Show PV1.mkv: épisode non identifié",
+            "Featurettes/Behind.mkv: épisode non identifié",
+            // ce qui compte
+            "Fate.Strange.Fake.S01E00.Whispers.of.Dawn.VOSTFR.1080p.WEBRiP.x265-KAF.mkv: Episode 0x01 was unexpected considering the Fate.Strange.Fake.S01.VOSTFR.1080p.WEBRiP.x265-KAF folder name",
+            "Mushoku.Tensei.Jobless.Reincarnation.S00E01.CUSTOM.MULTi.1080p.BluRay.x264-T3KASHi.mkv: Episode 0x01 was unexpected considering the Mushoku.Tensei.Jobless.Reincarnation.S01.CUSTOM.MULTi.1080p.BluRay.x264-T3KASHi folder name",
+            "Ed, Edd n Eddy S01E01.mkv: épisode non identifié",
+            "/home/x/downloads/Show/Show.S01E04.mkv: Invalid season or episode",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let left = left_out(&skipped);
+        assert_eq!(left.len(), 4, "{left:#?}");
+        assert!(
+            left[0].starts_with("Fate.Strange.Fake.S01E00"),
+            "spécial refusé gardé"
+        );
+        assert!(left[1].starts_with("Mushoku.Tensei"));
+        assert!(
+            left[2].starts_with("Ed, Edd n Eddy"),
+            "« ed » seul n'est pas un générique"
+        );
+        assert_eq!(
+            left[3], "Show.S01E04.mkv: Invalid season or episode",
+            "chemin réduit au fichier"
+        );
+        assert!(left.iter().all(|l| l.chars().count() <= 160));
+
+        // au plus LEFT_OUT_MAX entrées
+        let many: Vec<String> = (1..=60)
+            .map(|n| format!("Show.S01E{n:02}.mkv: épisode non identifié"))
+            .collect();
+        assert_eq!(left_out(&many).len(), LEFT_OUT_MAX);
+        assert!(left_out(&[]).is_empty());
+    }
+
+    #[test]
+    fn import_outcome_closes_a_partial_once_everything_is_in_place() {
+        // premier examen
+        assert_eq!(import_outcome(7, 18, false), "partial");
+        assert_eq!(import_outcome(25, 0, false), "imported");
+        assert_eq!(
+            import_outcome(0, 3, false),
+            "nothing_importable",
+            "rien de rangé : inchangé"
+        );
+        assert_eq!(import_outcome(0, 0, false), "nothing_importable");
+        // réexamen d'un partiel
+        assert_eq!(
+            import_outcome(0, 0, true),
+            "imported",
+            "l'admin a tout rangé à la main"
+        );
+        assert_eq!(
+            import_outcome(0, 18, true),
+            "partial",
+            "toujours rien de neuf"
+        );
+        assert_eq!(
+            import_outcome(18, 0, true),
+            "imported",
+            "un correctif a tout rangé"
+        );
+        assert_eq!(import_outcome(10, 8, true), "partial");
+        assert_eq!(
+            import_detail("One Piece (1999)", "imported", 0, 0),
+            "One Piece (1999) : plus aucune vidéo de côté"
+        );
+    }
+
+    fn partial_rec(attempts: u32, pending: bool) -> TorrentImportRecord {
+        TorrentImportRecord {
+            at: 0,
+            name: "One.Piece.S23.VOSTFR.1080p.WEB.CR.AAC.2.0.x264-TsundereRaws".into(),
+            outcome: "partial".into(),
+            detail: "One Piece (1999) : 7 fichier(s) rangé(s), 18 vidéo(s) de côté".into(),
+            attempts,
+            left_out: op_sxxe_paths()
+                .iter()
+                .map(|(p, _)| {
+                    format!(
+                        "{}: Invalid season or episode",
+                        p.rsplit('/').next().unwrap()
+                    )
+                })
+                .collect(),
+            alert_pending: pending,
+        }
+    }
+
+    #[test]
+    fn a_partial_is_alerted_once_and_kept_pending_until_sent() {
+        // le torrent devient partiel : alerte due
+        assert!(alert_due(None, "partial"));
+        assert!(alert_due(Some(&rec("retry")), "partial"));
+        // réexamen d'un partiel déjà signalé : pas de seconde alerte
+        assert!(!alert_due(Some(&partial_rec(0, false)), "partial"));
+        // alerte pas encore partie : toujours due
+        assert!(alert_due(Some(&partial_rec(0, true)), "partial"));
+        // autre issue : rien à signaler (un partiel fini à la main n'alerte plus)
+        assert!(!alert_due(None, "imported"));
+        assert!(!alert_due(Some(&partial_rec(1, true)), "imported"));
+        assert!(!alert_due(None, "nothing_importable"));
+
+        // écrit avec la décision
+        let first = record_after(
+            None,
+            100,
+            "One.Piece.S23",
+            "partial",
+            "d".into(),
+            0,
+            vec!["a: b".into()],
+        );
+        assert!(first.alert_pending, "alerte due dès la décision");
+        assert_eq!(first.left_out, vec!["a: b".to_string()]);
+        let mut sent = first.clone();
+        sent.alert_pending = false; // `send_partial_alerts` : partie
+        let again = record_after(
+            Some(&sent),
+            200,
+            "One.Piece.S23",
+            "partial",
+            "d".into(),
+            0,
+            vec!["a: b".into()],
+        );
+        assert!(!again.alert_pending, "une seule alerte par torrent");
+        let unsent = record_after(
+            Some(&first),
+            200,
+            "One.Piece.S23",
+            "partial",
+            "d".into(),
+            0,
+            vec!["a: b".into()],
+        );
+        assert!(unsent.alert_pending, "pas partie : redonnée");
+    }
+
+    #[test]
+    fn partial_alert_lists_the_left_out_videos() {
+        let r = partial_rec(0, true);
+        let (subject, body) = partial_alert("seedbox", &r, 3);
+        assert_eq!(
+            subject,
+            "Import partiel : One.Piece.S23.VOSTFR.1080p.WEB.CR.AAC.2.0.x264-TsundereRaws"
+        );
+        assert!(body.starts_with(
+            "seedbox · One Piece (1999) : 7 fichier(s) rangé(s), 18 vidéo(s) de côté"
+        ));
+        assert!(body.contains("Vidéos laissées de côté (18) :"), "{body}");
+        for l in &r.left_out {
+            assert!(body.contains(&format!("- {l}\n")), "{l} manque");
+        }
+        assert!(
+            body.contains("ManualImport en importMode copy, episodeIds explicites, chemin exact")
+        );
+        assert!(body.contains("toutes les 6 h (3 fois au plus)"));
+        assert!(
+            !body.contains("http") && !body.contains("/dl/") && !body.contains("token"),
+            "ni URL, ni chemin, ni jeton : {body}"
+        );
+        // liste pleine : dit qu'elle est limitée
+        let mut full = r.clone();
+        full.left_out = (0..LEFT_OUT_MAX).map(|i| format!("f{i}: x")).collect();
+        assert!(partial_alert("seedbox", &full, 3)
+            .1
+            .contains(&format!("({LEFT_OUT_MAX}, liste limitée)")));
+    }
+
+    #[test]
+    fn partial_torrents_are_reexamined_a_few_times_then_final() {
+        let t = torrent(1.0, "/downloads/x");
+        let h = 3600;
+        // pas avant 6 h
+        assert!(!is_candidate(
+            &t,
+            Some(&partial_rec(0, false)),
+            PARTIAL_RETRY_SECS - 1,
+            3
+        ));
+        assert!(is_candidate(&t, Some(&partial_rec(0, false)), 6 * h, 3));
+        assert!(is_candidate(&t, Some(&partial_rec(2, false)), 6 * h, 3));
+        // trois réexamens faits : définitif
+        assert!(!is_candidate(&t, Some(&partial_rec(3, false)), 100 * h, 3));
+
+        // le compte des essais : un torrent qui devient partiel repart de zéro
+        let r = record_after(
+            Some(&rec("retry")),
+            0,
+            "x",
+            "partial",
+            "d".into(),
+            2,
+            vec![],
+        );
+        assert_eq!((r.outcome.as_str(), r.attempts), ("partial", 0));
+        // chaque réexamen compte
+        let p = partial_rec(1, false);
+        let r = record_after(
+            Some(&p),
+            10,
+            "x",
+            "partial",
+            "neuf".into(),
+            1,
+            vec!["a: b".into()],
+        );
+        assert_eq!((r.outcome.as_str(), r.attempts, r.at), ("partial", 2, 10));
+        assert_eq!(r.detail, "neuf");
+        // un réexamen qui échoue (Arr injoignable) ou refuse tout garde le partiel tel quel
+        for failed in ["retry", "error", "nothing_importable"] {
+            let r = record_after(Some(&p), 10, "x", failed, "boom".into(), 2, vec![]);
+            assert_eq!(r.outcome, "partial", "{failed}");
+            assert_eq!(r.attempts, 2, "{failed} compte un essai");
+            assert_eq!(r.detail, p.detail, "{failed} garde le détail");
+            assert_eq!(r.left_out.len(), 18, "{failed} garde la liste");
+        }
+        // tout est en place : clos
+        let r = record_after(Some(&p), 10, "x", "imported", "d".into(), 1, vec![]);
+        assert_eq!(r.outcome, "imported");
+        assert!(r.left_out.is_empty() && !r.alert_pending);
+        // un autre que nous l'a pris en charge : son issue fait foi
+        let r = record_after(Some(&p), 10, "x", "arr_managed", String::new(), 1, vec![]);
+        assert_eq!(r.outcome, "arr_managed");
+        // les autres issues ne bougent pas
+        let r = record_after(Some(&rec("retry")), 0, "x", "retry", "e".into(), 2, vec![]);
+        assert_eq!((r.outcome.as_str(), r.attempts), ("retry", 2));
     }
 }

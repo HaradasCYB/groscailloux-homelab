@@ -178,6 +178,18 @@ Jellyseerr. Pour chaque torrent terminé pas encore jugé (`state.torrent_import
    saison 1 d'une série écrasée (réparée en réimportant ses fichiers d'origine). Puis `ManualImport` en
    **`importMode: copy`** (= hardlink). Jamais `auto` : pour un téléchargement non suivi, `auto` = déplacement.
 Rien d'importable ⇒ `nothing_importable`. Erreur (Arr injoignable…) ⇒ `retry`, `error` après `max_attempts`.
+**Import partiel** (`partial`, 2026-10-21) : des fichiers sont rangés mais des vidéos qui comptent restent de côté
+(`left_out`, d'après les refus de `fresh_files`). Ne comptent pas : les extraits (« Sample »), les épisodes déjà couverts
+(« déjà présent », « déjà pris », « Not an upgrade »…) et les bonus repérés dans le nom ou le dossier (`NCOP`, `NCED`,
+`OP1`, `ED2`, `creditless`, trailer, featurette, extras, menu, `PV`). Le 2026-10-18, un pack One Piece S23 avait 7 épisodes
+rangés sur 25 et était noté `imported` sans un mot ; la carte de la demande est restée deux jours sur « en attente de
+qBittorrent ». Désormais : détail « 7 fichier(s) rangé(s), 18 vidéo(s) de côté », ligne `warn` « import partiel », liste
+(40 au plus, nom du fichier seul) dans `state.torrent_import`, et **une alerte admin par torrent** (`alert_pending`,
+écrit avec la décision ; noté parti seulement si `!alerts::retry_later`, sinon redonné au passage suivant). Le torrent est
+**réexaminé** toutes les 6 h (`PARTIAL_RETRY_SECS`) tant que `attempts < max_attempts` (3 fois), toujours en `copy`, par
+chemin exact, sans remplacement : un correctif de correspondance installé entre-temps range seul le reste, et un partiel
+fini à la main passe en `imported`. Un réexamen en échec (Arr injoignable) laisse le partiel tel quel. Retour à un ancien
+binaire : `partial` y est lu comme définitif et affiché « pas rangé ».
 Au plus `max_per_run` torrents coûteux par passage, les plus récents d'abord. Aucune modification des
 torrents. Jellyfin : LibraryMonitor (VPS) ou `seedbox_refresh` (seedbox). Le watcher `auto_import` ignore les
 vidéos qui appartiennent à un torrent qBittorrent.
@@ -731,6 +743,7 @@ Jellyseerr : un changement de droits met ce temps à se voir.
 ## Page /status : « Rien ne bouge »
 Les torrents terminés qu'aucune fiche n'a voulus (`no_match` et `nothing_importable` de `torrent_import`, 15 au plus,
 les plus récents d'abord) sont listés sous le tableau des tâches : sans ça, un téléchargement fini restait invisible.
+Depuis le 2026-10-21, les imports partiels (`partial`) y figurent aussi, avec « N vidéo(s) non rangée(s) ».
 Autres sections : « Saisons sans release » (`uncovered` de `series_search`), « Canari de lecture », « Catalogue jamais
 regardé » (`catalogue_report`).
 Depuis le 2026-10-07 : « Dernière erreur » sous chaque tâche (même règle que la ligne ↳ de `homelabctl status`),
@@ -750,7 +763,7 @@ l'adresse, l'URL du webhook ni le corps), ou « alerte NON livrée » / « alert
   passage ne ferait qu'écrire un avertissement de plus. Appliquée par `scheduler::settle`, `hls_loop_watch`,
   `indexer_unblock` (alerte « toujours en panne » et « C411 en panne »), `seedbox_health` et `alerts::capacity`
   (alignement du 2026-10-08 : les trois derniers ne regardaient que `delivered`, et l'alerte « C411 en panne » ignorait
-  le résultat de l'envoi).
+  le résultat de l'envoi), puis `torrent_import` (import partiel, `alert_pending`, 2026-10-21).
 - **Mémoire des surveillances quotidiennes** (2026-10-08) : `cert_watch`, `backup_watch` et `diun_watch` passent aussi à
   chaque démarrage de homelabd. `alerts::watch` garde dans `state.watch_alerts` (par tâche : date + clé du défaut,
   `#[serde(default)]`, compatible avec l'état d'avant) la dernière alerte **partie** ; il retient la suivante tant que
@@ -1027,9 +1040,17 @@ l'**avancement** (`homelab_core::requests_progress`, pur et testé) : *recherche
 `homelab:series=<id>[:season=<n>]` / `homelab:movie=<id>` des deux qBittorrent — côté seedbox c'est le seul chemin,
 `series_search`/`movie_search` n'y passent jamais par la file de Sonarr/Radarr ; un hash déjà en file Arr ne compte
 qu'une fois, un torrent fini attend `torrent_import` (« ajout »), un torrent que `torrent_import` a rejeté affiche
-« pas rangé » : `%` = 1 − Σ sizeleft / Σ size, ETA = `timeleft`/`eta` max + 2 min d'import + un passage de
+« pas rangé », un torrent rangé en partie (`partial`) « Téléchargé en partie : N épisode(s) pas rangé(s), l'administrateur
+est prévenu » : `%` = 1 − Σ sizeleft / Σ size, ETA = `timeleft`/`eta` max + 2 min d'import + un passage de
 `seedbox_refresh`), *ajout* (fichier
-présent côté Arr, pas encore vu par Jellyfin), *disponible* (statut média Jellyseerr). Le script « Mon compte »
+présent côté Arr, pas encore vu par Jellyfin), *disponible* (statut média Jellyseerr). Le lien demande ↔ torrent est
+l'étiquette, le lien torrent ↔ décision de `torrent_import` est le hash (`state_key`), jamais le nom : la release prise et
+le torrent arrivé ne s'appellent pas pareil. Un torrent déjà rangé (`imported`, `arr_managed`) sort de la file
+(`shelved`) mais compte encore (2026-10-21) : « Téléchargement lancé, en attente de qBittorrent » ne s'affiche plus que
+**sans torrent** (pas encore arrivé, retiré, qBittorrent injoignable) ; un torrent rangé il y a moins de 2 min + un
+passage de `seedbox_refresh` donne « Téléchargé, ajout à la médiathèque », plus tard (saison toujours incomplète)
+« Téléchargé en partie : le reste sera recherché dans … » (« … est recherché » après un épisode seul). Les fichiers
+déjà là (`has_file`) priment sur un torrent bloqué ou rangé en partie. Le script « Mon compte »
 détecte les cartes `.je-request-card` de Jellyfin Enhanced et y insère une barre + texte, rafraîchis toutes les
 30 s ; sur téléviseur, pourcentage seul.
 
