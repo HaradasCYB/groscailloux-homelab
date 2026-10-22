@@ -238,9 +238,9 @@ interval_secs = 86400
 min_idle_days = 60          # 30 au moins, sinon homelabd refuse de démarrer
 include_russian = true      # voie russe évaluée, étiquetée « voie russe »
 max_titles_per_clean = 50   # par clic, les plus gros d'abord (200 au plus)
-# true = « Nettoyer » et « Nettoyer ce titre » journalisent ce qu'ils feraient sans rien supprimer. Passe à false après
-# revue d'une simulation, puis commencer par « Nettoyer ce titre » sur un petit titre.
-clean_dry_run = true
+# true = « Nettoyer » et « Nettoyer ce titre » journalisent ce qu'ils feraient sans rien supprimer. false depuis le
+# 22/10, après revue de deux simulations (liste complète, puis un film seul).
+clean_dry_run = false
 arr_delete_timeout_secs = 300   # DELETE de la fiche (deleteFiles) ; au-delà, la fiche est relue : un 404 vaut réussite
 recycle_wait_secs = 90      # attente avant de vider le dossier du titre dans la corbeille de l'Arr
 empty_recycle = true        # sinon rien n'est libéré avant le ménage de la corbeille (14 j)

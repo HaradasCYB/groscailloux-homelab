@@ -737,7 +737,7 @@ impl Default for RedList {
             min_idle_days: 60,
             include_russian: true,
             max_titles_per_clean: 50,
-            clean_dry_run: true,
+            clean_dry_run: false, // réel depuis le 2026-10-22 (voir homelab.toml)
             arr_delete_timeout_secs: 300,
             recycle_wait_secs: 90,
             empty_recycle: true,

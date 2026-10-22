@@ -167,7 +167,7 @@ Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la
 | Jellyfin | 12.1 | `docker-compose.yml`, image du service `jellyfin` |
 | Tmpfs de transcodage | 4 Go, `mem_limit` 6g ; purge chaque minute, urgence à 85 % | `docker-compose.yml` (`jellyfin`) ; `systemd/jellyfin-transcodes-purge.timer` |
 | Montage seedbox | cache 120G (dossier `seedbox{9oylk}`), 80G libres gardés, blocs 4M, 32 connexions | `systemd/homelab-seedbox-mount.service` ; modèle `rclone/rclone.conf` + `.env` `SEEDBOX_SFTP_HOST`, `SEEDBOX_USER` |
-| Liste rouge | rouge = aucune activité depuis 60 j ; 50 titres par clic sur « Nettoyer » ; simulation tant que `clean_dry_run = true` (titre seul compris) | `[tasks.red_list]` `min_idle_days`, `max_titles_per_clean`, `clean_dry_run` |
+| Liste rouge | rouge = aucune activité depuis 60 j ; 50 titres par clic sur « Nettoyer » ; suppression réelle depuis le 22/10 (`clean_dry_run = false`) | `[tasks.red_list]` `min_idle_days`, `max_titles_per_clean`, `clean_dry_run` |
 | Disque du VPS | alerte 85 %, suppression 95 %, journal seul 98 % | `[tasks.disk_pressure]` `alert_pct`, `hard_pct`, `crit_pct` |
 | Quota seedbox | alerte 85 % | `[tasks.seedbox_health] quota_alert_pct` |
 | Tâche en échec | alerte après 6 échecs de suite et 30 min | `[alerts]` `fail_streak`, `fail_minutes` |

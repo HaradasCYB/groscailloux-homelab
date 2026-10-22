@@ -73,6 +73,8 @@ un pack d'animé numéroté en absolu n'est plus importé à moitié en silence 
 - **Imports partiels signalés** : nouvelle issue « partiel » quand des vidéos utiles restent de côté (échantillons,
   bonus et épisodes déjà présents exclus), liste gardée dans l'état, une alerte admin par torrent, réexamen borné toutes
   les 6 h ; toujours `ManualImport` en copie, par chemin exact, sans remplacement (37e5c2e, c74f8c7).
+- **Liste rouge en service (22/10)** : `clean_dry_run = false` après revue de deux simulations ; « Nettoyer » supprime
+  désormais pour de vrai.
 
 ## 1.28.0 — 15/10/2026 — Mails aux couleurs de Groscailloux TV
 
