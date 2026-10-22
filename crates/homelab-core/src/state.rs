@@ -205,6 +205,10 @@ pub struct MediaMailRecord {
     pub next_at: Option<i64>,
 }
 
+fn is_zero_i64(n: &i64) -> bool {
+    *n == 0
+}
+
 fn is_zero(n: &u32) -> bool {
     *n == 0
 }
@@ -743,6 +747,18 @@ pub struct PendingStep {
     pub media_type: String,
     #[serde(default)]
     pub tmdb: i64,
+    /// `recycle` seedbox : corbeille de l'Arr au moment de la suppression ; la reprise exige la même, relue alors.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub bin: String,
+    /// `recycle` VPS : torrents gardés parce que le fichier dans la corbeille tenait encore leur lien physique ; revus
+    /// une fois la corbeille vidée. `arr_id` : fiche supprimée (historique des autres titres).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hashes: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub arr_id: i64,
+    /// `seerr` : dossiers du titre (hôte ou montage) ; le média n'est retiré qu'une fois tous disparus.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub origins: Vec<String>,
     pub first_at: i64,
     #[serde(default)]
     pub last_try: i64,

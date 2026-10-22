@@ -75,6 +75,10 @@ un pack d'animé numéroté en absolu n'est plus importé à moitié en silence 
   les 6 h ; toujours `ManualImport` en copie, par chemin exact, sans remplacement (37e5c2e, c74f8c7).
 - **Liste rouge en service (22/10)** : `clean_dry_run = false` après revue de deux simulations ; « Nettoyer » supprime
   désormais pour de vrai.
+- **Liste rouge plus sûre (22/10)** : bouton « Simuler d'abord » en suppression réelle ; simulation juste pour les
+  films du VPS liés à leur torrent (ils étaient comptés « partagés ») ; Jellyseerr libéré seulement une fois les dossiers
+  partis ; torrents retenus par la corbeille du VPS revus à sa reprise ; titre écarté si ses copies ont changé depuis la
+  confirmation ; reprise d'une corbeille seedbox seulement si l'Arr déclare la même corbeille.
 
 ## 1.28.0 — 15/10/2026 — Mails aux couleurs de Groscailloux TV
 

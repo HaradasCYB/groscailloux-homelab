@@ -1032,6 +1032,8 @@ async fn run_job(ctx: &TaskContext, job: &mut CleanJob, dry: bool) -> Result<()>
         quota_kb: q.quota_kb,
         at: q.at,
     });
+    // la liste montrée à la confirmation : une copie apparue ou changée depuis n'a pas été vue par l'admin
+    let shown = ctx.state.read(|s| s.red_list.report.clone()).await;
     // nouveau calcul complet : on ne supprime que ce qui est rouge maintenant
     let Some(computed) = red_list::compute(ctx).await? else {
         job.status = "refused".into();
@@ -1052,7 +1054,20 @@ async fn run_job(ctx: &TaskContext, job: &mut CleanJob, dry: bool) -> Result<()>
         return Ok(());
     }
     let exemptions = ctx.state.read(|s| s.red_list.exemptions.clone()).await;
-    let (picked, skipped) = select(&job.keys, &report, &exemptions, cfg.max_titles_per_clean);
+    let (picked, mut skipped) = select(&job.keys, &report, &exemptions, cfg.max_titles_per_clean);
+    let picked: Vec<&RedEntry> = picked
+        .into_iter()
+        .filter(|e| {
+            let same = same_copies(shown.as_ref(), e);
+            if !same {
+                skipped.push((
+                    e.key.clone(),
+                    "copies changées depuis la confirmation : à reconfirmer",
+                ));
+            }
+            same
+        })
+        .collect();
     let at = now();
     for (key, why) in skipped {
         let title = report
@@ -1319,7 +1334,7 @@ async fn empty_recycle(
         return RecycleStep::later("corbeille laissée à l'Arr (14 j)".into(), None);
     }
     let wait = Duration::from_secs(cfg.recycle_wait_secs);
-    let (outcome, target, origin) = if c.side.name == "vps" {
+    let (outcome, target, origin, used_bin) = if c.side.name == "vps" {
         let maps = side_maps(ctx, "vps");
         let (dir, target) = match vps_recycle_target(
             &bin,
@@ -1342,6 +1357,7 @@ async fn empty_recycle(
             out,
             target.to_string_lossy().to_string(),
             c.host.to_string_lossy().to_string(),
+            String::new(),
         )
     } else {
         let (bin, target) = match seedbox_recycle_target(
@@ -1360,13 +1376,14 @@ async fn empty_recycle(
             return RecycleStep::done();
         }
         let out = seedbox_empty(ctx, &c.red.folder, &target, &bin, wait).await;
-        (out, target, c.red.folder.clone())
+        (out, target, c.red.folder.clone(), bin)
     };
     let at = now();
     let to_replay = |why: String| {
         let mut p = pending_step("recycle", e, c.side.name, at, why.clone());
         p.target = target.clone();
         p.origin = origin.clone();
+        p.bin = used_bin.clone();
         RecycleStep::later(format!("corbeille à vider plus tard ({why})"), Some(p))
     };
     match outcome {
@@ -1468,6 +1485,7 @@ async fn clean_entry(
     let mut pending: Vec<PendingStep> = Vec::new();
     let (mut deleted, mut failed) = (0usize, 0usize);
     let mut jf_deleted = Vec::new();
+    let mut origins: Vec<PathBuf> = Vec::new();
     for (c, m) in copies.iter().zip(&measured) {
         // 4. la fiche et ses fichiers
         let (arr, path, query) =
@@ -1494,22 +1512,34 @@ async fn clean_entry(
         if let Some(n) = rec.note {
             notes.push(format!("{} : {n}", c.side.name));
         }
-        if let Some(p) = rec.pending {
-            res.pending.push(format!("recycle:{}", c.side.name));
-            pending.push(p);
-        }
+        let mut rec_pending = rec.pending;
         // 6. torrents d'origine
         let mut tnotes: Vec<&'static str> = Vec::new();
+        let mut kept: Vec<String> = Vec::new();
         for h in &m.hashes {
             let Some(tor) = m.torrents.iter().find(|x| x.hash.eq_ignore_ascii_case(h)) else {
                 continue;
             };
-            if dc::still_used(c.side, &c.title, h, &BTreeSet::new()).await {
+            // simulation : le dossier du titre compte comme supprimé si la vraie suppression le ferait disparaître
+            // (corbeille vidée ou absente) ; sinon le relevé jugerait le torrent lié à ce titre même
+            let gone = (dry && rec.done).then_some(c.host.as_path());
+            if dc::still_used(c.side, &c.title, h, &BTreeSet::new(), gone).await {
                 info!(task = TASK, side = c.side.name, torrent = %tor.name, "torrent still used by other library files: kept");
                 tnotes.push("torrent_kept");
+                kept.push(h.clone());
                 continue;
             }
             tnotes.push(dc::handle_torrent(ctx, c.side, tor, dry, TASK).await);
+        }
+        // VPS, corbeille pas encore vidée : le fichier qui y attend tient le lien des torrents gardés ; la reprise les
+        // revoit une fois la corbeille vidée (sinon ils resteraient pour toujours, la fiche n'existant plus)
+        if let Some(mut p) = rec_pending.take() {
+            if c.side.name == "vps" {
+                p.hashes = kept.clone();
+                p.arr_id = c.red.arr_id;
+            }
+            res.pending.push(format!("recycle:{}", c.side.name));
+            pending.push(p);
         }
         if tnotes.contains(&"torrent_pending") {
             res.pending.push(format!("torrent:{}", c.side.name));
@@ -1535,6 +1565,7 @@ async fn clean_entry(
         res.freed_later += b;
         res.shared += s;
         jf_deleted.push(c.jf.clone());
+        origins.push(c.host.clone());
         // 9. canari
         if cache
             .canary
@@ -1547,9 +1578,27 @@ async fn clean_entry(
     // 8. Seerr : seulement si le titre n'a plus de fichiers nulle part
     if failed == 0 && deleted > 0 {
         let at = now();
-        if let Some(p) = release_seerr(ctx, sides, e, &copies[0].title, dry, &mut notes).await {
+        let left = if dry {
+            Vec::new()
+        } else {
+            folders_left(&origins)
+        };
+        let why = if left.is_empty() {
+            release_seerr(ctx, sides, e, &copies[0].title, dry, &mut notes).await
+        } else {
+            // l'Arr n'a pas (encore) retiré le dossier : retirer le média laisserait un orphelin redemandable
+            warn!(task = TASK, title = %e.title, folders = ?left, "title folder still there: seerr media kept for now");
+            notes.push("dossier encore présent : Jellyseerr libéré plus tard".into());
+            Some("dossier du titre encore présent".into())
+        };
+        if let Some(p) = why {
+            let mut p = pending_step("seerr", e, "", at, p);
+            p.origins = origins
+                .iter()
+                .map(|o| o.to_string_lossy().to_string())
+                .collect();
             res.pending.push("seerr".into());
-            pending.push(pending_step("seerr", e, "", at, p));
+            pending.push(p);
         }
     }
     if !pending.is_empty() && !dry {
@@ -1687,6 +1736,96 @@ async fn arr_knows(ctx: &TaskContext, key: &str) -> Result<bool> {
     Ok(false)
 }
 
+/// Les copies d'un titre (côté, fiche, dossier) sont-elles celles de la liste montrée à la confirmation ?
+pub fn same_copies(shown: Option<&RedListReport>, e: &RedEntry) -> bool {
+    let copies = |x: &RedEntry| {
+        let mut v: Vec<(String, i64, String)> = x
+            .sides
+            .iter()
+            .map(|c| (c.side.clone(), c.arr_id, c.folder.clone()))
+            .collect();
+        v.sort();
+        v
+    };
+    shown
+        .and_then(|r| r.entries.iter().find(|x| x.key == e.key))
+        .is_some_and(|old| copies(old) == copies(e))
+}
+
+/// Dossiers d'un titre qui ne sont pas (sûrement) partis : encore là, ou indécidable (parent absent : montage tombé).
+pub fn folders_left(paths: &[PathBuf]) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .filter(|p| {
+            let parent_ok = p.parent().is_some_and(|d| d.is_dir());
+            !parent_ok || std::fs::symlink_metadata(p).is_ok()
+        })
+        .cloned()
+        .collect()
+}
+
+/// Corbeille seedbox à la reprise : notée à la suppression, identique à celle que l'Arr déclare maintenant, et parent de
+/// la cible.
+pub fn same_bin(noted: &str, now: Option<&str>, target_parent: &str) -> bool {
+    let norm = |x: &str| x.trim_end_matches('/').to_string();
+    !noted.is_empty()
+        && now.is_some_and(|n| norm(n) == norm(noted))
+        && norm(target_parent) == norm(noted)
+}
+
+/// Après une corbeille du VPS vidée : les torrents qu'elle retenait sont revus (encore utilisés ailleurs : gardés ;
+/// sinon retirés, ou mis en attente pour C411). Rend une note pour le journal.
+async fn release_kept_torrents(ctx: &TaskContext, p: &PendingStep) -> String {
+    if p.side != "vps" || p.hashes.is_empty() {
+        return String::new();
+    }
+    let Some((movie, provider, id)) = parse_key(&p.key) else {
+        return String::new();
+    };
+    let sides = ctx.sides();
+    let Some(side) = sides.iter().find(|x| x.name == "vps") else {
+        return String::new();
+    };
+    let torrents = match side.qbit.torrents().await {
+        Ok(t) => t,
+        Err(e) => {
+            warn!(task = TASK, title = %p.title, error = format!("{e:#}"), "qbittorrent unreachable: kept torrents not reviewed");
+            return " ; torrents non revus (qBittorrent injoignable)".into();
+        }
+    };
+    let title = dc::Title {
+        kind: if movie {
+            dc::Kind::Movie
+        } else {
+            dc::Kind::Series {
+                tvdb: if provider == "tvdb" { id } else { 0 },
+                total_files: 0,
+            }
+        },
+        id: p.arr_id,
+        tmdb: p.tmdb,
+        name: p.title.clone(),
+        files: Vec::new(),
+    };
+    let mut out = Vec::new();
+    for h in &p.hashes {
+        let Some(tor) = torrents.iter().find(|x| x.hash.eq_ignore_ascii_case(h)) else {
+            continue;
+        };
+        if dc::still_used(side, &title, h, &BTreeSet::new(), None).await {
+            info!(task = TASK, torrent = %tor.name, "torrent still used by other library files: kept");
+            out.push("torrent_kept");
+            continue;
+        }
+        out.push(dc::handle_torrent(ctx, side, tor, false, TASK).await);
+    }
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!(" ; torrents : {}", out.join(", "))
+    }
+}
+
 /// Rejoue une étape. `Ok(note)` : terminée (ou sans objet) ; `Err(motif)` : à retenter.
 async fn replay_one(ctx: &TaskContext, p: &PendingStep) -> std::result::Result<String, String> {
     match p.step.as_str() {
@@ -1701,11 +1840,26 @@ async fn replay_one(ctx: &TaskContext, p: &PendingStep) -> std::result::Result<S
                 let Some(bin) = seedbox_replay_bin(&p.target, &ctx.cfg.seedbox.media_root) else {
                     return Ok("cible refusée, abandonnée".into());
                 };
+                // même corbeille qu'à la suppression, relue maintenant dans l'Arr : jamais un dossier de bibliothèque
+                let movie = parse_key(&p.key).map(|(m, _, _)| m).unwrap_or(true);
+                let sides = ctx.sides();
+                let Some(side) = sides.iter().find(|x| x.name == "seedbox") else {
+                    return Ok("seedbox absente, abandonnée".into());
+                };
+                let arr = if movie { side.radarr } else { side.sonarr };
+                let now_bin = arr
+                    .recycle_bin()
+                    .await
+                    .map_err(|e| format!("corbeille illisible : {e:#}"))?;
+                if !same_bin(&p.bin, now_bin.as_deref(), &bin) {
+                    return Ok("corbeille changée depuis la suppression, abandonnée".into());
+                }
                 seedbox_empty(ctx, &p.origin, &p.target, &bin, Duration::ZERO).await
             };
             match outcome {
                 Ok(RecycleOutcome::Removed) | Ok(RecycleOutcome::Absent) => {
-                    Ok("corbeille vidée".into())
+                    let torrents = release_kept_torrents(ctx, p).await;
+                    Ok(format!("corbeille vidée{torrents}"))
                 }
                 Ok(RecycleOutcome::Refused(why)) => {
                     Ok(format!("cible refusée ({why}), abandonnée"))
@@ -1717,6 +1871,10 @@ async fn replay_one(ctx: &TaskContext, p: &PendingStep) -> std::result::Result<S
             }
         }
         "seerr" => {
+            let paths: Vec<PathBuf> = p.origins.iter().map(PathBuf::from).collect();
+            if !folders_left(&paths).is_empty() {
+                return Err("dossier du titre encore présent".into());
+            }
             // redemandé entre-temps : la fiche est revenue, retirer le média effacerait la nouvelle demande
             match arr_knows(ctx, &p.key).await {
                 Err(e) => return Err(format!("{e:#}")),
@@ -1835,6 +1993,69 @@ mod tests {
             entries,
             ..Default::default()
         }
+    }
+
+    /// Revue du 22/10 : une copie apparue, retirée ou changée entre la confirmation et le travail n'a pas été vue par
+    /// l'admin ; le titre est écarté (taille changée seule : gardé, les octets ne désignent pas une autre fiche).
+    #[test]
+    fn copies_changees_depuis_la_confirmation_ecartees() {
+        let e = entry("movie:tmdb:1", vec![side("vps", 45, 10)]);
+        let shown = report(vec![entry("movie:tmdb:1", vec![side("vps", 45, 99)])]);
+        assert!(same_copies(Some(&shown), &e));
+        let two = entry(
+            "movie:tmdb:1",
+            vec![side("vps", 45, 10), side("seedbox", 7, 5)],
+        );
+        assert!(!same_copies(Some(&shown), &two));
+        let other_id = entry("movie:tmdb:1", vec![side("vps", 46, 10)]);
+        assert!(!same_copies(Some(&shown), &other_id));
+        let mut moved = e.clone();
+        moved.sides[0].folder = "/arr/vps/ailleurs".into();
+        assert!(!same_copies(Some(&shown), &moved));
+        assert!(!same_copies(Some(&report(vec![])), &e));
+        assert!(!same_copies(None, &e));
+        // l'ordre des copies ne compte pas
+        let shown2 = report(vec![entry(
+            "movie:tmdb:1",
+            vec![side("seedbox", 7, 5), side("vps", 45, 10)],
+        )]);
+        assert!(same_copies(Some(&shown2), &two));
+    }
+
+    /// Revue du 22/10 : Jellyseerr n'est libéré qu'une fois les dossiers du titre partis ; montage tombé (parent
+    /// absent) = indécidable, donc attendu.
+    #[test]
+    fn seerr_attend_que_les_dossiers_soient_partis() {
+        let tmp = tempfile::tempdir().unwrap();
+        let there = tmp.path().join("Film (2019)");
+        std::fs::create_dir(&there).unwrap();
+        let gone = tmp.path().join("Parti (2018)");
+        let unmounted = tmp.path().join("montage/absent/Film (2020)");
+        let left = folders_left(&[there.clone(), gone.clone(), unmounted.clone()]);
+        assert_eq!(left, vec![there.clone(), unmounted]);
+        std::fs::remove_dir(&there).unwrap();
+        assert!(folders_left(&[there, gone]).is_empty());
+    }
+
+    /// Revue du 22/10 : la reprise d'une corbeille seedbox exige la corbeille notée, toujours déclarée par l'Arr, et
+    /// parente de la cible.
+    #[test]
+    fn reprise_seedbox_exige_la_meme_corbeille() {
+        let b = "/home/u/media/.recycle";
+        assert!(same_bin(b, Some("/home/u/media/.recycle/"), b));
+        assert!(
+            !same_bin("", Some(b), b),
+            "étape ancienne sans corbeille notée"
+        );
+        assert!(!same_bin(b, None, b), "corbeille désactivée depuis");
+        assert!(
+            !same_bin(b, Some("/home/u/media/movies"), b),
+            "corbeille changée"
+        );
+        assert!(
+            !same_bin(b, Some(b), "/home/u/media/movies"),
+            "cible hors de la corbeille"
+        );
     }
 
     fn keys(v: &[&str]) -> Vec<String> {

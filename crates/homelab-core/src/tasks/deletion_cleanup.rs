@@ -865,9 +865,12 @@ pub(crate) async fn still_used(
     t: &Title,
     hash: &str,
     exclude_episodes: &BTreeSet<i64>,
+    gone: Option<&std::path::Path>,
 ) -> bool {
     // VPS : un fichier du torrent encore lié ailleurs (lien physique vers la bibliothèque)
     if let Some((container, host_dir)) = &side.local_downloads {
+        // simulation (`gone`) : les fichiers de ce dossier comptent comme déjà supprimés, comme ils le seraient pour de vrai
+        let removed = gone.map(inode_counts).unwrap_or_default();
         if let Ok(files) = side.qbit.files(hash).await {
             let torrent = side
                 .qbit
@@ -883,7 +886,10 @@ pub(crate) async fn still_used(
                     };
                     use std::os::unix::fs::MetadataExt;
                     std::fs::metadata(format!("{}{rest}", host_dir.display()))
-                        .map(|m| m.nlink() > 1)
+                        .map(|m| {
+                            let gone = removed.get(&(m.dev(), m.ino())).copied().unwrap_or(0);
+                            m.nlink().saturating_sub(gone) > 1
+                        })
                         .unwrap_or(false)
                 });
                 if linked {
@@ -929,6 +935,10 @@ pub(crate) async fn still_used(
                 if exclude_episodes.contains(&eid) {
                     continue;
                 }
+                // simulation : la série entière part, ses propres épisodes ont encore leurs fichiers
+                if gone.is_some() && r.get("seriesId").and_then(Value::as_i64) == Some(t.id) {
+                    continue;
+                }
                 if let Ok(e) = arr.get(&format!("api/v3/episode/{eid}"), &[]).await {
                     if e.get("hasFile").and_then(Value::as_bool).unwrap_or(false) {
                         return true;
@@ -938,6 +948,30 @@ pub(crate) async fn still_used(
         }
     }
     false
+}
+
+/// Fichiers d'un dossier (récursif, liens symboliques ignorés) comptés par `(périphérique, inode)`. Dossier illisible :
+/// rien de compté, donc le torrent reste tenu pour utilisé (prudence).
+pub(crate) fn inode_counts(dir: &std::path::Path) -> HashMap<(u64, u64), u64> {
+    use std::os::unix::fs::MetadataExt;
+    let mut out = HashMap::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for ent in rd.flatten() {
+            let Ok(m) = std::fs::symlink_metadata(ent.path()) else {
+                continue;
+            };
+            if m.is_dir() {
+                stack.push(ent.path());
+            } else if m.is_file() {
+                *out.entry((m.dev(), m.ino())).or_insert(0) += 1;
+            }
+        }
+    }
+    out
 }
 
 /// Retire le torrent maintenant ou le met en attente (C411). Renvoie une étiquette pour le résumé. `dry` : rien n'est
@@ -1155,7 +1189,7 @@ async fn clean_title(ctx: &TaskContext, side: &Side<'_>, t: &Title) -> Result<St
         let Some(tor) = torrents.iter().find(|x| x.hash.eq_ignore_ascii_case(h)) else {
             continue;
         };
-        if still_used(side, t, h, &exclude_episodes).await {
+        if still_used(side, t, h, &exclude_episodes, None).await {
             info!(task = "deletion_cleanup", side = side.name, torrent = %tor.name, "torrent still used by other library files: kept");
             torrent_notes.push("torrent_kept");
             continue;
@@ -1438,6 +1472,41 @@ async fn dropped_now(ctx: &TaskContext) -> Result<Vec<(String, i64, i64)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Simulation de la liste rouge (22/10) : un film du VPS lié à son torrent comptait « partagé » parce que son propre
+    /// fichier, pas encore supprimé, tenait le lien. Les liens du dossier qui part se retirent du compte ; un lien
+    /// ailleurs (autre titre) garde le torrent.
+    #[test]
+    fn simulation_retire_les_liens_du_dossier_qui_part() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let dl = tmp.path().join("downloads");
+        let film = tmp.path().join("movies/Film (2019)/sub");
+        let autre = tmp.path().join("movies/Autre (2020)");
+        for d in [&dl, &film, &autre] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let seul = dl.join("seul.mkv");
+        let partage = dl.join("partage.mkv");
+        std::fs::write(&seul, b"a").unwrap();
+        std::fs::write(&partage, b"b").unwrap();
+        std::fs::hard_link(&seul, film.join("Film.mkv")).unwrap();
+        std::fs::hard_link(&partage, film.join("Bonus.mkv")).unwrap();
+        std::fs::hard_link(&partage, autre.join("Autre.mkv")).unwrap();
+        std::os::unix::fs::symlink(&partage, film.join("lien.mkv")).unwrap();
+        let gone = inode_counts(&tmp.path().join("movies/Film (2019)"));
+        let left = |p: &std::path::Path| {
+            let m = std::fs::metadata(p).unwrap();
+            m.nlink() - gone.get(&(m.dev(), m.ino())).copied().unwrap_or(0)
+        };
+        assert_eq!(left(&seul), 1, "seul lien restant : torrent libre");
+        assert_eq!(
+            left(&partage),
+            2,
+            "encore lié à un autre titre : torrent gardé"
+        );
+        assert!(inode_counts(&tmp.path().join("absent")).is_empty());
+    }
 
     fn maps() -> Vec<PathMap> {
         vec![

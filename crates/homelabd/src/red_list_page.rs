@@ -513,6 +513,16 @@ pub fn render_confirm(d: &ConfirmData<'_>) -> String {
         .key
         .map(|k| format!(r#"<input type="hidden" name="key" value="{}">"#, esc(k)))
         .unwrap_or_default();
+    // en suppression réelle, la simulation reste possible avant (même liste, même empreinte)
+    let simulate = if d.dry {
+        String::new()
+    } else {
+        format!(
+            r#"<form method="post" action="{BASE}/nettoyer"><input type="hidden" name="token" value="{token}"><input type="hidden" name="snap" value="{snap}">{key_field}<input type="hidden" name="simulation" value="1"><button class="btn ghost" type="submit">Simuler d'abord</button></form>"#,
+            token = esc(d.token),
+            snap = esc(d.snap),
+        )
+    };
     shell_with(
         "Nettoyer la liste rouge",
         CSS,
@@ -522,7 +532,7 @@ pub fn render_confirm(d: &ConfirmData<'_>) -> String {
 <section class="card" aria-label="Confirmation">
 <p>Pour chaque titre : fiche Radarr/Sonarr et fichiers (corbeille de l'Arr vidée), torrent, média Jellyseerr. Chaque titre est revérifié juste avant (exempté, en lecture, plus rouge : écarté).</p>
 <ul>{items}</ul>{rest}
-<div class="row"><form method="post" action="{BASE}/nettoyer"><input type="hidden" name="token" value="{token}"><input type="hidden" name="snap" value="{snap}">{key_field}<button class="btn danger" type="submit">{button}</button></form><a class="btn ghost" href="{BASE}">Annuler</a></div>
+<div class="row">{simulate}<form method="post" action="{BASE}/nettoyer"><input type="hidden" name="token" value="{token}"><input type="hidden" name="snap" value="{snap}">{key_field}<button class="btn danger" type="submit">{button}</button></form><a class="btn ghost" href="{BASE}">Annuler</a></div>
 </section>"#,
             n = d.entries.len(),
             size = esc(&human_size(total)),
@@ -855,6 +865,9 @@ struct CleanForm {
     snap: String,
     #[serde(default)]
     key: String,
+    /// « Simuler d'abord » : `1` force la simulation, même avec `clean_dry_run = false`.
+    #[serde(default)]
+    simulation: String,
 }
 
 async fn start_clean(State(st): State<PageState>, Form(f): Form<CleanForm>) -> Response {
@@ -882,7 +895,8 @@ async fn start_clean(State(st): State<PageState>, Form(f): Form<CleanForm>) -> R
             return back(code, key.unwrap_or(""));
         }
     };
-    let dry = cfg.clean_dry_run;
+    // `clean` y ajoute `--dry-run` (`effective_dry`)
+    let dry = f.simulation == "1" || cfg.clean_dry_run;
     let id = red_list_clean::new_job_id();
     info!(task = TASK, job = %id, titles = keys.len(), "clean started via web");
     let (ctx, jid) = (st.ctx.clone(), id.clone());
@@ -1165,6 +1179,33 @@ mod tests {
         assert!(!html.contains("Suppression réelle") && !html.contains("Supprimer définitivement"));
         let html = list_html(Some(&r), &BTreeMap::new(), false);
         assert!(!html.contains("supprime pour de vrai") && html.contains("ne suppriment rien"));
+    }
+
+    #[test]
+    fn real_confirm_offers_a_simulation_first() {
+        let r = report();
+        let one = selection(Some(&r), &BTreeMap::new(), Some("movie:tmdb:3"), 2).unwrap();
+        let html = render_confirm(&ConfirmData {
+            entries: &one,
+            snap: "s<",
+            token: "t",
+            key: Some("movie:tmdb:3"),
+            dry: false,
+            total_red: 3,
+        });
+        assert!(html.contains("Supprimer définitivement") && html.contains("Simuler d'abord"));
+        assert_eq!(html.matches(r#"name="simulation" value="1""#).count(), 1);
+        assert_eq!(
+            html.matches(r#"name="key" value="movie:tmdb:3""#).count(),
+            2
+        );
+        assert_eq!(html.matches(r#"name="snap" value="s&lt;""#).count(), 2);
+        assert!(!html.contains("token="));
+        let f: CleanForm =
+            serde_json::from_str(r#"{"token":"t","snap":"s","simulation":"1"}"#).unwrap();
+        assert_eq!(f.simulation, "1");
+        let f: CleanForm = serde_json::from_str(r#"{"token":"t","snap":"s"}"#).unwrap();
+        assert!(f.simulation.is_empty() && f.key.is_empty());
     }
 
     #[test]

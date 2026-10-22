@@ -588,8 +588,14 @@ Liste rouge : films et séries que personne n'a lancés depuis `min_idle_days` (
   d'origine (sauf encore utilisés ; délai C411 respecté), `vfs/forget` + `vfs/refresh` sur la seedbox, média Seerr retiré
   quand plus aucune copie ne reste. À la fin : un seul `Library/Media/Updated` « Deleted » (jamais `DELETE /Items`) et une
   alerte admin récapitulative.
+- **Garde-fous ajoutés le 22/10** : titre écarté si ses copies (côté, fiche, dossier) diffèrent de la liste confirmée ;
+  média Seerr retiré seulement quand les dossiers du titre ont disparu (sinon étape `seerr` rejouée, montage tombé =
+  attendre) ; sur le VPS, torrents retenus par un fichier encore dans la corbeille revus quand la reprise la vide ;
+  reprise d'une corbeille seedbox seulement si l'Arr déclare toujours la corbeille notée à la suppression.
 - **Simulation** tant que `clean_dry_run = true`, **titre seul compris** : rien n'est supprimé ni écrit hors de l'état,
-  le travail dit ce qu'il ferait. `--dry-run` de homelabd l'emporte toujours.
+  le travail dit ce qu'il ferait. `--dry-run` de homelabd l'emporte toujours. En suppression réelle, la confirmation
+  propose aussi « Simuler d'abord ». La simulation compte les fichiers du titre comme déjà supprimés : un torrent lié au
+  seul titre est annoncé retiré, comme pour de vrai (avant le 22/10, il était compté « partagé »).
 - Réglages `[tasks.red_list]` : `min_idle_days` (60, 30 au moins), `include_russian`, `max_titles_per_clean` (50, 200 au
   plus), `clean_dry_run`, `arr_delete_timeout_secs` (300), `recycle_wait_secs` (90), `empty_recycle`,
   `add_import_exclusion` (false : un membre peut redemander le titre), `ssh_host`, `jobs_kept` (20), `soon_days` (14).
