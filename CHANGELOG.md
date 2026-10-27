@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.29.0](#1290--21102026--liste-rouge-et-imports-partiels-signalés)** | 21/10/2026 | **Liste rouge et imports partiels signalés** |
+| **[1.30.0](#1300--27102026---continuer-à-regarder--à-la-carte-et-filtre-de-durée)** | 27/10/2026 | **« Continuer à regarder » à la carte et filtre de durée** |
+| [1.29.0](#1290--21102026--liste-rouge-et-imports-partiels-signalés) | 21/10/2026 | Liste rouge et imports partiels signalés |
 | [1.28.0](#1280--15102026--mails-aux-couleurs-de-groscailloux-tv) | 15/10/2026 | Mails aux couleurs de Groscailloux TV |
 | [1.27.0](#1270--14102026--nouveau-domaine-principal) | 14/10/2026 | Nouveau domaine principal |
 | [1.26.0](#1260--10102026--syncplay-après-un-saut-films-guettés-avant-leur-sortie-et-lot-3-jour-2) | 10/10/2026 | SyncPlay après un saut, films guettés avant leur sortie et lot 3, jour 2 |
@@ -39,6 +40,28 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.30.0 — 27/10/2026 — « Continuer à regarder » à la carte et filtre de durée
+
+Deux demandes des membres, dans l'interface web (navigateur, applis iPhone et Android, télé web) : retirer un titre de
+« Continuer à regarder » sans perdre sa progression, et trier les films par durée (COMMIT).
+
+### Pour les membres
+
+- **« Retirer de Continuer à regarder »** dans le menu « … » d'une vignette de « Continuer à regarder » ou « À suivre »
+  (sur téléphone : appui long, puis ⋮). Une série part entière ; la progression, l'historique et « vu » ne bougent pas,
+  et le titre revient tout seul dès qu'on le relance. Message avec « Annuler ». Retrait gardé par compte, sur tous les
+  appareils. Liste des titres retirés et bouton « Remettre » dans **Mon compte**.
+- **Filtre « Durée »** dans le menu Filtres des bibliothèques de films (Films, Films d'animation) : « Moins de 2 h » ou
+  « Moins de 1 h 30 », avec les autres filtres, le tri et les pages ; « Réinitialiser les filtres » le retire.
+
+### Pour l'administrateur
+
+- Scripts injectés `gc-continue.js` et `gc-duree.js` (`sudo scripts/jellyfin-js-apply.py`), section de Mon compte dans
+  `crates/homelabd/assets/compte/app.js` ; retraits dans les `DisplayPreferences` du compte (`gc-continue`/`groscailloux`).
+  Détail et limites (applis natives non couvertes) : [jellyfin-interface.md § 11 et § 12](docs/runbooks/jellyfin-interface.md#11--continuer-à-regarder--à-la-carte-2710).
+- Le retrait de Jellyfin Enhanced (par épisode, sans gestion chez nous) est caché dans les menus.
+- Bancs `tools/bench/scenarios/continuer.js` et `duree.js`.
 
 ## 1.29.0 — 21/10/2026 — Liste rouge et imports partiels signalés
 

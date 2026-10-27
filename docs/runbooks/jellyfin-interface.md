@@ -39,6 +39,8 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
 | Groscailloux Mon compte | `gc-account-loader.js` | non | charge `/gc-compte/app.js` ([comptes-et-abonnements.md](comptes-et-abonnements.md)) |
 | Groscailloux SyncPlay | `gc-syncplay.js` | non | contournement du saut en SyncPlay (§ 8) |
 | Groscailloux En-tête | `gc-header.js` | non | adaptation de la nouvelle interface 12.1 (§ 4) |
+| Groscailloux Continuer | `gc-continue.js` | non | « Retirer de Continuer à regarder », par compte (§ 11) |
+| Groscailloux Durée | `gc-duree.js` | non | filtre « Durée » des bibliothèques de films (§ 12) |
 
 - Une mise à jour du tchat ou de Mon compte = rebuild de homelabd (les `app.js` sont dans `crates/homelabd/assets/`),
   pas le plugin.
@@ -287,3 +289,57 @@ public part dans `public.js` (chargé dès l'ouverture, avant la connexion), un 
     `JellyseerrEnable4KRequests = false`). Le repasser à `false` laisserait ces demandes sans ligne mise à jour ni refus
     en français. `JellyseerrShowQuotaInfo = false` couperait la fenêtre de quota de JE (son `isQuotaError` répond non).
   - Banc : `tools/bench/scenarios/quota.js` ([outils-bancs-et-hors-pic.md](outils-bancs-et-hors-pic.md)).
+
+## 11. « Continuer à regarder » à la carte (27/10)
+
+- **Décision de l'admin : masquer seulement.** Ni progression, ni historique, ni « vu » touchés. Un titre retiré revient
+  seul dès que le membre le relance ou l'avance (date de dernière lecture du titre plus récente que celle gardée au
+  retrait, **dates du serveur**, jamais l'horloge de l'appareil). Une série se retire entière : tous ses épisodes, dans
+  « Continuer à regarder » **et** « À suivre ».
+- **Qui dessine** : Home Screen Sections (`/HomeScreen/Section/ContinueWatching` et `NextUp`, par `fetch`) ; Continue
+  Watching Deduplicator ne garde qu'un épisode par série en amont (`MaxEpisodesPerSeries = 1`). Ailleurs (onglet
+  Suggestions des bibliothèques, autres extensions) : `/UserItems/Resume` et `/Shows/NextUp` (SDK, `XMLHttpRequest`).
+  `gc-continue.js` filtre les **réponses** de ces seules requêtes GET dans la page ; `/Shows/NextUp?seriesId=` (bouton
+  « À suivre » d'une fiche de série) n'est jamais filtré.
+- **Stockage** : `DisplayPreferences` du compte, id `gc-continue`, client `groscailloux`, `CustomPrefs.gcHidden` =
+  `{"<id série ou film>": {n, y, t, s}}` (nom, type, dernière lecture au retrait en ms, date du retrait) ; 200 titres au
+  plus. Côté serveur, donc le même sur web, téléphone et télé web. Ce client à part ne touche pas `usersettings`/`emby`
+  (saut à 10 s, § 6). Lecture : une fois par minute au plus, et seulement si un titre est retiré, une requête des
+  100 dernières lectures (`sortBy=DatePlayed`) pour faire revenir un titre relancé ; toute écriture relit d'abord.
+  (`minDateLastSavedForUser` ne filtre pas en 12.1 : 40 éléments pour un compte neuf.)
+- **Entrées** : « Retirer de Continuer à regarder » dans la feuille « … » d'une vignette de ces rangées (bureau, télé
+  web : menu de la vignette) ; sur téléphone, l'appui long ouvre la **sélection multiple** de jellyfin-web (pas la
+  feuille) : l'entrée est dans son menu ⋮, pour une ou plusieurs vignettes. Message « … retiré » avec **Annuler** (7 s).
+  La vignette sort par un rafraîchissement de la rangée (`notifyRefreshNeeded`), aucun nœud retiré.
+- **Gestion** : section « Continuer à regarder » de **Mon compte** (liste, « Remettre »), fournie par le script
+  (`window.gcContinue.accountSection`, crochet dans `crates/homelabd/assets/compte/app.js`).
+- **Jellyfin Enhanced 12.10 a son propre retrait** (`RemoveContinueWatchingEnabled`, réglage serveur ET par compte :
+  vrai dans 568 `settings.json` de comptes le 27/10 ; entrées `remove-continue-watching` et `je-multiselect-remove`) :
+  par **épisode** (« À suivre » non couvert), dans son magasin « Hidden Content » dont la page de gestion est coupée
+  chez nous (`HiddenContentEnabled = false`), filtré côté serveur. Ses deux entrées sont **cachées par le CSS de
+  `gc-continue.js`** (aucun réglage de JE changé). Masquages JE existants
+  (`plugins/configurations/Jellyfin.Plugin.JellyfinEnhanced/<compte>/hidden-content.json`) : aucun compte de membre le
+  27/10.
+- **Limites** : applis natives (Android TV, Fire TV, Swiftfin, Findroid, Infuse…) : ni entrée ni filtre, la rangée y
+  reste complète. « Tout lire à partir d'ici » ignore les retraits.
+- Banc : `tools/bench/scenarios/continuer.js` ([tools/README.md](../../tools/README.md)).
+
+## 12. Filtre « Durée » des films (27/10)
+
+- Menu Filtres des bibliothèques de **films** de la nouvelle interface (vue `movies` : Films, Films d'animation) :
+  rubrique « Durée », « Moins de 2 h » ou « Moins de 1 h 30 » (un seul choix ; strictement moins, d'après
+  `RunTimeTicks`, un film sans durée n'apparaît pas). Rien sur les séries, les collections, l'ancienne interface (télé).
+- Le menu est React (popover MUI `#filter-popover`) : notre rubrique est **notre** nœud, posé juste avant
+  « Réinitialiser les filtres » et replacé si React ajoute une rubrique. Le choix va dans l'état React de la vue
+  (`setLibraryViewSettings`, trouvé par la fibre du bouton Filtres) sous `Filters.GcMaxRunTime` : pastille,
+  « Réinitialiser les filtres », mémoire par bibliothèque (`localStorage` « movies - <id> ») et nouvelle requête viennent
+  de jellyfin-web. **Ne pas lire l'état dans la fibre** : la copie accrochée au nœud peut retarder d'un rendu ; le
+  script suit lui-même la valeur (cases, « Réinitialiser ») et relit le `localStorage` au chargement.
+- `GET /Items` n'a pas de paramètre de durée (12.1, essayé) : quand le filtre est posé, la requête de page est servie
+  par le script (liste complète de la même requête, mêmes filtres et tri, lue une fois, gardée 2 min, 4 listes au plus,
+  vidée à toute écriture ; filtrée puis découpée à la page avec le bon total) ; la requête d'origine part en `limit=1`.
+  En cas d’échec, elle part telle quelle (rien filtré). Mesure du 27/10 : Films = 203 titres, liste complète ~220 Ko
+  (avant compression) en 0,26 s côté serveur, une fois par choix de filtre ; les pages suivantes viennent de la liste gardée.
+- Limites : « Tout lire » et « Aléatoire » de la barre ignorent la durée.
+- Banc : `tools/bench/scenarios/duree.js`.
+

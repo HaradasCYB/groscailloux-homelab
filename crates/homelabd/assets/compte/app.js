@@ -163,6 +163,12 @@
     }
     box.appendChild(h('p', { class: 'muted', text: 'Pour cet appareil, sous-titres SRT ; les sous-titres ASS des anim\u00e9s gardent leur propre style.' }));
 
+    // « Continuer à regarder » (27/10) : titres retirés de la rangée, bouton « Remettre ». La section vient du script
+    // injecté gc-continue.js (stockage dans les DisplayPreferences du compte) ; rien si ce script n'est pas chargé.
+    if (window.gcContinue && typeof window.gcContinue.accountSection === 'function') {
+      try { box.appendChild(window.gcContinue.accountSection(TV)); } catch (e) { /* section facultative */ }
+    }
+
     if (d.steps_url || d.guide_url) {
       box.appendChild(h('h3', { text: 'Aide' }));
       var help = h('p');

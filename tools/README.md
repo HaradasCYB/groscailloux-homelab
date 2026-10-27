@@ -64,6 +64,12 @@ tools/bench/bench.sh --timeout 600 --candidate DIR tools/bench/scenarios/quota.j
                      # quota de demandes Seerr (compte sans limite, ligne, pastille, message, refus de saisons et de
                      # film, TVDB, fenêtre rouverte pendant le message) ; proxy Seerr de JE simulé dans le navigateur
                      # (aucune vraie demande) ; contre-épreuve : compte.js d'avant le quota doit échouer
+tools/bench/bench.sh --timeout 400 --candidate DIR --env ITEMS=<film>,<épisode> tools/bench/scenarios/continuer.js desktop phone tv
+                     # « Retirer de Continuer à regarder » (gc-continue.js) : menu « … », sélection multiple sur téléphone,
+                     # stockage serveur, Mon compte « Remettre », retour seul après une relance, progression intacte
+tools/bench/bench.sh --timeout 400 --candidate DIR --item <film> --env LIB=<films> --env SERIES=<séries> \
+  tools/bench/scenarios/duree.js desktop phone                              # filtre « Durée » (gc-duree.js) : totaux, filtre
+                     # combiné, page 2 sans relecture, « Réinitialiser les filtres », rien sur les séries
 tools/bench/bench.sh --accounts 2 --prefix zz_sp --item <id> --env ITEM2=<id> --timeout 1500 \
   tools/bench/scenarios/syncplay.js desktop                                  # SyncPlay : reprise après un saut (~12 min)
 tools/bench/bench.sh --candidate /chemin/candidats tools/bench/scenarios/header.js desktop-legacy tv

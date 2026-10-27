@@ -30,6 +30,8 @@ SCRIPTS = {
     "Groscailloux Mon compte": ("branding/jellyfin/gc-account-loader.js", True),
     "Groscailloux SyncPlay": ("branding/jellyfin/gc-syncplay.js", True),
     "Groscailloux En-tête": ("branding/jellyfin/gc-header.js", True),
+    "Groscailloux Continuer": ("branding/jellyfin/gc-continue.js", True),
+    "Groscailloux Durée": ("branding/jellyfin/gc-duree.js", True),
 }
 
 env = dict(l.split("=", 1) for l in open(f"{BASE}/.env").read().splitlines() if "=" in l and not l.startswith("#"))
