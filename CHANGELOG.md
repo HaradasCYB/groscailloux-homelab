@@ -44,7 +44,7 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 ## 1.30.0 — 27/10/2026 — « Continuer à regarder » à la carte et filtre de durée
 
 Deux demandes des membres, dans l'interface web (navigateur, applis iPhone et Android, télé web) : retirer un titre de
-« Continuer à regarder » sans perdre sa progression, et trier les films par durée (COMMIT).
+« Continuer à regarder » sans perdre sa progression, et trier les films par durée (3a0a6b9).
 
 ### Pour les membres
 
