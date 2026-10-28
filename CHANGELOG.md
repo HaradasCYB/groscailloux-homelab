@@ -45,7 +45,7 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 ## 1.30.1 — 29/10/2026 — Saisons Netflix en « Parties » rangées dans la bonne saison
 
 Correction : une saison demandée d'une série que Sonarr numérote en « Parties » (numérotation scène) n'est plus rangée
-dans une autre saison à l'import.
+dans une autre saison à l'import (7bd45dd).
 
 ### Pour les membres
 
