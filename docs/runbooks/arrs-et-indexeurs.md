@@ -222,6 +222,20 @@ propre runbook : [voie-russe.md](voie-russe.md).
   `map_episodes`), avec `season=` dans l'étiquette, refusé en bloc au moindre doute (forme mixte, doublon, trou,
   numéro hors saison, suite qui ne commence pas à 1 après une autre saison) ; un titre qui contient un autre nombre est
   écarté ; la source reste `ArrFirst`.
+- **Numérotation scène (XEM) en « Parties » Netflix** (Lupin 2021, 28/10) : la fiche est en numérotation TVDB
+  (S1 = 10 épisodes = Parties 1 + 2, S2 = 7 = Partie 3, S3 = 8 = Partie 4) mais `useSceneNumbering` et la table XEM suivent
+  les Parties (TVDB 1x06 = scène 2x01, TVDB 2x01 = scène 3x01, TVDB 3x01 = scène 4x01). Un pack nommé en TVDB
+  (`Lupin.2021.S03…`, pris pour la saison 3) est alors proposé par `manualimport` en 2x01…2x07, son `S03E08` refusé
+  « Episode 3x08 was unexpected considering the … folder name » : 7 épisodes rangés dans la mauvaise saison, puis le même
+  piège pour `Lupin.S02` (1x06…1x10). `torrent_import::tag_season_pack` : **quand Sonarr bute ainsi** (au moins un refus
+  « was unexpected considering »), série non animée, étiquette `season=N`, l'étiquette et le nom font foi **pour tout le
+  torrent ou pour rien** (un seul `SNNEyy` par vidéo, lu de même par `parse`, sans doublon ni épisode inconnu) ; au
+  moindre doute, rien n'est rangé hors de la saison N (vidéos de côté, alerte « Import partiel »). Animés exclus (cours,
+  absolus, fansubs gardent leurs chemins). **Risque restant** : une release nommée en numérotation scène (`S03` = Partie
+  3) que Sonarr place sans aucun refus est laissée à Sonarr (juste) ; mais si un groupe la nomme en scène **et** qu'un
+  de ses fichiers bute, elle serait rangée en TVDB S3. Même piège attendu pour d'autres séries Netflix en Parties :
+  vérifier `useSceneNumbering` de la fiche et le journal « saison forcée ».
+  Les fausses entrées se suppriment à la main (fichiers de la mauvaise saison), après avoir vérifié leur `sceneSeasonNumber`.
 - Pistes par défaut fausses dans un pack (ex. piste russe par défaut) : corriger sur des **copies** (`mkvpropedit`),
   jamais sur les fichiers du torrent, qui doivent rester intacts pour le partage.
 
@@ -234,7 +248,7 @@ propre runbook : [voie-russe.md](voie-russe.md).
   situé dans le dossier d'une série, Sonarr renvoie tous les fichiers de la saison : **toujours choisir le candidat par
   chemin exact**, jamais le premier.
 - **`torrent_import` ne remplace jamais un fichier** : épisode ou film déjà présent ⇒ fichier écarté ; la correspondance
-  d'épisodes de l'Arr prime sur l'analyse du nom. Après tout import manuel, vérifier l'historique (`episodeFileDeleted`,
+  d'épisodes de l'Arr prime sur l'analyse du nom, sauf saison forcée par l'étiquette (§ 5, numérotation scène). Après tout import manuel, vérifier l'historique (`episodeFileDeleted`,
   raison `Upgrade`).
 - **Jamais d'import d'un fichier incomplet** : un torrent « terminé » peut contenir des fichiers désélectionnés après le
   début du téléchargement, donc tronqués. `torrent_import::incomplete_paths` écarte tout fichier à `progress < 1` ou

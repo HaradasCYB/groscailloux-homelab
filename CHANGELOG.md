@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.30.0](#1300--27102026---continuer-à-regarder--à-la-carte-et-filtre-de-durée)** | 27/10/2026 | **« Continuer à regarder » à la carte et filtre de durée** |
+| **[1.30.1](#1301--29102026--saisons-netflix-en-parties-rangées-dans-la-bonne-saison)** | 29/10/2026 | **Saisons Netflix en « Parties » rangées dans la bonne saison** |
+| [1.30.0](#1300--27102026---continuer-à-regarder--à-la-carte-et-filtre-de-durée) | 27/10/2026 | « Continuer à regarder » à la carte et filtre de durée |
 | [1.29.0](#1290--21102026--liste-rouge-et-imports-partiels-signalés) | 21/10/2026 | Liste rouge et imports partiels signalés |
 | [1.28.0](#1280--15102026--mails-aux-couleurs-de-groscailloux-tv) | 15/10/2026 | Mails aux couleurs de Groscailloux TV |
 | [1.27.0](#1270--14102026--nouveau-domaine-principal) | 14/10/2026 | Nouveau domaine principal |
@@ -40,6 +41,23 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.30.1 — 29/10/2026 — Saisons Netflix en « Parties » rangées dans la bonne saison
+
+Correction : une saison demandée d'une série que Sonarr numérote en « Parties » (numérotation scène) n'est plus rangée
+dans une autre saison à l'import.
+
+### Pour les membres
+
+- Une saison demandée de *Lupin* (et des séries Netflix découpées de même) arrive dans la bonne saison, au lieu d'être
+  rangée à moitié dans la saison précédente.
+
+### Pour l'administrateur
+
+- `torrent_import` ne range plus un pack pris pour la saison N dans la saison de la numérotation scène de Sonarr (Lupin,
+  28/10 : `S03` rangé en 2x01…2x07, `S02` en 1x06…1x10). Quand Sonarr bute (« was unexpected considering the … folder
+  name »), le nom et l'étiquette font foi pour tout le torrent ; au moindre doute, rien n'est rangé hors de la saison N.
+  Détail : [arrs-et-indexeurs.md § 5](docs/runbooks/arrs-et-indexeurs.md#5-séries--saisons-packs-et-numérotations).
 
 ## 1.30.0 — 27/10/2026 — « Continuer à regarder » à la carte et filtre de durée
 

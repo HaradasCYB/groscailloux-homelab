@@ -172,7 +172,17 @@ Jellyseerr. Pour chaque torrent terminé pas encore jugé (`state.torrent_import
    ni `SxxEyy`, 2026-10-08, `numbered_pack`) : lu dans la saison de l'étiquette, **seulement si Sonarr n'a rien lu dans
    aucun nom du torrent** (`sonarr_read_something`), décidé pour le torrent entier et refusé en bloc au moindre doute
    (forme mixte, doublon, trou, numéro hors saison, suite qui ne commence pas à 1 après une autre saison) ; un titre qui
-   contient un autre nombre (`Show 13`, `E13`) reste du ressort de Sonarr. **Jamais de remplacement** : un fichier dont
+   contient un autre nombre (`Show 13`, `E13`) reste du ressort de Sonarr. **Saison forcée par l'étiquette**
+   (`tag_season_pack`, 2026-10-28) : série non animée prise pour la saison N (`season=`) sur laquelle Sonarr bute par sa
+   **numérotation scène** (table XEM) — au moins une vidéo refusée « Episode NxYY was unexpected considering the …
+   folder name ». Si chaque vidéo hors extrait et bonus porte un seul `SNNEyy` littéral, lu de même par le `parse` de
+   Sonarr (sans absolu), sans doublon, sans épisode inconnu ni plus de fichiers que la saison N n'a d'épisodes, **tout**
+   le torrent va en N×yy (`EpisodeSource::OursOnly`) et ce refus cède (journal `info` « saison forcée par l'étiquette »).
+   Au moindre doute, rien n'est rangé par ce chemin **et** aucune proposition de Sonarr hors de la saison N n'est
+   importée (`TagSeasonGuard::refuse_off_season` : vidéo de côté, `warn`). Sans ce refus, Sonarr garde la main même
+   s'il range ailleurs : une release nommée en numérotation scène (`Lupin.S03` = Partie 3) est alors juste. Lupin (2021)
+   le 28/10 : `Lupin.2021.S03` (TVDB saison 3) rangé en 2x01…2x07, `Lupin.S02` en 1x06…1x10.
+   **Jamais de remplacement** : un fichier dont
    un épisode (ou le film) a déjà un fichier est écarté (« déjà présent »), et deux fichiers du torrent ne visent jamais
    le même épisode : le premier est importé, le second écarté (« déjà pris »). Le 2026-09-17, « The.Final.Season.E01 », sans saison, a été lu S01E01 et la
    saison 1 d'une série écrasée (réparée en réimportant ses fichiers d'origine). Puis `ManualImport` en

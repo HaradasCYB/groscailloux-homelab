@@ -426,6 +426,231 @@ pub fn is_invalid_episode_rejection(reason: &str) -> bool {
         .contains("invalid season or episode")
 }
 
+/// Rejet de `manualimport` quand la numérotation scène de Sonarr attend, pour ce dossier, un autre épisode que celui
+/// du nom : « Episode 3x08 was unexpected considering the Lupin.2021.S03.FRENCH.1080p.WEB.H265-GL0P folder name ».
+/// Il ne cède que pour un fichier rangé par [`tag_season_pack`] (`fresh_files_guarded`, `TagSeasonGuard::forced`).
+pub fn is_unexpected_episode_rejection(reason: &str) -> bool {
+    reason
+        .to_ascii_lowercase()
+        .contains("was unexpected considering")
+}
+
+/// Saison et épisode d'un nom de fichier qui porte **un seul** `SxxEyy` simple :
+/// `Lupin.2021.S03E08.FiNAL.FRENCH.1080p.WEB.H265-GL0P.mkv` → (3, 8). `None` pour un multi-épisode (`S03E01E02`,
+/// `S03E01-E02`, `S03E01-02`), deux marqueurs dans le nom, une saison de plus de deux chiffres ou un marqueur collé
+/// à une lettre ou un chiffre.
+pub fn single_sxxeyy(path: &str) -> Option<(i64, i64)> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static MULTI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"(?i)s(\d+)e(\d+)").expect("regex valide"));
+    let multi =
+        MULTI.get_or_init(|| regex::Regex::new(r"(?i)^(?:-?e\d|-\d)").expect("regex valide"));
+    let base = path.rsplit('/').next().unwrap_or(path);
+    let caps: Vec<regex::Captures<'_>> = re.captures_iter(base).collect();
+    let [c] = &caps[..] else {
+        return None;
+    };
+    let (all, s, e) = (c.get(0)?, c.get(1)?, c.get(2)?);
+    if base[..all.start()]
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+        || s.as_str().len() > 2
+        || e.as_str().len() > 3
+        || multi.is_match(&base[all.end()..])
+    {
+        return None;
+    }
+    Some((s.as_str().parse().ok()?, e.as_str().parse().ok()?))
+}
+
+/// Torrent pris par `series_search` pour la saison N (`season=` de l'étiquette) que Sonarr, par sa **numérotation
+/// scène**, range dans une autre saison. Lupin (2021), 2026-10-28 : la table XEM de la fiche suit les « Parties »
+/// Netflix (TVDB 3x01 = scène 4x01, TVDB 2x01 = scène 3x01) ; le pack `Lupin.2021.S03…` (= TVDB saison 3, nommé
+/// comme la recherche l'a trouvé) a été proposé en 2x01…2x07, et son `S03E08` refusé (« Episode 3x08 was unexpected
+/// considering the … folder name ») : 7 épisodes rangés dans la mauvaise saison. Ici, le nom fait foi : chaque
+/// `SNNEyy` vise l'épisode N×yy de la fiche (numérotation TVDB), comme le garde-fou d'égalité de saison de
+/// `series_candidate` l'a supposé en le prenant.
+///
+/// **Déclencheur** (revue sûreté) : au moins un fichier (hors extrait et bonus) refusé « was unexpected considering
+/// the … folder name », c'est-à-dire que Sonarr ne parvient pas à placer tout le torrent avec sa table scène. Un
+/// épisode proposé hors de N ne suffit pas : une release nommée **en numérotation scène** (`Lupin.S03` = Partie 3,
+/// 7 fichiers, rangée sans refus en TVDB 2x01…2x07) est alors juste, et la forcer en 3x01…3x07 mettrait le mauvais
+/// contenu dans la saison demandée (puis `has_file` fermerait la porte à la vraie). Les deux cas réels avaient leur
+/// refus (`S03E08` ; `S02E06`, `S02E07`).
+///
+/// - `None` : rien à corriger, le comportement d'origine suit : pas de saison dans l'étiquette, fiche d'animé
+///   (numérotation absolue : `sxxe_absolute_episodes`, cours, fansubs gardent leurs chemins), ou aucun refus « was
+///   unexpected considering » ;
+/// - `Some(Err)` : Sonarr bute sur sa numérotation scène mais notre lecture n'est pas certaine — rien n'est rangé par
+///   ce chemin, et [`tag_season_guard`] interdit d'importer les propositions de Sonarr hors de la saison N (elles
+///   reproduiraient l'incident) : un fichier sans `SxxEyy` simple, ou d'une autre saison que N, ou attribué par
+///   Sonarr à une autre fiche, ou à plusieurs épisodes, un `parse` de Sonarr qui ne lit pas le même couple (ou lit
+///   un numéro absolu), deux fichiers sur le même numéro, plus de fichiers que d'épisodes dans la saison N, un N×yy
+///   inconnu de la fiche ;
+/// - `Some(Ok)` : chemin → épisode N×yy, pour **tout** le torrent, à appliquer seul (`EpisodeSource::OursOnly`). Un
+///   N×yy qui a déjà un fichier reste dans la correspondance : `fresh_files` l'écarte (« épisode déjà présent »,
+///   jamais de remplacement) au lieu de laisser Sonarr ranger le fichier dans la saison qu'il croit lire (réexamen
+///   d'un partiel corrigé à la main).
+///
+/// Le nom est relu par [`single_sxxeyy`] en plus du `parse` de Sonarr : prudence voulue, seul un `SxxEyy` littéral
+/// et simple est forcé (jamais `3x01`, `301` ni un multi-épisode).
+pub fn tag_season_pack(
+    candidates: &[Value],
+    parses: &HashMap<String, Value>,
+    episodes: &[Value],
+    series_id: i64,
+    anime: bool,
+    tag_season: Option<i64>,
+) -> Option<Result<HashMap<String, Vec<i64>>, String>> {
+    let season = tag_season.filter(|s| *s > 0)?;
+    if anime {
+        return None;
+    }
+    let field = |e: &Value, k: &str| e.get(k).and_then(Value::as_i64);
+    let arr_eps = |c: &Value| -> Vec<Value> {
+        c.get("episodes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let rows: Vec<(&str, &Value)> = candidates
+        .iter()
+        .filter_map(|c| Some((c.get("path").and_then(Value::as_str)?, c)))
+        // extraits et bonus (`Featurettes/…`, `Trailer.mkv`) hors du compte, comme dans `left_out`
+        .filter(|(p, _)| {
+            let base = p.rsplit('/').next().unwrap_or(p);
+            !is_sample_path(p) && !(is_bonus(p) && !has_episode_marker(base))
+        })
+        .collect();
+    let stuck = rows.iter().any(|(_, c)| {
+        c.get("rejections")
+            .and_then(Value::as_array)
+            .is_some_and(|r| {
+                r.iter()
+                    .filter_map(|x| x.get("reason").and_then(Value::as_str))
+                    .any(is_unexpected_episode_rejection)
+            })
+    });
+    if !stuck {
+        return None;
+    }
+    let season_len = episodes
+        .iter()
+        .filter(|e| field(e, "seasonNumber") == Some(season))
+        .count();
+    if rows.len() > season_len {
+        return Some(Err(format!(
+            "{} fichier(s) pour {season_len} épisode(s) en saison {season}",
+            rows.len()
+        )));
+    }
+    let mut seen: HashSet<i64> = HashSet::new();
+    let mut out: HashMap<String, Vec<i64>> = HashMap::new();
+    for (path, c) in rows {
+        let base = path.rsplit('/').next().unwrap_or(path);
+        let other = |v: &Value| {
+            v.pointer("/series/id")
+                .and_then(Value::as_i64)
+                .is_some_and(|s| s != series_id)
+        };
+        if other(c) {
+            return Some(Err(format!("{base} : Sonarr l'attribue à une autre fiche")));
+        }
+        let Some((s, n)) = single_sxxeyy(base) else {
+            return Some(Err(format!("{base} : pas de SxxEyy simple")));
+        };
+        if s != season {
+            return Some(Err(format!(
+                "{base} : saison {s} ≠ saison {season} de l'étiquette"
+            )));
+        }
+        if arr_eps(c).len() > 1 {
+            return Some(Err(format!("{base} : plusieurs épisodes proposés")));
+        }
+        // le `parse` de Sonarr (nom brut, avant la numérotation scène) doit lire le même couple, sans absolu
+        let Some(parse) = parses.get(path) else {
+            return Some(Err(format!("{base} : pas de parse")));
+        };
+        let pei = parse.get("parsedEpisodeInfo").filter(|p| !p.is_null());
+        let nums = |k: &str| -> Vec<i64> {
+            pei.and_then(|p| p.get(k))
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_i64).collect())
+                .unwrap_or_default()
+        };
+        if other(parse)
+            || pei.and_then(|p| field(p, "seasonNumber")) != Some(season)
+            || nums("episodeNumbers") != [n]
+            || !nums("absoluteEpisodeNumbers").is_empty()
+        {
+            return Some(Err(format!(
+                "{base} : le parse de Sonarr ne lit pas S{season:02}E{n:02}"
+            )));
+        }
+        if !seen.insert(n) {
+            return Some(Err(format!("deux fichiers portent S{season:02}E{n:02}")));
+        }
+        let ids: Vec<i64> = episodes
+            .iter()
+            .filter(|e| {
+                field(e, "seasonNumber") == Some(season) && field(e, "episodeNumber") == Some(n)
+            })
+            .filter_map(|e| field(e, "id"))
+            .collect();
+        let [id] = ids[..] else {
+            return Some(Err(format!("S{season:02}E{n:02} inconnu de la fiche")));
+        };
+        out.insert(path.to_string(), vec![id]);
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(Ok(out))
+}
+
+/// Ce que la saison de l'étiquette impose à [`fresh_files_guarded`] (Lupin, 2026-10-28). Vide par défaut : rien ne
+/// change.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TagSeasonGuard {
+    /// chemins rangés par [`tag_season_pack`] : seuls à pouvoir lever « was unexpected considering ».
+    pub forced: HashSet<String>,
+    /// `Some(N)` : Sonarr bute sur sa numérotation scène sans que notre lecture soit certaine ; toute proposition de
+    /// Sonarr hors de la saison N est écartée (comptée dans les vidéos de côté), jamais importée.
+    pub refuse_off_season: Option<i64>,
+}
+
+/// Applique la décision de [`tag_season_pack`] à la correspondance d'`examine` (fonction pure, testée) :
+/// - `Some(Ok(m))` : `m` remplace la correspondance, les lectures `SxxEnnn` sont oubliées, la source passe à
+///   `OursOnly` (comme un pack de cours) ; `examine` saute ensuite « NN. Titre » et « - NN » ;
+/// - `Some(Err(_))` : correspondance inchangée, mais propositions de Sonarr hors de la saison N refusées ;
+/// - `None` : rien.
+pub fn tag_season_guard(
+    decision: Option<Result<HashMap<String, Vec<i64>>, String>>,
+    tag_season: Option<i64>,
+    by_path: &mut HashMap<String, Vec<i64>>,
+    sxxe_paths: &mut HashSet<String>,
+    source: &mut EpisodeSource,
+) -> TagSeasonGuard {
+    match decision {
+        Some(Ok(m)) => {
+            let forced = m.keys().cloned().collect();
+            *by_path = m;
+            sxxe_paths.clear();
+            *source = EpisodeSource::OursOnly;
+            TagSeasonGuard {
+                forced,
+                refuse_off_season: None,
+            }
+        }
+        Some(Err(_)) => TagSeasonGuard {
+            forced: HashSet::new(),
+            refuse_off_season: tag_season,
+        },
+        None => TagSeasonGuard::default(),
+    }
+}
+
 /// Épisode visé par chaque fichier d'un pack décalé. `Err(raison)` au moindre écart : **tout** le pack est
 /// refusé, jamais à moitié — un demi-pack laisse un trou et casse la contiguïté sur laquelle tout repose.
 #[allow(clippy::too_many_arguments)]
@@ -757,6 +982,34 @@ pub fn fresh_files(
     source: EpisodeSource,
     invalid_lifted: &HashSet<String>,
 ) -> (Vec<Value>, Vec<String>) {
+    fresh_files_guarded(
+        candidates,
+        movie,
+        id,
+        download_id,
+        episodes_by_path,
+        has_file,
+        source,
+        invalid_lifted,
+        &TagSeasonGuard::default(),
+    )
+}
+
+/// [`fresh_files`] sous la garde de la saison de l'étiquette ([`TagSeasonGuard`], [`tag_season_guard`]) : chemins
+/// forcés seuls à lever « Episode NxYY was unexpected considering the … folder name », extraits d'un torrent forcé
+/// écartés d'office, et propositions de Sonarr hors de la saison N refusées quand la lecture est incertaine.
+#[allow(clippy::too_many_arguments)]
+pub fn fresh_files_guarded(
+    candidates: &[Value],
+    movie: bool,
+    id: i64,
+    download_id: &str,
+    episodes_by_path: &HashMap<String, Vec<i64>>,
+    has_file: &HashSet<i64>,
+    source: EpisodeSource,
+    invalid_lifted: &HashSet<String>,
+    guard: &TagSeasonGuard,
+) -> (Vec<Value>, Vec<String>) {
     let (mut files, mut skipped) = (Vec::new(), Vec::new());
     let mut claimed: HashSet<i64> = HashSet::new();
     let arr_proposes = |c: &Value| {
@@ -789,8 +1042,11 @@ pub fn fresh_files(
                 .and_then(Value::as_array)
                 .is_none_or(|e| e.is_empty())
             && episodes_by_path.get(path).is_some_and(|e| !e.is_empty());
-        // sur ce refus, Sonarr s'arrête avant ses contrôles (extrait…) : l'extrait est écarté ici
-        if ours && is_sample_path(path) {
+        // `OursOnly` : invariant de `tag_season_guard`, gardé ici pour un appel direct (jamais Sonarr + levée)
+        let forced = !movie && source == EpisodeSource::OursOnly && guard.forced.contains(path);
+        // sur ce refus, Sonarr s'arrête avant ses contrôles (extrait…) : l'extrait est écarté ici ; dans un torrent
+        // forcé, un extrait refusé seulement « was unexpected » ne doit pas compter comme vidéo de côté
+        if (ours || (!movie && !guard.forced.is_empty())) && is_sample_path(path) {
             skipped.push(format!("{rel}: Sample"));
             continue;
         }
@@ -805,6 +1061,8 @@ pub fn fresh_files(
                     // « not an upgrade ». Notre correspondance explicite prime sur ce seul motif.
                     .filter(|r| source != EpisodeSource::OursOnly || !is_wrong_season_rejection(r))
                     .filter(|r| !(ours && is_invalid_episode_rejection(r)))
+                    // saison forcée par l'étiquette : la numérotation scène de Sonarr attendait un autre épisode
+                    .filter(|r| !(forced && is_unexpected_episode_rejection(r)))
                     .collect()
             })
             .unwrap_or_default();
@@ -845,6 +1103,29 @@ pub fn fresh_files(
             } else {
                 Vec::new()
             };
+            // lecture incertaine d'un torrent sur lequel Sonarr bute par sa numérotation scène : sa proposition hors
+            // de la saison N de l'étiquette reproduirait l'incident Lupin, elle n'est jamais importée
+            if let Some(n) = guard.refuse_off_season {
+                let off: Vec<i64> = c
+                    .get("episodes")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|e| {
+                        e.get("id")
+                            .and_then(Value::as_i64)
+                            .is_some_and(|i| arr_eps.contains(&i))
+                    })
+                    .filter_map(|e| e.get("seasonNumber").and_then(Value::as_i64))
+                    .filter(|s| *s != n)
+                    .collect();
+                if let Some(s) = off.first() {
+                    skipped.push(format!(
+                        "{rel}: saison {s} proposée par la numérotation scène de Sonarr, saison {n} attendue (étiquette)"
+                    ));
+                    continue;
+                }
+            }
             let eps = if arr_eps.is_empty() {
                 episodes_by_path.get(path).cloned().unwrap_or_default()
             } else {
@@ -1353,6 +1634,7 @@ async fn examine(
     }
     let mut by_path: HashMap<String, Vec<i64>> = HashMap::new();
     let mut sxxe_paths: HashSet<String> = HashSet::new();
+    let mut guard = TagSeasonGuard::default();
     let mut has_file: HashSet<i64> = HashSet::new();
     let mut source = EpisodeSource::ArrFirst;
     if movie {
@@ -1407,6 +1689,7 @@ async fn examine(
             let mut bare: Vec<(String, String, i64)> = Vec::new();
             // ce que Sonarr a lu dans chaque nom : tant qu'il a lu quelque chose, pas de lecture « NN. Titre »
             let mut parses: Vec<Value> = Vec::with_capacity(candidates.len());
+            let mut parse_by_path: HashMap<String, Value> = HashMap::new();
             for c in &candidates {
                 let Some(path) = c.get("path").and_then(Value::as_str) else {
                     continue;
@@ -1473,8 +1756,42 @@ async fn examine(
                     }
                 }
                 by_path.insert(path.to_string(), eps);
+                parse_by_path.insert(path.to_string(), parse.clone());
                 parses.push(parse);
             }
+            // Torrent pris pour la saison N que Sonarr range ailleurs par sa numérotation scène (Lupin, 2026-10-28 :
+            // `S03E01…E07` proposés en 2x01…2x07, `S03E08` refusé) : le nom, qui dit N, fait foi pour tout le torrent.
+            // Torrent pris pour la saison N sur lequel Sonarr bute par sa numérotation scène (Lupin, 2026-10-28 :
+            // `S03E01…E07` proposés en 2x01…2x07, `S03E08` refusé) : le nom, qui dit N, fait foi pour tout le torrent ;
+            // lecture incertaine : rien n'est rangé hors de N.
+            let decision = tag_season_pack(
+                &candidates,
+                &parse_by_path,
+                &episodes,
+                id,
+                anime,
+                tag_season,
+            );
+            match &decision {
+                Some(Ok(m)) => {
+                    info!(task = "torrent_import", side = side.name, torrent = %t.name,
+                          season = tag_season.unwrap_or_default(), files = m.len(),
+                          "saison forcée par l'étiquette (numérotation scène ignorée)");
+                }
+                Some(Err(why)) => {
+                    warn!(task = "torrent_import", side = side.name, torrent = %t.name,
+                          season = tag_season.unwrap_or_default(), %why,
+                          "saison de l'étiquette non forcée (lecture incertaine) : rien n'est rangé hors de cette saison");
+                }
+                None => {}
+            }
+            guard = tag_season_guard(
+                decision,
+                tag_season,
+                &mut by_path,
+                &mut sxxe_paths,
+                &mut source,
+            );
             // Pack « 05. Titre de l'épisode.mkv » (2026-10-08), en DERNIER recours : seulement si Sonarr n'a rien lu
             // dans aucun nom (ni `parse`, ni épisode proposé par `manualimport`, ni lecture fansub). Sinon l'ancien
             // chemin, inchangé : « 01. Show 13.mkv » … est rangé par Sonarr en E13…, jamais par nous en E01…. Jugé
@@ -1501,7 +1818,9 @@ async fn examine(
                 }
                 None => None,
             };
-            if let Some(m) = numbered {
+            if !guard.forced.is_empty() {
+                // saison forcée : ni « NN. Titre » ni « - NN » (le nom porte déjà son SxxEyy)
+            } else if let Some(m) = numbered {
                 by_path = m;
                 sxxe_paths.clear();
             } else if let (Some(season), false) = (tag_season, bare.is_empty()) {
@@ -1519,7 +1838,7 @@ async fn examine(
             }
         }
     }
-    let (files, skipped) = fresh_files(
+    let (files, skipped) = fresh_files_guarded(
         &candidates,
         movie,
         id,
@@ -1528,6 +1847,7 @@ async fn examine(
         &has_file,
         source,
         &sxxe_paths,
+        &guard,
     );
     for s in &skipped {
         info!(task = "torrent_import", side = side.name, torrent = %t.name, file = %s, "file skipped");
@@ -3680,5 +4000,631 @@ mod tests {
         // les autres issues ne bougent pas
         let r = record_after(Some(&rec("retry")), 0, "x", "retry", "e".into(), 2, vec![]);
         assert_eq!((r.outcome.as_str(), r.attempts), ("retry", 2));
+    }
+
+    // --- saison forcée par l'étiquette (Lupin, 2026-10-28) ---
+
+    const LUPIN: i64 = 128;
+    const LUPIN_DIR: &str = "/dl/Lupin.2021.S03.FRENCH.1080p.WEB.H265-GL0P";
+
+    /// Fiche Lupin (numérotation TVDB) : S1 = 10, S2 = 7, S3 = 8 épisodes ; id = saison × 100 + épisode.
+    fn lupin_episodes(with_file: &[i64]) -> Vec<Value> {
+        [(1, 10), (2, 7), (3, 8)]
+            .iter()
+            .flat_map(|&(s, n)| (1..=n).map(move |e| (s, e)))
+            .map(|(s, e)| {
+                let id = s * 100 + e;
+                json!({"id": id, "seasonNumber": s, "episodeNumber": e,
+                       "hasFile": with_file.contains(&id)})
+            })
+            .collect()
+    }
+
+    fn lupin_name(e: i64) -> String {
+        if e == 8 {
+            "Lupin.2021.S03E08.FiNAL.FRENCH.1080p.WEB.H265-GL0P.mkv".into()
+        } else {
+            format!("Lupin.2021.S03E{e:02}.FRENCH.1080p.WEB.H265-GL0P.mkv")
+        }
+    }
+
+    fn sonarr_parse(season: i64, e: i64) -> Value {
+        json!({"series": {"id": LUPIN},
+               "parsedEpisodeInfo": {"seasonNumber": season, "episodeNumbers": [e], "absoluteEpisodeNumbers": []}})
+    }
+
+    /// Ce que `manualimport` a répondu le 28/10 : E01…E07 proposés en 2x01…2x07 (scène), E08 refusé.
+    fn lupin_as_on_28_10() -> (Vec<Value>, HashMap<String, Value>) {
+        let mut cands = Vec::new();
+        let mut parses = HashMap::new();
+        for e in 1..=8 {
+            let name = lupin_name(e);
+            let path = format!("{LUPIN_DIR}/{name}");
+            let (eps, rej) = if e <= 7 {
+                (
+                    json!([{"id": 200 + e, "seasonNumber": 2, "episodeNumber": e}]),
+                    json!([]),
+                )
+            } else {
+                (
+                    json!([]),
+                    json!([{"reason": "Episode 3x08 was unexpected considering the Lupin.2021.S03.FRENCH.1080p.WEB.H265-GL0P folder name"}]),
+                )
+            };
+            cands.push(
+                json!({"path": path, "relativePath": name, "series": {"id": LUPIN},
+                              "episodes": eps, "rejections": rej}),
+            );
+            parses.insert(path, sonarr_parse(3, e));
+        }
+        (cands, parses)
+    }
+
+    fn forced_guard(m: &HashMap<String, Vec<i64>>) -> TagSeasonGuard {
+        TagSeasonGuard {
+            forced: m.keys().cloned().collect(),
+            refuse_off_season: None,
+        }
+    }
+
+    /// Pack Lupin.S02 (= TVDB saison 2, 7 fichiers) : scène 2x01…2x05 = TVDB 1x06…1x10, 2x06/2x07 refusés.
+    /// `fake_s1` : réexamen avec les fausses entrées 1x06…1x10 encore là (« Not an upgrade »).
+    fn lupin_s02(fake_s1: bool) -> (Vec<Value>, HashMap<String, Value>) {
+        let dir = "/dl/Lupin.S02.FRENCH.1080p.WEB.H265-GL0P";
+        let mut cands = Vec::new();
+        let mut parses = HashMap::new();
+        for e in 1..=7 {
+            let name = format!("Lupin.S02E{e:02}.FRENCH.1080p.WEB.H265-GL0P.mkv");
+            let path = format!("{dir}/{name}");
+            let (eps, rej) = if e <= 5 {
+                let rej = if fake_s1 {
+                    json!([{"reason": "Not an upgrade for existing episode file(s)"}])
+                } else {
+                    json!([])
+                };
+                (
+                    json!([{"id": 105 + e, "seasonNumber": 1, "episodeNumber": 5 + e}]),
+                    rej,
+                )
+            } else {
+                (
+                    json!([]),
+                    json!([{"reason": format!("Episode 2x{e:02} was unexpected considering the Lupin.S02.FRENCH.1080p.WEB.H265-GL0P folder name")}]),
+                )
+            };
+            cands.push(
+                json!({"path": path, "relativePath": name, "series": {"id": LUPIN},
+                              "episodes": eps, "rejections": rej}),
+            );
+            parses.insert(path, sonarr_parse(2, e));
+        }
+        (cands, parses)
+    }
+
+    /// Chaîne d'`examine` sans réseau : décision, garde, choix des fichiers.
+    fn run_tagged(
+        cands: &[Value],
+        parses: &HashMap<String, Value>,
+        episodes: &[Value],
+        season: i64,
+        by_path: HashMap<String, Vec<i64>>,
+    ) -> (Vec<Value>, Vec<String>, TagSeasonGuard) {
+        let has_file: HashSet<i64> = episodes
+            .iter()
+            .filter(|e| e["hasFile"] == json!(true))
+            .filter_map(|e| e["id"].as_i64())
+            .collect();
+        let (mut by_path, mut sxxe, mut source) =
+            (by_path, HashSet::new(), EpisodeSource::ArrFirst);
+        let decision = tag_season_pack(cands, parses, episodes, LUPIN, false, Some(season));
+        let guard = tag_season_guard(decision, Some(season), &mut by_path, &mut sxxe, &mut source);
+        let (files, skipped) = fresh_files_guarded(
+            cands, false, LUPIN, "H", &by_path, &has_file, source, &sxxe, &guard,
+        );
+        (files, skipped, guard)
+    }
+
+    fn episode_ids(files: &[Value]) -> Vec<i64> {
+        let mut v: Vec<i64> = files
+            .iter()
+            .flat_map(|f| f["episodeIds"].as_array().cloned().unwrap_or_default())
+            .filter_map(|x| x.as_i64())
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    #[test]
+    fn the_guard_applies_the_decision_to_the_mapping() {
+        let m: HashMap<String, Vec<i64>> = [("/a".to_string(), vec![301])].into_iter().collect();
+        let before: HashMap<String, Vec<i64>> =
+            [("/a".to_string(), vec![201])].into_iter().collect();
+        // forcé : correspondance remplacée, SxxEnnn oubliés, OursOnly
+        let (mut by, mut sx, mut src) = (
+            before.clone(),
+            HashSet::from(["/a".to_string()]),
+            EpisodeSource::ArrFirst,
+        );
+        let g = tag_season_guard(Some(Ok(m.clone())), Some(3), &mut by, &mut sx, &mut src);
+        assert_eq!((by, sx.is_empty(), src), (m, true, EpisodeSource::OursOnly));
+        assert_eq!(g.forced, HashSet::from(["/a".to_string()]));
+        assert_eq!(g.refuse_off_season, None);
+        // incertain : rien ne change, sauf le refus hors saison
+        let (mut by, mut sx, mut src) = (before.clone(), HashSet::new(), EpisodeSource::ArrFirst);
+        let g = tag_season_guard(Some(Err("x".into())), Some(3), &mut by, &mut sx, &mut src);
+        assert_eq!((&by, src), (&before, EpisodeSource::ArrFirst));
+        assert!(g.forced.is_empty());
+        assert_eq!(g.refuse_off_season, Some(3));
+        // rien
+        let (mut by, mut sx, mut src) = (before.clone(), HashSet::new(), EpisodeSource::ArrFirst);
+        assert_eq!(
+            tag_season_guard(None, Some(3), &mut by, &mut sx, &mut src),
+            TagSeasonGuard::default()
+        );
+        assert_eq!((by, src), (before, EpisodeSource::ArrFirst));
+    }
+
+    #[test]
+    fn lupin_end_to_end_both_packs_land_in_their_season() {
+        // S03 du 28/10 : 3x01…3x08, rien en saison 2
+        let (c, p) = lupin_as_on_28_10();
+        let (files, skipped, g) = run_tagged(&c, &p, &lupin_episodes(&[]), 3, HashMap::new());
+        assert_eq!(episode_ids(&files), (301..=308).collect::<Vec<_>>());
+        assert!(skipped.is_empty() && !g.forced.is_empty(), "{skipped:?}");
+        // S03 au réexamen (correction à la main faite) : rien d'importé, rien de côté
+        let filled: Vec<i64> = (301..=308).collect();
+        let (files, skipped, _) = run_tagged(&c, &p, &lupin_episodes(&filled), 3, HashMap::new());
+        assert!(files.is_empty());
+        assert!(left_out(&skipped).is_empty(), "{skipped:?}");
+        // S02 : 2x01…2x07, y compris au réexamen avec les fausses entrées 1x06…1x10 encore là
+        for fake in [false, true] {
+            let (c, p) = lupin_s02(fake);
+            let with: Vec<i64> = if fake { (106..=110).collect() } else { vec![] };
+            let (files, skipped, _) = run_tagged(&c, &p, &lupin_episodes(&with), 2, HashMap::new());
+            assert_eq!(
+                episode_ids(&files),
+                (201..=207).collect::<Vec<_>>(),
+                "fake={fake}"
+            );
+            assert!(skipped.is_empty(), "{skipped:?}");
+        }
+    }
+
+    #[test]
+    fn a_scene_named_release_is_left_to_sonarr() {
+        // revue sûreté : `Lupin.S03…` nommé en numérotation scène (= Partie 3, 7 fichiers), étiqueté saison 3. Sonarr
+        // le range sans refus en 2x01…2x07, ce qui est juste : jamais forcé en 3x01…3x07.
+        let dir = "/dl/Lupin.S03.FRENCH.1080p.WEB.x264-XYZ";
+        let mut c = Vec::new();
+        let mut p = HashMap::new();
+        for e in 1..=7 {
+            let path = format!("{dir}/Lupin.S03E{e:02}.FRENCH.1080p.WEB.x264-XYZ.mkv");
+            c.push(json!({"path": path, "series": {"id": LUPIN},
+                "episodes": [{"id": 200 + e, "seasonNumber": 2, "episodeNumber": e}], "rejections": []}));
+            p.insert(path, sonarr_parse(3, e));
+        }
+        assert_eq!(
+            tag_season_pack(&c, &p, &lupin_episodes(&[]), LUPIN, false, Some(3)),
+            None
+        );
+        let (files, _, g) = run_tagged(&c, &p, &lupin_episodes(&[]), 3, HashMap::new());
+        assert_eq!(g, TagSeasonGuard::default());
+        assert_eq!(episode_ids(&files), (201..=207).collect::<Vec<_>>());
+        // idem `Lupin.S02` en scène (Partie 2, 5 fichiers → TVDB 1x06…1x10)
+        let (c, p) = lupin_s02(false);
+        let c5: Vec<Value> = c[..5].to_vec();
+        assert_eq!(
+            tag_season_pack(&c5, &p, &lupin_episodes(&[]), LUPIN, false, Some(2)),
+            None
+        );
+    }
+
+    #[test]
+    fn an_uncertain_stuck_pack_never_lands_off_season() {
+        // revue exactitude : lecture incertaine (deux versions du E01) sur un torrent où Sonarr bute : avant, ses
+        // propositions 2x01…2x07 étaient importées. Désormais rien hors de la saison 3, et tout compte comme de côté.
+        let (mut c, mut p) = lupin_as_on_28_10();
+        let repack = format!("{LUPIN_DIR}/Lupin.2021.S03E01.REPACK.FRENCH.1080p.WEB.H265-GL0P.mkv");
+        let mut dup = c[0].clone();
+        dup["path"] = json!(repack);
+        c.remove(1);
+        c.push(dup);
+        p.insert(repack, sonarr_parse(3, 1));
+        let (files, skipped, g) = run_tagged(&c, &p, &lupin_episodes(&[]), 3, HashMap::new());
+        assert_eq!(g.refuse_off_season, Some(3));
+        assert!(files.is_empty(), "{files:?}");
+        assert_eq!(left_out(&skipped).len(), 8, "{skipped:?}");
+        assert_eq!(import_outcome(0, 8, false), "nothing_importable");
+        // une proposition de Sonarr DANS la saison 3 passe toujours
+        c[0]["episodes"] = json!([{"id": 301, "seasonNumber": 3, "episodeNumber": 1}]);
+        let (files, _, _) = run_tagged(&c, &p, &lupin_episodes(&[]), 3, HashMap::new());
+        assert_eq!(episode_ids(&files), vec![301]);
+    }
+
+    #[test]
+    fn a_bonus_in_the_pack_does_not_block_the_forced_season() {
+        let (mut c, p) = lupin_as_on_28_10();
+        c.push(
+            json!({"path": format!("{LUPIN_DIR}/Featurettes/Behind the scenes.mkv"),
+            "series": {"id": LUPIN}, "episodes": [],
+            "rejections": [{"reason": "Unable to parse file"}]}),
+        );
+        let (files, skipped, g) = run_tagged(&c, &p, &lupin_episodes(&[]), 3, HashMap::new());
+        assert_eq!(g.forced.len(), 8);
+        assert_eq!(episode_ids(&files), (301..=308).collect::<Vec<_>>());
+        assert!(left_out(&skipped).is_empty(), "{skipped:?}");
+    }
+
+    #[test]
+    fn a_single_plain_sxxeyy_is_read_from_the_name() {
+        assert_eq!(
+            single_sxxeyy(&format!("{LUPIN_DIR}/{}", lupin_name(8))),
+            Some((3, 8))
+        );
+        assert_eq!(
+            single_sxxeyy("Lupin.S02E07.FiNAL.FRENCH.1080p.mkv"),
+            Some((2, 7))
+        );
+        assert_eq!(single_sxxeyy("show_s01e05_1080p.mkv"), Some((1, 5)));
+        for refused in [
+            "Show.S03E01E02.1080p.mkv",
+            "Show.S03E01-E02.1080p.mkv",
+            "Show.S03E01-02.1080p.mkv",
+            "Show.S03E01.S03E02.mkv",
+            "One Piece S01E1156 VOSTFR.mkv",
+            "Show.S103E01.mkv",
+            "Erased S01 - 06 VOSTFR.mkv",
+            "Angels of Death - 07.mkv",
+            "XS03E01.mkv",
+        ] {
+            assert_eq!(single_sxxeyy(refused), None, "{refused}");
+        }
+    }
+
+    #[test]
+    fn lupin_pack_lands_in_the_tagged_season_not_the_scene_one() {
+        let (cands, parses) = lupin_as_on_28_10();
+        let episodes = lupin_episodes(&[]);
+        let m = tag_season_pack(&cands, &parses, &episodes, LUPIN, false, Some(3))
+            .expect("Sonarr contredit la saison")
+            .expect("lecture certaine");
+        assert_eq!(m.len(), 8);
+        for e in 1..=8 {
+            assert_eq!(m[&format!("{LUPIN_DIR}/{}", lupin_name(e))], vec![300 + e]);
+        }
+
+        let forced = forced_guard(&m);
+        let (files, skipped) = fresh_files_guarded(
+            &cands,
+            false,
+            LUPIN,
+            "H",
+            &m,
+            &HashSet::new(),
+            EpisodeSource::OursOnly,
+            &HashSet::new(),
+            &forced,
+        );
+        assert!(skipped.is_empty(), "{skipped:?}");
+        let mut got: Vec<i64> = files
+            .iter()
+            .map(|f| f["episodeIds"][0].as_i64().unwrap())
+            .collect();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            (301..=308).collect::<Vec<_>>(),
+            "3x01…3x08, rien en saison 2"
+        );
+        assert!(files
+            .iter()
+            .all(|f| f["seriesId"] == json!(LUPIN) && f["releaseType"] == json!("singleEpisode")));
+
+        // sans la décision (comportement du 28/10) : 7 fichiers en saison 2, le E08 de côté
+        let by: HashMap<String, Vec<i64>> = HashMap::new();
+        let (old, old_skipped) = fresh_files(
+            &cands,
+            false,
+            LUPIN,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+            &HashSet::new(),
+        );
+        assert_eq!(old.len(), 7);
+        assert!(old
+            .iter()
+            .all(|f| f["episodeIds"][0].as_i64().unwrap() / 100 == 2));
+        assert_eq!(old_skipped.len(), 1);
+    }
+
+    #[test]
+    fn the_lupin_s02_pack_also_lands_in_its_tagged_season() {
+        // Lupin.S02 (= TVDB saison 2) : scène 2x01…2x05 = TVDB 1x06…1x10, 2x06/2x07 refusés (28/10, 23:48)
+        let dir = "/dl/Lupin.S02.FRENCH.1080p.WEB.H265-GL0P";
+        let mut cands = Vec::new();
+        let mut parses = HashMap::new();
+        for e in 1..=7 {
+            let name = format!("Lupin.S02E{e:02}.FRENCH.1080p.WEB.H265-GL0P.mkv");
+            let path = format!("{dir}/{name}");
+            let (eps, rej) = if e <= 5 {
+                (
+                    json!([{"id": 105 + e, "seasonNumber": 1, "episodeNumber": 5 + e}]),
+                    json!([]),
+                )
+            } else {
+                (
+                    json!([]),
+                    json!([{"reason": format!("Episode 2x{e:02} was unexpected considering the Lupin.S02.FRENCH.1080p.WEB.H265-GL0P folder name")}]),
+                )
+            };
+            cands.push(
+                json!({"path": path, "relativePath": name, "series": {"id": LUPIN},
+                              "episodes": eps, "rejections": rej}),
+            );
+            parses.insert(path, sonarr_parse(2, e));
+        }
+        let m = tag_season_pack(&cands, &parses, &lupin_episodes(&[]), LUPIN, false, Some(2))
+            .unwrap()
+            .unwrap();
+        let mut got: Vec<i64> = m.values().flatten().copied().collect();
+        got.sort_unstable();
+        assert_eq!(got, (201..=207).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn without_a_tagged_season_nothing_changes() {
+        let (cands, parses) = lupin_as_on_28_10();
+        assert_eq!(
+            tag_season_pack(&cands, &parses, &lupin_episodes(&[]), LUPIN, false, None),
+            None
+        );
+        assert_eq!(
+            tag_season_pack(&cands, &parses, &lupin_episodes(&[]), LUPIN, false, Some(0)),
+            None
+        );
+    }
+
+    #[test]
+    fn when_sonarr_agrees_with_the_tag_nothing_changes() {
+        let (mut cands, parses) = lupin_as_on_28_10();
+        for (i, c) in cands.iter_mut().enumerate() {
+            let e = i as i64 + 1;
+            c["episodes"] = json!([{"id": 300 + e, "seasonNumber": 3, "episodeNumber": e}]);
+            c["rejections"] = json!([]);
+        }
+        assert_eq!(
+            tag_season_pack(&cands, &parses, &lupin_episodes(&[]), LUPIN, false, Some(3)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_name_of_another_season_than_the_tag_keeps_sonarr() {
+        // fichiers « S02 » dans un torrent étiqueté saison 3 : la lecture n'est pas certaine
+        let (mut cands, mut parses) = lupin_as_on_28_10();
+        let path = format!("{LUPIN_DIR}/Lupin.2021.S02E01.FRENCH.1080p.WEB.H265-GL0P.mkv");
+        cands[0]["path"] = json!(path);
+        parses.insert(path, sonarr_parse(2, 1));
+        let r = tag_season_pack(&cands, &parses, &lupin_episodes(&[]), LUPIN, false, Some(3));
+        assert!(matches!(r, Some(Err(_))), "{r:?}");
+    }
+
+    #[test]
+    fn a_duplicate_number_keeps_sonarr_for_the_whole_pack() {
+        let (mut cands, mut parses) = lupin_as_on_28_10();
+        let path = format!("{LUPIN_DIR}/Lupin.2021.S03E01.VOSTFR.1080p.WEB.H265-GL0P.mkv");
+        let mut dup = cands[0].clone();
+        dup["path"] = json!(path);
+        cands.push(dup);
+        parses.insert(path, sonarr_parse(3, 1));
+        // 9 fichiers pour 8 épisodes : refusé (nombre)
+        let r = tag_season_pack(&cands, &parses, &lupin_episodes(&[]), LUPIN, false, Some(3));
+        assert!(matches!(r, Some(Err(_))), "{r:?}");
+        // même nombre que la saison mais un doublon : refusé aussi (le E08 refusé reste, E07 retiré)
+        cands.remove(6);
+        let r = tag_season_pack(&cands, &parses, &lupin_episodes(&[]), LUPIN, false, Some(3));
+        assert_eq!(r, Some(Err("deux fichiers portent S03E01".into())));
+    }
+
+    #[test]
+    fn an_uncertain_reading_keeps_sonarr_for_the_whole_pack() {
+        let eps = lupin_episodes(&[]);
+        let check = |cands: &[Value], parses: &HashMap<String, Value>, why: &str| {
+            let r = tag_season_pack(cands, parses, &eps, LUPIN, false, Some(3));
+            assert!(matches!(r, Some(Err(_))), "{why}: {r:?}");
+        };
+        let p0 = format!("{LUPIN_DIR}/{}", lupin_name(1));
+        // multi-épisode dans le nom
+        let (mut c, mut p) = lupin_as_on_28_10();
+        let multi = format!("{LUPIN_DIR}/Lupin.2021.S03E01E02.FRENCH.mkv");
+        c[0]["path"] = json!(multi);
+        p.insert(multi, sonarr_parse(3, 1));
+        check(&c, &p, "multi-épisode");
+        // Sonarr propose deux épisodes pour un fichier
+        let (mut c, p) = lupin_as_on_28_10();
+        c[0]["episodes"] = json!([{"id": 201, "seasonNumber": 2}, {"id": 202, "seasonNumber": 2}]);
+        check(&c, &p, "plusieurs épisodes proposés");
+        // fichier attribué à une autre fiche
+        let (mut c, p) = lupin_as_on_28_10();
+        c[0]["series"] = json!({"id": 999});
+        check(&c, &p, "autre fiche");
+        // parse qui lit autre chose, ou un absolu
+        let (c, mut p) = lupin_as_on_28_10();
+        p.insert(p0.clone(), sonarr_parse(3, 2));
+        check(&c, &p, "parse différent");
+        let (c, mut p) = lupin_as_on_28_10();
+        p.get_mut(&p0).unwrap()["parsedEpisodeInfo"]["absoluteEpisodeNumbers"] = json!([18]);
+        check(&c, &p, "absolu lu");
+        // épisode inconnu de la fiche (saison 3 de 7 épisodes seulement)
+        let (c, p) = lupin_as_on_28_10();
+        let short: Vec<Value> = eps
+            .iter()
+            .filter(|e| e["id"] != json!(308))
+            .cloned()
+            .collect();
+        // sans le E08 refusé, Sonarr place tout lui-même : rien n'est forcé
+        assert_eq!(
+            tag_season_pack(&c[..7], &p, &short, LUPIN, false, Some(3)),
+            None
+        );
+        assert!(matches!(
+            tag_season_pack(&c, &p, &short, LUPIN, false, Some(3)),
+            Some(Err(_))
+        ));
+        // fichier sans SxxEyy
+        let (mut c, mut p) = lupin_as_on_28_10();
+        let bare = format!("{LUPIN_DIR}/Lupin - 01.mkv");
+        c[0]["path"] = json!(bare);
+        p.insert(bare, sonarr_parse(3, 1));
+        check(&c, &p, "sans SxxEyy");
+    }
+
+    #[test]
+    fn a_target_with_a_file_is_never_replaced_nor_sent_to_the_scene_season() {
+        // réexamen du partiel après la correction à la main : 3x01…3x08 ont leur fichier, la saison 2 est vide.
+        // La correspondance tient (pas de repli sur Sonarr, qui rangerait de nouveau en 2x01…2x07) et chaque
+        // fichier est écarté « déjà présent » : rien n'est importé, rien n'est remplacé, le partiel se clôt.
+        let (cands, parses) = lupin_as_on_28_10();
+        let filled: Vec<i64> = (301..=308).collect();
+        let episodes = lupin_episodes(&filled);
+        let m = tag_season_pack(&cands, &parses, &episodes, LUPIN, false, Some(3))
+            .unwrap()
+            .unwrap();
+        let has_file: HashSet<i64> = filled.iter().copied().collect();
+        let forced = forced_guard(&m);
+        let (files, skipped) = fresh_files_guarded(
+            &cands,
+            false,
+            LUPIN,
+            "H",
+            &m,
+            &has_file,
+            EpisodeSource::OursOnly,
+            &HashSet::new(),
+            &forced,
+        );
+        assert!(files.is_empty(), "jamais de remplacement ni de saison 2");
+        assert_eq!(skipped.len(), 8);
+        assert!(left_out(&skipped).is_empty());
+        assert_eq!(import_outcome(0, 0, true), "imported");
+
+        // un seul épisode déjà pourvu : les sept autres passent, celui-là n'est pas touché
+        let has_one: HashSet<i64> = [303].into_iter().collect();
+        let (files, skipped) = fresh_files_guarded(
+            &cands,
+            false,
+            LUPIN,
+            "H",
+            &m,
+            &has_one,
+            EpisodeSource::OursOnly,
+            &HashSet::new(),
+            &forced,
+        );
+        assert_eq!(files.len(), 7);
+        assert!(files.iter().all(|f| f["episodeIds"] != json!([303])));
+        assert_eq!(skipped.len(), 1);
+    }
+
+    #[test]
+    fn the_unexpected_rejection_yields_only_to_a_forced_season() {
+        let (cands, _) = lupin_as_on_28_10();
+        let e8 = format!("{LUPIN_DIR}/{}", lupin_name(8));
+        let by: HashMap<String, Vec<i64>> = [(e8.clone(), vec![308])].into_iter().collect();
+        let only_e8: Vec<Value> = cands[7..].to_vec();
+        // pack de cours, fansub (OursOnly sans saison forcée) : le rejet reste bloquant, comme avant
+        let (files, _) = fresh_files(
+            &only_e8,
+            false,
+            LUPIN,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::OursOnly,
+            &HashSet::new(),
+        );
+        assert!(files.is_empty());
+        // saison forcée mais source ArrFirst : bloquant aussi
+        let forced = TagSeasonGuard {
+            forced: [e8].into_iter().collect(),
+            refuse_off_season: None,
+        };
+        let (files, _) = fresh_files_guarded(
+            &only_e8,
+            false,
+            LUPIN,
+            "H",
+            &by,
+            &HashSet::new(),
+            EpisodeSource::ArrFirst,
+            &HashSet::new(),
+            &forced,
+        );
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn bleach_cour_s02_keeps_its_existing_behaviour() {
+        // Bleach (animé) : « BLEACH.Thousand-Year.Blood.War.S02E01 » que Sonarr lit en saison 2, torrent étiqueté
+        // saison 17 sans décalage : jamais forcé (animé), et même hors animé le nom S02 ≠ 17 garde Sonarr.
+        let path = "/dl/BLEACH.TYBW.S02/BLEACH.Thousand-Year.Blood.War.S02E01.mkv".to_string();
+        let cands = vec![json!({"path": path, "series": {"id": 60},
+            "episodes": [{"id": 2001, "seasonNumber": 2, "episodeNumber": 1}], "rejections": []})];
+        let parses: HashMap<String, Value> = [(
+            path.clone(),
+            json!({"series": {"id": 60}, "parsedEpisodeInfo": {"seasonNumber": 2, "episodeNumbers": [1]}}),
+        )]
+        .into_iter()
+        .collect();
+        let episodes = vec![
+            json!({"id": 2001, "seasonNumber": 2, "episodeNumber": 1}),
+            json!({"id": 17027, "seasonNumber": 17, "episodeNumber": 27}),
+        ];
+        assert_eq!(
+            tag_season_pack(&cands, &parses, &episodes, 60, true, Some(17)),
+            None
+        );
+        // hors animé non plus : aucun refus « was unexpected », Sonarr garde la main
+        assert_eq!(
+            tag_season_pack(&cands, &parses, &episodes, 60, false, Some(17)),
+            None
+        );
+        // et l'étiquette d'un cours garde sa propre lecture
+        assert!(matches!(
+            homelab_target("homelab:series=60:season=17:offset=26:eps=27-40"),
+            Some(TagTarget::CourPack { .. })
+        ));
+    }
+
+    #[test]
+    fn samples_are_left_out_of_the_forced_season() {
+        let (mut cands, parses) = lupin_as_on_28_10();
+        cands.push(
+            json!({"path": format!("{LUPIN_DIR}/Sample/Lupin.2021.S03E01.sample.mkv"),
+            "series": {"id": LUPIN}, "episodes": [{"id": 201, "seasonNumber": 2}],
+            "rejections": [{"reason": "Sample"}]}),
+        );
+        let m = tag_season_pack(&cands, &parses, &lupin_episodes(&[]), LUPIN, false, Some(3))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            m.len(),
+            8,
+            "l'extrait ne compte ni pour le doublon ni pour le nombre"
+        );
+        // extrait refusé seulement « was unexpected » : écarté comme extrait, jamais une vidéo de côté
+        let last = cands.len() - 1;
+        cands[last]["rejections"] =
+            json!([{"reason": "Episode 3x01 was unexpected considering the Sample folder name"}]);
+        let (files, skipped, _) =
+            run_tagged(&cands, &parses, &lupin_episodes(&[]), 3, HashMap::new());
+        assert_eq!(files.len(), 8);
+        assert!(
+            skipped.iter().any(|s| s.ends_with(": Sample")),
+            "{skipped:?}"
+        );
+        assert!(left_out(&skipped).is_empty(), "{skipped:?}");
     }
 }
