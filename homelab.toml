@@ -303,6 +303,9 @@ interval_secs = 30
 # ne demande plus de recherche à Sonarr (preventSearch) : ses rafales par épisode déclenchaient le 429
 # de C411 et bloquaient l'indexeur jusqu'à 24 h. Release confiée à Sonarr (release/push) ; refus
 # d'identification ou indexeur bloqué → qBittorrent avec l'étiquette homelab:series=<id>.
+# Seules les saisons DEMANDÉES dans Jellyseerr sont cherchées (1.30.2, cascade Lupin du 28/10) : une saison suivie
+# par monitor_sync pour ses seuls fichiers ne l'est plus. Séries inconnues de Jellyseerr : cherchées comme avant.
+# Garde-fou sans clé (comme le filtre « autre machine ») ; Jellyseerr illisible = passage en échec, rien cherché.
 interval_secs = 600         # 10 min : une demande part dans les minutes qui suivent
 max_queries_per_run = 6     # requêtes au plus par passage (36/h au pire, sous le plafond par clé)
 query_gap_secs = 5          # écart minimal entre deux requêtes

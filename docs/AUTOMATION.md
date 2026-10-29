@@ -244,7 +244,9 @@ demande crée la fiche et les saisons suivies, sans recherche. Sonarr garde le R
 
 Pour chaque Sonarr : `GET wanted/missing` → saisons avec épisodes diffusés manquants, hors file d'attente, pas
 cherchées récemment (`state.unknown_series` : sans candidat → `retry_after_hours` 24 h, pack pris → 7 j,
-épisodes pris → `episode_retry_mins` (5 min), erreur → 1 h) et **absentes de l'autre machine** ; séries ajoutées le plus récemment d'abord. Par saison, via Prowlarr
+épisodes pris → `episode_retry_mins` (5 min), erreur → 1 h), **absentes de l'autre machine** et **demandées dans
+Jellyseerr** (2026-10-29, 1.30.2 : une saison suivie seulement parce qu'elle a des fichiers n'est plus cherchée, voir
+plus bas) ; séries ajoutées le plus récemment d'abord. Par saison, via Prowlarr
 (deux clés, indexeurs « C411 » et « C411 (2) » de Prowlarr, voir « Budget de l'indexer » plus bas) : `search?type=tvsearch&query={TmdbId:<tmdbId>}{Season:<n>}`
 → releases dont l'attribut **`tmdbId` est celui de la fiche** (le nom ne compte pas) → `GET parse` de Sonarr
 (saison, pack, épisodes, qualité) → garde-fous : marqueur FR (VFF > MULTi > FRENCH > VOSTFR), qualité autorisée
@@ -314,6 +316,21 @@ par clé (« Budget de l'indexer » plus bas) ; filet de sécurité : Prowlarr c
 Historique : le 2026-09-17, avec une seule clé partagée par Prowlarr et les 4 Arrs, le 429 est tombé vers 50 requêtes
 dans l'heure, pendant le rattrapage de l'arriéré ; d'où les deux clés et leurs compteurs.
 Résumé : `grabbed=1 none=2 pending=13`.
+
+**Saisons demandées seulement** (2026-10-29, 1.30.2) : `wanted/missing` ne rend que des épisodes **suivis**, et
+`monitor_sync` suit toute saison qui a des fichiers. Le 28/10 (cascade Lupin), une saison 3 demandée seule, des
+fichiers mal rangés en saison 2 : saison 2 suivie, cherchée et prise, puis de même pour la saison 1. Après les fiches
+Sonarr et le filtre « autre machine », la tâche lit toutes les demandes Jellyseerr (`all_requests_counted`, autant
+d'ids distincts que le total annoncé, sinon erreur) et, pour chaque Sonarr (`jellyseerr_sonarr_id` pour la seedbox,
+`jellyseerr_vps_sonarr_id` pour le VPS), construit `id de série → saisons demandées` (`requested_here` : notion de
+`monitor_sync`, statuts 3 et 4 exclus, saisons de `deletions.seasons` retirées sauf nouvelle demande). Une saison d'une
+série de la table qui n'y figure pas est écartée **avant le budget et toute requête à l'indexeur** (`not_requested=<n>`
+au résumé, une ligne `debug` par saison). Une série absente de la table (ajoutée à la main) est cherchée comme avant.
+Les demandes d'un autre titre (`media.tvdbId` différent de la fiche : id Sonarr périmé côté Jellyseerr) sont
+ignorées ; une fiche qui n'a que de telles demandes est cherchée comme avant. Jellyseerr
+illisible ou lu en partie : le passage échoue sans rien chercher. Le suivi n'est pas modifié : les mises à niveau
+(RSS de Sonarr) continuent sur ces saisons. Pas de réglage (garde-fou, comme le filtre « autre machine ») ; risques
+restants (RSS, voie russe) : [arrs-et-indexeurs.md § 5](runbooks/arrs-et-indexeurs.md#5-séries--saisons-packs-et-numérotations).
 
 **Codec** (2026-09-26) : à langue, résolution et partage égaux (≥ 2 sources), le **x265** passe devant le x264 et
 l'**AV1** en dernier (`codec_rank`, clé `(langue, résolution, sources ≥ 2, codec, sources)`, même clé pour
@@ -666,7 +683,9 @@ Jellyseerr ajoute les séries sans `addOptions.monitor` ⇒ Sonarr monitore tout
 Les séries inconnues de Jellyseerr ne sont pas touchées. Un Sonarr injoignable est sauté, l'autre traité
 (2026-10-07) ; tant qu'un côté est muet, l'autre ne connaît pas ses saisons déjà présentes : il n'ajoute **aucun**
 nouveau suivi (risque de doublon Jellyfin) mais peut en retirer, rattrapé au passage suivant. Jellyseerr injoignable
-reste une erreur.
+reste une erreur. Une saison suivie parce qu'elle a des fichiers sans être demandée garde ses mises à niveau (RSS de
+Sonarr) mais n'est jamais cherchée par `series_search` (1.30.2, voir
+[series_search](#series_search--10-min-remplace-unknown_series_grab), « Saisons demandées seulement »).
 
 ### user_poller — 60 s
 `GET /api/v1/user?take=200` : users `userType == 2` (locaux), non admin, email valide, créés

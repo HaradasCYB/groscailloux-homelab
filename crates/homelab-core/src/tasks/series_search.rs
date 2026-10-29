@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::{Report, Task};
 use crate::clients::{ArrClient, ProwlarrClient, QbitClient, TorrentFile};
@@ -2404,6 +2404,125 @@ pub fn stale_uncovered(
         .collect()
 }
 
+/// Saisons demandées dans Jellyseerr pour le Sonarr de la machine `side` (`server` = son id dans Jellyseerr), par
+/// id de série de ce Sonarr. Même notion que `monitor_sync` : statuts 3 et 4 exclus, demande routée par
+/// `media.serviceId`, saison supprimée ici par `deletion_cleanup` retirée tant qu'elle n'est pas redemandée
+/// (`tvdb_of` : id de série → tvdbId, la clé des suppressions).
+///
+/// Une série absente de la table n'est pas gérée par Jellyseerr (ajoutée à la main) : ses saisons suivies restent
+/// cherchées comme avant. Une série présente avec une liste vide (toutes ses saisons supprimées) l'est, et rien n'y
+/// est cherché. Une demande routée vers la série dont le `media.tvdbId` diffère de celui de la fiche (id Sonarr
+/// périmé côté Jellyseerr, autre titre) est ignorée : les autres demandes de la fiche comptent seules, et une fiche
+/// qui n'a que de telles demandes est absente de la table, donc cherchée comme avant.
+pub fn requested_here(
+    requests: &[Value],
+    server: i64,
+    side: &str,
+    deleted: &BTreeMap<String, i64>,
+    tvdb_of: &HashMap<i64, i64>,
+) -> BTreeMap<i64, BTreeSet<i64>> {
+    use super::monitor_sync::{deleted_seasons, for_server, requested_seasons};
+    // demande d'un autre titre routée vers la fiche (id Sonarr périmé côté Jellyseerr) : ignorée, sans rien
+    // retirer aux autres demandes de la fiche
+    let other_title = |r: &Value| -> bool {
+        if r.get("type").and_then(Value::as_str) != Some("tv")
+            || r.pointer("/media/serviceId")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                != server
+        {
+            return false;
+        }
+        let Some(sid) = r
+            .pointer("/media/externalServiceId")
+            .and_then(Value::as_i64)
+        else {
+            return false;
+        };
+        let asked = r
+            .pointer("/media/tvdbId")
+            .and_then(Value::as_i64)
+            .filter(|t| *t > 0);
+        let have = tvdb_of.get(&sid).copied().filter(|t| *t > 0);
+        matches!((asked, have), (Some(a), Some(h)) if a != h)
+    };
+    let kept: Vec<Value> = requests
+        .iter()
+        .filter(|r| !other_title(r))
+        .cloned()
+        .collect();
+    let mut map = for_server(&requested_seasons(&kept), server);
+    let gone = deleted_seasons(deleted, side, requests);
+    for (sid, seasons) in map.iter_mut() {
+        if let Some(g) = tvdb_of.get(sid).and_then(|t| gone.get(t)) {
+            seasons.retain(|n| !g.contains(n));
+        }
+    }
+    map
+}
+
+/// Une saison est cherchée si sa série n'est pas gérée par Jellyseerr, ou si elle y est demandée.
+pub fn requested_or_unmanaged(
+    requested: &BTreeMap<i64, BTreeSet<i64>>,
+    series_id: i64,
+    season: i64,
+) -> bool {
+    requested
+        .get(&series_id)
+        .is_none_or(|s| s.contains(&season))
+}
+
+/// Retire de `all` les saisons suivies mais pas demandées (`requested[i]` : table de l'Arr `i`) et les renvoie
+/// (Arr, série, saison). Cascade Lupin du 28/10 : `monitor_sync` suit toute saison qui a des fichiers, même mal
+/// rangés ; la chercher ensuite faisait télécharger une saison que personne n'avait demandée.
+fn drop_unrequested(
+    all: &mut Vec<(usize, SeasonTodo)>,
+    requested: &[BTreeMap<i64, BTreeSet<i64>>],
+) -> Vec<(usize, i64, i64)> {
+    let mut dropped = Vec::new();
+    all.retain(|(i, t)| {
+        let keep = requested
+            .get(*i)
+            .is_none_or(|m| requested_or_unmanaged(m, t.series_id, t.season));
+        if !keep {
+            dropped.push((*i, t.series_id, t.season));
+        }
+        keep
+    });
+    dropped
+}
+
+/// Toutes les demandes Jellyseerr, lues en entier : autant d'ids distincts que le total annoncé. Une lecture en
+/// partie (demande ajoutée ou retirée pendant la pagination) pourrait faire passer une série demandée pour non
+/// gérée (et tout chercher) : c'est une erreur, et le passage ne cherche rien.
+async fn complete_requests(js: &crate::clients::JellyseerrClient) -> Result<Vec<Value>> {
+    let (requests, announced) = js
+        .all_requests_counted()
+        .await
+        .context("demandes Jellyseerr illisibles : aucune recherche à ce passage")?;
+    let distinct = requests
+        .iter()
+        .filter_map(|r| r.get("id").and_then(Value::as_i64))
+        .collect::<HashSet<i64>>()
+        .len() as u64;
+    if distinct < announced {
+        bail!(
+            "demandes Jellyseerr lues en partie ({distinct}/{announced}) : aucune recherche à ce passage"
+        );
+    }
+    Ok(requests)
+}
+
+/// Requêtes du passage : la base, plus une par demande de moins de `new_request_hours` (plafonnée).
+/// `entries` : (date d'ajout de la série, dernière diffusion manquante) des saisons retenues.
+fn run_budget(entries: &[(String, String)], cfg: &crate::config::SeriesSearch) -> usize {
+    let fresh = entries
+        .iter()
+        .filter(|(added, _)| is_fresh(added, now(), cfg.new_request_hours))
+        .count();
+    cfg.max_queries_per_run + fresh.min(cfg.max_new_per_run)
+}
+
 #[async_trait]
 impl Task for SeriesSearch {
     fn name(&self) -> &'static str {
@@ -2485,6 +2604,50 @@ impl Task for SeriesSearch {
         if before > all.len() {
             counts.insert("dup_other_side".into(), (before - all.len()) as u32);
         }
+        // saisons suivies mais pas demandées (rendues suivies par `monitor_sync` parce qu'elles ont des fichiers,
+        // ou par `monitorNewItems`) : jamais cherchées ici, avant le budget et toute requête à l'indexer. Jellyseerr
+        // est lu après les fiches Sonarr (une série ajoutée entre-temps porte déjà son id) ; illisible ou lu en
+        // partie : le passage échoue sans rien chercher.
+        if !all.is_empty() {
+            let requests = complete_requests(&ctx.jellyseerr).await?;
+            let deleted = ctx.state.read(|s| s.deletions.seasons.clone()).await;
+            let sb = &ctx.cfg.seedbox;
+            let requested: Vec<BTreeMap<i64, BTreeSet<i64>>> = arrs
+                .iter()
+                .map(|c| {
+                    let side = side_name(c.arr);
+                    let server = if side == "seedbox" {
+                        sb.jellyseerr_sonarr_id
+                    } else {
+                        sb.jellyseerr_vps_sonarr_id
+                    };
+                    let tvdb_of: HashMap<i64, i64> = c
+                        .series
+                        .iter()
+                        .filter_map(|(id, s)| Some((*id, s.get("tvdbId")?.as_i64()?)))
+                        .collect();
+                    requested_here(&requests, server, side, &deleted, &tvdb_of)
+                })
+                .collect();
+            let dropped = drop_unrequested(&mut all, &requested);
+            for (i, sid, season) in &dropped {
+                let title = arrs[*i]
+                    .series
+                    .get(sid)
+                    .and_then(|s| s.get("title").and_then(Value::as_str))
+                    .unwrap_or("?");
+                debug!(
+                    task = "series_search",
+                    service = arrs[*i].arr.name,
+                    series = title,
+                    season,
+                    "season monitored but not requested: not searched"
+                );
+            }
+            if !dropped.is_empty() {
+                counts.insert("not_requested".into(), dropped.len() as u32);
+            }
+        }
         let entries: Vec<(String, String)> = all
             .iter()
             .map(|(i, t)| {
@@ -2498,11 +2661,7 @@ impl Task for SeriesSearch {
             })
             .collect();
         // une demande de moins d'une heure passe devant (tri) et ouvre des requêtes en plus
-        let fresh = entries
-            .iter()
-            .filter(|(added, _)| is_fresh(added, now(), cfg.new_request_hours))
-            .count();
-        let budget = cfg.max_queries_per_run + fresh.min(cfg.max_new_per_run);
+        let budget = run_budget(&entries, cfg);
         let mut throttle = Throttle::new(budget, cfg.query_gap_secs);
         for idx in pick_order(&entries) {
             if throttle.remaining() == 0 {
@@ -3730,5 +3889,486 @@ mod tests {
             file_ids(&single, &["Film.2023.1080p.mkv".to_string()]),
             vec![0]
         );
+    }
+}
+
+/// Saisons suivies mais pas demandées (cascade Lupin du 28/10) : jamais cherchées automatiquement.
+#[cfg(test)]
+mod requested_filter_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn todo(series_id: i64, season: i64) -> SeasonTodo {
+        SeasonTodo {
+            series_id,
+            season,
+            latest_air: "2021-01-08T08:00:00Z".into(),
+            missing_numbers: HashSet::from([1]),
+            dated_missing: HashSet::from([1]),
+        }
+    }
+
+    fn tv(
+        id: i64,
+        sid: i64,
+        server: Option<i64>,
+        tvdb: Option<i64>,
+        seasons: &[(i64, i64)],
+    ) -> Value {
+        let mut media = json!({"externalServiceId": sid});
+        if let Some(s) = server {
+            media["serviceId"] = json!(s);
+        }
+        if let Some(t) = tvdb {
+            media["tvdbId"] = json!(t);
+        }
+        json!({
+            "id": id, "type": "tv", "createdAt": "2026-10-28T21:50:00.000Z", "media": media,
+            "seasons": seasons.iter().map(|(n, st)| json!({"seasonNumber": n, "status": st})).collect::<Vec<_>>()
+        })
+    }
+
+    fn here(requests: &[Value], server: i64, side: &str) -> BTreeMap<i64, BTreeSet<i64>> {
+        requested_here(requests, server, side, &BTreeMap::new(), &HashMap::new())
+    }
+
+    // --- construction de la table ---
+
+    #[test]
+    fn requested_season_is_kept() {
+        let m = here(&[tv(1, 128, Some(1), None, &[(3, 2)])], 1, "seedbox");
+        assert_eq!(m[&128], BTreeSet::from([3]));
+    }
+
+    #[test]
+    fn declined_and_failed_seasons_do_not_count() {
+        let m = here(
+            &[tv(
+                1,
+                5,
+                Some(1),
+                None,
+                &[(1, 2), (2, 3), (3, 4), (4, 1), (5, 5)],
+            )],
+            1,
+            "seedbox",
+        );
+        assert_eq!(m[&5], BTreeSet::from([1, 4, 5]));
+    }
+
+    #[test]
+    fn a_request_without_sonarr_id_is_ignored() {
+        let r = json!({"id": 1, "type": "tv", "media": {"serviceId": 1}, "seasons": [{"seasonNumber": 1, "status": 2}]});
+        assert!(here(&[r], 1, "seedbox").is_empty());
+    }
+
+    #[test]
+    fn requests_are_routed_by_jellyseerr_server() {
+        // même sonarrSeriesId 5 sur les deux Sonarr : deux séries différentes
+        let reqs = [
+            tv(1, 5, Some(0), None, &[(1, 2)]),
+            tv(2, 5, Some(1), None, &[(4, 2)]),
+        ];
+        assert_eq!(here(&reqs, 1, "seedbox")[&5], BTreeSet::from([4]));
+        assert_eq!(here(&reqs, 0, "vps")[&5], BTreeSet::from([1]));
+    }
+
+    #[test]
+    fn a_missing_service_id_means_server_zero() {
+        let reqs = [tv(1, 7, None, None, &[(2, 2)])];
+        assert_eq!(here(&reqs, 0, "vps")[&7], BTreeSet::from([2]));
+        assert!(here(&reqs, 1, "seedbox").is_empty());
+    }
+
+    #[test]
+    fn movie_requests_are_ignored() {
+        let r = json!({"id": 1, "type": "movie", "media": {"externalServiceId": 9, "serviceId": 1}, "seasons": []});
+        assert!(here(&[r], 1, "seedbox").is_empty());
+    }
+
+    #[test]
+    fn several_requests_of_a_series_add_up() {
+        let reqs = [
+            tv(1, 9, Some(1), None, &[(1, 2)]),
+            tv(2, 9, Some(1), None, &[(3, 2)]),
+        ];
+        assert_eq!(here(&reqs, 1, "seedbox")[&9], BTreeSet::from([1, 3]));
+    }
+
+    #[test]
+    fn a_deleted_season_stays_out_until_requested_again() {
+        let tvdb_of = HashMap::from([(9, 900)]);
+        // suppression le 29/10 (après la demande du 28/10)
+        let at = chrono::DateTime::parse_from_rfc3339("2026-10-29T10:00:00Z")
+            .unwrap()
+            .timestamp();
+        let deleted = BTreeMap::from([("seedbox:900:2".to_string(), at)]);
+        let mut old = tv(1, 9, Some(1), Some(900), &[(1, 2), (2, 2)]);
+        let m = requested_here(std::slice::from_ref(&old), 1, "seedbox", &deleted, &tvdb_of);
+        assert_eq!(
+            m[&9],
+            BTreeSet::from([1]),
+            "demande antérieure : S2 reste retirée"
+        );
+        // redemandée après la suppression : de nouveau cherchée
+        let again = {
+            let mut r = tv(2, 9, Some(1), Some(900), &[(2, 2)]);
+            r["createdAt"] = json!("2026-10-30T08:00:00.000Z");
+            r
+        };
+        let m = requested_here(&[old.clone(), again], 1, "seedbox", &deleted, &tvdb_of);
+        assert_eq!(m[&9], BTreeSet::from([1, 2]));
+        // une suppression notée côté VPS n'agit pas sur la seedbox
+        let vps_only = BTreeMap::from([("vps:900:2".to_string(), at)]);
+        let m = requested_here(
+            std::slice::from_ref(&old),
+            1,
+            "seedbox",
+            &vps_only,
+            &tvdb_of,
+        );
+        assert_eq!(m[&9], BTreeSet::from([1, 2]));
+        // série absente de la correspondance tvdb : pas de plantage, la suppression ne s'applique pas
+        old["media"]["tvdbId"] = Value::Null;
+        let m = requested_here(&[old], 1, "seedbox", &deleted, &HashMap::new());
+        assert_eq!(m[&9], BTreeSet::from([1, 2]));
+    }
+
+    #[test]
+    fn a_series_whose_seasons_were_all_deleted_stays_managed_and_empty() {
+        let tvdb_of = HashMap::from([(9, 900)]);
+        let deleted = BTreeMap::from([("seedbox:900:1".to_string(), i64::MAX)]);
+        let m = requested_here(
+            &[tv(1, 9, Some(1), Some(900), &[(1, 2)])],
+            1,
+            "seedbox",
+            &deleted,
+            &tvdb_of,
+        );
+        assert_eq!(m.get(&9), Some(&BTreeSet::new()));
+        assert!(!requested_or_unmanaged(&m, 9, 1));
+        assert!(!requested_or_unmanaged(&m, 9, 2));
+    }
+
+    #[test]
+    fn a_request_for_another_title_is_ignored_without_unprotecting_the_series() {
+        // cas réel du 29/10 : une ancienne demande d'un autre titre pointe vers la même fiche Sonarr
+        let tvdb_of = HashMap::from([(55, 483430)]);
+        let reqs = [
+            tv(138, 55, Some(1), Some(483430), &[(1, 2)]),
+            tv(98, 55, Some(1), Some(465973), &[(2, 2)]),
+        ];
+        let m = requested_here(&reqs, 1, "seedbox", &BTreeMap::new(), &tvdb_of);
+        assert_eq!(
+            m[&55],
+            BTreeSet::from([1]),
+            "la demande de l'autre titre ne compte pas"
+        );
+        assert!(requested_or_unmanaged(&m, 55, 1));
+        assert!(
+            !requested_or_unmanaged(&m, 55, 2),
+            "S2 non demandée pour ce titre : écartée"
+        );
+        // seulement la demande de l'autre titre : série non gérée, cherchée comme avant
+        let reqs = [tv(98, 55, Some(1), Some(465973), &[(2, 2)])];
+        let m = requested_here(&reqs, 1, "seedbox", &BTreeMap::new(), &tvdb_of);
+        assert!(
+            !m.contains_key(&55),
+            "série non gérée : comportement d'avant"
+        );
+        assert!(requested_or_unmanaged(&m, 55, 2));
+        // tvdbId absent de la demande : pas de doute, la série reste gérée
+        let reqs = [tv(138, 55, Some(1), None, &[(1, 2)])];
+        let m = requested_here(&reqs, 1, "seedbox", &BTreeMap::new(), &tvdb_of);
+        assert_eq!(m[&55], BTreeSet::from([1]));
+    }
+
+    // --- filtre ---
+
+    #[test]
+    fn lupin_cascade_only_the_requested_season_is_searched() {
+        // 28/10 : saison 3 seule demandée ; S2 puis S1 suivies par monitor_sync pour des fichiers mal rangés
+        let m = here(
+            &[tv(1, 128, Some(1), Some(362753), &[(3, 2)])],
+            1,
+            "seedbox",
+        );
+        let mut all = vec![(0, todo(128, 1)), (0, todo(128, 2)), (0, todo(128, 3))];
+        let dropped = drop_unrequested(&mut all, &[m]);
+        assert_eq!(dropped, vec![(0, 128, 1), (0, 128, 2)]);
+        assert_eq!(all.len(), 1);
+        assert_eq!((all[0].1.series_id, all[0].1.season), (128, 3));
+    }
+
+    #[test]
+    fn a_series_unknown_to_jellyseerr_is_searched_as_before() {
+        let m = here(&[tv(1, 128, Some(1), None, &[(3, 2)])], 1, "seedbox");
+        let mut all = vec![(0, todo(40, 1)), (0, todo(40, 7))];
+        assert!(drop_unrequested(&mut all, &[m]).is_empty());
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn a_whole_series_request_keeps_every_season_but_not_a_later_one() {
+        let m = here(
+            &[tv(1, 3, Some(1), None, &[(1, 2), (2, 2), (3, 2)])],
+            1,
+            "seedbox",
+        );
+        let mut all = vec![
+            (0, todo(3, 1)),
+            (0, todo(3, 2)),
+            (0, todo(3, 3)),
+            (0, todo(3, 4)),
+        ];
+        // S4, sortie après la demande « toutes saisons » : pas demandée, comme pour monitor_sync
+        assert_eq!(drop_unrequested(&mut all, &[m]), vec![(0, 3, 4)]);
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn a_partial_unrequested_season_with_files_is_not_completed() {
+        // S1 suivie parce qu'elle a 5 fichiers sur 10 (pack mal rangé) : ses manques ne sont pas cherchés
+        let m = here(&[tv(1, 128, Some(1), None, &[(3, 2)])], 1, "seedbox");
+        let mut s1 = todo(128, 1);
+        s1.missing_numbers = HashSet::from([1, 2, 3, 4, 5]);
+        let mut all = vec![(0, s1)];
+        assert_eq!(drop_unrequested(&mut all, &[m]), vec![(0, 128, 1)]);
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn each_arr_is_filtered_with_its_own_table() {
+        let reqs = [
+            tv(1, 5, Some(0), None, &[(1, 2)]),
+            tv(2, 5, Some(1), None, &[(2, 2)]),
+        ];
+        let maps = [here(&reqs, 0, "vps"), here(&reqs, 1, "seedbox")];
+        let mut all = vec![
+            (0, todo(5, 1)),
+            (0, todo(5, 2)),
+            (1, todo(5, 1)),
+            (1, todo(5, 2)),
+        ];
+        assert_eq!(
+            drop_unrequested(&mut all, &maps),
+            vec![(0, 5, 2), (1, 5, 1)]
+        );
+    }
+
+    #[test]
+    fn run_budget_counts_only_the_seasons_kept() {
+        let cfg = crate::config::SeriesSearch::default();
+        let fresh = chrono::Utc::now().to_rfc3339();
+        let added = HashMap::from([
+            (128, fresh.clone()),
+            (40, "2025-01-01T00:00:00Z".to_string()),
+        ]);
+        let m = here(&[tv(1, 128, Some(1), None, &[(3, 2)])], 1, "seedbox");
+        let mut all = vec![(0, todo(128, 1)), (0, todo(128, 2)), (0, todo(40, 1))];
+        let entries_of = |all: &[(usize, SeasonTodo)]| -> Vec<(String, String)> {
+            all.iter()
+                .map(|(_, t)| (added[&t.series_id].clone(), t.latest_air.clone()))
+                .collect()
+        };
+        assert!(cfg.max_new_per_run > 0);
+        assert!(run_budget(&entries_of(&all), &cfg) > cfg.max_queries_per_run);
+        drop_unrequested(&mut all, &[m]);
+        assert_eq!(run_budget(&entries_of(&all), &cfg), cfg.max_queries_per_run);
+    }
+
+    // --- run() de bout en bout : Jellyseerr lu avant toute requête à l'indexer ---
+
+    mod run {
+        use super::*;
+        use crate::secret::Secret;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        fn secrets(prowlarr: bool) -> crate::config::Secrets {
+            crate::config::Secrets {
+                sonarr_api_key: Secret::new("k"),
+                radarr_api_key: Secret::new("k"),
+                prowlarr_api_key: prowlarr.then(|| Secret::new("k")),
+                jellyfin_api_key: Secret::new("k"),
+                jellyseerr_api_key: Secret::new("k"),
+                jellyfin_lib_films: String::new(),
+                jellyfin_lib_series: String::new(),
+                jellyfin_lib_extra: Vec::new(),
+                seedbox_radarr_api_key: Some(Secret::new("k")),
+                seedbox_sonarr_api_key: Some(Secret::new("k")),
+                seedbox_qbit_password: None,
+                seedbox_bazarr_api_key: None,
+                jellyfin_public_url: String::new(),
+                jellyseerr_public_url: String::new(),
+                onboard_public_url: None,
+                onboard_fallback_url: None,
+                guide_contact_email: None,
+                guide_contact_discord: None,
+                chat_admin_email: None,
+                discord_webhook_members: None,
+                discord_webhook_admin: None,
+                discord_role_members: None,
+                quality_profile_id: 6,
+                onboard_token: None,
+                status_token: None,
+                admin_trusted_ips: Vec::new(),
+                russian_route_users: Vec::new(),
+                seedbox_jackett_api_key: None,
+                donation: None,
+                donation_notify_email: String::new(),
+                smtp: None,
+                paypal: None,
+                premium_public_url: None,
+                media_mail_preview_to: None,
+                media_mail_optout: Vec::new(),
+            }
+        }
+
+        /// Sonarr de la seedbox : Lupin (128), saison 3 complète, S1 (E01–E05) et S2 manquantes et suivies.
+        async fn sonarr() -> MockServer {
+            let server = MockServer::start().await;
+            let season = |n: i64, files: i64, total: i64| {
+                json!({"seasonNumber": n, "monitored": true,
+                       "statistics": {"episodeFileCount": files, "totalEpisodeCount": total}})
+            };
+            let added = chrono::Utc::now().to_rfc3339();
+            Mock::given(method("GET"))
+                .and(path("/api/v3/series"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                    "id": 128, "title": "Lupin", "tvdbId": 362753, "monitored": true, "added": added,
+                    "seasons": [season(1, 5, 10), season(2, 0, 7), season(3, 8, 8)]
+                }])))
+                .mount(&server)
+                .await;
+            let missing: Vec<Value> = (1..=5)
+                .map(|e| (1, e))
+                .chain((1..=7).map(|e| (2, e)))
+                .map(|(s, e)| {
+                    json!({"seriesId": 128, "seasonNumber": s, "episodeNumber": e,
+                           "airDateUtc": "2021-01-08T08:00:00Z", "monitored": true})
+                })
+                .collect();
+            Mock::given(method("GET"))
+                .and(path("/api/v3/wanted/missing"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"records": missing, "totalRecords": 12})),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v3/queue"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"records": [], "totalRecords": 0})),
+                )
+                .mount(&server)
+                .await;
+            server
+        }
+
+        /// Prowlarr qui ne doit recevoir aucune requête (vérifié à la destruction du serveur).
+        async fn prowlarr_never_called() -> MockServer {
+            let server = MockServer::start().await;
+            Mock::given(wiremock::matchers::any())
+                .respond_with(ResponseTemplate::new(500))
+                .expect(0)
+                .mount(&server)
+                .await;
+            server
+        }
+
+        async fn seerr(status: u16, body: Value) -> MockServer {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/api/v1/request"))
+                .respond_with(ResponseTemplate::new(status).set_body_json(body))
+                .mount(&server)
+                .await;
+            server
+        }
+
+        fn ctx(
+            dir: &std::path::Path,
+            sonarr: &MockServer,
+            prowlarr: &MockServer,
+            seerr: &MockServer,
+        ) -> TaskContext {
+            let raw = format!(
+                r#"
+[paths]
+base = "{d}"
+downloads = "{d}"
+state_file = "{d}/state.json"
+[urls]
+sonarr = "http://127.0.0.1:9/"
+radarr = "http://127.0.0.1:9/"
+prowlarr = "{p}/"
+qbittorrent = "http://127.0.0.1:9/"
+jellyfin = "http://127.0.0.1:9/"
+jellyseerr = "{j}/"
+[seedbox]
+enabled = true
+sonarr_url = "{s}/"
+radarr_url = "{s}/"
+jellyseerr_sonarr_id = 1
+"#,
+                d = dir.display(),
+                p = prowlarr.uri(),
+                j = seerr.uri(),
+                s = sonarr.uri(),
+            );
+            let cfg: Config = toml::from_str(&raw).unwrap();
+            TaskContext::new(cfg, secrets(true), false).unwrap()
+        }
+
+        #[tokio::test]
+        async fn lupin_cascade_searches_nothing_and_says_so() {
+            let dir = tempfile::tempdir().unwrap();
+            let (s, p) = (sonarr().await, prowlarr_never_called().await);
+            let j = seerr(
+                200,
+                json!({"pageInfo": {"results": 1}, "results": [tv(1, 128, Some(1), Some(362753), &[(3, 2)])]}),
+            )
+            .await;
+            let report = SeriesSearch
+                .run(&ctx(dir.path(), &s, &p, &j))
+                .await
+                .unwrap();
+            assert_eq!(report.summary, "not_requested=2");
+        }
+
+        #[tokio::test]
+        async fn an_unreadable_jellyseerr_stops_the_run_before_any_search() {
+            let dir = tempfile::tempdir().unwrap();
+            let (s, p) = (sonarr().await, prowlarr_never_called().await);
+            let j = seerr(500, json!({})).await;
+            let err = SeriesSearch
+                .run(&ctx(dir.path(), &s, &p, &j))
+                .await
+                .unwrap_err();
+            assert!(format!("{err:#}").contains("aucune recherche"), "{err:#}");
+        }
+
+        #[tokio::test]
+        async fn a_partly_read_request_list_stops_the_run_before_any_search() {
+            let dir = tempfile::tempdir().unwrap();
+            let (s, p) = (sonarr().await, prowlarr_never_called().await);
+            // 2 demandes annoncées, une seule lue (la seconde a glissé d'une page) : rien n'est cherché
+            let j = seerr(
+                200,
+                json!({"pageInfo": {"results": 2}, "results": [tv(1, 128, Some(1), Some(362753), &[(3, 2)])]}),
+            )
+            .await;
+            let err = SeriesSearch
+                .run(&ctx(dir.path(), &s, &p, &j))
+                .await
+                .unwrap_err();
+            assert!(
+                format!("{err:#}").contains("lues en partie (1/2)"),
+                "{err:#}"
+            );
+        }
     }
 }

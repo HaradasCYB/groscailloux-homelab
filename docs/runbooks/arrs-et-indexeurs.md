@@ -236,6 +236,22 @@ propre runbook : [voie-russe.md](voie-russe.md).
   de ses fichiers bute, elle serait rangée en TVDB S3. Même piège attendu pour d'autres séries Netflix en Parties :
   vérifier `useSceneNumbering` de la fiche et le journal « saison forcée ».
   Les fausses entrées se suppriment à la main (fichiers de la mauvaise saison), après avoir vérifié leur `sceneSeasonNumber`.
+- **Seules les saisons demandées sont cherchées** (1.30.2, cascade Lupin du 28/10) : `monitor_sync` suit toute saison
+  qui a des fichiers (`|| has_files`, gardé pour les mises à niveau), même mal rangés ; `series_search` la cherchait
+  ensuite comme une demande (S3 demandée ⇒ S2 puis S1 prises). Désormais `series_search` écarte toute saison d'une série
+  gérée par Jellyseerr qui n'y est pas demandée (`requested_here`, même notion que `monitor_sync` : statuts 3 et 4
+  exclus, routage par `media.serviceId`, saisons supprimées par `deletion_cleanup` retirées sauf nouvelle demande) ;
+  résumé `not_requested=<n>`, détail en `debug` (`RUST_LOG=debug`). Restent cherchées comme avant : les séries inconnues
+  de Jellyseerr (ajoutées à la main), celles qui n'ont que des demandes d'un autre titre (`media.tvdbId` différent de
+  la fiche, id Sonarr périmé côté Jellyseerr : une fiche de la seedbox le 29/10 ; ces demandes sont ignorées, les autres
+  demandes de la fiche comptent seules), et les séries déplacées du VPS vers la seedbox (leur
+  demande garde le `serviceId` du VPS). Jellyseerr illisible ou lu en partie : le passage échoue **sans rien chercher**
+  (alerte après `[alerts] fail_streak`). Risques restants, non couverts : le **RSS** de Sonarr seedbox peut encore
+  prendre une release récente d'une saison suivie non demandée (faible : le flux ne porte que des sorties récentes) ;
+  la **voie russe** (`anime_library` `SeriesSearch`, `russian_search`) suit le suivi Sonarr. Une saison demandée après
+  avoir été cherchée sans demande garde son délai `due` (jusqu'à `grabbed_retry_hours`, 7 j) : la lancer par
+  `/recherche` ; une telle saison peut aussi rester dans « Saisons sans release » de `/status.html` (affichage seul).
+  Pour reprendre une saison non demandée : la demander dans Jellyseerr, ou `/recherche`.
 - Pistes par défaut fausses dans un pack (ex. piste russe par défaut) : corriger sur des **copies** (`mkvpropedit`),
   jamais sur les fichiers du torrent, qui doivent rester intacts pour le partage.
 

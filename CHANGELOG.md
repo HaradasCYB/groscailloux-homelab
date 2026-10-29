@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.30.1](#1301--29102026--saisons-netflix-en-parties-rangées-dans-la-bonne-saison)** | 29/10/2026 | **Saisons Netflix en « Parties » rangées dans la bonne saison** |
+| **[1.30.2](#1302--29102026--une-saison-non-demandée-nest-plus-téléchargée)** | 29/10/2026 | **Une saison non demandée n'est plus téléchargée** |
+| [1.30.1](#1301--29102026--saisons-netflix-en-parties-rangées-dans-la-bonne-saison) | 29/10/2026 | Saisons Netflix en « Parties » rangées dans la bonne saison |
 | [1.30.0](#1300--27102026---continuer-à-regarder--à-la-carte-et-filtre-de-durée) | 27/10/2026 | « Continuer à regarder » à la carte et filtre de durée |
 | [1.29.0](#1290--21102026--liste-rouge-et-imports-partiels-signalés) | 21/10/2026 | Liste rouge et imports partiels signalés |
 | [1.28.0](#1280--15102026--mails-aux-couleurs-de-groscailloux-tv) | 15/10/2026 | Mails aux couleurs de Groscailloux TV |
@@ -41,6 +42,30 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.30.2 — 29/10/2026 — Une saison non demandée n'est plus téléchargée
+
+Correction : une saison que personne n'a demandée, suivie dans Sonarr seulement parce qu'elle contient des fichiers,
+n'est plus cherchée ni téléchargée par homelabd (commit à venir).
+
+### Pour les membres
+
+- Demander une seule saison d'une série ne fait plus télécharger les autres : seules les saisons demandées dans
+  Jellyseerr sont cherchées automatiquement.
+
+### Pour l'administrateur
+
+- `series_search` ne cherche plus que les saisons **demandées** (même notion que `monitor_sync` : statuts refusé et en
+  échec exclus, demande routée par `media.serviceId`, saison supprimée par `deletion_cleanup` écartée tant qu'elle
+  n'est pas redemandée). Cascade Lupin du 28/10 : une saison 3 demandée seule, des fichiers mal rangés en saison 2,
+  `monitor_sync` la rend suivie (`|| has_files`), `series_search` la prend, et de même pour la saison 1. Les séries
+  inconnues de Jellyseerr (ajoutées à la main) restent cherchées comme avant ; les demandes d'un autre titre (tvdbId
+  différent, id Sonarr périmé côté Jellyseerr) sont ignorées, et une fiche qui n'a que de telles demandes est cherchée
+  comme avant ; le suivi et les mises à niveau par le RSS de Sonarr ne changent pas. Jellyseerr est
+  lu après les fiches Sonarr, en entier : illisible ou lu en partie, le passage échoue sans aucune requête à
+  l'indexeur. Résumé : `not_requested=<n>` ; détail par saison en `debug`. Aucune clé ajoutée à `homelab.toml`.
+  Détail : [AUTOMATION.md](docs/AUTOMATION.md#series_search--10-min-remplace-unknown_series_grab) et
+  [arrs-et-indexeurs.md](docs/runbooks/arrs-et-indexeurs.md).
 
 ## 1.30.1 — 29/10/2026 — Saisons Netflix en « Parties » rangées dans la bonne saison
 
