@@ -46,7 +46,7 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 ## 1.30.2 — 29/10/2026 — Une saison non demandée n'est plus téléchargée
 
 Correction : une saison que personne n'a demandée, suivie dans Sonarr seulement parce qu'elle contient des fichiers,
-n'est plus cherchée ni téléchargée par homelabd (commit à venir).
+n'est plus cherchée ni téléchargée par homelabd (936d65a).
 
 ### Pour les membres
 
