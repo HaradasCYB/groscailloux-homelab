@@ -48,7 +48,7 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 ## 1.30.4 — 30/10/2026 — Série sortie le jour même reprise toutes les 2 h
 
 Correction : une saison cherchée trop tôt après sa sortie, avant que C411 ne la publie, n'attend plus le lendemain ;
-elle est reprise toutes les 2 h pendant 48 h (commit à venir).
+elle est reprise toutes les 2 h pendant 48 h (commit 0111e5d).
 
 ### Pour les membres
 
