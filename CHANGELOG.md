@@ -47,7 +47,7 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 ## 1.30.3 — 30/10/2026 — Films français cherchés malgré une date TMDB tardive
 
 Correction : un film français sorti en salle depuis plus de 110 jours est cherché même quand TMDB ne connaît qu'une
-date de DVD ou une date numérique encore à venir.
+date de DVD ou une date numérique encore à venir (bfaeb6b).
 
 ### Pour les membres
 
