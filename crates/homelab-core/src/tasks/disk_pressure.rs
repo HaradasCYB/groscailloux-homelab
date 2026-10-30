@@ -147,6 +147,7 @@ mod tests {
             ratio_limit: -2.0,
             seeding_time_limit: -2,
             completion_on: done,
+            added_on: 0,
             size: 1,
             progress: 1.0,
             content_path: String::new(),

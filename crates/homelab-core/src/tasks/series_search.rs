@@ -797,6 +797,179 @@ pub fn fallback_due(
     (r.outcome == "fallback_none").then(|| c411_up || now - r.at >= fallback_h * 3600)
 }
 
+/// Diffusion (RFC 3339) en secondes depuis l'époque ; vide ou illisible : `None`.
+fn air_secs(latest_air: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(latest_air)
+        .ok()
+        .map(|d| d.timestamp())
+}
+
+/// Fenêtre de sortie ouverte : le dernier épisode manquant est diffusé depuis **au plus** `window_h` heures. Date
+/// vide ou illisible, diffusion à venir, ou fenêtre coupée (`window_h = 0`) : non (on garde la reprise normale).
+pub fn in_release_window(latest_air: &str, now: i64, window_h: i64) -> bool {
+    window_h > 0
+        && air_secs(latest_air)
+            .is_some_and(|a| (0..=window_h.saturating_mul(3600)).contains(&(now - a)))
+}
+
+/// Délai (secondes) avant de reprendre une saison après un passage de résultat `outcome`, `latest_air` étant la
+/// diffusion du dernier épisode manquant. **Seule** règle de délai des séries : la décision (`season_due`) et
+/// l'onglet Demandes (`record_wait_secs`) la partagent. `fallback_none` est réglé à part (`fallback_due`).
+///
+/// Fenêtre de sortie (1.30.4, Dead-End Job du 2026-10-30) : une saison sans release (`none`) dont le dernier
+/// épisode manquant est sorti depuis au plus `release_window_hours` est reprise toutes les `release_retry_hours`.
+/// Avant, elle attendait `retry_after_hours` (24 h) même cherchée une heure après sa sortie, avant que C411 ne
+/// l'ait : 8 épisodes diffusés à 04:00 UTC, cherchés à 08:15 (rien), sur C411 le jour même, repris le lendemain.
+pub fn season_wait_secs(
+    outcome: &str,
+    latest_air: &str,
+    now: i64,
+    cfg: &crate::config::SeriesSearch,
+) -> i64 {
+    let h = |n: i64| n.saturating_mul(3600);
+    match outcome {
+        "grabbed" => h(cfg.grabbed_retry_hours),
+        // des épisodes viennent d'être pris : on reprend vite, le temps de l'import
+        "grabbed_episode" => h(cfg.grabbed_retry_hours).min(cfg.episode_retry_mins * 60),
+        "error" => h(cfg.error_retry_hours),
+        super::movie_search::VO_WAIT => h(cfg.release_retry_hours),
+        "none" if in_release_window(latest_air, now, cfg.release_window_hours) => {
+            h(cfg.release_retry_hours).min(h(cfg.retry_after_hours))
+        }
+        _ => h(cfg.retry_after_hours),
+    }
+}
+
+/// Faut-il (re)chercher cette saison ? (Hors `fallback_none`, décidé avant par `fallback_due`.)
+pub fn season_due(
+    rec: Option<&SeasonSearchRecord>,
+    latest_air: &str,
+    now: i64,
+    cfg: &crate::config::SeriesSearch,
+) -> bool {
+    rec.is_none_or(|r| now - r.at >= season_wait_secs(&r.outcome, latest_air, now, cfg))
+}
+
+/// Délai affiché par l'onglet Demandes pour un passage enregistré : la règle de `season_wait_secs` sur la date
+/// gardée dans l'enregistrement, et `fallback_retry_hours` pour un secours sans résultat (souvent moins : la saison
+/// repart dès que C411 répond). Limite connue : un épisode diffusé après le passage rouvre la fenêtre sans que la
+/// date gardée le sache ; la recherche part alors plus tôt que l'affichage.
+pub fn record_wait_secs(
+    rec: &SeasonSearchRecord,
+    now: i64,
+    cfg: &crate::config::SeriesSearch,
+    fallback_h: i64,
+) -> i64 {
+    if rec.outcome == "fallback_none" {
+        return fallback_h.saturating_mul(3600);
+    }
+    season_wait_secs(&rec.outcome, &rec.latest_air, now, cfg)
+}
+
+/// Reprise rapide par identifiant **seul** : la fenêtre de sortie est ouverte et un passage complet (identifiant
+/// puis texte libre) a déjà eu lieu après la dernière diffusion, il y a moins de `retry_after_hours`. Les noms en
+/// texte libre ne changent pas d'une reprise à l'autre (Dead-End Job : « 꿀알바 » puis « Dead-End Job », 2 requêtes
+/// perdues à chaque fois) ; ils sont refaits au premier passage après une diffusion, puis toutes les
+/// `retry_after_hours` comme avant — une série trouvée par son seul nom n'attend pas plus qu'avant 1.30.4.
+pub fn id_only_retry(
+    rec: Option<&SeasonSearchRecord>,
+    latest_air: &str,
+    now: i64,
+    cfg: &crate::config::SeriesSearch,
+) -> bool {
+    let (Some(r), Some(air)) = (rec, air_secs(latest_air)) else {
+        return false;
+    };
+    in_release_window(latest_air, now, cfg.release_window_hours)
+        && r.full_at > air
+        && now - r.full_at < cfg.retry_after_hours.saturating_mul(3600)
+}
+
+/// `full_at` à enregistrer après un passage : daté s'il était complet (texte libre permis), sinon celui d'avant —
+/// reprise par identifiant seul, erreur (le texte n'a peut-être jamais été essayé) ou secours public (C411 en panne).
+pub fn next_full_at(id_only: bool, outcome: &str, prev: i64, at: i64) -> i64 {
+    if id_only || matches!(outcome, "error" | "fallback_none") {
+        prev
+    } else {
+        at
+    }
+}
+
+/// Release d'une série **hors animé** sans audio français (VOSTFR, VO) publiée depuis moins de `hours` heures : pas
+/// prise, la VF suit souvent de peu et le profil ne remplace jamais un fichier pris (`upgradeAllowed = false`).
+/// Même règle que `movie_search::fresh_without_french`. Animé : jamais (la VOSTFR y est la norme, `lang_rank_for`).
+pub fn vo_fresh(c: &Candidate, now: i64, hours: i64, anime: bool) -> bool {
+    !anime && hours > 0 && super::movie_search::fresh_without_french(&c.release, now, hours)
+}
+
+/// Parmi les releases mises de côté par `vo_fresh`, une serait-elle prise (pack ou épisode manquant, mêmes règles
+/// que le choix normal) ? Alors le passage attend (`vo_wait`) au lieu de conclure « rien ».
+fn vo_wait_applies(
+    fresh: &[Candidate],
+    todo: &SeasonTodo,
+    allowed: &HashSet<i64>,
+    ix: &crate::config::Indexers,
+) -> bool {
+    !fresh.is_empty()
+        && (choose_sized(
+            fresh,
+            todo.season,
+            true,
+            &todo.missing_numbers,
+            todo.dated_missing.len(),
+            allowed,
+            ix.max_gb_per_episode,
+            ix.allow_no_french,
+        )
+        .is_some()
+            || !choose_episodes(
+                fresh,
+                todo.season,
+                &todo.missing_numbers,
+                allowed,
+                ix.max_gb_per_episode,
+                ix.allow_no_french,
+                1,
+            )
+            .is_empty())
+}
+
+/// Torrent terminé depuis moins de ce délai et pas encore jugé par `torrent_import` (toutes les 2 min) : sa saison
+/// n'est pas recherchée, le temps de l'import.
+pub const IMPORT_GRACE_SECS: i64 = 3600;
+
+/// Saisons `(série, saison)` d'un torrent étiqueté `homelab:series=<id>:season=<n>` (cours compris) **en cours** dans
+/// le qBittorrent de ce côté : ajouté depuis moins de `max_age_secs` et pas terminé, ou terminé depuis moins de
+/// `IMPORT_GRACE_SECS` sans jugement définitif de `torrent_import`. Ces torrents ne sont pas dans la file de l'Arr
+/// (ajoutés sans catégorie) : sans ce garde-fou, une reprise pendant le téléchargement prendrait une autre release de
+/// la même saison (doublon sur le quota) ou réétiquetterait le torrent. Date d'ajout inconnue (0) ou plus ancienne
+/// que `max_age_secs` : ignoré (un torrent arrêté ne bloque jamais une saison plus longtemps qu'avant).
+pub fn seasons_in_qbit(
+    torrents: &[crate::clients::Torrent],
+    imports: &BTreeMap<String, crate::state::TorrentImportRecord>,
+    side: &str,
+    now: i64,
+    max_age_secs: i64,
+) -> HashSet<(i64, i64)> {
+    torrents
+        .iter()
+        .filter(|t| {
+            if t.progress < 1.0 {
+                t.added_on > 0 && now - t.added_on < max_age_secs
+            } else {
+                let key = super::torrent_import::state_key(side, &t.hash);
+                t.completion_on > 0
+                    && now - t.completion_on < IMPORT_GRACE_SECS
+                    && imports.get(&key).is_none_or(|r| !r.is_final())
+            }
+        })
+        .filter_map(|t| match crate::requests_progress::homelab_tag(&t.tags)? {
+            (false, id, Some(season)) => Some((id, season)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Refus de l'Arr qui ne tiennent qu'à l'identification ou à l'état de l'indexeur : on passe alors par
 /// qBittorrent. Tout autre refus (liste noire, taille, profil…) est respecté.
 pub fn bypassable_rejection(reason: &str) -> bool {
@@ -1252,6 +1425,10 @@ struct SeasonTodo {
     /// Parmi `missing_numbers`, ceux qui ont une date de diffusion passée (`wanted/missing`) : les autres sont des
     /// épisodes sans date, qu'on ne sait pas être sortis. Sert à jauger la taille d'un pack (`choose_sized`).
     dated_missing: HashSet<i64>,
+    /// Reprise rapide : identifiant seul, pas de texte libre (`id_only_retry`).
+    id_only: bool,
+    /// `full_at` du passage précédent, gardé tel quel après une reprise par identifiant seul.
+    full_at: i64,
 }
 
 async fn names_for(ctx: &TaskContext, series: &Value) -> Vec<String> {
@@ -1517,6 +1694,10 @@ async fn season_candidates(
                 "identifiant incomplet : complément en texte libre"
             );
         }
+    }
+    // reprise rapide dans la fenêtre de sortie (`id_only_retry`) : les noms ont déjà été essayés après la diffusion
+    if todo.id_only && tmdb > 0 {
+        return Ok((out, packs, integrales, "tmdb seul, reprise rapide"));
     }
     // complément (ou secours) : titres de la fiche en texte libre. Les releases déjà vues par
     // identifiant sont ignorées, le garde-fou de saison reste le même.
@@ -2080,6 +2261,18 @@ async fn process_season(
         .unwrap_or(0);
     let allowed = allowed_qualities(&arr.quality_profile(profile_id).await?);
     let ix = &ctx.cfg.indexers;
+    let seen = cands.len();
+    // VOSTFR ou VO toute fraîche (hors animé, jamais pendant un secours) : mise de côté le temps qu'une version
+    // française paraisse. Épisode par épisode : les autres épisodes de la saison partent normalement.
+    let (fresh, cands): (Vec<Candidate>, Vec<Candidate>) = if how == "secours" {
+        (Vec::new(), cands)
+    } else {
+        let t = now();
+        let anime = is_anime(series);
+        cands
+            .into_iter()
+            .partition(|c| vo_fresh(c, t, cfg.vo_wait_hours, anime))
+    };
     let pick = |pack: bool| {
         choose_sized(
             &cands,
@@ -2187,6 +2380,19 @@ async fn process_season(
     }
     let chosen = pack.or_else(|| pick(false));
     let Some(c) = chosen else {
+        // rien d'acceptable hors des VOSTFR/VO toutes fraîches : on attend la version française
+        if vo_wait_applies(&fresh, todo, &allowed, ix) {
+            return Ok(SeasonOutcome::new(
+                super::movie_search::VO_WAIT,
+                format!(
+                    "{} release(s) sans audio français de moins de {} h (recherche {how}) : on attend une version \
+                     française",
+                    fresh.len(),
+                    cfg.vo_wait_hours
+                ),
+                left,
+            ));
+        }
         // rien d'acceptable : une intégrale peut contenir la saison (jamais pendant une panne de C411)
         if how != "secours" {
             if let Some(r) =
@@ -2209,8 +2415,7 @@ async fn process_season(
                 )
             } else {
                 format!(
-                    "{} candidat(s) {} (recherche {how}), aucun acceptable{pack_note}",
-                    cands.len(),
+                    "{seen} candidat(s) {} (recherche {how}), aucun acceptable{pack_note}",
                     cfg.indexer
                 )
             },
@@ -2276,6 +2481,8 @@ async fn plan_seasons(
             latest_air: String::new(),
             missing_numbers: HashSet::new(),
             dated_missing: HashSet::new(),
+            id_only: false,
+            full_at: 0,
         });
         t.missing_numbers.insert(num);
         t.dated_missing.insert(num);
@@ -2310,6 +2517,8 @@ async fn plan_seasons(
                     latest_air: String::new(),
                     missing_numbers: HashSet::new(),
                     dated_missing: HashSet::new(),
+                    id_only: false,
+                    full_at: 0,
                 });
                 t.missing_numbers.insert(num);
                 if latest > t.latest_air {
@@ -2354,7 +2563,7 @@ async fn plan_seasons(
             .await?;
     }
     let t = now();
-    Ok(by
+    let mut todo: Vec<SeasonTodo> = by
         .into_values()
         .filter(|s| !queued.contains(&(s.series_id, s.season)))
         // voie russe : RuTracker par l'Arr (anime_library), jamais C411
@@ -2365,20 +2574,59 @@ async fn plan_seasons(
         })
         .filter(|s| {
             let rec = records.get(&key(arr, s.series_id, s.season));
-            fallback_due(rec, t, ctx.cfg.indexers.fallback_retry_hours, c411_up).unwrap_or_else(
-                || {
-                    due(
-                        rec,
-                        t,
-                        cfg.retry_after_hours,
-                        cfg.grabbed_retry_hours,
-                        cfg.error_retry_hours,
-                        cfg.episode_retry_mins,
-                    )
-                },
-            )
+            fallback_due(rec, t, ctx.cfg.indexers.fallback_retry_hours, c411_up)
+                .unwrap_or_else(|| season_due(rec, &s.latest_air, t, cfg))
         })
-        .collect())
+        .map(|mut s| {
+            let rec = records.get(&key(arr, s.series_id, s.season));
+            let tmdb = series
+                .get(&s.series_id)
+                .and_then(|v| v.get("tmdbId").and_then(Value::as_i64))
+                .unwrap_or(0);
+            // sans identifiant TMDB, le texte libre est le seul chemin : jamais sauté
+            s.id_only = tmdb > 0 && id_only_retry(rec, &s.latest_air, t, cfg);
+            s.full_at = rec.map_or(0, |r| r.full_at);
+            s
+        })
+        .collect();
+    // torrents étiquetés en cours dans qBittorrent (hors file de l'Arr) : leur saison attend la fin de l'import.
+    // Lecture seule, une fois par passage ; qBittorrent illisible = pas de garde-fou (comportement d'avant 1.30.4).
+    if !todo.is_empty() {
+        if let Some(qbit) = qbit_for(ctx, arr) {
+            match qbit.torrents().await {
+                Ok(list) => {
+                    let imports = ctx.state.read(|s| s.torrent_import.clone()).await;
+                    let busy = seasons_in_qbit(
+                        &list,
+                        &imports,
+                        side_name(arr),
+                        t,
+                        cfg.retry_after_hours.saturating_mul(3600),
+                    );
+                    todo.retain(|s| {
+                        let keep = !busy.contains(&(s.series_id, s.season));
+                        if !keep {
+                            debug!(
+                                task = "series_search",
+                                service = arr.name,
+                                series_id = s.series_id,
+                                season = s.season,
+                                "torrent de cette saison en cours dans qBittorrent : pas de recherche"
+                            );
+                        }
+                        keep
+                    });
+                }
+                Err(e) => warn!(
+                    task = "series_search",
+                    service = arr.name,
+                    error = format!("{e:#}"),
+                    "qBittorrent illisible : saisons en téléchargement non écartées"
+                ),
+            }
+        }
+    }
+    Ok(todo)
 }
 
 fn key(arr: &ArrClient, series: i64, season: i64) -> String {
@@ -2703,12 +2951,16 @@ impl Task for SeriesSearch {
             let sname = ser.get("title").and_then(Value::as_str).unwrap_or("?");
             info!(task = "series_search", service = c.arr.name, series = sname, season = s.season, %outcome, %detail, "season searched");
             if !ctx.dry_run {
+                let at = now();
+                let full_at = next_full_at(s.id_only, &outcome, s.full_at, at);
                 let rec = SeasonSearchRecord {
-                    at: now(),
+                    at,
                     outcome,
                     detail,
                     title: sname.to_string(),
                     uncovered,
+                    latest_air: s.latest_air.clone(),
+                    full_at,
                 };
                 let k = key(c.arr, s.series_id, s.season);
                 ctx.state
@@ -2830,6 +3082,7 @@ mod tests {
             detail: String::new(),
             title: "Bleach".into(),
             uncovered: unc,
+            ..Default::default()
         };
         let mut records = BTreeMap::new();
         records.insert("sonarr-seedbox:5:17".to_string(), rec(vec![27, 28])); // complète depuis
@@ -3631,6 +3884,7 @@ mod tests {
             detail: String::new(),
             title: String::new(),
             uncovered: Vec::new(),
+            ..Default::default()
         };
         assert!(due(None, 1000, 24, 168, 1, 15));
         assert!(!due(Some(&r("none", 0)), 23 * 3600, 24, 168, 1, 15));
@@ -3905,6 +4159,8 @@ mod requested_filter_tests {
             latest_air: "2021-01-08T08:00:00Z".into(),
             missing_numbers: HashSet::from([1]),
             dated_missing: HashSet::from([1]),
+            id_only: false,
+            full_at: 0,
         }
     }
 
@@ -4370,5 +4626,1243 @@ jellyseerr_sonarr_id = 1
                 "{err:#}"
             );
         }
+
+        // --- 1.30.4 : fenêtre de sortie, Dead-End Job de bout en bout (compteur de requêtes à l'indexer) ---
+
+        /// Sonarr de la seedbox : Dead-End Job (129), saison 1 = 8 épisodes tous diffusés il y a 5 h, aucun fichier,
+        /// aucun titre alternatif (le titre français « Un job mortel » n'existe dans aucune source).
+        async fn sonarr_dead_end_job(aired: &str) -> MockServer {
+            let server = MockServer::start().await;
+            let added = (chrono::Utc::now() - chrono::Duration::hours(3)).to_rfc3339();
+            Mock::given(method("GET"))
+                .and(path("/api/v3/series"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                    "id": 129, "title": "Dead-End Job", "tvdbId": 462838, "tmdbId": 289517,
+                    "monitored": true, "added": added, "seriesType": "standard", "qualityProfileId": 7,
+                    "alternateTitles": [],
+                    "seasons": [{"seasonNumber": 1, "monitored": true,
+                                 "statistics": {"episodeFileCount": 0, "totalEpisodeCount": 8}}]
+                }])))
+                .mount(&server)
+                .await;
+            let missing: Vec<Value> = (1..=8)
+                .map(|e| {
+                    json!({"seriesId": 129, "seasonNumber": 1, "episodeNumber": e,
+                           "airDateUtc": aired, "monitored": true})
+                })
+                .collect();
+            Mock::given(method("GET"))
+                .and(path("/api/v3/wanted/missing"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"records": missing, "totalRecords": 8})),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v3/queue"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"records": [], "totalRecords": 0})),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v3/qualityprofile/7"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": []})))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v3/parse"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                .mount(&server)
+                .await;
+            server
+        }
+
+        /// Prowlarr : une clé « C411 » ; toute recherche renvoie une release d'une AUTRE œuvre (liste non vide : pas
+        /// de sonde de panne), donc « rien d'acceptable », comme C411 le 30/10 à 08:15 UTC.
+        async fn prowlarr_nothing_for_us() -> MockServer {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/api/v1/indexer"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!([{"id": 1, "name": "C411"}])),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v1/search"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                    "title": "Some.Other.Show.S01.MULTi.1080p.WEB.x264-GRP", "tmdbId": 1,
+                    "downloadUrl": "http://127.0.0.1:9/1", "seeders": 5, "size": 1000
+                }])))
+                .mount(&server)
+                .await;
+            server
+        }
+
+        async fn seerr_dead_end_job() -> MockServer {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/api/v1/request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "pageInfo": {"results": 1},
+                    "results": [tv(1, 129, Some(1), Some(462838), &[(1, 2)])]
+                })))
+                .mount(&server)
+                .await;
+            // TMDB n'a pas de traduction française : Jellyseerr renvoie le titre coréen dans les deux champs
+            Mock::given(method("GET"))
+                .and(path("/api/v1/tv/289517"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"name": "꿀알바", "originalName": "꿀알바"})),
+                )
+                .mount(&server)
+                .await;
+            server
+        }
+
+        fn ctx_fast(
+            dir: &std::path::Path,
+            sonarr: &MockServer,
+            prowlarr: &MockServer,
+            seerr: &MockServer,
+        ) -> TaskContext {
+            let raw = format!(
+                r#"
+[paths]
+base = "{d}"
+downloads = "{d}"
+state_file = "{d}/state.json"
+[urls]
+sonarr = "http://127.0.0.1:9/"
+radarr = "http://127.0.0.1:9/"
+prowlarr = "{p}/"
+qbittorrent = "http://127.0.0.1:9/"
+jellyfin = "http://127.0.0.1:9/"
+jellyseerr = "{j}/"
+[seedbox]
+enabled = true
+sonarr_url = "{s}/"
+radarr_url = "{s}/"
+jellyseerr_sonarr_id = 1
+[downloads]
+auto_sides = ["seedbox"]
+[tasks.series_search]
+query_gap_secs = 0
+"#,
+                d = dir.display(),
+                p = prowlarr.uri(),
+                j = seerr.uri(),
+                s = sonarr.uri(),
+            );
+            let cfg: Config = toml::from_str(&raw).unwrap();
+            TaskContext::new(cfg, secrets(true), false).unwrap()
+        }
+
+        async fn searches(prowlarr: &MockServer) -> usize {
+            prowlarr
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|r| r.url.path() == "/api/v1/search")
+                .count()
+        }
+
+        const KEY: &str = "sonarr-seedbox:129:1";
+
+        /// Lance un passage avec un état préparé ; renvoie (résumé, recherches à l'indexer, enregistrement après).
+        async fn pass(
+            prev: Option<SeasonSearchRecord>,
+        ) -> (String, usize, Option<SeasonSearchRecord>) {
+            let dir = tempfile::tempdir().unwrap();
+            let aired = (chrono::Utc::now() - chrono::Duration::hours(5)).to_rfc3339();
+            let (s, p, j) = (
+                sonarr_dead_end_job(&aired).await,
+                prowlarr_nothing_for_us().await,
+                seerr_dead_end_job().await,
+            );
+            let c = ctx_fast(dir.path(), &s, &p, &j);
+            if let Some(r) = prev {
+                c.state
+                    .update(|st| st.unknown_series.insert(KEY.into(), r))
+                    .await
+                    .unwrap();
+            }
+            let report = SeriesSearch.run(&c).await.unwrap();
+            let after = c.state.read(|st| st.unknown_series.get(KEY).cloned()).await;
+            (report.summary, searches(&p).await, after)
+        }
+
+        #[tokio::test]
+        async fn dead_end_job_first_pass_is_complete_id_then_two_names() {
+            // aucun passage : identifiant + « 꿀알바 » + « Dead-End Job » (3 requêtes, comme le 30/10 à 08:15 UTC)
+            let (summary, n, rec) = pass(None).await;
+            assert_eq!(summary, "none=1");
+            assert_eq!(n, 3);
+            let rec = rec.unwrap();
+            assert_eq!(rec.outcome, "none");
+            assert_eq!(rec.full_at, rec.at, "passage complet daté");
+            assert!(!rec.latest_air.is_empty());
+        }
+
+        #[tokio::test]
+        async fn dead_end_job_is_retried_two_hours_later_by_id_only() {
+            // cherchée 2 h 01 plus tôt (4 h après la sortie), rien : reprise le jour même, UNE requête
+            let at = now() - 2 * 3600 - 60;
+            let prev = SeasonSearchRecord {
+                at,
+                outcome: "none".into(),
+                full_at: at,
+                ..Default::default()
+            };
+            let (summary, n, rec) = pass(Some(prev)).await;
+            assert_eq!(summary, "none=1");
+            assert_eq!(
+                n, 1,
+                "reprise rapide : identifiant seul, pas de texte libre"
+            );
+            let rec = rec.unwrap();
+            assert!(rec.at > at);
+            assert_eq!(rec.full_at, at, "date du dernier passage complet gardée");
+            assert!(rec.detail.contains("reprise rapide"), "{}", rec.detail);
+        }
+
+        #[tokio::test]
+        async fn dead_end_job_is_not_retried_before_two_hours() {
+            let at = now() - 3600;
+            let prev = SeasonSearchRecord {
+                at,
+                outcome: "none".into(),
+                full_at: at,
+                ..Default::default()
+            };
+            let (summary, n, rec) = pass(Some(prev)).await;
+            assert_eq!(summary, "");
+            assert_eq!(n, 0);
+            assert_eq!(rec.unwrap().at, at);
+        }
+
+        #[tokio::test]
+        async fn a_record_from_before_1_30_4_gets_a_complete_pass() {
+            // état d'avant (sans `full_at`) : le premier passage dans la fenêtre refait le texte libre
+            let prev = SeasonSearchRecord {
+                at: now() - 2 * 3600 - 60,
+                outcome: "none".into(),
+                ..Default::default()
+            };
+            let (_, n, rec) = pass(Some(prev)).await;
+            assert_eq!(n, 3);
+            let rec = rec.unwrap();
+            assert_eq!(rec.full_at, rec.at);
+        }
+
+        // --- 1.30.4, contre-revue : envoi, VO fraîche et garde qBittorrent traversés par run() ---
+
+        /// Sonarr seedbox de Dead-End Job avec un `parse` qui lit les titres de test (S01 = pack, S01E0N = épisode)
+        /// et la liste des épisodes (tous diffusés) ; `missing` = épisodes encore manquants.
+        async fn sonarr_dej(aired: &str, missing: &[i64]) -> MockServer {
+            let server = MockServer::start().await;
+            let added = (chrono::Utc::now() - chrono::Duration::hours(3)).to_rfc3339();
+            Mock::given(method("GET"))
+                .and(path("/api/v3/series"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                    "id": 129, "title": "Dead-End Job", "tvdbId": 462838, "tmdbId": 289517,
+                    "monitored": true, "added": added, "seriesType": "standard", "qualityProfileId": 7,
+                    "alternateTitles": [],
+                    "seasons": [{"seasonNumber": 1, "monitored": true,
+                                 "statistics": {"episodeFileCount": 8 - missing.len(), "totalEpisodeCount": 8}}]
+                }])))
+                .mount(&server)
+                .await;
+            let recs: Vec<Value> = missing
+                .iter()
+                .map(|e| {
+                    json!({"seriesId": 129, "seasonNumber": 1, "episodeNumber": e,
+                           "airDateUtc": aired, "monitored": true})
+                })
+                .collect();
+            Mock::given(method("GET"))
+                .and(path("/api/v3/wanted/missing"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"records": recs, "totalRecords": missing.len()})),
+                )
+                .mount(&server)
+                .await;
+            let eps: Vec<Value> = (1..=8)
+                .map(|e| {
+                    json!({"seriesId": 129, "seasonNumber": 1, "episodeNumber": e,
+                           "airDateUtc": aired, "monitored": true, "hasFile": !missing.contains(&e)})
+                })
+                .collect();
+            Mock::given(method("GET"))
+                .and(path("/api/v3/episode"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!(eps)))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v3/queue"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"records": [], "totalRecords": 0})),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v3/qualityprofile/7"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": []})))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v3/parse"))
+                .respond_with(|req: &wiremock::Request| {
+                    let title = req
+                        .url
+                        .query_pairs()
+                        .find(|(k, _)| k == "title")
+                        .map(|(_, v)| v.into_owned())
+                        .unwrap_or_default();
+                    let ep = title
+                        .find("S01E")
+                        .and_then(|i| title.get(i + 4..i + 6))
+                        .and_then(|n| n.parse::<i64>().ok());
+                    let info = json!({
+                        "seasonNumber": 1,
+                        "episodeNumbers": ep.map_or_else(Vec::new, |e| vec![e]),
+                        "fullSeason": ep.is_none(),
+                        "quality": {"quality": {"id": 3, "resolution": 1080}}
+                    });
+                    ResponseTemplate::new(200).set_body_json(json!({"parsedEpisodeInfo": info}))
+                })
+                .mount(&server)
+                .await;
+            server
+        }
+
+        /// Prowlarr « C411 » qui renvoie `releases` à toute recherche (remplacé ensuite par un mock prioritaire qui
+        /// connaît l'adresse du serveur), et un `.torrent` factice sous `/dl/`.
+        async fn prowlarr_with(releases: Value) -> MockServer {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/api/v1/indexer"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!([{"id": 1, "name": "C411"}])),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v1/search"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(releases))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(wiremock::matchers::path_regex("^/dl/"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_bytes(b"d4:infod4:name1:xee".to_vec()),
+                )
+                .mount(&server)
+                .await;
+            server
+        }
+
+        fn release(prowlarr: &MockServer, n: u32, title: &str, published_ago_h: i64) -> Value {
+            let published =
+                (chrono::Utc::now() - chrono::Duration::hours(published_ago_h)).to_rfc3339();
+            json!({"title": title, "tmdbId": 289517, "downloadUrl": format!("{}/dl/{n}", prowlarr.uri()),
+                   "seeders": 20, "size": 1_000_000, "publishDate": published})
+        }
+
+        /// qBittorrent de la seedbox (connexion par cookie) : `torrents/info` renvoie `torrents`, tout ajout réussit.
+        async fn qbit_seedbox(torrents: Value) -> MockServer {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/api/v2/auth/login"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("set-cookie", "SID=test; HttpOnly; path=/")
+                        .set_body_string("Ok."),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v2/torrents/info"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(torrents))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/api/v2/torrents/add"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("Ok."))
+                .mount(&server)
+                .await;
+            server
+        }
+
+        async fn adds(qbit: &MockServer) -> Vec<String> {
+            qbit.received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|r| r.url.path() == "/api/v2/torrents/add")
+                .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+                .collect()
+        }
+
+        /// Comme `ctx_fast`, avec le qBittorrent de la seedbox branché.
+        fn ctx_qbit(
+            dir: &std::path::Path,
+            sonarr: &MockServer,
+            prowlarr: &MockServer,
+            seerr: &MockServer,
+            qbit: &MockServer,
+        ) -> TaskContext {
+            let raw = format!(
+                r#"
+[paths]
+base = "{d}"
+downloads = "{d}"
+state_file = "{d}/state.json"
+[urls]
+sonarr = "http://127.0.0.1:9/"
+radarr = "http://127.0.0.1:9/"
+prowlarr = "{p}/"
+qbittorrent = "http://127.0.0.1:9/"
+jellyfin = "http://127.0.0.1:9/"
+jellyseerr = "{j}/"
+[seedbox]
+enabled = true
+sonarr_url = "{s}/"
+radarr_url = "{s}/"
+jellyseerr_sonarr_id = 1
+qbit_url = "{q}/"
+qbit_user = "u"
+radarr_root = "/r"
+sonarr_root = "/s"
+[downloads]
+auto_sides = ["seedbox"]
+[tasks.series_search]
+query_gap_secs = 0
+"#,
+                d = dir.display(),
+                p = prowlarr.uri(),
+                j = seerr.uri(),
+                s = sonarr.uri(),
+                q = qbit.uri(),
+            );
+            let cfg: Config = toml::from_str(&raw).unwrap();
+            let mut sec = secrets(true);
+            sec.seedbox_qbit_password = Some(Secret::new("k"));
+            TaskContext::new(cfg, sec, false).unwrap()
+        }
+
+        /// Un passage complet sur des serveurs préparés : (résumé, recherches, enregistrement après).
+        async fn pass_on(
+            dir: &std::path::Path,
+            s: &MockServer,
+            p: &MockServer,
+            q: &MockServer,
+            prev: Option<SeasonSearchRecord>,
+        ) -> (String, usize, Option<SeasonSearchRecord>) {
+            let j = seerr_dead_end_job().await;
+            let c = ctx_qbit(dir, s, p, &j, q);
+            if let Some(r) = prev {
+                c.state
+                    .update(|st| st.unknown_series.insert(KEY.into(), r))
+                    .await
+                    .unwrap();
+            }
+            let report = SeriesSearch.run(&c).await.unwrap();
+            let after = c.state.read(|st| st.unknown_series.get(KEY).cloned()).await;
+            (report.summary, searches(p).await, after)
+        }
+
+        #[tokio::test]
+        async fn dead_end_job_retry_by_id_finds_gl0p_and_sends_it_to_the_seedbox() {
+            // (a) reprise rapide 2 h après un passage complet : l'identifiant ramène GL0P, envoyé tel quel
+            let dir = tempfile::tempdir().unwrap();
+            let aired = (chrono::Utc::now() - chrono::Duration::hours(7)).to_rfc3339();
+            let s = sonarr_dej(&aired, &[1, 2, 3, 4, 5, 6, 7, 8]).await;
+            let p = prowlarr_with(json!([])).await;
+            let gl0p = release(
+                &p,
+                1,
+                "Un.Job.Mortel.S01.MULTi.VFF.1080p.WEB.EAC3.5.1.x264-GL0P",
+                1,
+            );
+            Mock::given(method("GET"))
+                .and(path("/api/v1/search"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([gl0p])))
+                .with_priority(1)
+                .mount(&p)
+                .await;
+            let q = qbit_seedbox(json!([])).await;
+            let at = now() - 2 * 3600 - 60;
+            let prev = SeasonSearchRecord {
+                at,
+                outcome: "none".into(),
+                full_at: at,
+                ..Default::default()
+            };
+            let (summary, n, rec) = pass_on(dir.path(), &s, &p, &q, Some(prev)).await;
+            assert_eq!(summary, "grabbed=1");
+            assert_eq!(n, 1, "identifiant seul");
+            let added = adds(&q).await;
+            assert_eq!(added.len(), 1);
+            assert!(
+                added[0].contains("homelab:series=129:season=1"),
+                "{}",
+                added[0]
+            );
+            let rec = rec.unwrap();
+            assert_eq!(rec.outcome, "grabbed");
+            assert!(rec.detail.contains("GL0P"), "{}", rec.detail);
+            assert_eq!(
+                rec.full_at, at,
+                "reprise par identifiant : date du passage complet gardée"
+            );
+        }
+
+        #[tokio::test]
+        async fn mixed_season_sends_the_french_episodes_then_waits_for_the_fresh_vostfr() {
+            // (b) E1-E6 en VFF, E7-E8 en VOSTFR publiée il y a 1 h : E1-E6 partent (grabbed_episode) ; une fois
+            // importés, le passage suivant (E7-E8 manquants) attend la VF (vo_wait)
+            let dir = tempfile::tempdir().unwrap();
+            let aired = (chrono::Utc::now() - chrono::Duration::hours(5)).to_rfc3339();
+            let p = prowlarr_with(json!([])).await;
+            let mut list: Vec<Value> = (1..=6)
+                .map(|e| {
+                    release(
+                        &p,
+                        e,
+                        &format!("Dead-End.Job.S01E0{e}.VFF.1080p.WEB.x264-GRP"),
+                        2,
+                    )
+                })
+                .collect();
+            for e in 7..=8 {
+                list.push(release(
+                    &p,
+                    e,
+                    &format!("Dead-End.Job.S01E0{e}.VOSTFR.1080p.WEB.x264-GRP"),
+                    1,
+                ));
+            }
+            Mock::given(method("GET"))
+                .and(path("/api/v1/search"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!(list)))
+                .with_priority(1)
+                .mount(&p)
+                .await;
+            let q = qbit_seedbox(json!([])).await;
+            let s = sonarr_dej(&aired, &[1, 2, 3, 4, 5, 6, 7, 8]).await;
+            let (summary, _, rec) = pass_on(dir.path(), &s, &p, &q, None).await;
+            assert_eq!(summary, "grabbed_episode=1");
+            let added = adds(&q).await;
+            assert_eq!(added.len(), 6, "E1-E6 seulement");
+            assert!(added
+                .iter()
+                .all(|b| b.contains("homelab:series=129:season=1")));
+            let rec = rec.unwrap();
+            assert_eq!(rec.outcome, "grabbed_episode");
+            assert!(rec.detail.starts_with("6/6"), "{}", rec.detail);
+
+            // E1-E6 importés (rien en cours dans qBittorrent), 6 min plus tard : E7-E8 restent
+            let dir2 = tempfile::tempdir().unwrap();
+            let s2 = sonarr_dej(&aired, &[7, 8]).await;
+            let q2 = qbit_seedbox(json!([])).await;
+            let prev = SeasonSearchRecord {
+                at: now() - 360,
+                ..rec
+            };
+            let (summary, _, rec) = pass_on(dir2.path(), &s2, &p, &q2, Some(prev)).await;
+            assert_eq!(summary, "vo_wait=1");
+            assert!(adds(&q2).await.is_empty(), "VOSTFR fraîche jamais prise");
+            assert_eq!(rec.unwrap().outcome, "vo_wait");
+        }
+
+        #[tokio::test]
+        async fn a_season_whose_tagged_torrent_is_downloading_is_not_searched() {
+            // (c) GL0P pris à la main, en téléchargement (40 %) : la reprise rapide ne cherche rien
+            let dir = tempfile::tempdir().unwrap();
+            let aired = (chrono::Utc::now() - chrono::Duration::hours(5)).to_rfc3339();
+            let s = sonarr_dej(&aired, &[1, 2, 3, 4, 5, 6, 7, 8]).await;
+            let p = prowlarr_nothing_for_us().await;
+            let q = qbit_seedbox(json!([{
+                "hash": "abc", "name": "Un.Job.Mortel.S01.MULTi.VFF.1080p.WEB.EAC3.5.1.x264-GL0P",
+                "tags": "homelab:series=129:season=1", "progress": 0.4,
+                "added_on": now() - 1800, "completion_on": 0
+            }]))
+            .await;
+            let at = now() - 2 * 3600 - 60;
+            let prev = SeasonSearchRecord {
+                at,
+                outcome: "none".into(),
+                full_at: at,
+                ..Default::default()
+            };
+            let (summary, n, rec) = pass_on(dir.path(), &s, &p, &q, Some(prev)).await;
+            assert_eq!(summary, "");
+            assert_eq!(n, 0, "aucune requête à l'indexer");
+            assert!(adds(&q).await.is_empty());
+            assert_eq!(rec.unwrap().at, at, "enregistrement inchangé");
+        }
+    }
+}
+
+/// 1.30.4 : reprise rapide d'une saison sortie le jour même (Dead-End Job, 2026-10-30), VO fraîche, garde qBittorrent.
+#[cfg(test)]
+mod release_window_tests {
+    use super::*;
+    use crate::config::SeriesSearch as Cfg;
+    use crate::state::TorrentImportRecord;
+
+    const H: i64 = 3600;
+
+    fn ts(iso: &str) -> i64 {
+        chrono::DateTime::parse_from_rfc3339(iso)
+            .unwrap()
+            .timestamp()
+    }
+
+    fn iso(secs: i64) -> String {
+        chrono::DateTime::from_timestamp(secs, 0)
+            .unwrap()
+            .to_rfc3339()
+    }
+
+    fn rec(outcome: &str, at: i64) -> SeasonSearchRecord {
+        SeasonSearchRecord {
+            at,
+            outcome: outcome.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Premier instant (pas de 1 s) où la saison redevient à chercher, en partant de `from`.
+    fn next_due(r: &SeasonSearchRecord, latest_air: &str, from: i64, cfg: &Cfg) -> i64 {
+        (from..from + 30 * 86_400)
+            .find(|t| season_due(Some(r), latest_air, *t, cfg))
+            .unwrap()
+    }
+
+    // --- délai de reprise (`season_wait_secs`, `season_due`) ---
+
+    #[test]
+    fn dead_end_job_is_retried_the_same_day() {
+        // 8 épisodes diffusés le 2026-10-30 à 04:00 UTC ; cherchée à 08:15:44 UTC (09:15 au serveur), rien
+        let cfg = Cfg::default();
+        let air = "2026-10-30T04:00:00Z";
+        let at = 1_793_348_144;
+        assert_eq!(iso(at), "2026-10-30T08:15:44+00:00");
+        let r = rec("none", at);
+        assert!(!season_due(Some(&r), air, at + 2 * H - 1, &cfg));
+        assert!(season_due(Some(&r), air, at + 2 * H, &cfg));
+        // 10:15:44 UTC, le jour même, au lieu du 31/10 à 08:15:44
+        assert_eq!(
+            iso(next_due(&r, air, at, &cfg)),
+            "2026-10-30T10:15:44+00:00"
+        );
+        assert_ne!(next_due(&r, air, at, &cfg), at + 24 * H);
+    }
+
+    #[test]
+    fn a_weekly_series_whose_last_missing_episode_is_20_days_old_keeps_the_normal_pace() {
+        let cfg = Cfg::default();
+        let at = ts("2026-10-30T08:00:00Z");
+        let air = iso(at - 20 * 86_400);
+        let r = rec("none", at);
+        assert_eq!(season_wait_secs("none", &air, at, &cfg), 24 * H);
+        assert_eq!(next_due(&r, &air, at, &cfg), at + 24 * H);
+    }
+
+    #[test]
+    fn four_hours_after_airing_retry_at_two_hours_not_before() {
+        let cfg = Cfg::default();
+        let at = ts("2026-10-30T08:00:00Z");
+        let air = iso(at - 4 * H);
+        let r = rec("none", at);
+        assert!(!season_due(Some(&r), &air, at + 2 * H - 1, &cfg));
+        assert!(season_due(Some(&r), &air, at + 2 * H, &cfg));
+    }
+
+    #[test]
+    fn three_days_after_airing_is_24_hours() {
+        let cfg = Cfg::default();
+        let at = ts("2026-10-30T08:00:00Z");
+        let air = iso(at - 3 * 86_400);
+        assert_eq!(season_wait_secs("none", &air, at, &cfg), 24 * H);
+        assert!(!season_due(Some(&rec("none", at)), &air, at + 23 * H, &cfg));
+    }
+
+    #[test]
+    fn window_edge_is_inclusive_at_48_hours() {
+        let cfg = Cfg::default();
+        let air_s = ts("2026-10-28T08:00:00Z");
+        let air = iso(air_s);
+        assert!(in_release_window(&air, air_s + 48 * H, 48));
+        assert!(!in_release_window(&air, air_s + 48 * H + 1, 48));
+        assert_eq!(season_wait_secs("none", &air, air_s + 48 * H, &cfg), 2 * H);
+        assert_eq!(
+            season_wait_secs("none", &air, air_s + 48 * H + 1, &cfg),
+            24 * H
+        );
+        // à venir (ne devrait pas arriver : `plan_seasons` écarte les épisodes futurs) : hors fenêtre
+        assert!(!in_release_window(&air, air_s - 1, 48));
+        // fenêtre coupée
+        assert!(!in_release_window(&air, air_s + H, 0));
+    }
+
+    #[test]
+    fn empty_or_unreadable_air_date_keeps_24_hours() {
+        let cfg = Cfg::default();
+        for air in ["", "bientôt", "2026-10-30"] {
+            assert_eq!(season_wait_secs("none", air, 1_793_348_144, &cfg), 24 * H);
+            assert!(!id_only_retry(
+                Some(&SeasonSearchRecord {
+                    full_at: 1_793_348_144,
+                    ..rec("none", 1_793_348_144)
+                }),
+                air,
+                1_793_348_144 + 2 * H,
+                &cfg
+            ));
+        }
+    }
+
+    #[test]
+    fn other_outcomes_are_unchanged_inside_the_window() {
+        let cfg = Cfg::default();
+        let now = ts("2026-10-30T08:00:00Z");
+        let air = iso(now - H);
+        assert_eq!(season_wait_secs("grabbed", &air, now, &cfg), 168 * H);
+        assert_eq!(season_wait_secs("grabbed_episode", &air, now, &cfg), 5 * 60);
+        assert_eq!(season_wait_secs("error", &air, now, &cfg), H);
+        // résultat inconnu : délai normal, jamais la reprise rapide
+        assert_eq!(season_wait_secs("dry_run", &air, now, &cfg), 24 * H);
+        // attente d'une VF : `release_retry_hours`, dans la fenêtre ou non
+        assert_eq!(
+            season_wait_secs(super::super::movie_search::VO_WAIT, &air, now, &cfg),
+            2 * H
+        );
+        assert_eq!(
+            season_wait_secs(
+                super::super::movie_search::VO_WAIT,
+                &iso(now - 30 * 86_400),
+                now,
+                &cfg
+            ),
+            2 * H
+        );
+    }
+
+    #[test]
+    fn fallback_none_inside_the_window_keeps_its_own_rule() {
+        // `plan_seasons` : `fallback_due` d'abord, `season_due` ensuite — jamais 2 h sur les indexeurs publics
+        let cfg = Cfg::default();
+        let now = ts("2026-10-30T08:00:00Z");
+        let air = iso(now - H);
+        let r = rec("fallback_none", now);
+        let decide = |t: i64, c411_up: bool| {
+            fallback_due(Some(&r), t, 12, c411_up)
+                .unwrap_or_else(|| season_due(Some(&r), &air, t, &cfg))
+        };
+        assert!(!decide(now + 2 * H, false));
+        assert!(!decide(now + 12 * H - 1, false));
+        assert!(decide(now + 12 * H, false));
+        assert!(decide(now + 60, true), "C411 revenu : aussitôt");
+        assert_eq!(record_wait_secs(&r, now, &cfg, 12), 12 * H);
+        assert_eq!(
+            record_wait_secs(&r, now, &cfg, 6),
+            6 * H,
+            "lu dans la configuration"
+        );
+    }
+
+    #[test]
+    fn a_new_weekly_episode_reopens_the_window_and_a_grab_closes_it() {
+        // Doctor X : E6 manquant depuis 9 jours (rythme normal), E7 diffusé il y a 1 h → fenêtre ouverte
+        let cfg = Cfg::default();
+        let now = ts("2026-10-30T14:00:00Z");
+        let e6 = iso(now - 9 * 86_400);
+        let e7 = iso(now - H);
+        assert_eq!(season_wait_secs("none", &e6, now, &cfg), 24 * H);
+        assert_eq!(season_wait_secs("none", &e7, now, &cfg), 2 * H);
+        // E7 pris : le dernier manquant redevient E6, la fenêtre se ferme
+        assert_eq!(season_wait_secs("none", &e6, now + 3 * H, &cfg), 24 * H);
+    }
+
+    #[test]
+    fn an_undated_episode_follows_the_last_airing_of_the_season() {
+        // *Le Voyageur* : E01 présent (diffusé il y a 10 h), E02 sans date et manquant → `latest` = diffusion de E01
+        let now = ts("2026-10-30T14:00:00Z");
+        let eps = vec![
+            json!({"seasonNumber": 4, "episodeNumber": 1, "monitored": true, "hasFile": true,
+                   "airDateUtc": iso(now - 10 * H)}),
+            json!({"seasonNumber": 4, "episodeNumber": 2, "monitored": true, "hasFile": false}),
+        ];
+        let undated = undated_missing(&eps, &iso(now));
+        assert_eq!(undated.len(), 1);
+        let (season, num, latest) = &undated[0];
+        assert_eq!((*season, *num), (4, 2));
+        assert!(in_release_window(latest, now, 48));
+        assert!(!in_release_window(latest, now + 3 * 86_400, 48));
+    }
+
+    // --- texte libre pendant les reprises (`id_only_retry`) ---
+
+    #[test]
+    fn text_is_skipped_only_after_a_complete_pass_since_airing_inside_the_window() {
+        let cfg = Cfg::default();
+        let air_s = ts("2026-10-30T04:00:00Z");
+        let air = iso(air_s);
+        let first = air_s + 4 * H; // passage complet
+        let full = SeasonSearchRecord {
+            full_at: first,
+            ..rec("none", first)
+        };
+        // reprise 2 h plus tard : identifiant seul
+        assert!(id_only_retry(Some(&full), &air, first + 2 * H, &cfg));
+        // aucun passage, ou passage d'avant 1.30.4 (sans `full_at`) : complet
+        assert!(!id_only_retry(None, &air, first + 2 * H, &cfg));
+        assert!(!id_only_retry(
+            Some(&rec("none", first)),
+            &air,
+            first + 2 * H,
+            &cfg
+        ));
+        // passage complet d'AVANT la diffusion (épisode de la semaine précédente) : complet
+        let before = SeasonSearchRecord {
+            full_at: air_s - H,
+            ..rec("none", air_s - H)
+        };
+        assert!(!id_only_retry(Some(&before), &air, air_s + H, &cfg));
+        // texte refait toutes les `retry_after_hours`, même dans la fenêtre (rien de perdu par rapport à avant)
+        assert!(!id_only_retry(Some(&full), &air, first + 24 * H, &cfg));
+        // fenêtre fermée : complet (cours d'animés, séries trouvées par leur seul nom)
+        let late = SeasonSearchRecord {
+            full_at: air_s + 47 * H,
+            ..rec("none", air_s + 47 * H)
+        };
+        assert!(!id_only_retry(Some(&late), &air, air_s + 49 * H, &cfg));
+    }
+
+    #[test]
+    fn no_integrale_query_inside_the_window_and_config_guards_it() {
+        let cfg = Cfg::default();
+        let air_s = ts("2026-10-30T04:00:00Z");
+        // `try_integrale` n'ajoute sa requête « toutes saisons » qu'au-delà de `integrale_min_age_days`
+        assert!(!aired_before(
+            &iso(air_s),
+            air_s + cfg.release_window_hours * H,
+            cfg.integrale_min_age_days
+        ));
+        assert!(cfg.check().is_ok());
+        let wide = Cfg {
+            release_window_hours: 14 * 24,
+            ..Cfg::default()
+        };
+        assert!(wide.check().is_err());
+        let slow = Cfg {
+            release_retry_hours: 25,
+            ..Cfg::default()
+        };
+        assert!(slow.check().is_err());
+        let zero = Cfg {
+            release_retry_hours: 0,
+            ..Cfg::default()
+        };
+        assert!(zero.check().is_err());
+        let neg = Cfg {
+            vo_wait_hours: -1,
+            ..Cfg::default()
+        };
+        assert!(neg.check().is_err());
+        let off = Cfg {
+            release_window_hours: 0,
+            vo_wait_hours: 0,
+            ..Cfg::default()
+        };
+        assert!(off.check().is_ok());
+        // fenêtre coupée : pas de contrainte sur integrale_min_age_days (0 >= 0 refusait la configuration)
+        let off_no_integrale_age = Cfg {
+            release_window_hours: 0,
+            integrale_min_age_days: 0,
+            ..Cfg::default()
+        };
+        assert!(off_no_integrale_age.check().is_ok());
+        assert_eq!(
+            season_wait_secs("none", &iso(air_s), air_s + H, &off),
+            24 * H
+        );
+    }
+
+    #[test]
+    fn worst_case_cost_of_a_season_never_found_in_the_window() {
+        // passage toutes les 10 min ; premier passage complet 1 h après la diffusion (3 requêtes), puis reprises
+        let cfg = Cfg::default();
+        let air_s = ts("2026-10-30T04:00:00Z");
+        let air = iso(air_s);
+        let mut r: Option<SeasonSearchRecord> = None;
+        let (mut queries, mut passes) = (0, 0);
+        let mut t = air_s + H;
+        while t <= air_s + cfg.release_window_hours * H {
+            if season_due(r.as_ref(), &air, t, &cfg) {
+                let id_only = id_only_retry(r.as_ref(), &air, t, &cfg);
+                queries += if id_only { 1 } else { 1 + cfg.text_queries };
+                passes += 1;
+                let full_at = if id_only {
+                    r.as_ref().unwrap().full_at
+                } else {
+                    t
+                };
+                r = Some(SeasonSearchRecord {
+                    full_at,
+                    ..rec("none", t)
+                });
+            }
+            t += 600;
+        }
+        // 24 reprises au plus, texte refait une fois par 24 h : 1 + 23 reprises, 2 passages complets
+        assert!(passes <= 24, "{passes} passages");
+        assert!(queries <= 24 + 2 * cfg.text_queries, "{queries} requêtes");
+        assert_eq!(passes, 24);
+        assert_eq!(queries, 28);
+    }
+
+    #[test]
+    fn only_a_complete_pass_is_dated() {
+        assert_eq!(next_full_at(false, "none", 10, 20), 20);
+        assert_eq!(next_full_at(false, "grabbed_episode", 10, 20), 20);
+        assert_eq!(next_full_at(true, "none", 10, 20), 10, "identifiant seul");
+        assert_eq!(
+            next_full_at(false, "error", 10, 20),
+            10,
+            "erreur avant le texte"
+        );
+        assert_eq!(
+            next_full_at(false, "fallback_none", 0, 20),
+            0,
+            "secours public"
+        );
+    }
+
+    // --- VO fraîche (`vo_fresh`, `vo_wait_applies`) ---
+
+    fn cand(title: &str, eps: &[i64], published_ago_h: f64, now: i64) -> Candidate {
+        let published = iso(now - (published_ago_h * 3600.0) as i64);
+        let r = json!({"title": title, "downloadUrl": "http://x/1", "seeders": 5, "size": 1_000_000,
+                       "publishDate": published});
+        let info = json!({"seasonNumber": 1, "episodeNumbers": eps, "fullSeason": eps.is_empty(),
+                          "quality": {"quality": {"id": 3, "resolution": 1080}}});
+        series_candidate(&r, &info, 1, false).unwrap()
+    }
+
+    fn todo(missing: &[i64]) -> SeasonTodo {
+        SeasonTodo {
+            series_id: 115,
+            season: 1,
+            latest_air: String::new(),
+            missing_numbers: missing.iter().copied().collect(),
+            dated_missing: missing.iter().copied().collect(),
+            id_only: false,
+            full_at: 0,
+        }
+    }
+
+    #[test]
+    fn a_fresh_vostfr_waits_three_hours_a_fresh_vff_does_not() {
+        let now = ts("2026-10-30T14:00:00Z");
+        let vost = cand("Doctor.X.S01E07.VOSTFR.1080p.WEB.x264-GRP", &[7], 1.0, now);
+        assert!(vo_fresh(&vost, now, 3, false));
+        let old = cand("Doctor.X.S01E07.VOSTFR.1080p.WEB.x264-GRP", &[7], 3.0, now);
+        assert!(!vo_fresh(&old, now, 3, false), "3 h : prise");
+        let vff = cand(
+            "Un.Job.Mortel.S01E01.MULTi.VFF.1080p.WEB.x264-GL0P",
+            &[1],
+            0.1,
+            now,
+        );
+        assert!(!vo_fresh(&vff, now, 3, false));
+        // coupé
+        assert!(!vo_fresh(&vost, now, 0, false));
+        // la saison n'a que la VOSTFR fraîche : on attend (`vo_wait`), pas « rien »
+        let ix = crate::config::Indexers::default();
+        assert!(vo_wait_applies(&[vost], &todo(&[7]), &HashSet::new(), &ix));
+        assert!(!vo_wait_applies(&[], &todo(&[7]), &HashSet::new(), &ix));
+    }
+
+    #[test]
+    fn mixed_season_takes_the_french_episodes_and_waits_for_the_fresh_vostfr_one() {
+        let now = ts("2026-10-30T14:00:00Z");
+        let mut all: Vec<Candidate> = (1..=6)
+            .map(|e| {
+                cand(
+                    &format!("Doctor.X.S01E0{e}.FRENCH.1080p.WEB.x264-GRP"),
+                    &[e],
+                    30.0,
+                    now,
+                )
+            })
+            .collect();
+        all.push(cand(
+            "Doctor.X.S01E07.VOSTFR.1080p.WEB.x264-GRP",
+            &[7],
+            0.5,
+            now,
+        ));
+        let (fresh, ready): (Vec<Candidate>, Vec<Candidate>) =
+            all.into_iter().partition(|c| vo_fresh(c, now, 3, false));
+        let missing: HashSet<i64> = (1..=7).collect();
+        let picked = choose_episodes(&ready, 1, &missing, &HashSet::new(), 3.0, true, 60);
+        let mut eps: Vec<i64> = picked.iter().flat_map(|c| c.episodes.clone()).collect();
+        eps.sort_unstable();
+        assert_eq!(eps, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].episodes, vec![7]);
+        // passage suivant (E1–E6 pris) : E7 seul, toujours frais → attente
+        let ix = crate::config::Indexers::default();
+        assert!(vo_wait_applies(&fresh, &todo(&[7]), &HashSet::new(), &ix));
+    }
+
+    #[test]
+    fn an_anime_fresh_vostfr_is_taken_without_waiting() {
+        let now = ts("2026-10-30T14:00:00Z");
+        let c = cand(
+            "Black.Clover.S02E05.VOSTFR.1080p.WEB.x264-GRP",
+            &[5],
+            0.2,
+            now,
+        );
+        assert!(!vo_fresh(&c, now, 3, true));
+    }
+
+    // --- garde qBittorrent (`seasons_in_qbit`) ---
+
+    fn torrent(
+        tags: &str,
+        progress: f64,
+        added_ago: i64,
+        done_ago: i64,
+        now: i64,
+    ) -> crate::clients::Torrent {
+        serde_json::from_value(json!({
+            "hash": format!("H{tags}{progress}{added_ago}"), "name": "x", "progress": progress, "tags": tags,
+            "added_on": if added_ago < 0 { 0 } else { now - added_ago },
+            "completion_on": if done_ago < 0 { 0 } else { now - done_ago },
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_tagged_download_in_qbittorrent_holds_its_season() {
+        let now = ts("2026-10-30T20:00:00Z");
+        let none = BTreeMap::new();
+        let busy = |t: crate::clients::Torrent, imports: &BTreeMap<String, TorrentImportRecord>| {
+            seasons_in_qbit(&[t], imports, "seedbox", now, 24 * H)
+        };
+        // prise de l'admin du 30/10 (GL0P), en téléchargement
+        let gl0p = torrent("homelab:series=129:season=1", 0.4, 600, -1, now);
+        assert_eq!(busy(gl0p, &none), HashSet::from([(129, 1)]));
+        // cours d'animé (étiquette à décalage)
+        let cour = torrent(
+            "homelab:series=60:season=17:offset=26:eps=27-40",
+            0.1,
+            600,
+            -1,
+            now,
+        );
+        assert_eq!(busy(cour, &none), HashSet::from([(60, 17)]));
+        // autre série, autre saison, film, étiquette sans saison : rien
+        assert!(busy(torrent("homelab:movie=66", 0.4, 600, -1, now), &none).is_empty());
+        assert!(busy(torrent("homelab:series=129", 0.4, 600, -1, now), &none).is_empty());
+        let other = seasons_in_qbit(
+            &[torrent("homelab:series=129:season=2", 0.4, 600, -1, now)],
+            &none,
+            "seedbox",
+            now,
+            24 * H,
+        );
+        assert!(!other.contains(&(129, 1)));
+        // téléchargement arrêté depuis plus de 24 h, ou date d'ajout inconnue : ne bloque plus (comme avant)
+        assert!(busy(
+            torrent("homelab:series=129:season=1", 0.4, 25 * H, -1, now),
+            &none
+        )
+        .is_empty());
+        assert!(busy(
+            torrent("homelab:series=129:season=1", 0.4, -1, -1, now),
+            &none
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn a_finished_torrent_holds_its_season_only_until_judged() {
+        let now = ts("2026-10-30T20:43:00Z");
+        let t = torrent("homelab:series=129:season=1", 1.0, 3 * H, 120, now);
+        let key = super::super::torrent_import::state_key("seedbox", &t.hash);
+        let none = BTreeMap::new();
+        assert_eq!(
+            seasons_in_qbit(std::slice::from_ref(&t), &none, "seedbox", now, 24 * H),
+            HashSet::from([(129, 1)])
+        );
+        let judged = |outcome: &str| {
+            BTreeMap::from([(
+                key.clone(),
+                TorrentImportRecord {
+                    outcome: outcome.into(),
+                    ..Default::default()
+                },
+            )])
+        };
+        // à réessayer : toujours en attente d'import
+        assert!(!seasons_in_qbit(
+            std::slice::from_ref(&t),
+            &judged("retry"),
+            "seedbox",
+            now,
+            24 * H
+        )
+        .is_empty());
+        // importé (Dead-End Job, 20:43:15) ou jugé définitivement : la saison est libre
+        assert!(seasons_in_qbit(
+            std::slice::from_ref(&t),
+            &judged("imported"),
+            "seedbox",
+            now,
+            24 * H
+        )
+        .is_empty());
+        // l'autre machine : autre clé d'état, mais même saison de CE côté → seule la clé de ce côté compte
+        assert!(!seasons_in_qbit(
+            std::slice::from_ref(&t),
+            &judged("imported"),
+            "vps",
+            now,
+            24 * H
+        )
+        .is_empty());
+        // terminé depuis plus d'une heure sans jugement (torrent_import coupé) : ne bloque plus
+        let old = torrent(
+            "homelab:series=129:season=1",
+            1.0,
+            3 * H,
+            IMPORT_GRACE_SECS,
+            now,
+        );
+        assert!(seasons_in_qbit(&[old], &none, "seedbox", now, 24 * H).is_empty());
+    }
+
+    // --- affichage et état ---
+
+    #[test]
+    fn requests_tab_shows_the_fast_retry() {
+        let cfg = Cfg::default();
+        let at = 1_793_348_144;
+        let r = SeasonSearchRecord {
+            latest_air: "2026-10-30T04:00:00Z".into(),
+            full_at: at,
+            ..rec("none", at)
+        };
+        let wait = record_wait_secs(&r, at + 600, &cfg, 12);
+        assert_eq!(wait, 2 * H);
+        assert_eq!(
+            crate::requests_progress::next_search_in(&r, at + 600, wait),
+            2 * H - 600
+        );
+        // hors fenêtre, ou état d'avant 1.30.4 (sans date) : 24 h
+        let old = rec("none", at);
+        assert_eq!(record_wait_secs(&old, at + 600, &cfg, 12), 24 * H);
+        assert_eq!(
+            record_wait_secs(&rec("grabbed_episode", at), at, &cfg, 12),
+            5 * 60
+        );
+        assert_eq!(record_wait_secs(&rec("vo_wait", at), at, &cfg, 12), 2 * H);
+        let p = crate::requests_progress::progress(
+            &[],
+            false,
+            false,
+            Some((&rec("vo_wait", at), 2 * H)),
+            at + H,
+            120,
+            300,
+            false,
+        );
+        assert!(
+            p.label.contains("version française attendue"),
+            "{}",
+            p.label
+        );
+        assert!(p.label.contains("~1 h"), "{}", p.label);
+        let p = crate::requests_progress::progress(
+            &[],
+            false,
+            false,
+            Some((&r, wait)),
+            at + 600,
+            120,
+            300,
+            false,
+        );
+        assert!(
+            p.label.contains("prochaine tentative dans ~1 h 50"),
+            "{}",
+            p.label
+        );
+    }
+
+    #[test]
+    fn state_round_trips_with_old_and_new_binaries() {
+        // état d'avant 1.30.4 relu
+        let old_json = r#"{"at": 1793348144, "outcome": "none", "detail": "0 candidat(s)", "title": "Dead-End Job",
+                           "uncovered": [1,2,3,4,5,6,7,8]}"#;
+        let r: SeasonSearchRecord = serde_json::from_str(old_json).unwrap();
+        assert_eq!((r.latest_air.as_str(), r.full_at), ("", 0));
+        // état neuf relu par un ancien binaire (sa structure, sans `deny_unknown_fields`)
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct OldRecord {
+            at: i64,
+            outcome: String,
+            #[serde(default)]
+            detail: String,
+            #[serde(default)]
+            title: String,
+            #[serde(default)]
+            uncovered: Vec<i64>,
+        }
+        let new = SeasonSearchRecord {
+            latest_air: "2026-10-30T04:00:00Z".into(),
+            full_at: 1_793_348_144,
+            ..rec("none", 1_793_348_144)
+        };
+        let v = serde_json::to_string(&new).unwrap();
+        assert!(v.contains("latest_air") && v.contains("full_at"));
+        let o: OldRecord = serde_json::from_str(&v).unwrap();
+        assert_eq!(o.at, 1_793_348_144);
+        // champs vides non écrits
+        let bare = serde_json::to_string(&rec("none", 1)).unwrap();
+        assert!(!bare.contains("latest_air") && !bare.contains("full_at"));
+    }
+
+    #[test]
+    fn new_keys_are_read_and_an_unknown_key_is_refused() {
+        let ss: Cfg = toml::from_str(
+            "release_window_hours = 48\nrelease_retry_hours = 2\nvo_wait_hours = 3\n",
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                ss.release_window_hours,
+                ss.release_retry_hours,
+                ss.vo_wait_hours
+            ),
+            (48, 2, 3)
+        );
+        // `deny_unknown_fields` : un homelabctl ou un homelabd d'avant refuserait ces clés (installer les deux)
+        assert!(toml::from_str::<Cfg>("release_window_dayz = 2\n").is_err());
     }
 }

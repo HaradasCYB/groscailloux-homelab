@@ -243,8 +243,10 @@ la saison 4 : `{TmdbId:1429}{Season:4}` → 5 releases, toutes justes ; « Attac
 demande crée la fiche et les saisons suivies, sans recherche. Sonarr garde le RSS, l'import et le suivi.
 
 Pour chaque Sonarr : `GET wanted/missing` → saisons avec épisodes diffusés manquants, hors file d'attente, pas
-cherchées récemment (`state.unknown_series` : sans candidat → `retry_after_hours` 24 h, pack pris → 7 j,
-épisodes pris → `episode_retry_mins` (5 min), erreur → 1 h), **absentes de l'autre machine** et **demandées dans
+cherchées récemment (`state.unknown_series` : sans candidat → `retry_after_hours` 24 h, ou `release_retry_hours`
+(2 h) dans la **fenêtre de sortie** (voir plus bas), pack pris → 7 j, épisodes pris → `episode_retry_mins` (5 min),
+attente d'une VF (`vo_wait`) → 2 h, erreur → 1 h), sans torrent étiqueté de la saison **en cours dans qBittorrent**,
+**absentes de l'autre machine** et **demandées dans
 Jellyseerr** (2026-10-29, 1.30.2 : une saison suivie seulement parce qu'elle a des fichiers n'est plus cherchée, voir
 plus bas) ; séries ajoutées le plus récemment d'abord. Par saison, via Prowlarr
 (deux clés, indexeurs « C411 » et « C411 (2) » de Prowlarr, voir « Budget de l'indexer » plus bas) : `search?type=tvsearch&query={TmdbId:<tmdbId>}{Season:<n>}`
@@ -263,6 +265,47 @@ Black Clover S02 (03/10) : pack de 51 fichiers (S02E52-102, 14,2 Go) pris pour u
 diffusé. Rien par identifiant (série sans `tmdbId`, releases
 sans attribut) : `text_queries` noms essayés en texte libre (Jellyseerr FR et original, Sonarr, alternatifs),
 titre parsé identique exigé, release d'un autre identifiant écartée.
+
+**Fenêtre de sortie** (2026-10-30, 1.30.4) : une saison restée sans release (`none`) dont le dernier épisode
+manquant est diffusé depuis **au plus** `release_window_hours` (48 h) est reprise toutes les `release_retry_hours`
+(2 h) au lieu de `retry_after_hours` (24 h). Cas d'origine : *Dead-End Job* (« Un job mortel », Netflix, coréen),
+8 épisodes diffusés le 30/10 à 04:00 UTC, demandés à 08:12, cherchés une seule fois à 08:15 (3 requêtes, rien : pas
+encore sur C411), publiés en MULTi VFF le jour même et remis au lendemain 08:15. Le RSS de Sonarr ne rattrape pas
+ces séries : leur nom français n'est connu ni de TMDB (Jellyseerr `fr` renvoie « 꿀알바 ») ni de Sonarr (aucun titre
+alternatif), `parse` de « Un.Job.Mortel.S01… » donne `series: null`. Probablement le même cas pour *Doctor X*
+(« Mafia.En.Blouse.Blanche », à mesurer : la release paraît entre +1 h et +25 h après la diffusion). La règle tient dans `season_wait_secs`, partagée par la décision
+(`season_due`) et l'onglet Demandes (`record_wait_secs`). Détails :
+- **Identifiant seul pendant les reprises** (`id_only_retry`) : dans la fenêtre, si un passage complet (identifiant
+  puis texte libre) a eu lieu après la dernière diffusion et il y a moins de `retry_after_hours`, seule la requête
+  `{TmdbId}{Season}` part (1 requête au lieu de 3). Le texte libre (cours d'animés, séries trouvées par leur seul nom)
+  est refait au premier passage après une diffusion puis toutes les `retry_after_hours`, comme avant. Une série sans
+  `tmdbId` garde toujours le texte. Date du dernier passage complet : `full_at` de l'enregistrement.
+- **Coût** : 28 requêtes au plus par saison introuvable pendant 48 h (24 passages par identifiant, dont 2 avec le
+  texte libre), toujours sous `max_queries_per_run` par passage. Une série hebdomadaire rouvre la fenêtre à chaque
+  nouvel épisode manquant, puis revient à 24 h ; un épisode **sans date** suit la dernière diffusion de sa saison (`undated_missing`), sa fenêtre
+  s'ouvre donc à chaque épisode daté diffusé (coût borné de même). `try_integrale` n'ajoute aucune requête dans la
+  fenêtre (`integrale_min_age_days` = 14 j ; le démarrage refuse une fenêtre ≥ 14 × 24 h).
+- **VOSTFR/VO fraîche** (`vo_wait_hours`, 3 h, hors animés) : une release sans audio français publiée depuis moins de
+  3 h n'est pas prise, **épisode par épisode** (les autres épisodes de la saison partent) ; si rien d'autre n'est
+  acceptable, le passage note `vo_wait` et repart après `release_retry_hours`. Même règle que les films : reprendre
+  plus souvent ne doit pas faire prendre une VOSTFR une heure avant la VFF, et le profil (`upgradeAllowed = false`)
+  ne la remplacerait jamais. Jamais pendant un secours (indexeurs publics) ; les animés gardent la VOSTFR (MULTi >
+  VOSTFR) et le RSS de Sonarr la prend de toute façon. « Animé » = `seriesType = anime` dans Sonarr (`is_anime`) : un
+  animé classé `standard` attend donc 3 h comme une série ordinaire. Un pack VOSTFR frais d'une saison encore en
+  diffusion donne aussi `vo_wait` (reprise à 2 h, au lieu de `none`) : coût borné, la release a moins de 3 h.
+- **Torrent en cours dans qBittorrent** (`seasons_in_qbit`) : une saison dont un torrent étiqueté
+  `homelab:series=<id>:season=<n>` (cours compris) se télécharge de ce côté — ajouté depuis moins de
+  `retry_after_hours`, ou terminé depuis moins d'une heure sans jugement de `torrent_import` — n'est pas cherchée. Ces
+  torrents (seedbox, ajoutés sans catégorie) ne sont pas dans la file de l'Arr : une reprise pendant le téléchargement
+  aurait pris une autre release de la même saison (doublon) ou réétiqueté le torrent. qBittorrent illisible, torrent
+  arrêté depuis plus de 24 h ou date d'ajout inconnue : pas de garde-fou (comportement d'avant). Le délai d'import
+  d'une heure est une constante du code (`IMPORT_GRACE_SECS`, comme `PARTIAL_RETRY_SECS` de `torrent_import`). Conséquence voulue : après
+  un `grabbed_episode`, les épisodes restants (VOSTFR fraîche en attente, par exemple) ne sont recherchés qu'une fois
+  les torrents déjà pris importés.
+- `fallback_none` (secours public) garde sa propre règle (`fallback_retry_hours`, aussitôt si C411 revient) ;
+  `grabbed`, `grabbed_episode` et `error` gardent leurs délais ; dans la fenêtre, la reprise 5 min après un
+  `grabbed_episode` se fait toutefois par identifiant seul si un passage complet date de moins de 24 h.
+  `release_window_hours = 0` ou `vo_wait_hours = 0` coupe le volet correspondant.
 
 **Identifiant incomplet → texte libre en plus** (2026-09-18) : `uncovered()` compare les épisodes manquants aux
 épisodes couverts par les candidats. S'il en reste, les noms de la série sont essayés **en complément** de

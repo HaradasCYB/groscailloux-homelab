@@ -36,6 +36,9 @@ pub struct Torrent {
     pub seeding_time_limit: i64,
     #[serde(default)]
     pub completion_on: i64,
+    /// Ajout dans qBittorrent (epoch) ; 0 = inconnu.
+    #[serde(default)]
+    pub added_on: i64,
     #[serde(default)]
     pub size: i64,
     #[serde(default)]

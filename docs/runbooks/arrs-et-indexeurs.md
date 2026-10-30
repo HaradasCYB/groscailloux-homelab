@@ -76,6 +76,11 @@ propre runbook : [voie-russe.md](voie-russe.md).
 - Filet : Prowlarr coupe à 45 requêtes/h par indexeur (`queryLimit`).
 - Rythme des tâches : `[tasks.series_search] max_queries_per_run` (6 par passage de 10 min, 36/h au pire) et
   `query_gap_secs` (5) ; `[tasks.movie_search] max_per_run` (3 films par passage de 5 min).
+- Reprise d'une saison sans release : 24 h (`retry_after_hours`), mais toutes les 2 h (`release_retry_hours`), par
+  identifiant seul, tant que son dernier épisode manquant est diffusé depuis au plus 48 h (`release_window_hours`,
+  1.30.4, cas *Dead-End Job* du 30/10). VOSTFR/VO de moins de 3 h retenue hors animés (`vo_wait_hours`, résultat
+  `vo_wait`). Une saison dont un torrent étiqueté se télécharge dans qBittorrent n'est pas reprise. Coût au pire :
+  28 requêtes par saison introuvable sur 48 h. Détail : [AUTOMATION.md](../AUTOMATION.md#series_search--10-min-remplace-unknown_series_grab).
 - « C411 (2) » utilise la clé RSS des Arrs (`C411_RSS_API_KEY`) : le RSS de la seedbox (deux Arrs, toutes les 15 min)
   n'est pas compté par homelabd. La **troisième clé** (autobrr) n'est comptée nulle part.
 - `[manual_search]` n'a que `c411_indexer`, `text_queries` et `results_ttl_mins` : la page `/recherche` puise dans le

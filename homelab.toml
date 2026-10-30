@@ -316,7 +316,20 @@ max_new_per_run = 3         # requêtes en plus pour les demandes de moins d'une
 new_request_hours = 1
 episode_retry_mins = 5      # reprise 5 min après (le temps de l'import) : il reste des épisodes à prendre,
                             # rien ne sert d'attendre — aucune requête d'indexeur n'est gaspillée
-retry_after_hours = 24      # saison sans candidat : nouvelle recherche le lendemain
+retry_after_hours = 24      # saison sans candidat : nouvelle recherche le lendemain (hors fenêtre de sortie)
+# FENÊTRE DE SORTIE (2026-10-30, Dead-End Job) : 8 épisodes diffusés à 04:00 UTC, demandés à 08:12, cherchés à 08:15
+# (rien sur C411), sur C411 le jour même en MULTi VFF… et remis au lendemain par retry_after_hours. Le RSS de Sonarr ne
+# rattrape pas ces séries (titre français inconnu de Sonarr : « Un.Job.Mortel » → series null). Une saison sans
+# release dont le dernier épisode manquant est diffusé depuis au plus release_window_hours est reprise toutes les
+# release_retry_hours, par identifiant SEUL (le texte libre est refait au premier passage après une diffusion, puis
+# toutes les retry_after_hours) : 28 requêtes au plus par saison introuvable, au lieu d'un jour de retard. Une saison
+# dont un torrent étiqueté est en cours dans qBittorrent n'est pas reprise (pas de doublon). 0 = fenêtre coupée.
+release_window_hours = 48   # doit rester sous integrale_min_age_days × 24 (contrôlé au démarrage)
+release_retry_hours = 2     # aussi : reprise après une attente de VF (vo_wait)
+# VOSTFR/VO publiée depuis moins de vo_wait_hours (hors animés) : pas prise, on attend la VF, épisode par épisode
+# (comme [tasks.movie_search] vo_wait_hours) ; reprendre plus souvent ne doit pas faire prendre la VOSTFR 1 h avant
+# la VFF, le profil ne remplace jamais un fichier pris. 0 = coupé.
+vo_wait_hours = 3
 grabbed_retry_hours = 168   # saison prise mais encore manquante : après 7 jours
 error_retry_hours = 1       # erreur (indexeur indisponible, délai dépassé) : nouvelle tentative dans l'heure
 indexer = "C411"            # nom de l'indexeur dans Prowlarr

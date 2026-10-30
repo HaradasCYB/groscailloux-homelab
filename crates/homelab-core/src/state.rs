@@ -310,10 +310,10 @@ pub struct AccountRecord {
     pub jellyseerr_permissions: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SeasonSearchRecord {
     pub at: i64,
-    /// `grabbed`, `none`, `error`.
+    /// `grabbed`, `grabbed_episode`, `none`, `vo_wait`, `error`, `fallback_none`.
     pub outcome: String,
     #[serde(default)]
     pub detail: String,
@@ -324,6 +324,15 @@ pub struct SeasonSearchRecord {
     /// est un blocage durable : l'indexer n'a rien, la recherche repartira pour rien.
     #[serde(default)]
     pub uncovered: Vec<i64>,
+    /// Diffusion du dernier épisode manquant au moment du passage (`series_search`, RFC 3339) : l'onglet Demandes
+    /// en déduit la fenêtre de sortie (reprise rapide). Vide pour un film ou un état d'avant 1.30.4 ; un ancien
+    /// binaire ignore le champ (aucun `deny_unknown_fields`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub latest_air: String,
+    /// Dernier passage **complet** (identifiant puis texte libre) : pendant la fenêtre de sortie, les reprises qui
+    /// suivent un passage complet postérieur à la diffusion n'interrogent que l'identifiant. 0 = inconnu.
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub full_at: i64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

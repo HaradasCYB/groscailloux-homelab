@@ -140,23 +140,11 @@ pub fn parse_timeleft(s: &str) -> Option<i64> {
     Some(days * 86_400 + secs)
 }
 
-/// Délai avant la prochaine tentative de recherche, d'après le dernier passage et les délais configurés
-/// (`grabbed` → `grabbed_h`, `none` → `retry_h`, `error` → `error_h`).
-pub fn next_search_in(
-    rec: &SeasonSearchRecord,
-    now: i64,
-    retry_h: i64,
-    grabbed_h: i64,
-    error_h: i64,
-) -> i64 {
-    let delay = match rec.outcome.as_str() {
-        "grabbed" | "grabbed_episode" => grabbed_h * 3600,
-        "error" => error_h * 3600,
-        // secours sans résultat (C411 en panne) : 12 h au plus, souvent moins (retour de C411)
-        "fallback_none" => 12 * 3600,
-        _ => retry_h * 3600,
-    };
-    (rec.at + delay - now).max(0)
+/// Délai avant la prochaine tentative de recherche : `wait_secs` est le délai qui suit ce passage, calculé par
+/// l'appelant avec la règle de la tâche (`series_search::record_wait_secs` pour une série : fenêtre de sortie,
+/// `grabbed_episode`, `fallback_retry_hours` ; `movie_search` pour un film).
+pub fn next_search_in(rec: &SeasonSearchRecord, now: i64, wait_secs: i64) -> i64 {
+    (rec.at + wait_secs - now).max(0)
 }
 
 /// `2026-09-29` → `29/09/2026` (sinon la chaîne telle quelle).
@@ -200,7 +188,7 @@ pub fn progress(
     queue: &[QueueSummary],
     has_file: bool,
     available: bool,
-    search: Option<(&SeasonSearchRecord, i64, i64, i64)>,
+    search: Option<(&SeasonSearchRecord, i64)>,
     now: i64,
     import_allowance: i64,
     scan_delay: i64,
@@ -313,7 +301,7 @@ pub fn progress(
         };
     }
     match search {
-        Some((rec, retry_h, grabbed_h, error_h)) if rec.outcome.starts_with("grabbed") => {
+        Some((rec, wait)) if rec.outcome.starts_with("grabbed") => {
             match judged_at {
                 // pris mais aucun torrent visible (qBittorrent injoignable, torrent retiré ou pas encore arrivé) : ce
                 // n'est pas une « prochaine tentative dans 7 j »
@@ -334,9 +322,9 @@ pub fn progress(
                     }
                 }
                 // torrent rangé, saison toujours incomplète : il ne couvrait pas tout. Après un épisode seul
-                // (`grabbed_episode`), `series_search` reprend en quelques minutes : `next_search_in` surestimerait.
+                // (`grabbed_episode`), `series_search` reprend en quelques minutes : « en cours » plutôt qu'un délai.
                 Some(_) => {
-                    let in_secs = next_search_in(rec, now, retry_h, grabbed_h, error_h);
+                    let in_secs = next_search_in(rec, now, wait);
                     let soon = rec.outcome == "grabbed_episode" || in_secs == 0;
                     Progress {
                         stage: Stage::Search,
@@ -358,14 +346,19 @@ pub fn progress(
                 }
             }
         }
-        Some((rec, retry_h, grabbed_h, error_h)) => {
-            let in_secs = next_search_in(rec, now, retry_h, grabbed_h, error_h);
+        Some((rec, wait)) => {
+            let in_secs = next_search_in(rec, now, wait);
             Progress {
                 stage: Stage::Search,
                 percent: 3,
                 eta_secs: None,
                 label: if in_secs == 0 {
                     "Recherche en cours".into()
+                } else if rec.outcome == crate::tasks::movie_search::VO_WAIT {
+                    format!(
+                        "Version sous-titrée toute récente : version française attendue, nouvelle recherche dans {}",
+                        human_eta(in_secs)
+                    )
                 } else {
                     format!(
                         "Recherche : prochaine tentative dans {}",
@@ -410,11 +403,22 @@ mod tests {
             detail: String::new(),
             title: "One Piece".into(),
             uncovered: vec![],
+            ..Default::default()
         }
     }
 
-    /// `progress` avec les délais de la production : recherche 24 h, reprise après une saison prise 168 h, erreur
-    /// 1 h ; import 120 s, passage de `seedbox_refresh` 300 s.
+    /// Délai d'une série avec les réglages par défaut (ceux de la production) : recherche 24 h (2 h dans la fenêtre
+    /// de sortie de 48 h), saison prise 168 h, épisodes pris 5 min, erreur 1 h, secours 12 h.
+    fn wait(r: &SeasonSearchRecord, now: i64) -> i64 {
+        crate::tasks::series_search::record_wait_secs(
+            r,
+            now,
+            &crate::config::SeriesSearch::default(),
+            12,
+        )
+    }
+
+    /// `progress` avec les délais de la production (`wait`) ; import 120 s, passage de `seedbox_refresh` 300 s.
     fn card(
         queue: &[QueueSummary],
         has_file: bool,
@@ -425,7 +429,7 @@ mod tests {
             queue,
             has_file,
             false,
-            rec.map(|r| (r, 24, 168, 1)),
+            rec.map(|r| (r, wait(r, now))),
             now,
             120,
             300,
@@ -627,12 +631,13 @@ mod tests {
             detail: String::new(),
             title: String::new(),
             uncovered: vec![],
+            ..Default::default()
         };
         let p = progress(
             &[],
             false,
             false,
-            Some((&rec, 24, 168, 1)),
+            Some((&rec, wait(&rec, 1000 + 3600))),
             1000 + 3600,
             120,
             300,
@@ -709,12 +714,13 @@ mod tests {
             detail: String::new(),
             title: String::new(),
             uncovered: vec![],
+            ..Default::default()
         };
         let p = progress(
             &[],
             false,
             false,
-            Some((&rec, 24, 168, 1)),
+            Some((&rec, wait(&rec, 2000))),
             2000,
             120,
             300,

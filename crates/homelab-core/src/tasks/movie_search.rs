@@ -677,6 +677,7 @@ impl Task for MovieSearch {
                     detail,
                     title: title.to_string(),
                     uncovered: Vec::new(),
+                    ..Default::default()
                 };
                 let k = format!("{}:{id}", arr.name);
                 ctx.state

@@ -722,6 +722,7 @@ mod tests {
             detail: String::new(),
             title: title.into(),
             uncovered,
+            ..Default::default()
         };
         let mut recs = BTreeMap::new();
         recs.insert(
@@ -766,6 +767,7 @@ mod tests {
                 detail: String::new(),
                 title: format!("Bleach {trap}"),
                 uncovered: vec![27, 28],
+                ..Default::default()
             },
         );
         let stuck = unmatched(&recs, 1000, 15);

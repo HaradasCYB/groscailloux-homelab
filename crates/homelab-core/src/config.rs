@@ -972,6 +972,44 @@ pub struct SeriesSearch {
     /// Requête supplémentaire « toutes saisons » seulement si le dernier épisode manquant est sorti depuis au
     /// moins N jours (une saison en cours de diffusion attend son épisode de la semaine, pas une intégrale).
     pub integrale_min_age_days: i64,
+    /// Fenêtre de sortie : une saison restée sans release (`none`) dont le dernier épisode manquant est diffusé
+    /// depuis au plus N heures est reprise toutes les `release_retry_hours` au lieu de `retry_after_hours`
+    /// (Dead-End Job, 2026-10-30 : cherchée 4 h après sa sortie, avant C411, et remise au lendemain). 0 = coupé.
+    pub release_window_hours: i64,
+    /// Délai de reprise dans la fenêtre de sortie, et après une attente de version française (`vo_wait`).
+    pub release_retry_hours: i64,
+    /// Release sans audio français (VOSTFR, VO) publiée depuis moins de N heures : pas prise, on attend une version
+    /// française (comme `[tasks.movie_search] vo_wait_hours`). Jamais pour un animé (la VOSTFR y est la norme).
+    /// 0 = coupé.
+    pub vo_wait_hours: i64,
+}
+
+impl SeriesSearch {
+    /// Valeurs incohérentes refusées au démarrage (et par `homelabctl check`).
+    pub fn check(&self) -> Result<()> {
+        if self.release_window_hours < 0 || self.vo_wait_hours < 0 {
+            bail!("[tasks.series_search] release_window_hours et vo_wait_hours ne peuvent pas être négatifs");
+        }
+        if !(1..=self.retry_after_hours.max(1)).contains(&self.release_retry_hours) {
+            bail!(
+                "[tasks.series_search] release_retry_hours ({}) doit être entre 1 et retry_after_hours ({}) : \
+                 la reprise rapide ne peut pas être plus lente que la reprise normale",
+                self.release_retry_hours,
+                self.retry_after_hours
+            );
+        }
+        // au-delà, `try_integrale` ajouterait une requête « toutes saisons » à chaque reprise rapide
+        if self.release_window_hours > 0
+            && self.release_window_hours >= self.integrale_min_age_days.saturating_mul(24)
+        {
+            bail!(
+                "[tasks.series_search] release_window_hours ({}) doit rester sous integrale_min_age_days × 24 ({})",
+                self.release_window_hours,
+                self.integrale_min_age_days.saturating_mul(24)
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Default for SeriesSearch {
@@ -997,6 +1035,9 @@ impl Default for SeriesSearch {
             integrale_packs: true,
             integrale_max_files: 300,
             integrale_min_age_days: 14,
+            release_window_hours: 48,
+            release_retry_hours: 2,
+            vo_wait_hours: 3,
         }
     }
 }
@@ -2026,6 +2067,7 @@ impl Config {
             bail!("[tasks.catalogue_report] min_age_days ne peut pas être négatif");
         }
         self.tasks.red_list.check()?;
+        self.tasks.series_search.check()?;
         if self.alerts.fail_streak == 0 {
             bail!("[alerts] fail_streak doit être au moins 1");
         }

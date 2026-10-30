@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.30.3](#1303--30102026--films-français-cherchés-malgré-une-date-tmdb-tardive)** | 30/10/2026 | **Films français cherchés malgré une date TMDB tardive** |
+| **[1.30.4](#1304--30102026--série-sortie-le-jour-même-reprise-toutes-les-2-h)** | 30/10/2026 | **Série sortie le jour même reprise toutes les 2 h** |
+| [1.30.3](#1303--30102026--films-français-cherchés-malgré-une-date-tmdb-tardive) | 30/10/2026 | Films français cherchés malgré une date TMDB tardive |
 | [1.30.2](#1302--29102026--une-saison-non-demandée-nest-plus-téléchargée) | 29/10/2026 | Une saison non demandée n'est plus téléchargée |
 | [1.30.1](#1301--29102026--saisons-netflix-en-parties-rangées-dans-la-bonne-saison) | 29/10/2026 | Saisons Netflix en « Parties » rangées dans la bonne saison |
 | [1.30.0](#1300--27102026---continuer-à-regarder--à-la-carte-et-filtre-de-durée) | 27/10/2026 | « Continuer à regarder » à la carte et filtre de durée |
@@ -43,6 +44,39 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.30.4 — 30/10/2026 — Série sortie le jour même reprise toutes les 2 h
+
+Correction : une saison cherchée trop tôt après sa sortie, avant que C411 ne la publie, n'attend plus le lendemain ;
+elle est reprise toutes les 2 h pendant 48 h (commit à venir).
+
+### Pour les membres
+
+- Une série demandée le jour de sa sortie arrive dans les heures qui suivent sa publication au lieu d'un jour plus
+  tard. L'onglet Demandes affiche la prochaine tentative réelle (« dans ~2 h »), et « version française attendue »
+  quand seule une version sous-titrée toute récente existe.
+
+### Pour l'administrateur
+
+- `series_search` : fenêtre de sortie. Une saison sans release dont le dernier épisode manquant est diffusé depuis au
+  plus `release_window_hours` (48) est reprise toutes les `release_retry_hours` (2) au lieu de `retry_after_hours`
+  (24), par identifiant seul (le texte libre reste fait au premier passage puis toutes les 24 h). Cas du 30/10 :
+  *Dead-End Job* (« Un job mortel »), 8 épisodes diffusés à 04:00 UTC, cherchés à 08:15 sans résultat, publiés en
+  MULTi VFF sur C411 le jour même et remis au lendemain ; le RSS de Sonarr ne les rattrape pas (titre français inconnu
+  de Sonarr et de TMDB). Probablement le même cas pour *Doctor X* (à mesurer). Coût au pire : 28 requêtes par saison
+  introuvable sur 48 h (24 passages par identifiant, dont 2 avec le texte libre).
+- `series_search` : VOSTFR/VO de moins de `vo_wait_hours` (3) h retenue hors animés, épisode par épisode (résultat
+  `vo_wait`, repris après 2 h), comme pour les films.
+- `series_search` : une saison dont un torrent étiqueté `homelab:series=…:season=…` se télécharge dans qBittorrent
+  n'est plus reprise (doublon ou réétiquetage évités, garde-fou borné à 24 h).
+- Onglet Demandes : « prochaine tentative » calculée par la règle de la tâche (`record_wait_secs`) ; corrigé au
+  passage : épisodes pris (5 min au lieu de 7 j), secours public (`fallback_retry_hours` au lieu de 12 h en dur),
+  film pris (`[tasks.movie_search] retry_after_hours` au lieu de 7 j).
+- **Trois clés ajoutées** à `[tasks.series_search]` (`release_window_hours`, `release_retry_hours`, `vo_wait_hours`) :
+  installer homelabd **et** homelabctl ensemble (`deny_unknown_fields`). État : `latest_air` et `full_at` ajoutés aux
+  enregistrements de saison (un ancien binaire les ignore). Détail :
+  [AUTOMATION.md](docs/AUTOMATION.md#series_search--10-min-remplace-unknown_series_grab) et
+  [arrs-et-indexeurs.md](docs/runbooks/arrs-et-indexeurs.md).
 
 ## 1.30.3 — 30/10/2026 — Films français cherchés malgré une date TMDB tardive
 

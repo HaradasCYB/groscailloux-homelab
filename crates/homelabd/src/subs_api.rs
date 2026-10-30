@@ -1312,24 +1312,25 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
         }
         let ss = &cfg.tasks.series_search;
         let ms = &cfg.tasks.movie_search;
-        let (retry_h, grabbed_h, error_h) = if kind == "tv" {
-            (
-                ss.retry_after_hours,
-                ss.grabbed_retry_hours,
-                ss.error_retry_hours,
-            )
-        } else {
-            let retry = if search
-                .as_ref()
-                .is_some_and(|s| s.outcome == homelab_core::tasks::movie_search::VO_WAIT)
-            {
-                ms.release_retry_hours
-            } else {
-                movie_info
+        let fallback_h = cfg.indexers.fallback_retry_hours;
+        // délai qui suit le dernier passage, avec la règle de la tâche (une seule source : la tâche elle-même)
+        let wait = |rec: &homelab_core::state::SeasonSearchRecord| -> i64 {
+            if kind == "tv" {
+                return homelab_core::tasks::series_search::record_wait_secs(
+                    rec, t, ss, fallback_h,
+                );
+            }
+            // `movie_search` : `due(rec, t, retry, retry_after_hours, error_retry_hours, …)` après `fallback_due`
+            let h = match rec.outcome.as_str() {
+                "fallback_none" => fallback_h,
+                "error" => ms.error_retry_hours,
+                "grabbed" | "grabbed_episode" => ms.retry_after_hours,
+                o if o == homelab_core::tasks::movie_search::VO_WAIT => ms.release_retry_hours,
+                _ => movie_info
                     .get(&(side, ext))
-                    .map_or(ms.retry_after_hours, |i| i.retry)
+                    .map_or(ms.retry_after_hours, |i| i.retry),
             };
-            (retry, 168, ms.error_retry_hours)
+            h.saturating_mul(3600)
         };
         let created = r
             .get("createdAt")
@@ -1340,7 +1341,7 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
             &queue,
             has_file,
             available,
-            search.as_ref().map(|r| (r, retry_h, grabbed_h, error_h)),
+            search.as_ref().map(|r| (r, wait(r))),
             t,
             import_allowance,
             scan_delay,
