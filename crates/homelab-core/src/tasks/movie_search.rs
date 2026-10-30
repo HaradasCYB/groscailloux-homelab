@@ -66,8 +66,15 @@ pub fn fallback_queries(fr_title: &str, year: i64) -> Vec<String> {
     out
 }
 
-/// Film à rattraper : suivi, sans fichier, sorti, ajouté depuis assez longtemps, hors file d'attente.
-pub fn wanted(movie: &Value, queued: &HashSet<i64>, now_secs: i64, missing_hours: i64) -> bool {
+/// Film à rattraper : suivi, sans fichier, sorti (selon Radarr, ou film français en retard sur sa date TMDB :
+/// `vod_overdue`), ajouté depuis assez longtemps, hors file d'attente.
+pub fn wanted(
+    movie: &Value,
+    queued: &HashSet<i64>,
+    now_secs: i64,
+    missing_hours: i64,
+    min_days_after_cinema: i64,
+) -> bool {
     let id = movie.get("id").and_then(Value::as_i64).unwrap_or(0);
     let added = movie
         .get("added")
@@ -75,9 +82,12 @@ pub fn wanted(movie: &Value, queued: &HashSet<i64>, now_secs: i64, missing_hours
         .and_then(|a| chrono::DateTime::parse_from_rfc3339(a).ok())
         .map(|d| d.timestamp())
         .unwrap_or(now_secs);
+    let released = movie.get("isAvailable").and_then(Value::as_bool) == Some(true)
+        || chrono::DateTime::from_timestamp(now_secs, 0)
+            .is_some_and(|now| vod_overdue(movie, now, min_days_after_cinema));
     movie.get("monitored").and_then(Value::as_bool) == Some(true)
         && movie.get("hasFile").and_then(Value::as_bool) != Some(true)
-        && movie.get("isAvailable").and_then(Value::as_bool) == Some(true)
+        && released
         && movie.get("tmdbId").and_then(Value::as_i64).unwrap_or(0) > 0
         && !queued.contains(&id)
         && now_secs - added >= missing_hours * 3600
@@ -119,6 +129,34 @@ pub fn awaiting_vod(
     }
     let c = cinema.date_naive();
     Some((c, c.checked_add_months(chrono::Months::new(4))?))
+}
+
+/// Film français en salle depuis au moins `min_days` jours que Radarr ne tient pas encore pour sorti, parce que la
+/// date de TMDB (numérique ou physique) est encore à venir : il est cherché quand même.
+///
+/// En France, la VOD sort environ 4 mois après la salle, mais TMDB n'a souvent pour un film français que la date du
+/// DVD, ou une date numérique tardive : *De Gaulle : Résistance* (2026-10-30), en salle depuis le 03/06, sans date
+/// numérique, DVD au 04/11, déjà sur C411 et jamais cherché (`isAvailable = false` jusqu'au 02/11). Le même seuil que
+/// `awaiting_vod` (`min_days_after_cinema`) : les deux cas sont disjoints (avant le seuil, sans date : on attend la
+/// VOD ; après le seuil, daté plus tard : on cherche). Les films étrangers ne sont pas concernés : leur date numérique
+/// (souvent américaine) est fiable et leurs releases précoces sont des CAM ou des TS.
+pub fn vod_overdue(movie: &Value, now: chrono::DateTime<chrono::Utc>, min_days: i64) -> bool {
+    let french = movie
+        .pointer("/originalLanguage/name")
+        .and_then(Value::as_str)
+        == Some("French");
+    if !french || movie.get("isAvailable").and_then(Value::as_bool) != Some(false) {
+        return false;
+    }
+    let Some(cinema) = movie
+        .get("inCinemas")
+        .and_then(Value::as_str)
+        .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+    else {
+        return false;
+    };
+    let days = (now - cinema.with_timezone(&chrono::Utc)).num_days();
+    days >= 0 && days >= min_days && release_date(movie).is_some_and(|d| d > now.date_naive())
 }
 
 /// Date à laquelle Radarr tient un film pour sorti (`minimumAvailability = released`) : la plus proche des dates
@@ -261,9 +299,15 @@ async fn ensure_delay_profile(
     Ok(())
 }
 
-/// Meilleure release d'un film : identifiant TMDB, français, qualité acceptable ; tri langue, résolution,
-/// sources. Le codec ne compte pas (voir `series_search::choose`). `items` : (résultat Prowlarr,
-/// `parsedMovieInfo` Radarr).
+/// Qualités Radarr jamais prises pour un film, quel que soit le profil : inconnue (0), WORKPRINT (24), CAM (25),
+/// TELESYNC (26), TELECINE (27), DVDSCR (28), REGIONAL (29). Ce sont des constantes du code de Radarr, les mêmes dans
+/// toute instance. Le profil FR-friendly les refuse déjà, mais un profil « Any » ou illisible (`allowed` vide)
+/// accepterait tout ; `vod_overdue` cherche justement des films avant leur date officielle (2026-10-30).
+pub const PRE_RELEASE_QUALITIES: [i64; 7] = [0, 24, 25, 26, 27, 28, 29];
+
+/// Meilleure release d'un film : identifiant TMDB, français, qualité acceptable (jamais une qualité de
+/// `PRE_RELEASE_QUALITIES`) ; tri langue, résolution, sources. Le codec ne compte pas (voir
+/// `series_search::choose`). `items` : (résultat Prowlarr, `parsedMovieInfo` Radarr).
 pub fn best_movie_release<'a>(
     items: &'a [(Value, Value)],
     tmdb_id: i64,
@@ -294,6 +338,10 @@ pub fn best_movie_release<'a>(
                 })
                 .unwrap_or(0);
             if !size_ok(size, 1, max_gb) || (lang == 0 && !allow_vo) {
+                return None;
+            }
+            let qid = quality.pointer("/quality/id").and_then(Value::as_i64)?;
+            if PRE_RELEASE_QUALITIES.contains(&qid) {
                 return None;
             }
             let release = json!({
@@ -501,6 +549,7 @@ impl Task for MovieSearch {
         let t = now();
         let mut todo: Vec<(&ArrClient, Value)> = Vec::new();
         let mut vod_wait = 0u32;
+        let mut overdue = 0u32;
         let mut watched = 0u32;
         let now_dt = chrono::Utc::now();
         let today = now_dt.date_naive();
@@ -536,7 +585,7 @@ impl Task for MovieSearch {
                 Ok((movies, queued)) => {
                     for m in movies {
                         let id = m.get("id").and_then(Value::as_i64).unwrap_or(0);
-                        if !wanted(&m, &queued, t, cfg.missing_hours)
+                        if !wanted(&m, &queued, t, cfg.missing_hours, cfg.min_days_after_cinema)
                             || super::anime_library::russian_route(&m, &ctx.cfg.tasks.anime_library)
                         {
                             continue;
@@ -544,6 +593,9 @@ impl Task for MovieSearch {
                         if awaiting_vod(&m, now_dt, cfg.min_days_after_cinema).is_some() {
                             vod_wait += 1;
                             continue;
+                        }
+                        if vod_overdue(&m, now_dt, cfg.min_days_after_cinema) {
+                            overdue += 1;
                         }
                         let rec = records.get(&format!("{}:{id}", arr.name));
                         let mut retry = retry_hours(cfg, release_date(&m), today);
@@ -636,6 +688,12 @@ impl Task for MovieSearch {
         let mut summary: Vec<String> = counts.iter().map(|(k, v)| format!("{k}={v}")).collect();
         if vod_wait > 0 {
             summary.push(format!("{vod_wait} en attente de la VOD"));
+        }
+        if overdue > 0 {
+            summary.push(format!(
+                "{overdue} français en salle depuis plus de {} jours (date TMDB plus tardive)",
+                cfg.min_days_after_cinema
+            ));
         }
         if watched > 0 {
             summary.push(format!(
@@ -839,31 +897,36 @@ mod tests {
             &movie(1, true, false, "2026-09-15T12:00:00Z"),
             &q,
             now,
-            24
+            24,
+            110
         ));
         assert!(!wanted(
             &movie(2, true, false, "2026-09-17T06:00:00Z"),
             &q,
             now,
-            24
+            24,
+            110
         )); // trop récent
         assert!(!wanted(
             &movie(3, true, false, "2026-09-10T12:00:00Z"),
             &q,
             now,
-            24
+            24,
+            110
         )); // en file
         assert!(!wanted(
             &movie(4, false, false, "2026-09-10T12:00:00Z"),
             &q,
             now,
-            24
+            24,
+            110
         )); // non suivi
         assert!(!wanted(
             &movie(5, true, true, "2026-09-10T12:00:00Z"),
             &q,
             now,
-            24
+            24,
+            110
         )); // déjà là
     }
 
@@ -920,5 +983,190 @@ mod tests {
             rel["title"],
             "Souvenirs.De.Marnie.2014.MULTI.VFF.1080p.BluRay.x265"
         );
+    }
+
+    /// *De Gaulle : Résistance* (Radarr seedbox 244, demandé le 2026-10-30) : français, salle le 03/06, aucune date
+    /// numérique, DVD le 04/11, `isAvailable = false` (Radarr attend le 02/11).
+    fn resistance() -> Value {
+        json!({"id": 244, "tmdbId": 1165366, "title": "De Gaulle: Résistance", "monitored": true, "hasFile": false,
+               "isAvailable": false, "status": "inCinemas", "minimumAvailability": "released",
+               "originalLanguage": {"id": 2, "name": "French"},
+               "inCinemas": "2026-06-03T00:00:00Z", "physicalRelease": "2026-11-04T00:00:00Z",
+               "added": "2026-10-30T18:10:00Z"})
+    }
+
+    fn at(s: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    #[test]
+    fn a_french_film_late_on_its_tmdb_date_is_searched() {
+        let m = resistance();
+        assert!(
+            vod_overdue(&m, at("2026-10-30T19:15:00Z"), 110),
+            "149 jours"
+        );
+        assert!(
+            !vod_overdue(&m, at("2026-08-01T12:00:00Z"), 110),
+            "59 jours"
+        );
+        // borne : 110 jours pleins
+        assert!(
+            !vod_overdue(&m, at("2026-09-20T12:00:00Z"), 110),
+            "109 jours"
+        );
+        assert!(
+            vod_overdue(&m, at("2026-09-21T12:00:00Z"), 110),
+            "110 jours"
+        );
+        // disponible selon Radarr : chemin habituel
+        let mut avail = m.clone();
+        avail["isAvailable"] = json!(true);
+        assert!(!vod_overdue(&avail, at("2026-10-30T19:15:00Z"), 110));
+        // date TMDB passée mais toujours « non disponible » (incohérent) : rien de spécial
+        let mut past = m.clone();
+        past["physicalRelease"] = json!("2026-10-20T00:00:00Z");
+        assert!(!vod_overdue(&past, at("2026-10-30T19:15:00Z"), 110));
+        // sans salle, salle à venir, langue absente : non
+        let mut no_cinema = m.clone();
+        no_cinema.as_object_mut().unwrap().remove("inCinemas");
+        assert!(!vod_overdue(&no_cinema, at("2026-10-30T19:15:00Z"), 110));
+        let mut future = m.clone();
+        future["inCinemas"] = json!("2026-12-01T00:00:00Z");
+        assert!(!vod_overdue(&future, at("2026-10-30T19:15:00Z"), 110));
+        let mut no_lang = m.clone();
+        no_lang.as_object_mut().unwrap().remove("originalLanguage");
+        assert!(!vod_overdue(&no_lang, at("2026-10-30T19:15:00Z"), 110));
+    }
+
+    #[test]
+    fn a_recent_or_foreign_film_with_a_future_date_is_not_searched_early() {
+        let now = at("2026-10-30T19:15:00Z");
+        // en salle depuis 3 semaines, DVD daté : rien avant sa date
+        let three_weeks = json!({"isAvailable": false, "originalLanguage": {"name": "French"},
+            "inCinemas": "2026-10-09T00:00:00Z", "physicalRelease": "2027-02-10T00:00:00Z"});
+        assert!(!vod_overdue(&three_weeks, now, 110));
+        let mut w = three_weeks.clone();
+        w["id"] = json!(1);
+        w["tmdbId"] = json!(2);
+        w["monitored"] = json!(true);
+        w["hasFile"] = json!(false);
+        w["added"] = json!("2026-10-29T00:00:00Z");
+        assert!(!wanted(&w, &HashSet::new(), now.timestamp(), 0, 110));
+        // The Odyssey : anglais, 107 jours, numérique le 17/11
+        let odyssey = json!({"isAvailable": false, "originalLanguage": {"name": "English"},
+            "inCinemas": "2026-07-15T00:00:00Z", "digitalRelease": "2026-11-17T00:00:00Z",
+            "physicalRelease": "2026-11-17T00:00:00Z"});
+        assert!(!vod_overdue(&odyssey, now, 110));
+        // un film anglais en salle depuis 150 jours n'est pas concerné non plus
+        let mut long = odyssey.clone();
+        long["inCinemas"] = json!("2026-06-02T00:00:00Z");
+        assert!(!vod_overdue(&long, now, 110));
+    }
+
+    /// Fige un invariant (seuils `days < min` et `days >= min` complémentaires) plutôt qu'un comportement : casse si
+    /// l'une des deux fonctions change de borne sans l'autre.
+    #[test]
+    fn vod_overdue_and_awaiting_vod_never_overlap() {
+        let now = at("2026-10-30T19:15:00Z");
+        // Kraken : français, sans date, 30 jours → attente de la VOD, pas de recherche anticipée
+        let kraken = json!({"isAvailable": false, "originalLanguage": {"name": "French"},
+            "inCinemas": "2026-09-30T00:00:00Z"});
+        assert!(awaiting_vod(&kraken, now, 110).is_some());
+        assert!(!vod_overdue(&kraken, now, 110));
+        // français sans date à 120 jours : Radarr le tient pour sorti (salle + 90), chemin habituel
+        let old = json!({"isAvailable": true, "originalLanguage": {"name": "French"},
+            "inCinemas": "2026-07-02T00:00:00Z"});
+        assert!(awaiting_vod(&old, now, 110).is_none());
+        assert!(!vod_overdue(&old, now, 110));
+        let samples = [
+            resistance(),
+            kraken,
+            old,
+            fr_movie("French", "2026-06-10T00:00:00Z", None),
+            fr_movie(
+                "French",
+                "2026-10-01T00:00:00Z",
+                Some("2027-02-01T00:00:00Z"),
+            ),
+            fr_movie(
+                "French",
+                "2026-03-01T00:00:00Z",
+                Some("2026-12-01T00:00:00Z"),
+            ),
+        ];
+        for days in [0, 30, 60, 100, 109, 110, 111, 150, 300] {
+            let t = at("2026-03-01T12:00:00Z") + chrono::Duration::days(days);
+            for m in &samples {
+                let mut m = m.clone();
+                if m.get("isAvailable").is_none() {
+                    m["isAvailable"] = json!(false);
+                }
+                assert!(
+                    !(awaiting_vod(&m, t, 110).is_some() && vod_overdue(&m, t, 110)),
+                    "{m} au jour {days}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn resistance_is_wanted_like_any_missing_film() {
+        let now = at("2026-10-30T19:15:00Z").timestamp();
+        let none = HashSet::new();
+        assert!(wanted(&resistance(), &none, now, 0, 110));
+        let mut has = resistance();
+        has["hasFile"] = json!(true);
+        assert!(!wanted(&has, &none, now, 0, 110));
+        let mut off = resistance();
+        off["monitored"] = json!(false);
+        assert!(!wanted(&off, &none, now, 0, 110));
+        let queued: HashSet<i64> = [244].into_iter().collect();
+        assert!(!wanted(&resistance(), &queued, now, 0, 110));
+        // seuil réglable : 160 jours → pas encore
+        assert!(!wanted(&resistance(), &none, now, 0, 160));
+        // voie russe : écartée par `run`, comme tout film
+        let cfg = crate::config::AnimeLibrary::default();
+        let mut ru = resistance();
+        ru["path"] = json!(format!("{}/De Gaulle", cfg.seedbox_ru_movies_root));
+        assert!(super::super::anime_library::russian_route(&ru, &cfg));
+        ru["path"] = json!(format!("{}/De Gaulle", cfg.seedbox_default_movies_root));
+        assert!(!super::super::anime_library::russian_route(&ru, &cfg));
+    }
+
+    #[test]
+    fn resistance_retry_rhythm_around_its_tmdb_date() {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let cfg = crate::config::MovieSearch::default();
+        let rel = release_date(&resistance());
+        assert_eq!(rel, Some(d("2026-11-04")));
+        assert_eq!(retry_hours(&cfg, rel, d("2026-10-30")), 72);
+        assert_eq!(retry_hours(&cfg, rel, d("2026-11-02")), 2);
+        assert_eq!(retry_hours(&cfg, rel, d("2026-11-06")), 2);
+        assert_eq!(retry_hours(&cfg, rel, d("2026-11-07")), 72);
+    }
+
+    #[test]
+    fn pre_release_qualities_are_never_taken() {
+        let r = |t: &str| json!({"title": t, "tmdbId": 1165366, "seeders": 30, "downloadUrl": "http://p/dl", "size": 2_000_000_000i64});
+        let q = |id: i64, res: i64| json!({"quality": {"quality": {"id": id, "resolution": res}}});
+        let cam = (r("La.Bataille.de.Gaulle.2026.FRENCH.CAM.x264"), q(25, 0));
+        // même si le profil l'autorise
+        let allowed: HashSet<i64> = [25].into_iter().collect();
+        assert!(
+            best_movie_release(std::slice::from_ref(&cam), 1165366, &allowed, 15.0, true).is_none()
+        );
+        // qualité inconnue, profil illisible (`allowed` vide : tout passe d'ordinaire)
+        let unknown = (r("La.Bataille.de.Gaulle.2026.FRENCH"), q(0, 0));
+        assert!(best_movie_release(&[unknown], 1165366, &HashSet::new(), 15.0, true).is_none());
+        let web = (
+            r("La.Bataille.de.Gaulle.Resistance.2026.VFF.1080p.WEB.H265-X"),
+            q(3, 1080),
+        );
+        let (_, rel) =
+            best_movie_release(&[cam, web], 1165366, &HashSet::new(), 15.0, true).unwrap();
+        assert_eq!(rel["quality"]["quality"]["id"], 3, "WEBDL-1080p gardée");
     }
 }

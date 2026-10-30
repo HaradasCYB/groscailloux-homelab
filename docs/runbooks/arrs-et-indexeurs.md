@@ -34,6 +34,16 @@ propre runbook : [voie-russe.md](voie-russe.md).
   tâche pose elle-même, dans le Radarr de la seedbox, `availabilityDelay = -2` et le profil de délai par défaut
   (torrents retenus 180 min sauf score ≥ 2500, protocole préféré torrent) : les changer dans Radarr ne sert à rien,
   ils sont remis au passage suivant (`docs/AUTOMATION.md`, movie_search).
+  - **Film français** : sans date, il n'est pas cherché avant 110 jours de salle (`awaiting_vod`) ; à partir de
+    110 jours, il est cherché **même si Radarr le dit « pas encore sorti »** parce que TMDB n'a qu'une date de DVD ou
+    une date numérique tardive (`vod_overdue`, même clé `min_days_after_cinema` ; *De Gaulle : Résistance*,
+    30/10). Ne pas « corriger » en passant la fiche Radarr en `minimumAvailability = inCinemas` : la valeur sortirait
+    de `homelab.toml`, ouvrirait le RSS au même titre et serait à défaire à l'arrivée du fichier. Un tel film n'est
+    téléchargeable que côté seedbox (qBittorrent direct) : remis au VPS, son `release/push` serait sans doute refusé.
+  - Jamais de CAM, TS, TC, DVDSCR, WORKPRINT, REGIONAL ni qualité inconnue pour un film, quel que soit le profil
+    (`PRE_RELEASE_QUALITIES`).
+  - `homelabctl run movie_search --dry-run` envoie de **vraies** recherches C411 (jusqu'à `max_per_run`, hors budget
+    du daemon : l'état y est en lecture seule) ; seul l'envoi au client est simulé. Ne pas le lancer par réflexe.
 - **Recherche manuelle** : page `/recherche` de homelabd, jamais la recherche de Sonarr/Radarr (voir § 8).
 
 ## 2. Indexeurs et clés C411

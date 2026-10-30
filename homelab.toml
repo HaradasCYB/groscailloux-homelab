@@ -359,6 +359,9 @@ indexer = "C411"
 # Film FRANÇAIS sans date numérique connue : Radarr le croit disponible 90 jours après la salle, mais en France la
 # VOD arrive 4 mois après (chronologie des médias) et C411 n'a rien avant. On ne le cherche pas avant N jours après
 # la salle ; le membre voit « VOD vers le … » dans l'onglet Demandes (Le Vertige, 2026-09-25). Le RSS reste actif.
+# Même seuil dans l'autre sens (2026-10-30, De Gaulle : Résistance) : un film FRANÇAIS en salle depuis N jours ou
+# plus est cherché même si Radarr ne le tient pas encore pour sorti, parce que la date de TMDB (souvent celle du DVD)
+# est à venir : salle le 03/06, aucune date numérique, DVD le 04/11, déjà sur C411 le 30/10 et jamais cherché.
 min_days_after_cinema = 110
 # Film attendu : C411 a souvent la WEB la veille de la date numérique de TMDB (Spider-Man: Brand New Day, 2026-10-05 :
 # première release 10 h avant, prise 8 h après elle ; sur 14 films récents, jamais plus de 23 h avant). Radarr tient

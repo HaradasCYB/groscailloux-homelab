@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.30.2](#1302--29102026--une-saison-non-demandée-nest-plus-téléchargée)** | 29/10/2026 | **Une saison non demandée n'est plus téléchargée** |
+| **[1.30.3](#1303--30102026--films-français-cherchés-malgré-une-date-tmdb-tardive)** | 30/10/2026 | **Films français cherchés malgré une date TMDB tardive** |
+| [1.30.2](#1302--29102026--une-saison-non-demandée-nest-plus-téléchargée) | 29/10/2026 | Une saison non demandée n'est plus téléchargée |
 | [1.30.1](#1301--29102026--saisons-netflix-en-parties-rangées-dans-la-bonne-saison) | 29/10/2026 | Saisons Netflix en « Parties » rangées dans la bonne saison |
 | [1.30.0](#1300--27102026---continuer-à-regarder--à-la-carte-et-filtre-de-durée) | 27/10/2026 | « Continuer à regarder » à la carte et filtre de durée |
 | [1.29.0](#1290--21102026--liste-rouge-et-imports-partiels-signalés) | 21/10/2026 | Liste rouge et imports partiels signalés |
@@ -42,6 +43,30 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.30.3 — 30/10/2026 — Films français cherchés malgré une date TMDB tardive
+
+Correction : un film français sorti en salle depuis plus de 110 jours est cherché même quand TMDB ne connaît qu'une
+date de DVD ou une date numérique encore à venir.
+
+### Pour les membres
+
+- Un film français sorti au cinéma depuis environ 4 mois n'attend plus sa date de DVD : il est cherché tous les
+  3 jours, et l'onglet Demandes l'explique (« En salle depuis le … : la VOD française est sans doute sortie ») au lieu
+  de « Pas encore sorti en numérique ».
+
+### Pour l'administrateur
+
+- `movie_search` (`vod_overdue`) : un film en langue originale française, non disponible pour Radarr, en salle depuis
+  au moins `min_days_after_cinema` (110) jours et dont la date TMDB est encore à venir est cherché. Cas du 30/10 :
+  *De Gaulle : Résistance*, salle le 03/06, aucune date numérique, DVD le 04/11 (Radarr : disponible le 02/11), déjà
+  sur C411 et jamais cherché, alors que la seconde partie, datée en numérique, a été prise en 5 min. Films étrangers
+  inchangés. Résumé : « N français en salle depuis plus de 110 jours ». Aucune clé ajoutée à `homelab.toml`.
+- `movie_search` ne prend jamais une qualité d'avant-sortie (CAM, TS, TC, DVDSCR, WORKPRINT, REGIONAL) ni une qualité
+  inconnue, quel que soit le profil (`PRE_RELEASE_QUALITIES`).
+- Onglet Demandes : un film français sans date en attente de sa VOD affiche « VOD vers le … » même avant 90 jours de
+  salle (il affichait « Pas encore sorti en numérique »). Détail :
+  [AUTOMATION.md](docs/AUTOMATION.md#movie_search--5-min) et [arrs-et-indexeurs.md](docs/runbooks/arrs-et-indexeurs.md).
 
 ## 1.30.2 — 29/10/2026 — Une saison non demandée n'est plus téléchargée
 

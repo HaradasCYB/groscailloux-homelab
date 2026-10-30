@@ -888,6 +888,97 @@ async fn details(st: &SubsState, kind: &str, tmdb: i64) -> Value {
     v
 }
 
+/// Ce que l'onglet Demandes sait d'un film de Radarr.
+#[derive(Debug, Clone, Default)]
+struct MovieInfo {
+    /// Radarr le tient pour sorti (`isAvailable`).
+    available: bool,
+    /// Date numérique ou physique la plus proche (`AAAA-MM-JJ`).
+    release: Option<String>,
+    /// Film français en attente de la VOD (`awaiting_vod`) : salle, VOD estimée.
+    vod: Option<(chrono::NaiveDate, chrono::NaiveDate)>,
+    /// Film français en retard sur sa date TMDB, cherché quand même (`vod_overdue`) : date de salle.
+    overdue: Option<chrono::NaiveDate>,
+    /// Délai avant la prochaine recherche (plus court autour de la date de sortie).
+    retry: i64,
+}
+
+/// `72` → « tous les 3 jours », `2` → « toutes les 2 h ».
+fn rhythm(hours: i64) -> String {
+    if hours >= 48 && hours % 24 == 0 {
+        format!("tous les {} jours", hours / 24)
+    } else {
+        format!("toutes les {hours} h")
+    }
+}
+
+/// Précision de l'onglet Demandes pour un film encore cherché, sans téléchargement ni fichier ; `None` garde le
+/// libellé de `progress`. `idle` : jamais cherché alors que la demande a plus de 6 h. `outcome` : résultat de la
+/// dernière recherche (`None` si jamais cherché).
+fn movie_search_label(
+    info: Option<&MovieInfo>,
+    ms: &homelab_core::config::MovieSearch,
+    idle: bool,
+    outcome: Option<&str>,
+) -> Option<String> {
+    let d = |n: &chrono::NaiveDate| rp::date_fr(&n.format("%Y-%m-%d").to_string());
+    let Some(i) = info else {
+        return Some("Fiche absente côté téléchargement : l'administrateur doit la refaire".into());
+    };
+    // De Gaulle : Résistance (2026-10-30) : en salle depuis 149 jours, date TMDB = DVD du 04/11
+    if let Some(cinema) = &i.overdue {
+        // déjà cherché avec un autre résultat que « rien » (erreur, attente VO, pris…) : `progress` dit mieux
+        if outcome.is_some_and(|o| o != "none") {
+            return None;
+        }
+        return Some(match &i.release {
+            Some(r) => format!(
+                "En salle depuis le {} : la VOD française est sans doute sortie, recherché {} (date TMDB : {})",
+                d(cinema),
+                rhythm(i.retry),
+                rp::date_fr(r)
+            ),
+            None => format!(
+                "En salle depuis le {} : la VOD française est sans doute sortie, recherché {}",
+                d(cinema),
+                rhythm(i.retry)
+            ),
+        });
+    }
+    // film français sans date : disponible ou non pour Radarr (salle + 90 jours), on attend la VOD
+    if let Some((cinema, vod)) = &i.vod {
+        return Some(format!(
+            "En salle depuis le {} · VOD vers le {}, récupéré dès sa sortie",
+            d(cinema),
+            d(vod)
+        ));
+    }
+    if !i.available {
+        // Radarr le tient pour sorti `release_window_days` avant : recherche dès ce jour-là
+        let from = i
+            .release
+            .as_deref()
+            .and_then(|r| chrono::NaiveDate::parse_from_str(r, "%Y-%m-%d").ok())
+            .and_then(|r| {
+                r.checked_sub_days(chrono::Days::new(ms.release_window_days.max(0) as u64))
+            });
+        return Some(match (&i.release, from) {
+            (Some(r), Some(f)) => format!(
+                "Pas encore sorti en numérique (prévu le {}) : recherché toutes les {} h dès le {}",
+                rp::date_fr(r),
+                ms.release_retry_hours,
+                f.format("%d/%m")
+            ),
+            (Some(r), None) => format!(
+                "Pas encore sorti en numérique (prévu le {})",
+                rp::date_fr(r)
+            ),
+            (None, _) => "Pas encore sorti en numérique".into(),
+        });
+    }
+    idle.then(|| "Recherche régulière en cours, rien de trouvé pour l'instant".into())
+}
+
 async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
     let ctx = &st.ctx;
     let t = now();
@@ -1022,19 +1113,8 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
     // saisons par série : numéro → (fichiers, épisodes diffusés, prochaine diffusion)
     let mut season_info: SeasonInfo = HashMap::new();
     let mut movie_files: HashSet<(&'static str, i64)> = HashSet::new();
-    // films connus de l'Arr : (côté, id) → (isAvailable, date de sortie numérique/physique la plus proche)
-    // (disponible selon Radarr, date numérique/physique, attente de la VOD pour un film français : salle, VOD estimée,
-    // délai avant la prochaine recherche : plus court autour de la date de sortie)
-    #[allow(clippy::type_complexity)]
-    let mut movie_info: HashMap<
-        (&'static str, i64),
-        (
-            bool,
-            Option<String>,
-            Option<(chrono::NaiveDate, chrono::NaiveDate)>,
-            i64,
-        ),
-    > = HashMap::new();
+    // films connus de l'Arr : (côté, id) → ce qu'en dit Radarr (`MovieInfo`)
+    let mut movie_info: HashMap<(&'static str, i64), MovieInfo> = HashMap::new();
     let vod_days = ctx.cfg.tasks.movie_search.min_days_after_cinema;
     for (side, arr, kind) in &sides {
         if *kind == "tv" {
@@ -1109,7 +1189,30 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
                     homelab_core::tasks::movie_search::release_date(&m),
                     chrono::Utc::now().date_naive(),
                 );
-                movie_info.insert((side, id), (avail, release, vod, retry));
+                // seul un côté qui télécharge (`auto_sides`) cherche ces films : ailleurs, libellé habituel
+                let overdue = (ctx.cfg.downloads.may_grab(arr.name)
+                    && homelab_core::tasks::movie_search::vod_overdue(
+                        &m,
+                        chrono::Utc::now(),
+                        vod_days,
+                    ))
+                .then(|| {
+                    m.get("inCinemas")
+                        .and_then(Value::as_str)
+                        .and_then(|d| d.get(..10))
+                        .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                })
+                .flatten();
+                movie_info.insert(
+                    (side, id),
+                    MovieInfo {
+                        available: avail,
+                        release,
+                        vod,
+                        overdue,
+                        retry,
+                    },
+                );
             }
         }
     }
@@ -1224,7 +1327,7 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
             } else {
                 movie_info
                     .get(&(side, ext))
-                    .map_or(ms.retry_after_hours, |i| i.3)
+                    .map_or(ms.retry_after_hours, |i| i.retry)
             };
             (retry, 168, ms.error_retry_hours)
         };
@@ -1247,50 +1350,13 @@ async fn build_requests_progress(st: &SubsState) -> anyhow::Result<Value> {
         let downloading = queue.iter().any(|q| q.tracked_state != "shelved");
         if p.stage == rp::Stage::Search && !downloading && !has_file {
             if kind == "movie" {
-                match movie_info.get(&(side, ext)) {
-                    None => {
-                        p.label =
-                            "Fiche absente côté téléchargement : l'administrateur doit la refaire"
-                                .into()
-                    }
-                    Some((true, _, Some((cinema, vod)), _)) => {
-                        let d =
-                            |n: &chrono::NaiveDate| rp::date_fr(&n.format("%Y-%m-%d").to_string());
-                        p.label = format!(
-                            "En salle depuis le {} · VOD vers le {}, récupéré dès sa sortie",
-                            d(cinema),
-                            d(vod)
-                        );
-                    }
-                    Some((false, release, _, _)) => {
-                        // Radarr le tient pour sorti `release_window_days` avant : recherche dès ce jour-là
-                        let from = release
-                            .as_deref()
-                            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-                            .and_then(|d| {
-                                d.checked_sub_days(chrono::Days::new(
-                                    ms.release_window_days.max(0) as u64
-                                ))
-                            });
-                        p.label = match (release, from) {
-                            (Some(d), Some(f)) => format!(
-                                "Pas encore sorti en numérique (prévu le {}) : recherché toutes les {} h dès le {}",
-                                rp::date_fr(d),
-                                ms.release_retry_hours,
-                                f.format("%d/%m")
-                            ),
-                            (Some(d), None) => format!(
-                                "Pas encore sorti en numérique (prévu le {})",
-                                rp::date_fr(d)
-                            ),
-                            (None, _) => "Pas encore sorti en numérique".into(),
-                        }
-                    }
-                    Some((true, _, _, _)) if search.is_none() && t - created > 6 * 3600 => {
-                        p.label =
-                            "Recherche régulière en cours, rien de trouvé pour l'instant".into();
-                    }
-                    _ => {}
+                if let Some(l) = movie_search_label(
+                    movie_info.get(&(side, ext)),
+                    ms,
+                    search.is_none() && t - created > 6 * 3600,
+                    search.as_ref().map(|s| s.outcome.as_str()),
+                ) {
+                    p.label = l;
                 }
             } else if kind == "tv" && !season_info.contains_key(&(side, ext)) {
                 p.label =
@@ -1873,5 +1939,90 @@ mod tests {
         assert!(route_listable("classique", false, false));
         assert!(!route_listable("classique", true, false));
         assert!(!route_listable("classique", false, true));
+    }
+
+    /// Onglet Demandes, film cherché sans résultat (2026-10-30, *De Gaulle : Résistance*).
+    fn movie_info(
+        available: bool,
+        release: Option<&str>,
+        vod: Option<(&str, &str)>,
+        overdue: Option<&str>,
+        retry: i64,
+    ) -> MovieInfo {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        MovieInfo {
+            available,
+            release: release.map(str::to_string),
+            vod: vod.map(|(a, b)| (d(a), d(b))),
+            overdue: overdue.map(d),
+            retry,
+        }
+    }
+
+    #[test]
+    fn a_french_film_late_on_its_tmdb_date_is_shown_as_searched() {
+        let ms = homelab_core::config::MovieSearch::default();
+        let resistance = movie_info(false, Some("2026-11-04"), None, Some("2026-06-03"), 72);
+        let want = "En salle depuis le 03/06/2026 : la VOD française est sans doute sortie, recherché tous les 3 jours (date TMDB : 04/11/2026)";
+        // jamais cherché encore, ou déjà cherché sans résultat (`none`) : même libellé, jamais « Pas encore sorti »
+        assert_eq!(
+            movie_search_label(Some(&resistance), &ms, false, None).as_deref(),
+            Some(want)
+        );
+        assert_eq!(
+            movie_search_label(Some(&resistance), &ms, true, None).as_deref(),
+            Some(want)
+        );
+        // The Odyssey : étranger, daté, non disponible → inchangé
+        let odyssey = movie_info(false, Some("2026-11-17"), None, None, 72);
+        assert_eq!(
+            movie_search_label(Some(&odyssey), &ms, false, None).as_deref(),
+            Some("Pas encore sorti en numérique (prévu le 17/11/2026) : recherché toutes les 2 h dès le 15/11")
+        );
+        // français daté, en salle depuis moins de 110 jours → inchangé
+        let recent = movie_info(false, Some("2027-02-10"), None, None, 72);
+        assert_eq!(
+            movie_search_label(Some(&recent), &ms, false, None).as_deref(),
+            Some("Pas encore sorti en numérique (prévu le 10/02/2027) : recherché toutes les 2 h dès le 08/02")
+        );
+        // Kraken : français sans date, 30 jours (Radarr : pas encore disponible) → « VOD vers le … »
+        let kraken = movie_info(false, None, Some(("2026-09-30", "2027-01-30")), None, 72);
+        let vod = "En salle depuis le 30/09/2026 · VOD vers le 30/01/2027, récupéré dès sa sortie";
+        assert_eq!(
+            movie_search_label(Some(&kraken), &ms, false, None).as_deref(),
+            Some(vod)
+        );
+        // entre 90 et 110 jours, Radarr le croit disponible : même libellé
+        let kraken_late = movie_info(true, None, Some(("2026-09-30", "2027-01-30")), None, 72);
+        assert_eq!(
+            movie_search_label(Some(&kraken_late), &ms, false, None).as_deref(),
+            Some(vod)
+        );
+        // film disponible : libellé de `progress`, sauf demande ancienne jamais cherchée
+        let avail = movie_info(true, Some("2026-10-01"), None, None, 72);
+        assert_eq!(movie_search_label(Some(&avail), &ms, false, None), None);
+        assert_eq!(
+            movie_search_label(Some(&avail), &ms, true, None).as_deref(),
+            Some("Recherche régulière en cours, rien de trouvé pour l'instant")
+        );
+        assert!(movie_search_label(None, &ms, false, None)
+            .unwrap()
+            .starts_with("Fiche absente"));
+        // déjà cherché sans résultat : même libellé ; autre résultat (erreur, attente VO) : celui de `progress`
+        assert_eq!(
+            movie_search_label(Some(&resistance), &ms, false, Some("none")).as_deref(),
+            Some(want)
+        );
+        assert_eq!(
+            movie_search_label(Some(&resistance), &ms, false, Some("error")),
+            None
+        );
+        assert_eq!(
+            movie_search_label(Some(&resistance), &ms, false, Some("vo_wait")),
+            None
+        );
+        assert_eq!(rhythm(72), "tous les 3 jours");
+        assert_eq!(rhythm(2), "toutes les 2 h");
+        assert_eq!(rhythm(24), "toutes les 24 h");
     }
 }

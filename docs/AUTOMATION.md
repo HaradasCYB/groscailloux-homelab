@@ -338,7 +338,8 @@ l'**AV1** en dernier (`codec_rank`, clé `(langue, résolution, sources ≥ 2, c
 le DTS n'est lu ni par les Chromecast ni par l'appli iOS). Un x264 reste pris quand c'est la seule version française bien partagée.
 
 ### movie_search — 5 min
-Recherche des films **suivis, sans fichier, sortis, hors file d'attente**, dès le passage qui suit la demande
+Recherche des films **suivis, sans fichier, sortis (ou français en retard sur leur date TMDB, voir plus bas), hors
+file d'attente**, dès le passage qui suit la demande
 (`missing_hours` 0, passage toutes les 5 min) : depuis le 2026-09-17, Radarr n'a plus aucune recherche (C411 en
 RSS seulement) et le RSS ne ramène que les nouveautés — un film ancien ne peut venir que d'ici. Même mécanique que
 `series_search` : `{TmdbId:<id>}` (type `movie`), `tmdbId` vérifié, `parse` Radarr, garde-fous, `release/push`,
@@ -369,8 +370,26 @@ depuis la publication : une vieille VOSTFR (catalogue) part tout de suite.
 disponible 90 jours après la salle ; en France la VOD arrive 4 mois après (chronologie des médias) et C411 n'a rien
 avant. Un film en langue originale française, sans `digitalRelease` ni `physicalRelease`, sorti en salle depuis
 moins de `min_days_after_cinema` (110) jours n'est pas cherché (résumé : « N en attente de la VOD ») ; l'onglet
-Demandes affiche « Au cinéma depuis le … : la VOD arrive environ 4 mois après (vers le …) ». Le RSS reste actif.
-Les films étrangers (date numérique américaine connue) sont déjà gérés par Radarr (`isAvailable`).
+Demandes affiche « En salle depuis le … · VOD vers le …, récupéré dès sa sortie ». Le RSS reste actif.
+
+**Films français en retard sur leur date TMDB** (`vod_overdue`, 2026-10-30) : pour un film français, TMDB n'a
+souvent que la date du DVD, ou une date numérique tardive, alors que la VOD sort environ 4 mois après la salle.
+*De Gaulle : Résistance* : salle le 03/06, aucune date numérique, DVD le 04/11 → Radarr `isAvailable = false`
+jusqu'au 02/11, alors que le film était sur C411 le 30/10. Un film en langue originale française que Radarr ne tient
+pas pour sorti, en salle depuis **au moins** `min_days_after_cinema` (110) jours, et dont la date de `release_date`
+est encore à venir, est donc cherché quand même (résumé : « N français en salle depuis plus de 110 jours »), au
+rythme habituel (`retry_after_hours`, puis `release_retry_hours` autour de la date TMDB). C'est l'autre côté du
+même seuil qu'`awaiting_vod` (avant : sans date, on attend ; après : daté plus tard, on cherche), les deux cas sont
+disjoints. L'onglet Demandes affiche « En salle depuis le … : la VOD française est sans doute sortie, recherché tous
+les 3 jours (date TMDB : …) ». Le RSS de Radarr, lui, reste fermé jusqu'à la date (moins `release_window_days`).
+Les films étrangers ne sont pas concernés (date numérique fiable, releases précoces = CAM/TS ; *The Odyssey* reste
+« Pas encore sorti »). Côté seedbox, la release va directement au qBittorrent (`homelab:movie=<id>`) et
+`torrent_import` l'importe (`ManualImport`, copie) : la disponibilité de Radarr ne joue pas. Côté VPS (aujourd'hui
+hors `auto_sides`), Radarr refuserait probablement le `release/push` d'un film non disponible (résultat `none`).
+
+**Qualités d'avant-sortie jamais prises** (`PRE_RELEASE_QUALITIES`, 2026-10-30) : `best_movie_release` écarte
+toujours les qualités Radarr inconnue (0), WORKPRINT, CAM, TELESYNC, TELECINE, DVDSCR et REGIONAL (24–29, constantes
+du code de Radarr), même si le profil les autorise ou s'il est illisible (`allowed` vide = tout accepté).
 
 ### indexer_unblock — 5 min
 Après des échecs (429, délais), Sonarr et Radarr mettent un indexeur en pause, jusqu'à 24 h ; aucune API ne
