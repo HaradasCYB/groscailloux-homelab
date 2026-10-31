@@ -49,7 +49,7 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 ## 1.30.5 — 31/10/2026 — Inscription : l'essai annoncé tel qu'il est
 
 Correction : à l'inscription publique, l'essai gratuit est décidé avant les mails et la page, qui disent enfin ce qui
-s'est passé (commit à venir).
+s'est passé (commit d7094f9).
 
 ### Pour les membres
 
