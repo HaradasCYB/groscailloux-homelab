@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.30.4](#1304--30102026--série-sortie-le-jour-même-reprise-toutes-les-2-h)** | 30/10/2026 | **Série sortie le jour même reprise toutes les 2 h** |
+| **[1.30.5](#1305--31102026--inscription--lessai-annoncé-tel-quil-est)** | 31/10/2026 | **Inscription : l'essai annoncé tel qu'il est** |
+| [1.30.4](#1304--30102026--série-sortie-le-jour-même-reprise-toutes-les-2-h) | 30/10/2026 | Série sortie le jour même reprise toutes les 2 h |
 | [1.30.3](#1303--30102026--films-français-cherchés-malgré-une-date-tmdb-tardive) | 30/10/2026 | Films français cherchés malgré une date TMDB tardive |
 | [1.30.2](#1302--29102026--une-saison-non-demandée-nest-plus-téléchargée) | 29/10/2026 | Une saison non demandée n'est plus téléchargée |
 | [1.30.1](#1301--29102026--saisons-netflix-en-parties-rangées-dans-la-bonne-saison) | 29/10/2026 | Saisons Netflix en « Parties » rangées dans la bonne saison |
@@ -44,6 +45,31 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.30.5 — 31/10/2026 — Inscription : l'essai annoncé tel qu'il est
+
+Correction : à l'inscription publique, l'essai gratuit est décidé avant les mails et la page, qui disent enfin ce qui
+s'est passé (commit à venir).
+
+### Pour les membres
+
+- Après l'inscription, le mail de bienvenue annonce « Ton essai de N jours a commencé » et la page « Ton essai de
+  N jours démarre dès que ton mot de passe est choisi » (N = `[subscriptions] trial_days`, 7 aujourd'hui), au lieu de
+  promettre une activation par l'administrateur pour un compte déjà actif. Le formulaire `/inscription` annonce aussi
+  l'essai. Si l'essai est impossible (plafond de comptes atteint), le message reste « sera activé par
+  l'administrateur ».
+
+### Pour l'administrateur
+
+- `onboard::run` démarre l'essai (`subscription_ops::start_trial`, sous `onboard_lock`) avant le mail de bienvenue
+  et le mail admin. Essai démarré : « Nouveau membre en essai : X » (fin d'essai, parrain, sans parrain ou code
+  inconnu ignoré, rien à faire). Essai impossible : « Nouveau compte à activer : X » avec la raison (plafond premium,
+  `trial_days = 0`, abonnements désactivés, erreur) et le parrain ; plafond atteint : fiche « suspendue » au lieu
+  d'un essai qui courait sur un compte fermé. Lien de bienvenue non parti : dit dans le mail admin (avertissement).
+  Inscription arrêtée après la création du compte Jellyfin : alerte « Inscription ratée à moitié ». La réponse
+  neutre (adresse déjà inscrite) tient compte du plafond, pour ne rien révéler. Onboarding admin, `homelabctl
+  onboard` et `user_poller` inchangés. Nouvel exemple `homelabctl mail-test --kind welcome_trial` (18 types) :
+  installer homelabd et homelabctl ensemble. Aucune clé de `homelab.toml`.
 
 ## 1.30.4 — 30/10/2026 — Série sortie le jour même reprise toutes les 2 h
 

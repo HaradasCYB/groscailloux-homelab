@@ -326,8 +326,7 @@ pub enum WelcomeNotice {
     None,
     /// Compte créé suspendu : « sera activé par l'administrateur… tu recevras un mail ».
     Activation,
-    /// Inscription avec essai gratuit de `days` jours (prêt pour le jour où l'inscription saura qu'un essai
-    /// démarre avant d'envoyer le mail ; pas encore utilisé par l'envoi).
+    /// Inscription publique dont l'essai gratuit de `days` jours a démarré (décidé avant l'envoi, 1.30.5).
     Trial { days: u32 },
 }
 
@@ -456,6 +455,15 @@ pub fn activated_mail(username: &str, steps_url: &str, button: ActivatedButton) 
     m.render()
 }
 
+/// Encadré par défaut d'un mail de bienvenue : rien pour un compte actif, « activation » pour un compte suspendu.
+pub fn notice_for(premium: bool) -> WelcomeNotice {
+    if premium {
+        WelcomeNotice::None
+    } else {
+        WelcomeNotice::Activation
+    }
+}
+
 /// Contenu du mail d'un lien selon son type : bienvenue et démo (`premium` = compte déjà actif, sans encadré
 /// « activation »), ou activation d'un compte sans mot de passe. Les premiers pas sont sur l'hôte du lien.
 pub fn render(
@@ -464,6 +472,17 @@ pub fn render(
     link: &str,
     ttl_mins: u64,
     premium: bool,
+) -> RenderedMail {
+    render_with(kind, username, link, ttl_mins, notice_for(premium))
+}
+
+/// Comme [`render`], avec l'encadré du mail de bienvenue choisi par l'appelant (essai de l'inscription publique).
+pub fn render_with(
+    kind: &str,
+    username: &str,
+    link: &str,
+    ttl_mins: u64,
+    notice: WelcomeNotice,
 ) -> RenderedMail {
     let steps = steps_url(link.split("/bienvenue/").next().unwrap_or(link));
     match kind {
@@ -475,17 +494,7 @@ pub fn render(
                 ttl_mins,
             },
         ),
-        _ => welcome_mail(
-            username,
-            link,
-            &steps,
-            ttl_mins,
-            if premium {
-                WelcomeNotice::None
-            } else {
-                WelcomeNotice::Activation
-            },
-        ),
+        _ => welcome_mail(username, link, &steps, ttl_mins, notice),
     }
 }
 
@@ -522,6 +531,19 @@ pub async fn send(
     kind: &str,
     premium: bool,
 ) -> Result<Sent> {
+    send_with(ctx, user_id, username, email, kind, notice_for(premium)).await
+}
+
+/// Comme [`send`], avec l'encadré du mail de bienvenue choisi par l'appelant (l'onboarding d'une inscription
+/// publique : essai démarré ou compte à activer).
+pub async fn send_with(
+    ctx: &TaskContext,
+    user_id: &str,
+    username: &str,
+    email: &str,
+    kind: &str,
+    notice: WelcomeNotice,
+) -> Result<Sent> {
     let s = &ctx.secrets;
     let base = link_base(ctx);
     let ttl = ctx.cfg.onboard.link_ttl_mins;
@@ -544,7 +566,7 @@ pub async fn send(
     } else {
         let token = issue(ctx, user_id, username, email, kind).await?;
         let link = url(&base, &token);
-        let mail = render(kind, username, &link, ttl, premium);
+        let mail = render_with(kind, username, &link, ttl, notice);
         (link, now() + (ttl as i64) * 60, mail)
     };
     let Some(smtp) = &s.smtp else {

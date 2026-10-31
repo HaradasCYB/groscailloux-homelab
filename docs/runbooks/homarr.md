@@ -47,6 +47,12 @@ arrêté, base sauvegardée, tout en une commande) :
 3. Démarrage de Homarr ; contrôler la tuile connecté (elle ouvre la page, l'auth NPM « admin-outils » est demandée comme
    pour « Comptes ») et l'absence de la tuile sur le tableau public.
 
+## Tuile « Abonnement Premium » (tableau privé « Operations », 31/10)
+
+Même recette que « Liste rouge », à côté d'elle dans « Accès & docs » : app « Abonnement Premium » dont le `href` et le
+`ping_url` sont `PREMIUM_PUBLIC_URL` + `/premium` (nouveau domaine), icône de « Lien d'inscription ». Script, retour
+arrière et base d'avant : `backups/homarr-premium-20261031/`.
+
 ## Lot 3 (en cours jusqu'au 12/10)
 
 Le lot 3 prépare Homarr 1.77.2 (`backups/lot3-20261008/homarr/`) : plus de tâches de fond par widget, télémétrie coupée,

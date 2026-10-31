@@ -58,12 +58,16 @@ const DIRECT_TEXT: &str = "Petit point sur ta demande : la saison 2 arrive samed
 const ANNOUNCE_TEXT: &str = "Maintenance samedi matin\nSamedi, entre 7 h et 8 h, le serveur redémarre pour une mise à jour. La lecture sera coupée quelques minutes.\n\nTout revient seul ensuite : rien à faire de ton côté. Merci pour ta patience !";
 
 /// Catalogue : type (`--kind`) et ce que c'est, dans l'ordre des envois.
-pub const KINDS: [(&str, &str); 17] = [
+pub const KINDS: [(&str, &str); 18] = [
     ("media_movie", "film demandé disponible"),
     ("media_season", "saison demandée disponible"),
     ("media_seasons", "plusieurs saisons demandées disponibles"),
     ("media_digest", "plusieurs demandes disponibles ensemble"),
     ("welcome", "bienvenue, compte à activer"),
+    (
+        "welcome_trial",
+        "bienvenue, essai gratuit démarré (inscription)",
+    ),
     ("demo", "bienvenue, compte déjà actif (nouveau lien)"),
     ("activated", "compte activé, mot de passe déjà choisi"),
     ("activated_nopass", "compte activé, mot de passe à choisir"),
@@ -79,7 +83,7 @@ pub const KINDS: [(&str, &str); 17] = [
 ];
 
 /// Types qui portent un lien de bienvenue.
-const WITH_LINK: [&str; 3] = ["welcome", "demo", "activated_nopass"];
+const WITH_LINK: [&str; 4] = ["welcome", "welcome_trial", "demo", "activated_nopass"];
 
 pub fn ids() -> Vec<&'static str> {
     KINDS.iter().map(|(id, _)| *id).collect()
@@ -135,6 +139,8 @@ pub struct Env {
     /// Hôte de la page de bienvenue (premiers pas).
     pub onboard_base: String,
     pub ttl_mins: u64,
+    /// `[subscriptions] trial_days` (encadré « essai » du mail de bienvenue d'une inscription).
+    pub trial_days: u32,
     /// `/premium?compte=Exemple&k=…`, comme le cycle d'abonnement le construit.
     pub pay_url: String,
     pub price_text: String,
@@ -158,6 +164,7 @@ impl Env {
             link: link.unwrap_or_else(|| welcome::url(&base, DUMP_TOKEN)),
             onboard_base: base,
             ttl_mins: ctx.cfg.onboard.link_ttl_mins,
+            trial_days: s.trial_days.max(1),
             pay_url: subscription_ops::pay_url(ctx, NAME),
             price_text: s.price_text.clone(),
             grace_days: i64::from(s.grace_days),
@@ -186,6 +193,13 @@ pub fn fixed(kind: &str, e: &Env) -> Option<RenderedMail> {
     };
     Some(match kind {
         "welcome" => welcome::render(welcome::KIND_WELCOME, NAME, &e.link, e.ttl_mins, false),
+        "welcome_trial" => welcome::render_with(
+            welcome::KIND_WELCOME,
+            NAME,
+            &e.link,
+            e.ttl_mins,
+            welcome::WelcomeNotice::Trial { days: e.trial_days },
+        ),
         "demo" => welcome::render(welcome::KIND_DEMO, NAME, &e.link, e.ttl_mins, true),
         "activated" => {
             welcome::activated_mail(NAME, &steps, ActivatedButton::Jellyfin(&e.jellyfin_url))
@@ -457,7 +471,10 @@ pub struct Sample {
 /// Mêmes en-têtes que le vrai envoi : `Reply-To` des mails de bienvenue (gardé par `mail::build_message` seulement
 /// sur le domaine d'envoi), `List-Unsubscribe` des « disponible ».
 fn envelope(kind: &str, ctx: &TaskContext) -> (Option<String>, Vec<(String, String)>) {
-    if matches!(kind, "welcome" | "demo" | "activated" | "activated_nopass") {
+    if matches!(
+        kind,
+        "welcome" | "welcome_trial" | "demo" | "activated" | "activated_nopass"
+    ) {
         (ctx.secrets.guide_contact_email.clone(), Vec::new())
     } else if is_media(kind) {
         let h = ctx
@@ -729,6 +746,7 @@ mod tests {
                     .into(),
             onboard_base: "https://compte.example.test".into(),
             ttl_mins: 60,
+            trial_days: 7,
             pay_url: "https://compte.example.test/premium?compte=Exemple&k=0123456789abcdef".into(),
             price_text: "3,50 € / mois".into(),
             grace_days: 3,
@@ -765,8 +783,8 @@ mod tests {
         let mut uniq = subjects.clone();
         uniq.sort();
         uniq.dedup();
-        // bienvenue et démo, actif avec ou sans mot de passe : même objet que dans la vraie vie
-        assert_eq!(uniq.len(), KINDS.len() - 2, "{subjects:?}");
+        // bienvenue (à activer, essai) et démo, actif avec ou sans mot de passe : même objet que dans la vraie vie
+        assert_eq!(uniq.len(), KINDS.len() - 3, "{subjects:?}");
         assert!(fixed("media_movie", &env()).is_none() && fixed("autre", &env()).is_none());
         assert!(media_fallback("welcome", "https://tv.example.test", 0).is_none());
     }
@@ -796,6 +814,13 @@ mod tests {
             assert!(rendered(k).text.contains(&e.pay_url), "{k}");
         }
         assert!(rendered("sub_reminder").subject.contains("essai"));
+        // bienvenue d'une inscription : encadré « essai », jamais la promesse d'activation par l'admin
+        let w = rendered("welcome_trial");
+        assert!(w.text.contains("Ton essai de 7 jours a commencé"));
+        assert!(!w.text.contains("activé par l'administrateur"));
+        assert!(rendered("welcome")
+            .text
+            .contains("activé par l'administrateur"));
         assert!(rendered("sub_suspended_trial").subject.contains("essai"));
         assert!(rendered("sub_reminder_7d").subject.contains("7 jours"));
         assert!(rendered("chat_direct").text.starts_with("Salut Exemple,"));

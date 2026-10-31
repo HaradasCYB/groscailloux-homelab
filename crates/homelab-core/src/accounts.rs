@@ -161,6 +161,26 @@ pub async fn set_premium(ctx: &TaskContext, user_id: &str, on: bool) -> Result<O
     set_premium_locked(ctx, user_id, on).await
 }
 
+/// Comptes premium (hors protégés) et plafond `[accounts] max_premium`, lus dans Jellyfin.
+pub async fn premium_usage(ctx: &TaskContext) -> Result<(usize, usize)> {
+    let users = ctx.jellyfin.users().await?;
+    Ok((
+        premium_count(&users, &ctx.cfg.accounts.protected),
+        ctx.cfg.accounts.max_premium,
+    ))
+}
+
+/// Le compte est-il actif (premium) d'après Jellyfin ? Relu après une erreur, pour ne pas annoncer un compte
+/// suspendu qui ne l'est pas.
+pub async fn account_is_premium(ctx: &TaskContext, user_id: &str) -> Result<bool> {
+    let users = ctx.jellyfin.users().await?;
+    let user = users
+        .iter()
+        .find(|u| u.get("Id").and_then(Value::as_str) == Some(user_id))
+        .with_context(|| format!("compte Jellyfin introuvable : {user_id}"))?;
+    Ok(is_premium(user))
+}
+
 /// Comme [`set_premium`], pour un appelant qui tient déjà `onboard_lock` (l'onboarding).
 pub async fn set_premium_locked(ctx: &TaskContext, user_id: &str, on: bool) -> Result<Outcome> {
     let cfg = &ctx.cfg.accounts;

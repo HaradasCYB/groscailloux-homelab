@@ -1227,19 +1227,41 @@ async fn welcome_renew(
     neutral()
 }
 
-fn signup_form(username: &str, email: &str, err: Option<&str>) -> String {
-    signup_form_p(username, email, "", err)
+fn signup_form(trial: Option<u32>, username: &str, email: &str, err: Option<&str>) -> String {
+    signup_form_p(trial, username, email, "", err)
 }
 
-fn signup_form_p(username: &str, email: &str, parrain: &str, err: Option<&str>) -> String {
+/// Ce que le formulaire annonce : essai configuré (`trial` = `[subscriptions] trial_days` si les abonnements sont
+/// en service) ou validation par l'administrateur. Phrase d'introduction et case à cocher.
+fn signup_promise(trial: Option<u32>) -> (String, &'static str) {
+    match trial {
+        Some(days) => (
+            format!("Ton compte démarre par un essai gratuit de {days} jours dès que ton mot de passe est choisi (s'il ne reste plus de place, l'administrateur l'active ensuite)."),
+            "Je sais que l'administrateur peut suspendre un compte qu'il ne connaît pas.",
+        ),
+        None => (
+            "Chaque compte est ensuite validé par l'administrateur.".to_string(),
+            "Je sais que mon compte sera validé par l'administrateur avant de pouvoir regarder.",
+        ),
+    }
+}
+
+fn signup_form_p(
+    trial: Option<u32>,
+    username: &str,
+    email: &str,
+    parrain: &str,
+    err: Option<&str>,
+) -> String {
+    let (intro, accept) = signup_promise(trial);
     format!(
-        r#"{err}<p>Indique le pseudo que tu veux et ton adresse e-mail : tu recevras un lien pour choisir ton mot de passe. Chaque compte est ensuite validé par l'administrateur.</p>
+        r#"{err}<p>Indique le pseudo que tu veux et ton adresse e-mail : tu recevras un lien pour choisir ton mot de passe. {intro}</p>
 <form method="post" action="/inscription" autocomplete="off">
 <div class="field"><label for="username">Pseudo</label><input id="username" name="username" type="text" required pattern="[a-zA-Z0-9_-]{{2,32}}" maxlength="32" value="{u}" autocomplete="username"></div>
 <div class="field"><label for="email">Adresse e-mail</label><input id="email" name="email" type="email" required maxlength="120" value="{e}" autocomplete="email"></div>
 <div class="field"><label for="parrain">Code de parrainage <span class="opt">(facultatif)</span></label><input id="parrain" name="parrain" type="text" maxlength="8" value="{p}" autocomplete="off" autocapitalize="characters" spellcheck="false" pattern="[A-Za-z0-9]{{8}}"></div>
 <div class="hp" aria-hidden="true"><label for="website">Site web</label><input id="website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
-<label class="check"><input type="checkbox" name="accept" value="1" required> Je sais que mon compte sera validé par l'administrateur avant de pouvoir regarder.</label>
+<label class="check"><input type="checkbox" name="accept" value="1" required> {accept}</label>
 <button class="btn" type="submit">Créer mon compte</button>
 </form>
 <p class="foot">Groscailloux est un service privé entre amis : l'administrateur peut refuser un compte qu'il ne connaît pas.</p>"#,
@@ -1257,10 +1279,11 @@ async fn signup_get(State(st): State<AppState>) -> Response {
     if !st.ctx.cfg.onboard.public_signup {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let form_trial = configured_trial_days(&st.ctx);
     public_page(
         INSCRIPTION_HTML,
         "Créer ton compte",
-        &signup_form("", "", None),
+        &signup_form(form_trial, "", "", None),
         StatusCode::OK,
     )
 }
@@ -1277,16 +1300,59 @@ struct SignupForm {
     parrain: String,
 }
 
-fn signup_done() -> Response {
+/// Corps de la page qui suit l'inscription (fonction pure) : `trial_days` = essai démarré (de N jours), sinon le
+/// compte attend l'administrateur.
+fn signup_done_body(trial_days: Option<u32>) -> String {
+    let next = match trial_days {
+        Some(days) => format!(
+            "<p>Ton essai de {days} jours démarre dès que ton mot de passe est choisi : films et séries sont alors à toi.</p>"
+        ),
+        None => "<p>L'administrateur activera ton compte ensuite : tu recevras un second mail à ce moment-là.</p>".to_string(),
+    };
+    format!(
+        r#"<div class="notice ok">Un lien vient de partir pour choisir ton mot de passe (valable une heure).</div>{next}<p class="foot">Rien reçu ? Regarde dans les courriers indésirables.</p>"#
+    )
+}
+
+/// Essai annoncé par le formulaire : la configuration seule (la place sous le plafond se décide à l'envoi).
+fn configured_trial_days(ctx: &TaskContext) -> Option<u32> {
+    let s = &ctx.cfg.subscriptions;
+    subscription_ops::trial_days_for(s.enabled, s.trial_days).ok()
+}
+
+/// Essai qu'une inscription démarrerait maintenant (configuration **et** place sous le plafond premium) : la page
+/// des réponses neutres (adresse déjà connue, champ leurre) dit la même chose qu'une vraie inscription, sans rien
+/// révéler de l'adresse. Jellyfin injoignable : la page « l'administrateur activera » (une vraie inscription
+/// échouerait de toute façon).
+async fn expected_trial_days(ctx: &TaskContext) -> Option<u32> {
+    let s = &ctx.cfg.subscriptions;
+    configured_trial_days(ctx)?;
+    match accounts::premium_usage(ctx).await {
+        Ok((premium, max)) => {
+            subscription_ops::expected_trial(s.enabled, s.trial_days, premium, max)
+        }
+        Err(e) => {
+            warn!(
+                task = "onboard",
+                error = format!("{e:#}"),
+                "premium count unavailable for the neutral signup page"
+            );
+            None
+        }
+    }
+}
+
+fn signup_done(trial_days: Option<u32>) -> Response {
     public_page(
         INSCRIPTION_HTML,
         "Vérifie ta boîte mail",
-        r#"<div class="notice ok">Un lien vient de partir pour choisir ton mot de passe (valable une heure).</div><p>L'administrateur activera ton compte ensuite : tu recevras un second mail à ce moment-là.</p><p class="foot">Rien reçu ? Regarde dans les courriers indésirables.</p>"#,
+        &signup_done_body(trial_days),
         StatusCode::OK,
     )
 }
 
-/// POST /inscription : crée le compte (suspendu), envoie le lien, prévient l'admin.
+/// POST /inscription : crée le compte, démarre l'essai (sinon le compte reste suspendu), envoie le lien, prévient
+/// l'admin (tout dans `onboard::run`).
 async fn signup_post(
     State(st): State<AppState>,
     Extension(client): Extension<Client>,
@@ -1296,18 +1362,20 @@ async fn signup_post(
         return StatusCode::NOT_FOUND.into_response();
     }
     let ip = client.ip;
+    let form_trial = configured_trial_days(&st.ctx);
     let username = f.username.trim().to_string();
     let email = f.email.trim().to_lowercase();
     if !f.website.trim().is_empty() {
         // champ leurre rempli : un robot ; réponse neutre, rien de créé
         info!(task = "onboard", %ip, "signup honeypot hit");
-        return signup_done();
+        return signup_done(expected_trial_days(&st.ctx).await);
     }
     if !onboard::valid_username(&username) {
         return public_page(
             INSCRIPTION_HTML,
             "Créer ton compte",
             &signup_form(
+                form_trial,
                 &username,
                 &email,
                 Some("Pseudo invalide : 2 à 32 caractères, lettres, chiffres, tiret ou souligné."),
@@ -1319,7 +1387,12 @@ async fn signup_post(
         return public_page(
             INSCRIPTION_HTML,
             "Créer ton compte",
-            &signup_form(&username, &email, Some("Adresse e-mail invalide.")),
+            &signup_form(
+                form_trial,
+                &username,
+                &email,
+                Some("Adresse e-mail invalide."),
+            ),
             StatusCode::BAD_REQUEST,
         );
     }
@@ -1327,7 +1400,12 @@ async fn signup_post(
         return public_page(
             INSCRIPTION_HTML,
             "Créer ton compte",
-            &signup_form(&username, &email, Some("Coche la case pour continuer.")),
+            &signup_form(
+                form_trial,
+                &username,
+                &email,
+                Some("Coche la case pour continuer."),
+            ),
             StatusCode::BAD_REQUEST,
         );
     }
@@ -1336,6 +1414,7 @@ async fn signup_post(
             INSCRIPTION_HTML,
             "Créer ton compte",
             &signup_form(
+                form_trial,
                 &username,
                 &email,
                 Some("Doucement : réessaie dans 30 secondes."),
@@ -1347,7 +1426,7 @@ async fn signup_post(
     match accounts::account_by_email(&st.ctx, &email).await {
         Ok(Some(_)) => {
             info!(task = "onboard", %ip, "signup with an address already in use");
-            return signup_done();
+            return signup_done(expected_trial_days(&st.ctx).await);
         }
         Ok(None) => {}
         Err(e) => {
@@ -1360,6 +1439,7 @@ async fn signup_post(
                 INSCRIPTION_HTML,
                 "Créer ton compte",
                 &signup_form(
+                    form_trial,
                     &username,
                     &email,
                     Some("Service momentanément indisponible, réessaie dans un instant."),
@@ -1373,6 +1453,7 @@ async fn signup_post(
             INSCRIPTION_HTML,
             "Créer ton compte",
             &signup_form(
+                form_trial,
                 &username,
                 &email,
                 Some("Ce pseudo est déjà pris, choisis-en un autre."),
@@ -1394,6 +1475,7 @@ async fn signup_post(
             INSCRIPTION_HTML,
             "Créer ton compte",
             &signup_form(
+                form_trial,
                 &username,
                 &email,
                 Some("Trop d'inscriptions aujourd'hui : réessaie demain."),
@@ -1402,33 +1484,20 @@ async fn signup_post(
         );
     }
     info!(task = "onboard", %ip, %username, "public signup");
+    let parrain = f.parrain.trim().to_uppercase();
     let req = OnboardRequest {
         username: username.clone(),
         email: email.clone(),
         password: None,
         source: onboard::Source::SelfSignup,
+        referral: (!parrain.is_empty()).then_some(parrain),
     };
-    let parrain = f.parrain.trim().to_uppercase();
     match onboard::run(&st.ctx, req).await {
-        Ok(r) => {
-            // essai gratuit (`[subscriptions] trial_days`) : fiche « essai » + compte activé tout de suite
-            if st.ctx.cfg.subscriptions.enabled {
-                let referral = (!parrain.is_empty()).then_some(parrain.as_str());
-                match subscription_ops::start_trial(&st.ctx, &r.jellyfin_id, &username, referral)
-                    .await
-                {
-                    Ok(true) => info!(task = "subs", %username, "trial started at signup"),
-                    Ok(false) => {}
-                    Err(e) => {
-                        warn!(task = "subs", %username, error = format!("{e:#}"), "trial not started")
-                    }
-                }
-            }
-            signup_done()
-        }
+        // essai gratuit (`[subscriptions] trial_days`) démarré dans `onboard::run`, avant les mails
+        Ok(r) => signup_done(r.trial.as_ref().and_then(|t| t.started_days())),
         Err(e) => {
             warn!(task = "onboard", %ip, error = format!("{e:#}"), "public signup failed");
-            public_page(INSCRIPTION_HTML, "Créer ton compte", &signup_form(&username, &email, Some("La création a échoué, réessaie dans un instant ou écris à l'administrateur.")), StatusCode::BAD_GATEWAY)
+            public_page(INSCRIPTION_HTML, "Créer ton compte", &signup_form(form_trial, &username, &email, Some("La création a échoué, réessaie dans un instant ou écris à l'administrateur.")), StatusCode::BAD_GATEWAY)
         }
     }
 }
@@ -1889,6 +1958,7 @@ async fn onboard_handler(
         email,
         password: body.password.filter(|p| !p.is_empty()).map(Secret::new),
         source: onboard::Source::Admin,
+        referral: None,
     };
     match onboard::run(&st.ctx, req).await {
         Ok(r) => {
@@ -1941,6 +2011,34 @@ async fn onboard_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signup_done_page_says_what_happens_next() {
+        let trial = signup_done_body(Some(7));
+        assert!(trial.contains("Ton essai de 7 jours démarre dès que ton mot de passe est choisi"));
+        assert!(!trial.contains("L'administrateur activera"));
+        let manual = signup_done_body(None);
+        assert!(manual.contains("L'administrateur activera ton compte ensuite"));
+        assert!(!manual.contains("essai"));
+        for b in [&trial, &manual] {
+            assert!(b.contains("Un lien vient de partir pour choisir ton mot de passe"));
+        }
+    }
+
+    /// Le formulaire annonce l'essai quand il est configuré, la validation par l'administrateur sinon.
+    #[test]
+    fn signup_form_announces_the_trial() {
+        let trial = signup_form(Some(7), "", "", None);
+        assert!(trial.contains("essai gratuit de 7 jours"));
+        assert!(!trial.contains("validé par l'administrateur"));
+        let manual = signup_form(None, "", "", None);
+        assert!(manual.contains("Chaque compte est ensuite validé par l'administrateur."));
+        assert!(manual.contains("Je sais que mon compte sera validé par l'administrateur"));
+        assert!(!manual.contains("essai"));
+        for f in [&trial, &manual] {
+            assert!(f.contains(r#"name="accept" value="1" required"#));
+        }
+    }
 
     /// Un homelabctl d'avant `--all` n'envoie que `to` : mail de bienvenue d'exemple, comme avant.
     #[test]

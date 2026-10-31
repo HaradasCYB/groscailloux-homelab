@@ -198,71 +198,300 @@ pub async fn ensure_fiches(ctx: &TaskContext) -> Result<FichesSync> {
     })
 }
 
-/// Essai gratuit à l'inscription : fiche « essai » et compte activé (si `trial_days > 0`).
+/// Parrain d'une inscription publique (affiché dans le mail de l'admin, que l'essai démarre ou non).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Sponsor {
+    /// Aucun code saisi.
+    None,
+    /// Code reconnu : pseudo du parrain.
+    Known(String),
+    /// Code saisi mais inconnu (ou celui du compte lui-même) : ignoré.
+    Unknown,
+    /// Code saisi mais non vérifié (erreur de la base des abonnés).
+    Unchecked,
+}
+
+impl Sponsor {
+    /// Phrase du mail de l'admin.
+    pub fn line(&self) -> String {
+        match self {
+            Self::None => "Sans parrain.".into(),
+            Self::Known(p) => format!("Parrainé par {p}."),
+            Self::Unknown => "Code de parrainage saisi inconnu, ignoré.".into(),
+            Self::Unchecked => {
+                "Code de parrainage saisi mais non vérifié (erreur), à regarder.".into()
+            }
+        }
+    }
+}
+
+/// Parrain d'après le code saisi et la fiche qui porte ce code (fonction pure) : le code du compte lui-même ne
+/// compte pas.
+pub fn sponsor_for(code: Option<&str>, found: Option<(&str, &str)>, user_id: &str) -> Sponsor {
+    match (code.map(str::trim).filter(|c| !c.is_empty()), found) {
+        (None, _) => Sponsor::None,
+        (Some(_), Some((id, name))) if id != user_id => Sponsor::Known(name.to_string()),
+        (Some(_), _) => Sponsor::Unknown,
+    }
+}
+
+/// Pourquoi l'essai d'une inscription publique n'a pas démarré.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrialBlock {
+    /// `[subscriptions] enabled = false`.
+    Disabled,
+    /// `[subscriptions] trial_days = 0`.
+    NoTrialDays,
+    /// `[accounts] max_premium` atteint : compte laissé suspendu, fiche passée en « suspendu ».
+    CapReached { premium: usize, max: usize },
+    /// Une fiche existait déjà pour ce compte avec un autre statut (rien de touché).
+    Existing(String),
+    /// Erreur (base des abonnés, Jellyfin) : état du compte à vérifier.
+    Failed(String),
+}
+
+impl TrialBlock {
+    /// Raison lisible, pour le mail de l'admin.
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Disabled => "abonnements désactivés ([subscriptions] enabled = false)".into(),
+            Self::NoTrialDays => "aucun essai configuré ([subscriptions] trial_days = 0)".into(),
+            Self::CapReached { premium, max } => {
+                format!("plafond premium atteint ({premium}/{max})")
+            }
+            Self::Existing(status) => format!("fiche d'abonné déjà présente (statut {status})"),
+            Self::Failed(e) => format!("erreur ({e}) : vérifier l'état du compte sur /accounts"),
+        }
+    }
+}
+
+/// Issue de l'essai d'une inscription publique, décidée **avant** le mail de bienvenue et le mail de l'admin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrialOutcome {
+    /// Fiche « essai » posée et compte activé.
+    Started {
+        days: u32,
+        ends_at: i64,
+        sponsor: Sponsor,
+    },
+    NotStarted {
+        block: TrialBlock,
+        sponsor: Sponsor,
+    },
+}
+
+impl TrialOutcome {
+    pub fn started(&self) -> bool {
+        matches!(self, Self::Started { .. })
+    }
+
+    /// Durée de l'essai démarré (page qui suit l'inscription), `None` s'il n'a pas démarré.
+    pub fn started_days(&self) -> Option<u32> {
+        match self {
+            Self::Started { days, .. } => Some(*days),
+            Self::NotStarted { .. } => None,
+        }
+    }
+
+    pub fn sponsor(&self) -> &Sponsor {
+        match self {
+            Self::Started { sponsor, .. } | Self::NotStarted { sponsor, .. } => sponsor,
+        }
+    }
+}
+
+/// Première décision, avant toute écriture (fonction pure) : durée de l'essai d'après la configuration.
+pub fn trial_days_for(enabled: bool, trial_days: u32) -> std::result::Result<u32, TrialBlock> {
+    if !enabled {
+        Err(TrialBlock::Disabled)
+    } else if trial_days == 0 {
+        Err(TrialBlock::NoTrialDays)
+    } else {
+        Ok(trial_days)
+    }
+}
+
+/// Essai qu'une inscription démarrerait maintenant (fonction pure) : configuration et place sous le plafond
+/// premium. Sert aux réponses neutres de la page d'inscription, qui doivent dire la même chose qu'une vraie.
+pub fn expected_trial(enabled: bool, trial_days: u32, premium: usize, max: usize) -> Option<u32> {
+    trial_days_for(enabled, trial_days)
+        .ok()
+        .filter(|_| accounts::can_activate(premium, max))
+}
+
+/// Décision finale (fonction pure), une fois la fiche posée et l'activation tentée : `fiche` = statut de la fiche
+/// après `ensure` (une fiche préexistante garde le sien), `activation` = réponse de
+/// [`accounts::set_premium_locked`] (`Unchanged` = compte déjà actif).
+pub fn trial_outcome(
+    days: u32,
+    ends_at: i64,
+    fiche: Status,
+    sponsor: Sponsor,
+    activation: std::result::Result<&Outcome, String>,
+) -> TrialOutcome {
+    let block = if fiche != Status::Trial {
+        TrialBlock::Existing(fiche.as_str().to_string())
+    } else {
+        match activation {
+            Ok(Outcome::Activated | Outcome::Unchanged) => {
+                return TrialOutcome::Started {
+                    days,
+                    ends_at,
+                    sponsor,
+                }
+            }
+            Ok(Outcome::CapReached { premium, max }) => TrialBlock::CapReached {
+                premium: *premium,
+                max: *max,
+            },
+            Ok(Outcome::Suspended) => TrialBlock::Failed("activation : compte suspendu".into()),
+            Err(e) => TrialBlock::Failed(e),
+        }
+    };
+    TrialOutcome::NotStarted { block, sponsor }
+}
+
+/// Essai gratuit à l'inscription publique : fiche « essai » et compte activé (si `[subscriptions] enabled` et
+/// `trial_days > 0`, plafond premium non atteint), parrain vérifié. Appelé par l'onboarding, **qui tient
+/// `onboard_lock`** (activation par [`accounts::set_premium_locked`]), avant le mail de bienvenue et celui de
+/// l'admin : les deux disent ce qui s'est vraiment passé. Décisions : [`sponsor_for`], [`trial_days_for`],
+/// [`trial_outcome`]. Une fois le compte activé, une écriture ratée du journal n'est qu'un avertissement : l'essai
+/// a bien démarré.
 pub async fn start_trial(
     ctx: &TaskContext,
     user_id: &str,
     username: &str,
     referral: Option<&str>,
-) -> Result<bool> {
+) -> TrialOutcome {
     let cfg = &ctx.cfg.subscriptions;
     let t = now();
-    let days = cfg.trial_days as i64;
-    if days == 0 {
-        ctx.subs
-            .ensure(user_id, username, Status::Suspended, None, "signup", t)?;
-        return Ok(false);
+    let code = referral.map(str::trim).filter(|c| !c.is_empty());
+    let (sponsor, referrer_id) = match code.map(|c| ctx.subs.by_referral_code(c)) {
+        None => (Sponsor::None, None),
+        Some(Ok(found)) => {
+            let found = found.map(|r| (r.user_id, r.username));
+            let sponsor = sponsor_for(
+                code,
+                found.as_ref().map(|(i, n)| (i.as_str(), n.as_str())),
+                user_id,
+            );
+            let id = matches!(sponsor, Sponsor::Known(_))
+                .then(|| found.map(|(i, _)| i))
+                .flatten();
+            (sponsor, id)
+        }
+        Some(Err(e)) => {
+            warn!(task = "subs", user = %username, error = format!("{e:#}"), "code de parrainage non vérifié");
+            (Sponsor::Unchecked, None)
+        }
+    };
+    if sponsor == Sponsor::Unknown {
+        info!(task = "subs", user = %username, "code de parrainage inconnu ignoré");
     }
-    let s = ctx.subs.ensure(
-        user_id,
-        username,
-        Status::Trial,
-        Some(t + days * DAY),
-        "trial",
-        t,
-    )?;
-    if let Some(code) = referral.map(str::trim).filter(|c| !c.is_empty()) {
-        match ctx.subs.by_referral_code(code)? {
-            Some(r) if r.user_id != user_id => {
-                ctx.subs.set_referred_by(user_id, &r.user_id, t)?;
+    let note_referral = |ctx: &TaskContext| {
+        if let (Some(rid), Sponsor::Known(name)) = (&referrer_id, &sponsor) {
+            let r = ctx.subs.set_referred_by(user_id, rid, t).and_then(|()| {
                 ctx.subs.log(
                     user_id,
                     "referred",
-                    &format!("parrainé par {}", r.username),
+                    &format!("parrainé par {name}"),
                     "signup",
                     t,
-                )?;
+                )
+            });
+            if let Err(e) = r {
+                warn!(task = "subs", user = %username, error = format!("{e:#}"), "parrainage non noté");
             }
-            _ => info!(task = "subs", user = %username, "code de parrainage inconnu ignoré"),
         }
-    }
-    if s.status != Status::Trial {
-        return Ok(false);
-    }
-    match accounts::set_premium(ctx, user_id, true).await {
-        Ok(Outcome::CapReached { premium, max }) => {
-            warn!(task = "subs", user = %username, premium, max, "essai : plafond premium atteint, compte laissé suspendu");
-            ctx.subs.log(
-                user_id,
-                "trial_blocked",
-                "plafond premium atteint",
-                "signup",
-                t,
-            )?;
-            Ok(false)
+    };
+    let days = match trial_days_for(cfg.enabled, cfg.trial_days) {
+        Ok(d) => d,
+        Err(block) => {
+            if block == TrialBlock::NoTrialDays {
+                match ctx
+                    .subs
+                    .ensure(user_id, username, Status::Suspended, None, "signup", t)
+                {
+                    Ok(_) => note_referral(ctx),
+                    Err(e) => {
+                        warn!(task = "subs", user = %username, error = format!("{e:#}"), "fiche suspendue non créée")
+                    }
+                }
+            }
+            return TrialOutcome::NotStarted { block, sponsor };
         }
-        Ok(_) => {
+    };
+    let ends_at = t + i64::from(days) * DAY;
+    let fiche = match ctx
+        .subs
+        .ensure(user_id, username, Status::Trial, Some(ends_at), "trial", t)
+    {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(task = "subs", user = %username, error = format!("{e:#}"), "trial not started");
+            return TrialOutcome::NotStarted {
+                block: TrialBlock::Failed(format!("{e:#}")),
+                sponsor,
+            };
+        }
+    };
+    note_referral(ctx);
+    let activation = if fiche.status == Status::Trial {
+        accounts::set_premium_locked(ctx, user_id, true)
+            .await
+            .map_err(|e| format!("{e:#}"))
+    } else {
+        Ok(Outcome::Unchanged)
+    };
+    let outcome = trial_outcome(
+        days,
+        fiche.expires_at.unwrap_or(ends_at),
+        fiche.status,
+        sponsor,
+        activation.as_ref().map_err(String::clone),
+    );
+    // journal et fiche d'après la décision ; une erreur ici ne change plus ce qui a été fait
+    let noted = match &outcome {
+        TrialOutcome::Started { .. } => {
+            info!(task = "subs", user = %username, "trial started at signup");
             ctx.subs.log(
                 user_id,
                 "trial_started",
                 &format!("{days} jours"),
                 "signup",
                 t,
-            )?;
-            Ok(true)
+            )
         }
-        Err(e) => Err(e),
+        TrialOutcome::NotStarted {
+            block: TrialBlock::CapReached { premium, max },
+            ..
+        } => {
+            warn!(task = "subs", user = %username, premium, max, "essai : plafond premium atteint, compte laissé suspendu");
+            // pas de fiche « essai » qui courrait sur un compte suspendu (rappels, fin d'essai) : l'admin choisit
+            // le statut en activant le compte
+            ctx.subs.set_status(
+                user_id,
+                Status::Suspended,
+                Some(None),
+                None,
+                "signup",
+                "essai impossible : plafond premium atteint",
+                t,
+            )
+        }
+        TrialOutcome::NotStarted {
+            block: TrialBlock::Failed(e),
+            ..
+        } => {
+            warn!(task = "subs", user = %username, error = %e, "trial not started");
+            Ok(())
+        }
+        TrialOutcome::NotStarted { .. } => Ok(()),
+    };
+    if let Err(e) = noted {
+        warn!(task = "subs", user = %username, error = format!("{e:#}"), "essai : journal ou fiche non mis à jour");
     }
+    outcome
 }
 
 /// Issue d'un paiement reçu.
@@ -1071,6 +1300,109 @@ pub async fn reconcile(ctx: &TaskContext) -> Result<(String, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Configuration → essai possible ou non (avant toute écriture), et page des réponses neutres.
+    #[test]
+    fn trial_decision_from_the_config() {
+        assert_eq!(trial_days_for(true, 7), Ok(7));
+        assert_eq!(trial_days_for(true, 0), Err(TrialBlock::NoTrialDays));
+        assert_eq!(trial_days_for(false, 7), Err(TrialBlock::Disabled));
+        assert_eq!(trial_days_for(false, 0), Err(TrialBlock::Disabled));
+        // réponse neutre : même page qu'une vraie inscription, plafond compris
+        assert_eq!(expected_trial(true, 7, 24, 25), Some(7));
+        assert_eq!(expected_trial(true, 7, 25, 25), None);
+        assert_eq!(expected_trial(true, 0, 0, 25), None);
+        assert_eq!(expected_trial(false, 7, 0, 25), None);
+    }
+
+    /// Code saisi → parrain : reconnu, absent, inconnu, ou le code du compte lui-même.
+    #[test]
+    fn trial_decision_sponsor() {
+        let bob = Some(("id-bob", "bob"));
+        assert_eq!(sponsor_for(None, bob, "id-lea"), Sponsor::None);
+        assert_eq!(sponsor_for(Some("  "), None, "id-lea"), Sponsor::None);
+        assert_eq!(
+            sponsor_for(Some("ABCD1234"), bob, "id-lea"),
+            Sponsor::Known("bob".into())
+        );
+        assert_eq!(
+            sponsor_for(Some("ZZZZ9999"), None, "id-lea"),
+            Sponsor::Unknown
+        );
+        assert_eq!(
+            sponsor_for(Some("ABCD1234"), Some(("id-lea", "léa")), "id-lea"),
+            Sponsor::Unknown
+        );
+    }
+
+    /// Fiche posée + activation tentée → issue : seul un compte effectivement actif démarre l'essai.
+    #[test]
+    fn trial_decision_after_activation() {
+        let s = || Sponsor::Known("bob".into());
+        let started = TrialOutcome::Started {
+            days: 7,
+            ends_at: 100,
+            sponsor: s(),
+        };
+        assert_eq!(
+            trial_outcome(7, 100, Status::Trial, s(), Ok(&Outcome::Activated)),
+            started
+        );
+        // compte déjà actif (`new_accounts_premium`) : l'essai court aussi
+        assert_eq!(
+            trial_outcome(7, 100, Status::Trial, s(), Ok(&Outcome::Unchanged)),
+            started
+        );
+        assert_eq!(
+            trial_outcome(
+                7,
+                100,
+                Status::Trial,
+                s(),
+                Ok(&Outcome::CapReached {
+                    premium: 25,
+                    max: 25
+                })
+            ),
+            TrialOutcome::NotStarted {
+                block: TrialBlock::CapReached {
+                    premium: 25,
+                    max: 25
+                },
+                sponsor: s()
+            }
+        );
+        let failed = trial_outcome(7, 100, Status::Trial, s(), Err("Jellyfin 500".into()));
+        assert_eq!(
+            failed,
+            TrialOutcome::NotStarted {
+                block: TrialBlock::Failed("Jellyfin 500".into()),
+                sponsor: s()
+            }
+        );
+        assert_eq!(failed.sponsor(), &s());
+        assert!(matches!(
+            trial_outcome(7, 100, Status::Trial, s(), Ok(&Outcome::Suspended)),
+            TrialOutcome::NotStarted {
+                block: TrialBlock::Failed(_),
+                ..
+            }
+        ));
+        // fiche préexistante (autre statut) : rien ne démarre, quel que soit le compte
+        assert_eq!(
+            trial_outcome(
+                7,
+                100,
+                Status::Active,
+                Sponsor::None,
+                Ok(&Outcome::Unchanged)
+            ),
+            TrialOutcome::NotStarted {
+                block: TrialBlock::Existing("active".into()),
+                sponsor: Sponsor::None
+            }
+        );
+    }
 
     #[test]
     fn premium_link_carries_the_key_only_with_a_server_secret() {

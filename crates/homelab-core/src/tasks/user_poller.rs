@@ -128,6 +128,7 @@ impl Task for UserPoller {
                 email: c.email.clone(),
                 password: None,
                 source: onboard::Source::Poller,
+                referral: None,
             };
             let outcome = match onboard::run(ctx, req).await {
                 Ok(r) => {

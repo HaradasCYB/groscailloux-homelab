@@ -1001,10 +1001,15 @@ de le renvoyer ; `homelabctl accounts link <compte>` idem ; `homelabctl mail-tes
 un lien de démonstration (page en lecture seule ; `--all` : tous les mails aux membres, voir **Mails**). Les liens vivent dans l'état **du daemon** : la CLI passe par
 `POST /admin/link` et `/admin/mail-test` (jeton en en-tête). `cleanup` purge les liens finis depuis > 7 j.
 
-**Inscription publique** : pseudo + e-mail + case « validé par l'admin » + champ leurre ; rate limit IP
+**Inscription publique** : pseudo + e-mail + case à cocher + champ leurre ; rate limit IP
 (`web.rate_limit_secs`), plafond `max_signups_per_day` (toutes adresses), adresse déjà connue → réponse neutre sans
-création, pseudo pris → message. Le compte est créé suspendu, le membre reçoit son lien, l'admin un mail
-« nouveau compte à activer » (`CHAT_ADMIN_EMAIL`, repli `GUIDE_CONTACT_EMAIL`).
+création (même page qu'une vraie inscription, plafond premium compris), pseudo pris → message. Le compte est créé
+suspendu, puis l'essai est décidé **avant les mails** (1.30.5, `subscription_ops::start_trial` sous `onboard_lock`) :
+essai démarré → compte actif, encadré « essai » dans le mail de bienvenue, mail admin « Nouveau membre en essai » (fin
+d'essai, parrain, rien à faire) ; essai impossible (plafond premium, `trial_days = 0`, abonnements coupés, erreur) →
+compte suspendu, fiche « suspendue », encadré « activation », mail admin « Nouveau compte à activer » avec la raison
+(`CHAT_ADMIN_EMAIL`, repli `GUIDE_CONTACT_EMAIL`). Lien de bienvenue non parti ou erreur : le mail admin le dit, en
+avertissement. Détail : [comptes-et-abonnements.md](runbooks/comptes-et-abonnements.md#2-onboarding-et-mails).
 
 **Mails** (`mail.rs`) : `curl smtps` vers le SMTP de `.env`, message MIME construit ici — `Date`, `Message-ID`,
 `Reply-To` (contact, mails de lien seulement), sujet/noms RFC 2047, corps quoted-printable UTF-8 ; texte seul pour

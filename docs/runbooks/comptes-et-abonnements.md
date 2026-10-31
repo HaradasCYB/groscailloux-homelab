@@ -31,8 +31,35 @@ des abonnements. Procédure admin pas à pas : [ONBOARDING.md](../ONBOARDING.md)
   = 60, usage unique) où le membre choisit son mot de passe ; page expirée → renvoi par adresse (réponse neutre,
   `renew_per_hour`).
 - Page publique `/inscription` (`public_signup`, champ leurre, limite par IP, `max_signups_per_day`, adresse connue →
-  réponse neutre) ; l'admin reçoit « nouveau compte à activer » et le membre « ton compte est actif » à l'activation
-  depuis `/accounts` (colonne « Lien », bouton Renvoyer).
+  réponse neutre). **Tout le monde a l'essai** (`[subscriptions] trial_days` jours, 7 aujourd'hui, avec ou sans code
+  de parrainage : voulu) ; le formulaire l'annonce (« essai gratuit de N jours… ») quand il est configuré, sinon
+  « validé par l'administrateur ». Depuis la 1.30.5, `onboard::run` **décide l'essai avant les mails**
+  (`subscription_ops::start_trial`, sous `onboard_lock` : fiche « essai », parrain vérifié, compte activé si
+  `[accounts] max_premium` n'est pas atteint ; décisions pures `trial_days_for`, `sponsor_for`, `trial_outcome`),
+  puis envoie :
+  - **essai démarré** : au membre, le mail de bienvenue avec l'encadré « Ton essai de N jours a commencé » ; à
+    l'admin, « Nouveau membre en essai : X » (fin d'essai JJ/MM, « Parrainé par Y », « Sans parrain » ou « Code de
+    parrainage saisi inconnu, ignoré », « Rien à faire ») ; la page dit « Ton essai de N jours démarre dès que ton mot
+    de passe est choisi » ;
+  - **essai impossible** (plafond premium atteint, `trial_days = 0`, abonnements désactivés, erreur) : encadré
+    « sera activé par l'administrateur », « Nouveau compte à activer : X » avec la raison (« Essai impossible :
+    plafond premium atteint (25/25) »…) et le parrain, page « L'administrateur activera ton compte ensuite ». Plafond
+    atteint ou `trial_days = 0` : la fiche est « suspendue » (pas de fiche « essai » qui courrait, rappels compris, sur
+    un compte fermé) ; l'admin choisit le statut en activant. Le membre reçoit « ton compte est actif » à l'activation
+    depuis `/accounts` (colonne « Lien de bienvenue », bouton « Renvoyer le lien »).
+  - **cas d'exception** : erreur après l'activation → l'état du compte est relu dans Jellyfin (« Nouveau compte : X »,
+    à qualifier, s'il est actif) ; une erreur d'écriture du journal après l'activation n'est qu'un avertissement (l'essai
+    a démarré). **Lien de bienvenue non parti** (SMTP) : le mail admin le dit (« Mail de bienvenue NON parti : … »),
+    jamais « Rien à faire », en avertissement. Inscription arrêtée **après** la création du compte Jellyfin (import
+    Jellyseerr raté) : alerte « Inscription ratée à moitié : X » (supprimer le compte à moitié créé pour que le membre
+    recommence). Mail et Discord admin tous deux en échec : `warn` « inscription NON signalée à l'admin » dans le
+    journal (pas de file de réessai : `/accounts` montre le compte).
+
+  Avant la 1.30.5, l'essai démarrait **après** les mails : le membre lisait « sera activé par l'administrateur » et
+  l'admin « à activer » pour un compte déjà actif. Les réponses neutres (adresse connue, champ leurre) affichent la
+  page qu'aurait une vraie inscription (configuration **et** place sous le plafond premium, sinon la page révélerait
+  qu'une adresse est inscrite). Onboarding admin, `homelabctl onboard` et `user_poller` : inchangés (pas d'essai,
+  encadré selon `new_accounts_premium`, pas de mail admin).
 - `mail.rs` construit un MIME complet (`Date`, `Message-ID`, `Reply-To`, RFC 2047, quoted-printable,
   `multipart/alternative`) ; `SMTP_FROM_NAME` = « Groscailloux ». (Avant le 20/09, le mail finissait en spam : `curl smtps`
   sans `Date`/`Message-ID`, identifiants en clair, liens DuckDNS.)
@@ -48,7 +75,7 @@ des abonnements. Procédure admin pas à pas : [ONBOARDING.md](../ONBOARDING.md)
   (`format=Jpg`) ou chez TMDB en secours. Jamais le nom, le logo ni le rouge d'un service commercial. Chaque mail est
   rendu par une fonction pure (`welcome`, `subscriptions`, `chat`, `available_mail`) ; les mails d'admin restent en texte.
 - **Voir chaque mail avant de le valider** : `homelabctl mail-test <adresse> --all` fait envoyer par homelabd un exemple de
-  **chaque** mail qu'un membre peut recevoir (17 types : `homelabctl mail-test --help`), compte fictif « Exemple »,
+  **chaque** mail qu'un membre peut recevoir (18 types : `homelabctl mail-test --help` ; `welcome_trial` = bienvenue d'une inscription avec essai), compte fictif « Exemple »,
   objet « [Exemple] … », à 2 s d'écart (une à deux minutes) ; `--kind <type>` (répétable) pour un seul. Pour le
   placement Gmail (Principale, Promotions ou spam ; « Afficher l'original » : SPF, DKIM, DMARC), l'adresse est une boîte
   Gmail de l'admin, donnée sur la ligne de commande et jamais écrite dans le dépôt. Les mails « disponible » prennent de

@@ -278,7 +278,7 @@ pub fn render(d: &PageData<'_>) -> String {
 {flash}
 <div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th>Abonnement</th><th>Lien de bienvenue</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
 <p class="foot">Abonnement : « Actif (période) » pose une échéance de N jours (30 par défaut), « Prolonger » l'ajoute. Le cycle (rappels, grâce, suspension) ne suit que les essais et les abonnements PayPal ; un membre qui paie sur PayPal est rattaché et prolongé tout seul. Toute autre fiche (actif ou offert par ta décision, exempté, à qualifier) n'est jamais suspendue et le membre ne reçoit aucun rappel : à l'échéance, tu reçois une information et la fiche passe « À gérer (échéance passée) », compte laissé actif. « À qualifier » = compte actif sans abonnement connu.</p>
-<p class="foot">Les comptes protégés ne se gèrent que dans le tableau de bord Jellyfin et ne comptent pas dans le plafond. Les nouveaux comptes arrivent suspendus ; à l'activation, le membre reçoit un mail. « Renvoyer le lien » envoie un nouveau lien de bienvenue (définir ou changer son mot de passe).</p>"#,
+<p class="foot">Les comptes protégés ne se gèrent que dans le tableau de bord Jellyfin et ne comptent pas dans le plafond. Les nouveaux comptes arrivent suspendus (sauf une inscription publique dont l'essai a démarré) ; à l'activation, le membre reçoit un mail. « Renvoyer le lien » envoie un nouveau lien de bienvenue (définir ou changer son mot de passe).</p>"#,
             max = d.max_premium,
             streams = d.max_playbacks,
         ),
