@@ -42,16 +42,16 @@
     st.textContent = [
       '.gc-acc-btn svg{width:1.45em;height:1.45em;fill:currentColor;display:block}',
       '.gc-acc-wrap{position:fixed;inset:0;z-index:100000;display:flex;align-items:flex-start;justify-content:center;padding:4.5em 1em 1em;background:rgba(0,0,0,.55)}',
-      '.gc-acc{width:min(34rem,100%);max-height:calc(100vh - 6em);overflow:auto;background:#141a22;color:#e8eef5;border:1px solid #2b3642;border-radius:14px;padding:1.1em 1.2em;font:15px/1.45 system-ui,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,.5)}',
-      '.gc-acc h2{margin:0 0 .3em;font-size:1.25em}.gc-acc h3{margin:1em 0 .4em;font-size:1em;color:#9fb3c8;text-transform:uppercase;letter-spacing:.04em}',
+      '.gc-acc{width:min(34rem,100%);max-height:calc(100vh - 6em);overflow:auto;background:#121418;color:#e6e7ea;border:1px solid #2a2d33;border-radius:14px;padding:1.1em 1.2em;font:15px/1.45 system-ui,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,.5)}',
+      '.gc-acc h2{margin:0 0 .3em;font-size:1.25em}.gc-acc h3{margin:1em 0 .4em;font-size:1em;color:#a3a7af;text-transform:uppercase;letter-spacing:.04em}',
       '.gc-acc .st{display:inline-block;padding:.15em .6em;border-radius:999px;font-weight:600;font-size:.9em}',
-      '.gc-acc .st.active,.gc-acc .st.offered,.gc-acc .st.exempt{background:#1d5d3a;color:#c9f7dc}.gc-acc .st.trial{background:#2a4d7a;color:#d3e7ff}.gc-acc .st.grace{background:#7a5a1a;color:#ffe7b3}.gc-acc .st.suspended{background:#7a2a2a;color:#ffd0d0}.gc-acc .st.unknown{background:#3a3f47;color:#dfe5ec}',
-      '.gc-acc .row{display:flex;justify-content:space-between;gap:1em;padding:.45em 0;border-bottom:1px solid #222b35}.gc-acc .row:last-child{border-bottom:0}',
-      '.gc-acc .muted{color:#9fb3c8;font-size:.92em}.gc-acc .btn{display:inline-block;padding:.5em .9em;border-radius:8px;border:1px solid #3a4b5e;background:#1e2a38;color:#e8eef5;cursor:pointer;font:inherit;text-decoration:none}',
-      '.gc-acc .btn.primary{background:#0a6fb0;border-color:#0a6fb0;color:#fff}.gc-acc .btn:focus-visible{outline:2px solid #8fd3fb;outline-offset:2px}',
-      '.gc-acc .close{float:right;background:none;border:0;color:#9fb3c8;font-size:1.4em;cursor:pointer;line-height:1}',
-      '.gc-acc code{background:#0f151c;padding:.15em .45em;border-radius:6px;font-size:1.05em;letter-spacing:.08em}',
-      '.gc-acc .note{margin:.6em 0 0;padding:.6em .8em;border-radius:8px;background:#1b2430;font-size:.92em}',
+      '.gc-acc .st.active,.gc-acc .st.offered,.gc-acc .st.exempt{background:#1d5d3a;color:#c9f7dc}.gc-acc .st.trial{background:#2a4d7a;color:#d3e7ff}.gc-acc .st.grace{background:#7a5a1a;color:#ffe7b3}.gc-acc .st.suspended{background:#7a2a2a;color:#ffd0d0}.gc-acc .st.unknown{background:#2a2d33;color:#e6e7ea}',
+      '.gc-acc .row{display:flex;justify-content:space-between;gap:1em;padding:.45em 0;border-bottom:1px solid #2a2d33}.gc-acc .row:last-child{border-bottom:0}',
+      '.gc-acc .muted{color:#a3a7af;font-size:.92em}.gc-acc .btn{display:inline-block;padding:.5em .9em;border-radius:8px;border:1px solid #2a2d33;background:#1f2228;color:#e6e7ea;cursor:pointer;font:inherit;text-decoration:none}',
+      '.gc-acc .btn.primary{background:#1b6fd8;border-color:#1b6fd8;color:#fff}.gc-acc .btn:focus-visible{outline:2px solid #5aa6ff;outline-offset:2px}',
+      '.gc-acc .close{float:right;background:none;border:0;color:#a3a7af;font-size:1.4em;cursor:pointer;line-height:1}',
+      '.gc-acc code{background:#08090b;padding:.15em .45em;border-radius:6px;font-size:1.05em;letter-spacing:.08em}',
+      '.gc-acc .note{margin:.6em 0 0;padding:.6em .8em;border-radius:8px;background:#1f2228;font-size:.92em}',
       '.gc-acc .err{background:#4a1f1f}.gc-acc .ok{background:#1f4a2c}',
       '.gc-acc ul{margin:.3em 0;padding-left:1.2em}.gc-acc li{margin:.15em 0}',
       '@media (max-width:600px){.gc-acc-wrap{padding:3.8em .5em .5em}.gc-acc{padding:.9em}}',
@@ -62,17 +62,17 @@
       // le panneau dépassait de 45 px sous l'écran en 1080p (marges ajoutées à max-height) : les boutons de taille
       // des sous-titres, en bas, n'avaient que 17 px visibles une fois sélectionnés (banc LG T6, 04/10)
       '.gc-acc{box-sizing:border-box;max-height:100%}',
-      '.gc-acc .btn:focus,.gc-acc select:focus,.gc-acc a:focus,.gc-acc .close:focus{outline:3px solid #8fd3fb;outline-offset:3px}',
+      '.gc-acc .btn:focus,.gc-acc select:focus,.gc-acc a:focus,.gc-acc .close:focus{outline:3px solid #5aa6ff;outline-offset:3px}',
       '.gc-acc .gc-choices{display:flex;flex-wrap:wrap;gap:.5em}.gc-acc .gc-choices .btn{padding:.6em 1em}'
     ] : [
       // PC : la croix partait au défilement et le bas du panneau dépassait de 12 px (marges comptées en plus)
       '.gc-acc{box-sizing:border-box}',
-      '.gc-acc-head{position:sticky;top:-1.1em;z-index:1;margin:-1.1em -1.2em .3em;padding:.6em .6em .4em 1.2em;background:#141a22;border-bottom:1px solid #222b35}',
+      '.gc-acc-head{position:sticky;top:-1.1em;z-index:1;margin:-1.1em -1.2em .3em;padding:.6em .6em .4em 1.2em;background:#121418;border-bottom:1px solid #2a2d33}',
       // Téléphone (04/10) : la liste de langue et l'adresse d'inscription dépassaient du panneau (défilement de côté),
       // la croix (25 px) partait au défilement, et en paysage le bas du panneau sortait de l'écran.
       '@media (max-width:600px),(max-height:500px){'
       + '.gc-acc{box-sizing:border-box;max-height:100%;padding:.9em}'
-      + '.gc-acc-head{position:sticky;top:-.9em;z-index:1;margin:-.9em -.9em .3em;padding:.3em .3em .3em .9em;background:#141a22;border-bottom:1px solid #222b35}'
+      + '.gc-acc-head{position:sticky;top:-.9em;z-index:1;margin:-.9em -.9em .3em;padding:.3em .3em .3em .9em;background:#121418;border-bottom:1px solid #2a2d33}'
       + '.gc-acc .close{min-width:44px;min-height:44px;font-size:1.6em}'
       + '.gc-acc select.btn{display:block;width:100%;max-width:100%;box-sizing:border-box;text-overflow:ellipsis}'
       + '.gc-acc p,.gc-acc li{overflow-wrap:anywhere}'
@@ -500,11 +500,11 @@
     st.textContent = [
       '.gc-req{display:block;width:100%;flex:0 0 100%;box-sizing:border-box;margin:.45em 0 .2em;font-size:.86em;color:#c9d4df}',
       '.gc-req .bar{height:6px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;margin:.3em 0}',
-      '.gc-req .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#3b8fd9,#6fd0ff);transition:width .6s}',
-      '.gc-req.search .bar i{background:linear-gradient(90deg,#8a8f99,#b9c0cc)}.gc-req.import .bar i{background:linear-gradient(90deg,#3fae6b,#7ee0a2)}.gc-req.available .bar i{background:#3fae6b}',
+      '.gc-req .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#2f8fff,#5aa6ff);transition:width .6s}',
+      '.gc-req.search .bar i{background:linear-gradient(90deg,#8a8f99,#b9c0cc)}.gc-req.import .bar i{background:linear-gradient(90deg,#34c77b,#7ee0a2)}.gc-req.available .bar i{background:#34c77b}',
       // jusqu'à 3 lignes (un libellé explicatif était coupé à « … » sur une seule ligne, 2026-09-25)
       '.gc-req .txt{white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.3}',
-      '.gc-route{margin:.35em 0 0;padding:.25em .7em;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.06);color:#e8eef5;font:inherit;font-size:.82em;cursor:pointer}',
+      '.gc-route{margin:.35em 0 0;padding:.25em .7em;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.06);color:#e6e7ea;font:inherit;font-size:.82em;cursor:pointer}',
       '.gc-route:hover{background:rgba(255,255,255,.14)}.gc-route[disabled]{opacity:.6;cursor:default}'
     ].join('\n');
     document.head.appendChild(st);
@@ -686,7 +686,7 @@
     st.textContent = [
       '.gc-dl{display:block;width:100%;flex:0 0 100%;box-sizing:border-box;margin:.4em 0 .15em;font-size:.86em;color:#c9d4df}',
       '.gc-dl .txt{white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.3}',
-      '.gc-dl .det{margin-top:.3em;font-size:.86em;color:#8fa1b3;white-space:normal;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.25}'
+      '.gc-dl .det{margin-top:.3em;font-size:.86em;color:#a3a7af;white-space:normal;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.25}'
     ].join('\n');
     document.head.appendChild(st);
   }
@@ -959,7 +959,7 @@
       t = h('div', { id: 'gc-quota-toast', class: 'gc-quota-toast', role: 'status' });
       // min() ignoré par un vieux navigateur de télé : la largeur fixe d'avant reste alors
       t.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:99999;pointer-events:none;max-width:360px;' +
-        'max-width:min(80vw,360px);padding:10px 14px;border-radius:8px;background:rgba(20,24,30,.94);color:#fff;' +
+        'max-width:min(80vw,360px);padding:10px 14px;border-radius:8px;background:rgba(18,20,24,.94);color:#fff;' +
         'font-size:clamp(13px,2vw,16px);line-height:1.4;box-shadow:0 4px 20px rgba(0,0,0,.3);' +
         'border:1px solid rgba(255,255,255,.12)';
       document.body.appendChild(t);
