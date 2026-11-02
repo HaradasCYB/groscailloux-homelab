@@ -15,7 +15,8 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 
 | Version | Date | Thème |
 | --- | --- | --- |
-| **[1.30.5](#1305--31102026--inscription--lessai-annoncé-tel-quil-est)** | 31/10/2026 | **Inscription : l'essai annoncé tel qu'il est** |
+| **[1.31.0](#1310--02112026--pages-web-en-noir-et-bleu-groscailloux-tv)** | 02/11/2026 | **Pages web en noir et bleu Groscailloux TV** |
+| [1.30.5](#1305--31102026--inscription--lessai-annoncé-tel-quil-est) | 31/10/2026 | Inscription : l'essai annoncé tel qu'il est |
 | [1.30.4](#1304--30102026--série-sortie-le-jour-même-reprise-toutes-les-2-h) | 30/10/2026 | Série sortie le jour même reprise toutes les 2 h |
 | [1.30.3](#1303--30102026--films-français-cherchés-malgré-une-date-tmdb-tardive) | 30/10/2026 | Films français cherchés malgré une date TMDB tardive |
 | [1.30.2](#1302--29102026--une-saison-non-demandée-nest-plus-téléchargée) | 29/10/2026 | Une saison non demandée n'est plus téléchargée |
@@ -45,6 +46,31 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [0.1.0](#010--30042026--06052026--les-fondations) | 30/04 → 06/05/2026 | Les fondations : demander un film depuis Jellyfin, tout arrive seul |
 
 ---
+
+## 1.31.0 — 02/11/2026 — Pages web en noir et bleu Groscailloux TV
+
+Nouveauté : toutes les pages servies par homelabd (hors Jellyfin) prennent la DA de l'interface et des mails, noir,
+bleu et bouton principal blanc, avec un seul gabarit commun au lieu de six styles recopiés (commits 950b857, 5299ca2,
+3a86274, 29c3284, 04afa04, 9c3a432, 795f62c, 4645b4f, b794767, d17792f, 919e26d, bb31b33).
+
+### Pour les membres
+
+- Inscription, bienvenue, premiers pas, lien expiré, abonnement Premium (page, activation, merci) et guide : fond noir,
+  logo Groscailloux TV en en-tête, police du système (plus de polices Google), bouton principal blanc ; textes et
+  fonctionnement inchangés. Le guide a un sommaire lisible sur téléphone. Contrastes conformes WCAG AA.
+- Le tchat et « Mon compte » prennent le même bleu.
+
+### Pour l'administrateur
+
+- Module `crates/homelabd/src/ui.rs` (jetons, CSS de base, `page`, `page_admin`, `page_bare`, page d'erreur) et logo
+  servi à `/assets/logo.png` ; référence de la DA : [docs/DESIGN.md](docs/DESIGN.md).
+- Onboarding admin, connexion, `/recherche`, `/accounts`, liste rouge et `status.html` (sans en-tête dans Homarr) sur
+  le même gabarit ; onboarding admin entièrement en français ; colonnes de la liste rouge alignées d'une section à
+  l'autre ; tableaux qui défilent signalés sur téléphone ; boutons de `/recherche` à 44 px ; réponses brutes
+  (« Session expirée », « Jellyfin injoignable ») en page d'erreur stylée ; `/recherche`, `/connexion` et
+  l'onboarding sans référent. `assets/don.html` (mort) supprimé.
+- Test ignoré `web::render_tests::render_pages_to_dir` : rend toutes les pages avec des données factices dans
+  `GC_RENDER_DIR`. Aucune clé de `homelab.toml`.
 
 ## 1.30.5 — 31/10/2026 — Inscription : l'essai annoncé tel qu'il est
 
