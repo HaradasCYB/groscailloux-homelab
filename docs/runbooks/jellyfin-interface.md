@@ -1,8 +1,9 @@
 # Jellyfin : interface « Groscailloux TV » et scripts injectés
 
 À lire avant de toucher au calque CSS, à un script de `branding/jellyfin/`, aux scripts servis par homelabd dans
-Jellyfin (tchat, Mon compte) ou à un réglage d'affichage. Serveur et extensions :
-[jellyfin-serveur-et-extensions.md](jellyfin-serveur-et-extensions.md). Bancs : [outils-bancs-et-hors-pic.md](outils-bancs-et-hors-pic.md).
+Jellyfin (tchat, Mon compte) ou à un réglage d'affichage. Couleurs, rayons et composants de la DA (communs aux pages
+de homelabd et aux mails) : [DESIGN.md](../DESIGN.md) ; un jeton se change dans les trois sources à la fois. Serveur et
+extensions : [jellyfin-serveur-et-extensions.md](jellyfin-serveur-et-extensions.md). Bancs : [outils-bancs-et-hors-pic.md](outils-bancs-et-hors-pic.md).
 
 ## 1. Règles de l'interface
 

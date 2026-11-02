@@ -22,6 +22,7 @@ fait tout). Deux machines : le **VPS** (lecture, recherche, automatisation, bibl
 | [docs/SECRETS.md](docs/SECRETS.md) | chaque variable de `.env` (noms seulement) et leur rotation |
 | [docs/ONBOARDING.md](docs/ONBOARDING.md) | arrivée d'un membre, côté admin |
 | [docs/JELLYFIN-12.md](docs/JELLYFIN-12.md) | migration 10.11 → 12.1 et retour arrière |
+| [docs/DESIGN.md](docs/DESIGN.md) | DA Groscailloux TV : jetons, composants, règles ; un jeton change dans `ui.rs`, `mail_layout.rs` et `groscailloux-tv.css` à la fois |
 | [docs/runbooks/](docs/runbooks/README.md) | un runbook par domaine + historique des incidents + table « ancien CLAUDE.md → nouvel emplacement » |
 | [tools/README.md](tools/README.md) | outils versionnés : hors pic (`offpeak.sh`), bancs (`bench.sh`), tests |
 | [CHANGELOG.md](CHANGELOG.md) | versions livrées |
