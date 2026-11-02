@@ -657,13 +657,12 @@ fn allowed(st: &PageState, given: Option<&str>) -> bool {
 }
 
 fn denied() -> Response {
-    (
+    crate::ui::error_response(
         StatusCode::UNAUTHORIZED,
-        Html(format!(
-            "<p>Session expirée : <a href=\"/connexion?next={BASE}\">se reconnecter</a>.</p>"
-        )),
+        "Session expirée",
+        &format!("Session expirée : <a href=\"/connexion?next={BASE}\">se reconnecter</a>."),
+        None,
     )
-        .into_response()
 }
 
 fn page(html: String) -> Response {
@@ -956,6 +955,17 @@ async fn recompute(State(st): State<PageState>, Form(f): Form<TokenForm>) -> Res
 mod tests {
     use super::*;
     use homelab_core::state::RedSide;
+
+    #[tokio::test]
+    async fn denied_is_a_styled_401_with_the_same_text() {
+        let r = denied();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let b = String::from_utf8_lossy(&b);
+        assert!(b.contains("<h1>Session expirée</h1>"));
+        assert!(b.contains("Session expirée : <a href=\"/connexion?next=/accounts/liste-rouge\">se reconnecter</a>."));
+        assert!(b.contains("class=\"gc-top\""));
+    }
 
     fn entry(key: &str, title: &str, bytes: u64) -> RedEntry {
         RedEntry {

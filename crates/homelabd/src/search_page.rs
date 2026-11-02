@@ -46,14 +46,12 @@ fn allowed(st: &SearchState, given: &str) -> bool {
 }
 
 fn denied() -> Response {
-    (
+    crate::ui::error_response(
         StatusCode::UNAUTHORIZED,
-        Html(
-            "<p>Session expirée : <a href=\"/connexion?next=/recherche\">se reconnecter</a>.</p>"
-                .to_string(),
-        ),
+        "Session expirée",
+        "Session expirée : <a href=\"/connexion?next=/recherche\">se reconnecter</a>.",
+        None,
     )
-        .into_response()
 }
 
 fn urlencode(s: &str) -> String {
@@ -471,6 +469,19 @@ async fn download(State(st): State<SearchState>, Form(f): Form<DownloadForm>) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn denied_is_a_styled_401_with_the_same_text() {
+        let r = denied();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let b = String::from_utf8_lossy(&b);
+        assert!(b.contains("<h1>Session expirée</h1>"));
+        assert!(b.contains(
+            "Session expirée : <a href=\"/connexion?next=/recherche\">se reconnecter</a>."
+        ));
+        assert!(b.contains("class=\"gc-top\""));
+    }
 
     fn row(title: &str, flags: Vec<&'static str>) -> Row {
         Row {

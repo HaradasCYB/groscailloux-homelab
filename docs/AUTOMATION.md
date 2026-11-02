@@ -1348,12 +1348,12 @@ testées) + `subscription_ops` (ce qui touche Jellyfin/PayPal/mails, toujours vi
 
 ## Page de don
 
-`GET /don` (public, sous-domaine `don.`) : page statique `crates/homelabd/assets/don.html` avec le
-bouton PayPal (`DONATION_PAYPAL_CLIENT_ID`, `DONATION_PAYPAL_PLAN_ID` dans `.env` ; absents = 404).
-Don facultatif, sans aucun lien avec le service : la page le dit, rien n'y renvoie et elle ne renvoie à
-rien. Le conteneur du bouton ne doit pas avoir `id="paypal"` (l'élément masquerait `window.paypal` et
-le SDK plante). Avatar : `npm/data/don/avatar.jpg` (hors git), servi par NPM en `/avatar.jpg`. Le cadre
-PayPal reste en `color-scheme: light` (sinon fond blanc opaque en thème sombre).
+`GET /don` (public, sous-domaine `don.`) : redirection permanente (301) vers `/premium` ; l'ancienne page
+statique `assets/don.html` n'est plus servie et a été supprimée (refonte de la DA). Les identifiants
+`DONATION_PAYPAL_CLIENT_ID` et `DONATION_PAYPAL_PLAN_ID` ne servent plus qu'au bouton de repli de `/premium`
+(voir ci-dessus). Pour le bouton PayPal de `/premium` : le conteneur ne doit pas avoir `id="paypal"`
+(l'élément masquerait `window.paypal` et le SDK plante) et le cadre reste en `color-scheme: light` (sinon
+fond blanc opaque en thème sombre). Avatar : `npm/data/don/avatar.jpg` (hors git), servi par NPM en `/avatar.jpg`.
 
 ## Comptes premium
 

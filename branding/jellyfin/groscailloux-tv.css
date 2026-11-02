@@ -2,6 +2,7 @@
    Groscailloux TV : CSS personnalisé de Jellyfin (Tableau de bord > Général > Branding).
    Source versionnée : branding/jellyfin/groscailloux-tv.css ; appliqué par
    scripts/jellyfin-branding-apply.sh. Ne pas éditer dans l'interface de Jellyfin.
+   Référence de la DA (jetons communs avec crates/homelabd/src/ui.rs et les mails) : docs/DESIGN.md.
    Base : ElegantFin, VERSION ÉPINGLÉE (jamais @main : le 2026-09-08 un fichier importé via @main
    a disparu et l'import est tombé en 404 sans bruit). Monter de version = changer le tag ici,
    repasser le banc d'essai, puis appliquer.

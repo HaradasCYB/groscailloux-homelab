@@ -744,7 +744,11 @@ async fn status_html(
     if !status_allowed(&st, &q) {
         return (
             StatusCode::UNAUTHORIZED,
-            Html("<p>token manquant ou invalide</p>".to_string()),
+            Html(crate::ui::error_page(
+                "Accès refusé",
+                "token manquant ou invalide",
+                None,
+            )),
         );
     }
     let runs = st.ctx.state.read(|s| s.task_runs.clone()).await;
@@ -818,11 +822,12 @@ fn accounts_allowed(st: &AppState, given: Option<&str>) -> bool {
 }
 
 fn denied() -> Response {
-    (
+    crate::ui::error_response(
         StatusCode::UNAUTHORIZED,
-        Html("<p>Session expirée : <a href=\"/connexion\">se reconnecter</a>.</p>".to_string()),
+        "Session expirée",
+        "Session expirée : <a href=\"/connexion\">se reconnecter</a>.",
+        None,
     )
-        .into_response()
 }
 
 async fn accounts_html(
@@ -841,11 +846,13 @@ async fn accounts_html(
                 error = format!("{e:#}"),
                 "accounts page: jellyfin unreachable"
             );
-            return (
+            // lien « Réessayer » = la même adresse (href vide), donc la même requête
+            return crate::ui::error_response(
                 StatusCode::BAD_GATEWAY,
-                Html("<p>Jellyfin injoignable, réessayer dans un instant.</p>".to_string()),
-            )
-                .into_response();
+                "Jellyfin injoignable",
+                "Jellyfin injoignable, réessayer dans un instant.",
+                Some(("", "Réessayer")),
+            );
         }
     };
     let who_until = match (q.get("who"), q.get("until")) {

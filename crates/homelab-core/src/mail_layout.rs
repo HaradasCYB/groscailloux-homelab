@@ -1,5 +1,7 @@
 //! Gabarit des mails aux membres (2026-10-15) : thème sombre « bleu galet » de Groscailloux TV, un document et
 //! ses composants, repris à l'identique des prototypes validés (affiche, fond, puces, un seul gros bouton).
+//! Référence de la DA (jetons communs avec `crates/homelabd/src/ui.rs` et `branding/jellyfin/groscailloux-tv.css`,
+//! exceptions propres aux mails) : `docs/DESIGN.md`.
 //!
 //! Un même contenu ([`MailContent`] : objet, préheader, blocs) donne le HTML **et** une vraie version texte
 //! (Gmail se méfie d'un mail sans texte ou fait d'images). Règles :

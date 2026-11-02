@@ -673,7 +673,7 @@ fn too_many(path: &str) -> Response {
         )
             .into_response()
     } else {
-        (StatusCode::TOO_MANY_REQUESTS, Html(format!("<p>{MSG}</p>"))).into_response()
+        crate::ui::error_response(StatusCode::TOO_MANY_REQUESTS, "Trop d'essais", MSG, None)
     }
 }
 
@@ -860,6 +860,20 @@ fn strip_location(resp: &mut Response<Body>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn too_many_is_a_styled_429_except_for_onboard() {
+        let r = too_many("/connexion");
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let b = String::from_utf8_lossy(&b);
+        assert!(b.contains("<h1>Trop d&#39;essais</h1>"));
+        assert!(b.contains("<p>Trop d'essais, réessaie dans 15 minutes.</p>"));
+        let j = too_many("/onboard");
+        assert_eq!(j.status(), StatusCode::TOO_MANY_REQUESTS);
+        let b = axum::body::to_bytes(j.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&b).contains("\"success\":false"));
+    }
 
     #[test]
     fn hmac_matches_rfc4231_case_2() {

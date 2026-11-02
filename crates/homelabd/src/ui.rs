@@ -9,6 +9,8 @@
 //!   échappé ; [`page_described`] y ajoute un `<meta name="description">` (aperçu d'un lien partagé),
 //!   [`page_refreshing`] un rechargement automatique (`<meta http-equiv="refresh">`), [`page_admin`] le
 //!   `no-referrer` des pages d'administration, [`page_bare`] la variante compacte sans en-tête (cadre Homarr) ;
+//! - [`error_page`] / [`error_response`] : page d'erreur (titre, message, lien de retour facultatif), même code
+//!   HTTP que la réponse brute qu'elle remplace ;
 //! - [`logo`] : `GET /assets/logo.png`, le galet de `branding/jellyfin/logo/icon-transparent.png`, public.
 //!
 //! Aucune ressource externe : police système, aucun script, aucune URL absolue (les pages publiques ne doivent
@@ -187,6 +189,49 @@ pub fn page_bare(
     render(title, &head, body_html, extra_css)
 }
 
+/// Page d'erreur (session expirée, trop d'essais, service injoignable…) : carte étroite, `title` en `<h1>` (échappé,
+/// aussi titre de l'onglet), `message_html` (constante du code, déjà échappée) en paragraphe, puis un lien
+/// `back` facultatif (`(href, libellé)`, échappés). `no-referrer` comme [`page_admin`] : ces réponses gardent
+/// surtout des pages d'administration dont l'adresse peut porter un jeton.
+pub fn error_page(title: &str, message_html: &str, back: Option<(&str, &str)>) -> String {
+    let back = back
+        .map(|(href, label)| {
+            format!(
+                "<p><a class=\"btn secondary\" href=\"{}\">{}</a></p>",
+                esc(href),
+                esc(label)
+            )
+        })
+        .unwrap_or_default();
+    let body = format!(
+        "<div class=\"gc-narrow\"><div class=\"card gc-error\"><h1>{}</h1><p>{message_html}</p>{back}</div></div>",
+        esc(title)
+    );
+    let head = Head {
+        no_referrer: true,
+        ..Head::default()
+    };
+    render(title, &head, &body, ERROR_CSS)
+}
+
+/// Réponse HTTP d'une [`error_page`] avec le code `status`.
+pub fn error_response(
+    status: axum::http::StatusCode,
+    title: &str,
+    message_html: &str,
+    back: Option<(&str, &str)>,
+) -> Response {
+    (
+        status,
+        axum::response::Html(error_page(title, message_html, back)),
+    )
+        .into_response()
+}
+
+/// Mise en page propre à [`error_page`] : carte centrée un peu plus bas, titre à taille de carte.
+const ERROR_CSS: &str =
+    ".gc-error{margin-top:8vh}.gc-error h1{font-size:clamp(1.5rem,1.2rem + 1.2vw,1.9rem)}";
+
 /// Options du squelette (privées : chaque variante publique en fixe un jeu).
 #[derive(Default)]
 struct Head<'a> {
@@ -285,6 +330,33 @@ mod tests {
         assert!(html.contains("<meta name=\"robots\" content=\"noindex\">"));
         assert!(html.contains("rel=\"icon\" type=\"image/png\" href=\"/assets/logo.png\""));
         assert!(html.contains("Groscailloux <span class=\"gc-tv\">TV</span>"));
+    }
+
+    #[test]
+    fn error_page_has_title_message_and_optional_back_link() {
+        let e = error_page(
+            "Session <expirée>",
+            "Session expirée : <a href=\"/connexion\">se reconnecter</a>.",
+            None,
+        );
+        assert!(e.contains("<title>Session &lt;expirée&gt;</title>"));
+        assert!(e.contains("<h1>Session &lt;expirée&gt;</h1>"));
+        assert!(e.contains("<p>Session expirée : <a href=\"/connexion\">se reconnecter</a>.</p>"));
+        assert!(e.contains("<meta name=\"referrer\" content=\"no-referrer\">"));
+        assert!(e.contains("class=\"gc-top\""));
+        assert!(!e.contains("class=\"btn secondary\""));
+        let b = error_page("t", "m", Some(("/x?a=1&b=\"2\"", "Retour <ici>")));
+        assert!(b.contains(
+            "<a class=\"btn secondary\" href=\"/x?a=1&amp;b=&quot;2&quot;\">Retour &lt;ici&gt;</a>"
+        ));
+    }
+
+    #[tokio::test]
+    async fn error_response_keeps_the_status() {
+        let r = error_response(axum::http::StatusCode::BAD_GATEWAY, "t", "m", None);
+        assert_eq!(r.status(), axum::http::StatusCode::BAD_GATEWAY);
+        let body = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("<p>m</p>"));
     }
 
     #[test]

@@ -178,8 +178,8 @@ en cas d'écart, **le code a raison et ce document se corrige**.
 | Tchat et « Mon compte » (injectés dans Jellyfin) | `crates/homelabd/assets/chat/app.js`, `crates/homelabd/assets/compte/app.js` | couleurs en dur dans le script, à garder égales aux jetons |
 | Logo et images | `branding/jellyfin/logo/` ; mails : `crates/homelab-core/assets/mail/` (`logo.png`, `bienvenue.jpg`) | pages : `GET /assets/logo.png` (`ui::logo`) ; mails : images jointes au message ; aucune autre image de marque |
 
-Pages encore dans l'ancienne DA claire (`crates/homelabd/assets/don.html`, accent `#0a6fb0` de `compte/app.js`) : migrées
-par les lots 2 de la refonte ; ne pas les prendre pour modèle.
+Reste de l'ancienne DA claire : l'accent `#0a6fb0` de `compte/app.js`, aligné par le lot 2.G de la refonte ; ne pas le
+prendre pour modèle (l'ancienne page de don a été supprimée : `/don` redirige vers `/premium`).
 
 **Règle : changer un jeton = changer les trois (`ui.rs`, `mail_layout.rs`, `groscailloux-tv.css`) + ce document**, dans
 le même commit, avec les tests de `ui.rs` (`page_carries_the_tokens`) et de `mail_layout.rs` mis à jour. Un nouveau
