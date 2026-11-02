@@ -53,8 +53,8 @@ const PREMIUM_CSS: &str = r#".gc-premium{display:grid;gap:18px}
 .avatar{width:88px;height:88px;border-radius:50%;object-fit:cover;display:block;padding:3px;border:2px solid var(--accent);background:var(--bg)}
 .price{justify-self:start;padding:6px 14px;border-radius:999px;background:var(--accent-fill);color:var(--strong);font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums}
 .facts{padding:14px 16px;border-radius:var(--r-md);background:var(--raised);display:grid;gap:8px;list-style:none;font-size:.9375rem}
-.facts li{display:flex;gap:10px;align-items:baseline}
-.facts li::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);transform:translateY(-1px)}
+.facts li{position:relative;padding-left:17px}
+.facts li::before{content:"";position:absolute;left:0;top:.62em;width:7px;height:7px;border-radius:50%;background:var(--accent)}
 .gc-premium .notice{margin:0}
 .gc-premium .field{margin:0}
 .gc-premium .field label{margin-bottom:6px}
@@ -309,7 +309,7 @@ fn index_page() -> String {
 {js}</script>"#,
         js = ONBOARD_ADMIN_JS
     );
-    ui::page("Groscailloux — Onboarder", &body, INDEX_CSS)
+    ui::page_admin("Groscailloux — Onboarder", None, &body, INDEX_CSS)
 }
 
 /// Guide des nouveaux membres (public, lien du mail de bienvenue).

@@ -101,13 +101,10 @@ const SEARCH_CSS: &str = r#".gc-search .lead{margin-bottom:24px}
 .gc-search td form{margin:0}
 .gc-search td button{min-height:36px;padding:6px 12px;font-size:.9rem}"#;
 
-/// Page de la recherche : `ui::page` (ou sa variante qui se recharge tant que la recherche tourne).
+/// Page de la recherche : `ui::page_admin` (`no-referrer` ; rechargée toutes les 4 s tant que la recherche tourne).
 fn page(title: &str, refresh: Option<&str>, body: &str) -> String {
     let body = format!(r#"<div class="gc-search">{body}</div>"#);
-    match refresh {
-        Some(url) => crate::ui::page_refreshing(title, 4, url, &body, SEARCH_CSS),
-        None => crate::ui::page(title, &body, SEARCH_CSS),
-    }
+    crate::ui::page_admin(title, refresh.map(|url| (4, url)), &body, SEARCH_CSS)
 }
 
 /// Liste des titres trouvés, avec un bouton par saison (séries) ou pour le film.
@@ -469,6 +466,18 @@ async fn download(State(st): State<SearchState>, Form(f): Form<DownloadForm>) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn search_pages_send_no_referrer_and_refresh_while_running() {
+        let p = page("Recherche", None, "<p>x</p>");
+        assert!(p.contains("<meta name=\"referrer\" content=\"no-referrer\">"));
+        assert!(p.contains("<div class=\"gc-search\"><p>x</p></div>") && !p.contains("http-equiv"));
+        let r = page("Résultats", Some("/recherche/resultats?id=1&n=2"), "");
+        assert!(r.contains(
+            "<meta http-equiv=\"refresh\" content=\"4;url=/recherche/resultats?id=1&amp;n=2\">"
+        ));
+        assert!(r.contains("no-referrer"));
+    }
 
     #[tokio::test]
     async fn denied_is_a_styled_401_with_the_same_text() {

@@ -596,7 +596,12 @@ pub fn login_page(next: &str, msg: &str, status: StatusCode) -> Response {
     );
     let mut r = (
         status,
-        Html(crate::ui::page("Connexion admin", &body, LOGIN_CSS)),
+        Html(crate::ui::page_admin(
+            "Connexion admin",
+            None,
+            &body,
+            LOGIN_CSS,
+        )),
     )
         .into_response();
     r.headers_mut()
@@ -1130,6 +1135,7 @@ mod tests {
             .unwrap();
         let html = String::from_utf8(bytes.to_vec()).unwrap();
         assert!(html.contains("<title>Connexion admin</title>"));
+        assert!(html.contains("<meta name=\"referrer\" content=\"no-referrer\">"));
         assert!(html.contains("--bg:#08090b") && html.contains("class=\"gc-top\""));
         assert!(!html.contains("prefers-color-scheme"), "plus de mode clair");
         // `next` caché, échappé ; lien « onglet » encodé ; jeton jamais en clair ni dans une adresse

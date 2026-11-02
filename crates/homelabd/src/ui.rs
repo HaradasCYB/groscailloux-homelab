@@ -7,8 +7,8 @@
 //!   boutons, notices, tableaux et pastilles d'administration) ;
 //! - [`page`] : squelette HTML unique (`lang="fr"`, viewport, `theme-color`, `noindex`, icône), le titre est
 //!   échappé ; [`page_described`] y ajoute un `<meta name="description">` (aperçu d'un lien partagé),
-//!   [`page_refreshing`] un rechargement automatique (`<meta http-equiv="refresh">`), [`page_admin`] le
-//!   `no-referrer` des pages d'administration, [`page_bare`] la variante compacte sans en-tête (cadre Homarr) ;
+//!   [`page_admin`] le `no-referrer` des pages d'administration et un rechargement automatique facultatif
+//!   (`<meta http-equiv="refresh">`), [`page_bare`] la variante compacte sans en-tête (cadre Homarr) ;
 //! - [`error_page`] / [`error_response`] : page d'erreur (titre, message, lien de retour facultatif), même code
 //!   HTTP que la réponse brute qu'elle remplace ;
 //! - [`logo`] : `GET /assets/logo.png`, le galet de `branding/jellyfin/logo/icon-transparent.png`, public.
@@ -49,11 +49,12 @@ color-scheme:dark;
 /// Composants communs. Les pages n'ajoutent que leurs règles propres (`extra_css` de [`page`]).
 pub const BASE_CSS: &str = r#"*,*::before,*::after{box-sizing:border-box}
 [hidden]{display:none!important}
-html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
-body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:16px/1.55 var(--font);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow-wrap:break-word}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;scroll-padding-top:72px}
+body{margin:0;min-height:100vh;min-height:100dvh;background:var(--bg);color:var(--text);font:16px/1.55 var(--font);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow-wrap:break-word}
 img{max-width:100%;height:auto}
 a{color:var(--accent-hover);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:.18em}
 a:hover{color:var(--strong)}
+a,button,input,select,textarea,label,summary{touch-action:manipulation}
 :focus-visible{outline:2px solid var(--accent-hover);outline-offset:2px}
 .gc-top{position:sticky;top:0;z-index:10;background:rgba(8,9,11,.86);-webkit-backdrop-filter:saturate(1.4) blur(14px);backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--divider)}
 .gc-top-in{display:flex;align-items:center;gap:12px;max-width:var(--wide);margin:0 auto;padding:10px var(--gutter);min-height:56px}
@@ -63,7 +64,7 @@ a:hover{color:var(--strong)}
 .gc-main{max-width:var(--wide);margin:0 auto;padding:32px var(--gutter) 64px}
 .gc-narrow{max-width:var(--measure);margin-left:auto;margin-right:auto}
 .gc-bare{padding:12px var(--gutter) 16px}
-h1,h2,h3{color:var(--strong);font-family:var(--font-display);line-height:1.12;margin:0 0 .5em}
+h1,h2,h3{color:var(--strong);font-family:var(--font-display);line-height:1.12;margin:0 0 .5em;text-wrap:balance}
 h1{font-size:clamp(1.9rem,1.2rem + 2.6vw,2.75rem);font-weight:800;letter-spacing:-.035em}
 h2{font-size:clamp(1.3rem,1.1rem + .9vw,1.6rem);font-weight:700;letter-spacing:-.025em;margin-top:1.6em}
 h3{font-size:1.1rem;font-weight:700;letter-spacing:-.015em;margin-top:1.4em}
@@ -104,7 +105,7 @@ input[aria-invalid=true]{border-color:var(--err)}
 .notice.ok{border-left-color:var(--ok);background:rgba(52,199,123,.08)}
 .notice.warn{border-left-color:var(--warn);background:rgba(240,180,41,.08)}
 .notice.err{border-left-color:var(--err);background:rgba(239,68,68,.09)}
-.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:var(--r-lg);margin:0 0 20px}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;scrollbar-color:#4a4f58 transparent;scrollbar-width:thin;border:1px solid var(--line);border-radius:var(--r-lg);margin:0 0 20px;background:linear-gradient(to right,var(--bg) 40%,rgba(8,9,11,0)) left/32px 100% no-repeat local,linear-gradient(to left,var(--bg) 40%,rgba(8,9,11,0)) right/32px 100% no-repeat local,radial-gradient(farthest-side at 0 50%,rgba(90,166,255,.35),rgba(90,166,255,0)) left/12px 100% no-repeat scroll,radial-gradient(farthest-side at 100% 50%,rgba(90,166,255,.35),rgba(90,166,255,0)) right/12px 100% no-repeat scroll}
 table{width:100%;border-collapse:collapse;font-size:.92rem;font-variant-numeric:tabular-nums}
 th,td{padding:10px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--divider)}
 th{color:var(--dim);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;background:var(--surface);white-space:nowrap}
@@ -137,25 +138,10 @@ pub fn page_described(title: &str, description: &str, body_html: &str, extra_css
     render(title, &head, body_html, extra_css)
 }
 
-/// Comme [`page`], avec un `<meta http-equiv="refresh">` : la page se recharge vers `url` (chemin local, échappé)
-/// après `secs` secondes (résultats de `/recherche` tant que la recherche tourne, sans JavaScript).
-pub fn page_refreshing(
-    title: &str,
-    secs: u32,
-    url: &str,
-    body_html: &str,
-    extra_css: &str,
-) -> String {
-    let head = Head {
-        refresh: Some((secs, Some(url))),
-        ..Head::default()
-    };
-    render(title, &head, body_html, extra_css)
-}
-
-/// Page d'administration (`/accounts`, liste rouge) : comme [`page`], avec `<meta name="referrer"
-/// content="no-referrer">` (aucune adresse de page d'admin ne part dans un en-tête `Referer`) ; `refresh` =
-/// rechargement vers un chemin local (échappé), comme [`page_refreshing`].
+/// Page d'administration (`/accounts`, liste rouge, `/recherche`, connexion, onboarding) : comme [`page`], avec
+/// `<meta name="referrer" content="no-referrer">` (aucune adresse de page d'admin ne part dans un en-tête
+/// `Referer`) ; `refresh` = `<meta http-equiv="refresh">` vers un chemin local (échappé) après N secondes
+/// (résultats de `/recherche` tant que la recherche tourne, travail de la liste rouge), sans JavaScript.
 pub fn page_admin(
     title: &str,
     refresh: Option<(u32, &str)>,
@@ -370,7 +356,7 @@ mod tests {
 
     #[test]
     fn refresh_is_in_the_head_and_escaped() {
-        let r = page_refreshing("t", 4, "/x?a=1&b=\"2\"", "<p>c</p>", "");
+        let r = page_admin("t", Some((4, "/x?a=1&b=\"2\"")), "<p>c</p>", "");
         let meta = "<meta http-equiv=\"refresh\" content=\"4;url=/x?a=1&amp;b=&quot;2&quot;\">";
         assert!(r.contains(meta), "{r}");
         assert!(r.find(meta).unwrap() < r.find("</head>").unwrap());
@@ -432,6 +418,10 @@ mod tests {
         assert!(!BASE_CSS.contains("outline-offset:2px;border-radius"));
         assert!(BASE_CSS.contains("button.accent:hover{background:var(--accent-press)}"));
         assert!(BASE_CSS.contains("@media (prefers-reduced-motion:reduce)"));
+        // hauteur d'écran réelle sur mobile ; barre de défilement sombre et ombres de défilement des tableaux
+        assert!(BASE_CSS.contains("min-height:100dvh"));
+        assert!(BASE_CSS.contains("scrollbar-color:#4a4f58 transparent"));
+        assert!(BASE_CSS.contains("no-repeat local"));
         assert!(html.find(".x{color:red}") > html.find(".sr-only{"));
     }
 

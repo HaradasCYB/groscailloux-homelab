@@ -28,7 +28,7 @@ const GUIDE_CSS: &str = r#"html{scroll-behavior:smooth}
 .g-hero{display:grid;gap:20px;padding-bottom:8px}
 .g-hero h1{margin:0;text-wrap:balance}
 .gd .lead{max-width:62ch;margin:0}
-.logo-print{display:none}
+.gd .logo-print{display:none}
 .essentiel{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:12px}
 .essentiel>div,.app,.rules>div,.contact>div{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px 18px}
 .essentiel .jf,.essentiel .js,.contact>div{border-top:3px solid var(--accent)}
@@ -113,7 +113,7 @@ nav.steps a:hover{background:var(--surface);border-color:var(--line);color:var(-
 body{font-size:10.5pt}
 .gc-top,.g-up{display:none}
 .gc-main{padding:0;max-width:none}
-.logo-print{display:block;width:260px}
+.gd .logo-print{display:block;width:260px}
 .g-hero{gap:4mm;padding-bottom:4mm}
 .g-layout{display:block;margin:0}
 nav.steps{position:static;max-height:none;overflow:visible;margin:0 0 2mm;padding:0}
@@ -285,6 +285,8 @@ mod tests {
         // captures intégrées gardées ; logo d'impression seulement (la marque à l'écran est l'en-tête commun)
         assert_eq!(p.matches("src=\"data:image/").count(), 16);
         assert!(!p.contains("logo-screen"));
+        // le logo d'impression reste caché à l'écran : `.gd img{display:block}` l'emporterait sur `.logo-print`
+        assert!(p.contains(".gd .logo-print{display:none}"));
     }
 
     #[test]

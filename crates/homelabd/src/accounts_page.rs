@@ -111,7 +111,7 @@ pub(crate) const ADMIN_CSS: &str = r#".adm{display:grid;gap:16px}
 .bar i.ok{background:var(--ok)}.bar i.warn{background:var(--warn)}.bar i.err{background:var(--err)}
 .adm table{font-size:.875rem}
 .adm td{vertical-align:middle}
-td.n{font-weight:600;color:var(--strong);word-break:break-word}tr.off td.n{color:var(--dim)}
+td.n{font-weight:600;color:var(--strong);min-width:10em;overflow-wrap:break-word}tr.off td.n{color:var(--dim)}
 td.w{white-space:nowrap;color:var(--dim);font-variant-numeric:tabular-nums}
 td.sub{min-width:15em}
 td.t{width:1%;white-space:nowrap}
