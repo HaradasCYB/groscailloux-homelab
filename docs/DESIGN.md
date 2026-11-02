@@ -265,8 +265,9 @@ Les états se lisent aussi sans la couleur : un mot (« Actif », « Échu », �
 
 - **En-tête** (`gc-top`, `gc-top-in`, `gc-brand`, `gc-tv`) : bande fine et collante, fond `bg` à 86 % flouté, logo galet
   30 px + « Groscailloux » + pastille « TV » en dégradé bleu. Posé par `page()` sur chaque page ; il n'est pas un lien
-  (aucune page d'accueil commune). `page()` le pose toujours ; le cas de la page d'état affichée en iframe dans Homarr se
-  tranche à sa migration.
+  (aucune page d'accueil commune). `page()` et `page_admin()` (pages d'administration, `no-referrer`) le posent ;
+  `page_bare()` (`/status.html`, affichée en iframe dans Homarr) n'en a pas : `<main class="gc-bare">` compact, fond `bg`
+  opaque (un fond transparent dépendrait du `color-scheme` de la page hôte).
 - **Carte** (`.card`) : `surface`, filet `line`, rayon `lg`, 24 px de marge interne (18 px sur téléphone). Contient un
   formulaire, un résumé, une étape.
 - **Champs** (`label`, `input`, `select`, `textarea`, `.field`, `.hint`) : libellé visible au-dessus (jamais le seul

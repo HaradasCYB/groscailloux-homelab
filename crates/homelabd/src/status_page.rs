@@ -1,6 +1,7 @@
 //! Page d'état HTML (tableau « Opérations » de Homarr, en iFrame) : dernier passage de chaque
-//! tâche, disque du VPS, quota de la seedbox. Rendu côté serveur, sans JavaScript, thème sombre,
-//! rechargée toutes les 60 s. Protégée par `HOMELABD_STATUS_TOKEN` (voir `web.rs`).
+//! tâche, disque du VPS, quota de la seedbox. Rendu côté serveur, sans JavaScript, sur
+//! [`crate::ui::page_bare`] (jetons communs, sans en-tête, compacte), rechargée toutes les 60 s.
+//! Protégée par `HOMELABD_STATUS_TOKEN` (voir `web.rs`).
 
 use std::collections::BTreeMap;
 
@@ -176,7 +177,7 @@ fn alerts_section(a: &AlertStats, now: i64) -> String {
         })
         .collect();
     format!(
-        r#"<h1 style="margin:14px 0 6px">Alertes admin · {ok} livrée(s), {ko} non livrée(s) · {last}</h1><table>{rows}</table>"#,
+        r#"<h2>Alertes admin · {ok} livrée(s), {ko} non livrée(s) · {last}</h2><div class="table-wrap"><table>{rows}</table></div>"#,
         ok = a.delivered,
         ko = a.failed,
         last = esc(&last)
@@ -187,12 +188,12 @@ fn alerts_section(a: &AlertStats, now: i64) -> String {
 /// **Lecture seule** : un tableau, aucun formulaire ni bouton, rien qui supprime ; l'admin tranche à la main. Tout texte
 /// venu des Arrs (titres) passe par `esc`. Avant le premier calcul (`None`), une ligne le dit.
 /// Lien vers la liste rouge (`/accounts/liste-rouge`, session admin) : ce qu'on peut supprimer, titre par titre.
-const RED_LIST_LINK: &str = r#"<p class="gd" style="margin:6px 0"><a href="/accounts/liste-rouge" style="color:#93c5fd">Liste rouge</a> : titres que personne n'a lancés depuis longtemps, à exempter ou à nettoyer.</p>"#;
+const RED_LIST_LINK: &str = r#"<p class="gd"><a href="/accounts/liste-rouge">Liste rouge</a> : titres que personne n'a lancés depuis longtemps, à exempter ou à nettoyer.</p>"#;
 
 fn catalogue_section(r: Option<&CatalogueReport>, now: i64) -> String {
     let Some(r) = r else {
         return format!(
-            r#"<h1 style="margin:14px 0 6px">Catalogue jamais regardé</h1><p class="gd">pas encore calculé (une fois par jour)</p>{RED_LIST_LINK}"#
+            r#"<h2>Catalogue jamais regardé</h2><p class="gd">pas encore calculé (une fois par jour)</p>{RED_LIST_LINK}"#
         );
     };
     let share = |b: &CatalogueBucket| percent(b.bytes, r.catalogue.bytes);
@@ -317,7 +318,7 @@ fn catalogue_section(r: Option<&CatalogueReport>, now: i64) -> String {
     }
     let notes: String = notes
         .iter()
-        .map(|n| format!(r#"<p class="gd" style="margin:4px 0">{}</p>"#, esc(n)))
+        .map(|n| format!(r#"<p class="gd">{}</p>"#, esc(n)))
         .collect();
     let rows = |list: &[CatalogueEntry], progress: bool| -> String {
         list.iter()
@@ -346,7 +347,7 @@ fn catalogue_section(r: Option<&CatalogueReport>, now: i64) -> String {
             String::new()
         } else {
             format!(
-                r#"<h1 style="margin:14px 0 6px">{}</h1><table class="cat">{}</table>"#,
+                r#"<h2>{}</h2><div class="table-wrap"><table class="cat">{}</table></div>"#,
                 esc(&heading),
                 rows(list, progress)
             )
@@ -372,10 +373,37 @@ fn catalogue_section(r: Option<&CatalogueReport>, now: i64) -> String {
         true,
     );
     format!(
-        r#"<h1 style="margin:14px 0 6px">Catalogue jamais regardé · calculé {at}</h1><div class="gs" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">{cards}</div>{RED_LIST_LINK}{notes}{listed}{backlog}"#,
+        r#"<h2>Catalogue jamais regardé · calculé {at}</h2><div class="gs wide">{cards}</div>{RED_LIST_LINK}{notes}{listed}{backlog}"#,
         at = esc(&ago(now, r.at)),
     )
 }
+
+/// Règles de `/status.html`, après [`crate::ui::BASE_CSS`] : compacte (14 px, cadre Homarr), jauges `.g`, pastilles
+/// d'état `.dot`, résumés en chasse fixe `td.s`, catalogue empilé sur téléphone (`table.cat`).
+const STATUS_CSS: &str = r#"body{font-size:14px;line-height:1.45}
+.gc-bare h1{font-size:1rem;letter-spacing:-.01em;margin:0}
+.gc-bare h2{font-size:.95rem;letter-spacing:-.01em;margin:18px 0 8px}
+.sh{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between;margin-bottom:12px}
+.sh .row{gap:6px}
+.gs{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px}
+.gs.wide{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.g{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px}
+.gt{display:flex;justify-content:space-between;gap:8px;font-size:.85rem;color:var(--dim)}
+.gt b{color:var(--strong);font-variant-numeric:tabular-nums}
+.bar{height:6px;background:var(--raised);border-radius:3px;margin:8px 0 6px;overflow:hidden}.bar i{display:block;height:100%}
+i.ok{background:var(--ok)}i.warn{background:var(--warn)}i.err{background:var(--err)}i.none{background:#4a4f58}
+.gd{font-size:.8rem;color:var(--dim);margin:4px 0}
+.gc-bare .table-wrap{margin-bottom:12px}
+.gc-bare table{font-size:.85rem}
+.gc-bare td{padding:6px 10px}
+td.w{white-space:nowrap;color:var(--dim);font-variant-numeric:tabular-nums;width:1%}
+td.s{color:var(--dim);font-family:var(--mono);font-size:.8rem;word-break:break-word}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:1px}
+.dot.ok{background:var(--ok)}.dot.err{background:var(--err)}.dot.none{background:#4a4f58}
+.e{margin-top:2px;color:var(--warn)}
+.notice{margin:12px 0 0;padding:8px 12px}
+@media (max-width:600px){table.cat tr{display:block;border-top:1px solid var(--divider);padding:4px 0}table.cat tr:first-child{border-top:0}table.cat td{display:inline-block;width:auto;border:0;padding:1px 10px 1px 4px}table.cat td.s{display:block;padding-bottom:2px}}
+@media (forced-colors:active){.dot,.bar i{forced-color-adjust:none}}"#;
 
 fn gauge(title: &str, pct: Option<u8>, detail: &str) -> String {
     let (p, cls) = match pct {
@@ -415,8 +443,14 @@ pub fn render(d: &PageData<'_>) -> String {
             .map(|n| format!(r#"<div class="e">{}</div>"#, esc(&n)))
             .unwrap_or_default();
         rows.push_str(&format!(
-            r#"<tr><td><i class="dot {st}"></i>{name}</td><td class="w">{when}</td><td class="s" title="{full}">{sum}{note}</td></tr>"#,
+            r#"<tr><td><i class="dot {st}" aria-hidden="true"></i><span class="sr-only">{st_label} : </span>{name}</td><td class="w">{when}</td><td class="s" title="{full}">{sum}{note}</td></tr>"#,
             name = esc(&homelab_core::tasks::label_of(t)),
+            // la pastille n'est qu'une couleur : son sens, lu par les lecteurs d'écran (WCAG 1.4.1)
+            st_label = match st {
+                "ok" => "réussie",
+                "err" => "en échec",
+                _ => "pas de résultat",
+            },
             when = esc(&when),
             full = esc(&summary),
             sum = esc(&summary)
@@ -449,31 +483,10 @@ pub fn render(d: &PageData<'_>) -> String {
         Some(false) => r#"<span class="pill err">montage seedbox absent</span>"#,
         None => "",
     };
-    format!(
-        r#"<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60"><title>État de l'automatisation</title><style>
-:root{{color-scheme:dark}}*{{box-sizing:border-box}}
-body{{margin:0;padding:12px 14px;background:#141517;color:#dfe5ea;font:13px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}}
-header{{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:10px}}
-h1{{font-size:14px;margin:0;font-weight:600;letter-spacing:.02em}}
-.pill{{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-variant-numeric:tabular-nums}}
-.pill.ok{{background:#12321f;color:#6ee7a0}}.pill.err{{background:#3b1518;color:#fca5a5}}
-.gs{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px}}
-.g{{background:#1b1d20;border:1px solid #2a2d31;border-radius:8px;padding:8px 10px}}
-.gt{{display:flex;justify-content:space-between;font-size:12px;color:#9aa6b1}}.gt b{{color:#dfe5ea;font-variant-numeric:tabular-nums}}
-.bar{{height:6px;background:#2a2d31;border-radius:3px;margin:6px 0 4px;overflow:hidden}}.bar i{{display:block;height:100%}}
-i.ok{{background:#22c55e}}i.warn{{background:#f59e0b}}i.err{{background:#ef4444}}i.none{{background:#4b5563}}
-.gd{{font-size:11px;color:#8591a0}}
-table{{width:100%;border-collapse:collapse}}td{{padding:5px 4px;border-top:1px solid #24272b;vertical-align:top}}
-td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1%}}td.s{{color:#8591a0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;word-break:break-word}}
-.dot{{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:1px}}
-.dot.ok{{background:#22c55e}}.dot.err{{background:#ef4444}}.dot.none{{background:#4b5563}}
-.e{{margin-top:2px;color:#d6a45a}}
-@media(max-width:600px){{table.cat tr{{display:block;border-top:1px solid #24272b;padding:4px 0}}table.cat td{{display:inline-block;width:auto;border:0;padding:1px 10px 1px 4px}}table.cat td.s{{display:block;padding-bottom:2px}}}}
-</style></head><body>
-<header><h1>Automatisation homelabd</h1><div>{headline} {mount}</div></header>
+    let body = format!(
+        r#"<div class="sh"><h1>Automatisation homelabd</h1><div class="row">{headline} {mount}</div></div>
 <div class="gs">{vps}{sb}</div>
-<table>{rows}</table>{canary}{stuck}{blocked}{catalogue}{alerts}
-</body></html>"#,
+<div class="table-wrap"><table>{rows}</table></div>{canary}{stuck}{blocked}{catalogue}{alerts}"#,
         alerts = alerts_section(d.alerts, d.now),
         catalogue = catalogue_section(d.catalogue, d.now),
         vps = gauge(
@@ -483,7 +496,7 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
         ),
         canary = match &d.canary {
             Some((ok, text)) => format!(
-                r#"<p class="{cls}" style="margin:12px 0 0"><b>Canari de lecture</b> : {text}</p>"#,
+                r#"<p class="notice {cls}"><b>Canari de lecture</b> : {text}</p>"#,
                 cls = if *ok { "ok" } else { "err" },
                 text = esc(text),
             ),
@@ -493,7 +506,7 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
             String::new()
         } else {
             format!(
-                r#"<h1 style="margin:14px 0 6px">Rien ne bouge ({n})</h1><table>{rows}</table>"#,
+                r#"<h2>Rien ne bouge ({n})</h2><div class="table-wrap"><table>{rows}</table></div>"#,
                 n = d.stuck_torrents.len(),
                 rows = d
                     .stuck_torrents
@@ -506,7 +519,7 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
             String::new()
         } else {
             format!(
-                r#"<h1 style="margin:14px 0 6px">Saisons sans release ({n})</h1><table>{rows}</table>"#,
+                r#"<h2>Saisons sans release ({n})</h2><div class="table-wrap"><table>{rows}</table></div>"#,
                 n = d.blocked_seasons.len(),
                 rows = d
                     .blocked_seasons
@@ -515,7 +528,8 @@ td.w{{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;width:1
                     .collect::<String>()
             )
         },
-    )
+    );
+    crate::ui::page_bare("État de l'automatisation", Some(60), &body, STATUS_CSS)
 }
 
 #[cfg(test)]
@@ -810,6 +824,60 @@ mod tests {
             alerts: &AlertStats::default(),
         });
         assert!(html.contains("quota non disponible"));
+    }
+
+    /// Cadre Homarr : variante sans en-tête de `ui`, rechargée sur la même adresse (jeton gardé), sans aucun
+    /// formulaire ni script.
+    #[test]
+    fn status_is_a_bare_read_only_page() {
+        let runs = BTreeMap::new();
+        let html = render(&PageData {
+            now: 0,
+            runs: &runs,
+            tasks: &[],
+            vps_disk_pct: Some(50),
+            seedbox: None,
+            mount_ok: Some(false),
+            stuck_torrents: &[],
+            blocked_seasons: &[],
+            canary: Some((false, "échec".into())),
+            catalogue: None,
+            alerts: &AlertStats::default(),
+        });
+        assert!(html.contains(r#"<main id="main" class="gc-bare">"#));
+        assert!(!html.contains(r#"class="gc-top""#) && !html.contains("<header"));
+        assert!(html.contains(r#"<meta http-equiv="refresh" content="60">"#));
+        assert!(html.contains("no-referrer") && html.contains("--bg:#08090b"));
+        for forbidden in ["<form", "<button", "<input", "<script"] {
+            assert!(!html.contains(forbidden), "{forbidden}");
+        }
+        assert!(!html.contains("style=\"margin") && !html.contains("#93c5fd"));
+        assert!(html.contains(r#"<p class="notice err"><b>Canari de lecture</b>"#));
+        assert!(html.contains(r#"<span class="pill err">montage seedbox absent</span>"#));
+        // la pastille de couleur a son sens en texte pour les lecteurs d'écran
+        let runs = BTreeMap::from([(
+            "stack_health".to_string(),
+            RunInfo {
+                last_ok: Some(false),
+                ..RunInfo::default()
+            },
+        )]);
+        let html = render(&PageData {
+            now: 0,
+            runs: &runs,
+            tasks: &["stack_health"],
+            vps_disk_pct: None,
+            seedbox: None,
+            mount_ok: None,
+            stuck_torrents: &[],
+            blocked_seasons: &[],
+            canary: None,
+            catalogue: None,
+            alerts: &AlertStats::default(),
+        });
+        assert!(html.contains(
+            r#"<i class="dot err" aria-hidden="true"></i><span class="sr-only">en échec : </span>"#
+        ));
     }
 
     fn catalogue_sample() -> CatalogueReport {

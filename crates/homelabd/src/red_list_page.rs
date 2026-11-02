@@ -23,22 +23,19 @@ use homelab_core::TaskContext;
 use serde::Deserialize;
 use tracing::{info, warn};
 
-use crate::accounts_page::shell_with;
+use crate::accounts_page::{flash_html, shell_with};
 use crate::status_page::ago;
 
 const BASE: &str = "/accounts/liste-rouge";
 const TASK: &str = "red_list";
 
-const CSS: &str = r#"<style>
-.badge.ru{background:#3b1f22;color:#fca5a5}.badge.sim{background:#1d2633;color:#b9cbe3}
-h2{font-size:15px;margin:6px 0 4px;font-weight:620}
-.why{display:block;color:#9aa6b1;font-size:12px;font-weight:400}
-details summary{cursor:pointer;color:#c3ccd5}
+/// Règles propres à la liste rouge, après `accounts_page::ADMIN_CSS`.
+const CSS: &str = r#".why{display:block;color:var(--dim);font-size:.8rem;font-weight:400}
+details summary{cursor:pointer;color:var(--text);padding:6px 0}
+details .table-wrap{margin-top:8px}
 .row form{display:inline}
-.card{max-width:none}
-.card li{margin:2px 0}
-td.t .acts{gap:6px}
-</style>"#;
+ul.foot{margin:0;padding-left:20px}
+.cap .row{margin-top:12px}"#;
 
 #[derive(Clone)]
 struct PageState {
@@ -176,7 +173,7 @@ pub fn message(code: &str, who: &str) -> Option<(&'static str, String)> {
 
 fn flash(msg: Option<(&str, &str)>) -> String {
     msg.and_then(|(code, who)| message(code, who))
-        .map(|(cls, text)| format!(r#"<p class="flash {cls}" role="status">{text}</p>"#))
+        .map(|(cls, text)| flash_html(cls, &text))
         .unwrap_or_default()
 }
 
@@ -208,7 +205,7 @@ fn title_cell(e: &RedEntry) -> String {
         r#"{title}{ru}<span class="why">{kind} · {sides}</span>"#,
         title = esc(&e.title),
         ru = if e.russian {
-            r#"<span class="badge ru">voie russe</span>"#
+            r#"<span class="pill err">voie russe</span>"#
         } else {
             ""
         },
@@ -259,15 +256,15 @@ pub fn render_list(d: &ListData<'_>) -> String {
     let token = esc(d.token);
     let mut out = String::new();
     out.push_str(&format!(
-        r#"<header><div><h1>Liste rouge</h1><p class="sub">Titres que personne n'a lancés depuis {days} j, des plus gros aux plus petits. « Exempter » les garde pour toujours ; « Nettoyer » supprime au plus {max} titres par clic, après confirmation.</p></div><nav class="row"><a class="btn ghost" href="/accounts">Comptes</a><a class="btn ghost" href="/status.html">État</a></nav></header>"#,
+        r#"<div class="ph"><div><h1>Liste rouge</h1><p class="lead">Titres que personne n'a lancés depuis {days} j, des plus gros aux plus petits. « Exempter » les garde pour toujours ; « Nettoyer » supprime au plus {max} titres par clic, après confirmation.</p></div><nav class="row" aria-label="Administration"><a class="btn secondary" href="/accounts">Comptes</a><a class="btn secondary" href="/status.html">État</a></nav></div>"#,
         days = d.report.map_or(0, |r| r.min_idle_days),
         max = d.max,
     ));
     out.push_str(&flash(d.msg));
     if d.global_dry {
-        out.push_str(r#"<p class="flash info"><span class="badge sim">Simulation</span> homelabd tourne en dry-run : rien n'est supprimé, même un titre seul.</p>"#);
+        out.push_str(r#"<p class="notice info"><span class="pill info">Simulation</span> homelabd tourne en dry-run : rien n'est supprimé, même un titre seul.</p>"#);
     } else if d.clean_dry_run {
-        out.push_str(r#"<p class="flash info"><span class="badge sim">Simulation</span> <code>clean_dry_run = true</code> : « Nettoyer » et « Nettoyer ce titre » ne suppriment rien, ils disent seulement ce qu'ils feraient.</p>"#);
+        out.push_str(r#"<p class="notice info"><span class="pill info">Simulation</span> <code>clean_dry_run = true</code> : « Nettoyer » et « Nettoyer ce titre » ne suppriment rien, ils disent seulement ce qu'ils feraient.</p>"#);
     }
     let running = d.jobs.iter().rev().find(|j| j.status == "running");
     if d.busy || running.is_some() {
@@ -275,24 +272,24 @@ pub fn render_list(d: &ListData<'_>) -> String {
             .map(|j| format!(r#" <a href="{}">Suivre le travail</a>"#, job_href(&j.id)))
             .unwrap_or_default();
         out.push_str(&format!(
-            r#"<p class="flash warn">Un « Nettoyer » ou un recalcul est en cours.{link}</p>"#
+            r#"<p class="notice warn" role="status">Un « Nettoyer » ou un recalcul est en cours.{link}</p>"#
         ));
     }
     if d.pending > 0 {
         out.push_str(&format!(
-            r#"<p class="flash info">{} étape(s) de nettoyage à rejouer (corbeille, Jellyseerr) : homelabd les reprend à chaque passage.</p>"#,
+            r#"<p class="notice info">{} étape(s) de nettoyage à rejouer (corbeille, Jellyseerr) : homelabd les reprend à chaque passage.</p>"#,
             d.pending
         ));
     }
     let recalc = format!(
-        r#"<form method="post" action="{BASE}/recalculer"><input type="hidden" name="token" value="{token}"><button class="btn ghost" type="submit"{dis}>Recalculer</button></form>"#,
+        r#"<form method="post" action="{BASE}/recalculer"><input type="hidden" name="token" value="{token}"><button class="btn secondary" type="submit"{dis}>Recalculer</button></form>"#,
         dis = if d.busy { " disabled" } else { "" },
     );
     let Some(r) = d.report else {
         out.push_str(&format!(
-            r#"<section class="cap"><p>Pas encore calculée (une fois par jour).</p><div class="row">{recalc}</div></section>"#
+            r#"<section class="card cap"><p>Pas encore calculée (une fois par jour).</p><div class="row">{recalc}</div></section>"#
         ));
-        return shell_with("Liste rouge", CSS, &out);
+        return shell_with("Liste rouge", CSS, None, &out);
     };
     if !r.complete {
         let missing: String = r
@@ -301,7 +298,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
             .map(|m| format!("<li>{}</li>", esc(m)))
             .collect();
         out.push_str(&format!(
-            r#"<div class="flash err"><b>Calcul incomplet</b> : une lecture a pu échapper au calcul, « Nettoyer » est refusé.<ul>{missing}</ul></div>"#
+            r#"<div class="notice err" role="alert"><b>Calcul incomplet</b> : une lecture a pu échapper au calcul, « Nettoyer » est refusé.<ul>{missing}</ul></div>"#
         ));
     }
     let total: u64 = r.entries.iter().map(|e| e.bytes).sum();
@@ -315,7 +312,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
         String::new()
     };
     out.push_str(&format!(
-        r#"<section class="cap" aria-label="Totaux"><div class="ct"><b>{n} titre(s) · {size}</b><span>calculé {at} · {ev} titre(s) évalué(s) · {soon} bientôt rouge(s) · {ex} exempté(s)</span></div><div class="row" style="margin-top:10px">{clean_link}{recalc}</div></section>"#,
+        r#"<section class="card cap" aria-label="Totaux"><div class="ct"><b>{n} titre(s) · {size}</b><span>calculé {at} · {ev} titre(s) évalué(s) · {soon} bientôt rouge(s) · {ex} exempté(s)</span></div><div class="row">{clean_link}{recalc}</div></section>"#,
         n = r.entries.len(),
         size = esc(&human_size(total)),
         at = esc(&ago(d.now, r.at)),
@@ -364,7 +361,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
             })
             .collect();
         out.push_str(&format!(
-            r#"<div class="tw"><table><thead><tr><th>Titre</th><th>Taille</th><th>Arrivée</th><th>Dernière lecture</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>"#
+            r#"<div class="table-wrap"><table><thead><tr><th scope="col">Titre</th><th scope="col">Taille</th><th scope="col">Arrivée</th><th scope="col">Dernière lecture</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>"#
         ));
     }
     // bientôt rouges
@@ -388,7 +385,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
             })
             .collect();
         out.push_str(&format!(
-            r#"<h2>Bientôt rouges ({days} j)</h2><div class="tw"><table><tbody>{rows}</tbody></table></div>"#,
+            r#"<h2>Bientôt rouges ({days} j)</h2><div class="table-wrap"><table><tbody>{rows}</tbody></table></div>"#,
             days = r.soon_days
         ));
     }
@@ -420,7 +417,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
             })
             .collect();
         out.push_str(&format!(
-            r#"<h2>Exemptés ({n})</h2><div class="tw"><table><tbody>{rows}</tbody></table></div>"#,
+            r#"<h2>Exemptés ({n})</h2><div class="table-wrap"><table><tbody>{rows}</tbody></table></div>"#,
             n = d.exemptions.len()
         ));
     }
@@ -439,7 +436,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
             })
             .collect();
         out.push_str(&format!(
-            r#"<details><summary>Non évalués ({n}) : jamais rouges</summary><div class="tw"><table><tbody>{rows}</tbody></table></div></details>"#,
+            r#"<details><summary>Non évalués ({n}) : jamais rouges</summary><div class="table-wrap"><table><tbody>{rows}</tbody></table></div></details>"#,
             n = r.unmatched.len()
         ));
     }
@@ -466,7 +463,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
         ));
     }
     out.push_str(r#"<p class="foot">Chaque titre est revérifié juste avant sa suppression (exempté, en lecture, plus rouge, fiche changée : écarté). Un titre présent sur le VPS et la seedbox n'est rouge que si aucune copie n'a été lue.</p>"#);
-    shell_with("Liste rouge", CSS, &out)
+    shell_with("Liste rouge", CSS, None, &out)
 }
 
 pub struct ConfirmData<'a> {
@@ -497,15 +494,17 @@ pub fn render_confirm(d: &ConfirmData<'_>) -> String {
         })
         .collect();
     let mode = if d.dry {
-        r#"<p class="flash info"><span class="badge sim">Simulation</span> Rien ne sera supprimé : le travail dit seulement ce qu'il ferait.</p>"#
+        r#"<p class="notice info"><span class="pill info">Simulation</span> Rien ne sera supprimé : le travail dit seulement ce qu'il ferait.</p>"#
     } else if d.key.is_some() {
-        r#"<p class="flash err"><b>Suppression réelle</b> de ce seul titre, définitive.</p>"#
+        r#"<p class="notice err"><b>Suppression réelle</b> de ce seul titre, définitive.</p>"#
     } else {
-        r#"<p class="flash err"><b>Suppression réelle</b> et définitive.</p>"#
+        r#"<p class="notice err"><b>Suppression réelle</b> et définitive.</p>"#
     };
     let rest = d.total_red.saturating_sub(d.entries.len());
     let rest = if d.key.is_none() && rest > 0 {
-        format!(r#"<p class="sub">Les {rest} titre(s) suivant(s) attendent un prochain clic.</p>"#)
+        format!(
+            r#"<p class="muted">Les {rest} titre(s) suivant(s) attendent un prochain clic.</p>"#
+        )
     } else {
         String::new()
     };
@@ -518,7 +517,7 @@ pub fn render_confirm(d: &ConfirmData<'_>) -> String {
         String::new()
     } else {
         format!(
-            r#"<form method="post" action="{BASE}/nettoyer"><input type="hidden" name="token" value="{token}"><input type="hidden" name="snap" value="{snap}">{key_field}<input type="hidden" name="simulation" value="1"><button class="btn ghost" type="submit">Simuler d'abord</button></form>"#,
+            r#"<form method="post" action="{BASE}/nettoyer"><input type="hidden" name="token" value="{token}"><input type="hidden" name="snap" value="{snap}">{key_field}<input type="hidden" name="simulation" value="1"><button class="btn secondary" type="submit">Simuler d'abord</button></form>"#,
             token = esc(d.token),
             snap = esc(d.snap),
         )
@@ -526,13 +525,14 @@ pub fn render_confirm(d: &ConfirmData<'_>) -> String {
     shell_with(
         "Nettoyer la liste rouge",
         CSS,
+        None,
         &format!(
-            r#"<header><div><h1>Nettoyer {n} titre(s) ?</h1><p class="sub">{size} au total.</p></div></header>
+            r#"<div class="ph"><div><h1>Nettoyer {n} titre(s) ?</h1><p class="lead">{size} au total.</p></div></div>
 {mode}
-<section class="card" aria-label="Confirmation">
+<section class="card confirm" aria-label="Confirmation">
 <p>Pour chaque titre : fiche Radarr/Sonarr et fichiers (corbeille de l'Arr vidée), torrent, média Jellyseerr. Chaque titre est revérifié juste avant (exempté, en lecture, plus rouge : écarté).</p>
 <ul>{items}</ul>{rest}
-<div class="row">{simulate}<form method="post" action="{BASE}/nettoyer"><input type="hidden" name="token" value="{token}"><input type="hidden" name="snap" value="{snap}">{key_field}<button class="btn danger" type="submit">{button}</button></form><a class="btn ghost" href="{BASE}">Annuler</a></div>
+<div class="row">{simulate}<form method="post" action="{BASE}/nettoyer"><input type="hidden" name="token" value="{token}"><input type="hidden" name="snap" value="{snap}">{key_field}<button class="btn danger" type="submit">{button}</button></form><a class="btn secondary" href="{BASE}">Annuler</a></div>
 </section>"#,
             n = d.entries.len(),
             size = esc(&human_size(total)),
@@ -559,36 +559,32 @@ fn outcome_label(r: &CleanResult) -> &'static str {
 }
 
 pub fn render_job(id: &str, job: Option<&CleanJob>, busy: bool, now: i64) -> String {
-    let refresh = format!(
-        r#"<meta http-equiv="refresh" content="5;url={}">"#,
-        job_href(id)
-    );
+    // chemin brut : `ui::page_admin` l'échappe dans la balise
+    let target = format!("{BASE}/travail?id={}", urlencode(id));
+    let refresh = Some((5, target.as_str()));
     let back = format!(r#"<p><a href="{BASE}">← Liste rouge</a></p>"#);
     let Some(j) = job else {
         return if busy {
             shell_with(
                 "Nettoyer : en préparation",
-                &format!("{CSS}{refresh}"),
+                CSS,
+                refresh,
                 &format!(
-                    r#"{back}<h1>Travail en préparation…</h1><p class="sub">La page se recharge toutes les 5 s.</p>"#
+                    r#"{back}<div class="ph"><div><h1>Travail en préparation…</h1><p class="lead">La page se recharge toutes les 5 s.</p></div></div>"#
                 ),
             )
         } else {
             shell_with(
                 "Travail introuvable",
                 CSS,
+                None,
                 &format!(
-                    r#"{back}<h1>Travail introuvable</h1><p class="sub">Seuls les derniers travaux sont gardés.</p>"#
+                    r#"{back}<div class="ph"><div><h1>Travail introuvable</h1><p class="lead">Seuls les derniers travaux sont gardés.</p></div></div>"#
                 ),
             )
         };
     };
     let running = j.status == "running";
-    let head = if running {
-        format!("{CSS}{refresh}")
-    } else {
-        CSS.to_string()
-    };
     let state = if running {
         format!(
             "{} / {} titre(s) traité(s) · lancé {} · la page se recharge toutes les 5 s",
@@ -602,7 +598,7 @@ pub fn render_job(id: &str, job: Option<&CleanJob>, busy: bool, now: i64) -> Str
     let detail = if j.detail.is_empty() {
         String::new()
     } else {
-        format!(r#"<p class="flash warn">{}</p>"#, esc(&j.detail))
+        format!(r#"<p class="notice warn">{}</p>"#, esc(&j.detail))
     };
     let quota = j
         .quota_before
@@ -638,13 +634,14 @@ pub fn render_job(id: &str, job: Option<&CleanJob>, busy: bool, now: i64) -> Str
     let table = if rows.is_empty() {
         String::new()
     } else {
-        format!(r#"<div class="tw"><table><tbody>{rows}</tbody></table></div>"#)
+        format!(r#"<div class="table-wrap"><table><tbody>{rows}</tbody></table></div>"#)
     };
     shell_with(
         "Nettoyer : travail",
-        &head,
+        CSS,
+        if running { refresh } else { None },
         &format!(
-            r#"{back}<header><div><h1>Nettoyer{sim}</h1><p class="sub">{state}</p></div></header>{detail}{table}{quota}"#,
+            r#"{back}<div class="ph"><div><h1>Nettoyer{sim}</h1><p class="lead">{state}</p></div></div>{detail}{table}{quota}"#,
             sim = if j.dry_run { " (simulation)" } else { "" },
             state = esc(&state),
         ),
@@ -1234,6 +1231,18 @@ mod tests {
         assert!(!html.contains("token="));
         assert!(render_job("x", None, true, 0).contains("http-equiv"));
         assert!(render_job("x", None, false, 0).contains("introuvable"));
+    }
+
+    #[test]
+    fn pages_use_the_shared_admin_design() {
+        let html = list_html(Some(&report()), &BTreeMap::new(), false);
+        assert!(html.contains(r#"class="gc-top""#) && html.contains("no-referrer"));
+        assert!(html.contains(".adm{display:grid") && html.contains(".why{"));
+        assert!(html.contains(r#"<span class="pill info">Simulation</span>"#));
+        for violet in ["#3a325a", "#c4b5fd", "#16121f"] {
+            assert!(!html.contains(violet), "{violet}");
+        }
+        assert_eq!(html.matches("<style>").count(), 1, "un seul bloc de style");
     }
 
     #[test]

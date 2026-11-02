@@ -92,59 +92,92 @@ pub fn message(code: &str, who: &str, max_premium: usize) -> Option<(&'static st
     })
 }
 
-const CSS: &str = r#".sb{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11.5px;font-weight:600;margin-bottom:3px}
-.sb.active,.sb.offered,.sb.exempt{background:#143d2a;color:#9fe3bd}.sb.trial{background:#1c3556;color:#b9d6ff}.sb.grace,.sb.due{background:#4d3a10;color:#ffd98a}.sb.suspended{background:#4a1d1d;color:#ffb3b3}.sb.unknown{background:#2c3038;color:#d3d9e2}
-.subf{display:flex;gap:4px;align-items:center;margin-top:2px}.subf select,.subf input{background:#16121f;color:#e6e1f5;border:1px solid #3a325a;border-radius:8px;padding:3px 6px;font:inherit;font-size:12px}.subf input{width:4.2em}
-td.sub{min-width:15em}
-.lk{display:block;font-size:12px;color:#9b94b8;margin-bottom:4px}.lnk{background:none;border:1px solid #3a325a;color:#c4b5fd;border-radius:8px;padding:4px 8px;font:inherit;font-size:12px;cursor:pointer}
-:root{color-scheme:dark}*{box-sizing:border-box}
-body{margin:0;padding-block:20px;padding-inline:16px;background:#141517;color:#dfe5ea;font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-main{max-width:800px;margin:0 auto;display:grid;gap:16px}
-h1{font-size:18px;margin:0;font-weight:650;letter-spacing:.01em}
-.sub{margin:2px 0 0;color:#8591a0;font-size:12.5px}
-.cap{background:#1b1d20;border:1px solid #2a2d31;border-radius:10px;padding:12px 14px}
+/// Règles propres aux pages d'administration (`/accounts`, `/accounts/delete`, liste rouge), après
+/// [`crate::ui::BASE_CSS`] : mise en page en grille (`.adm`), compteur (`.cap`), tableau des comptes, interrupteur
+/// Premium (`.sw`), petits boutons de ligne (`.lnk`), liens Supprimer (`.del`), pastilles d'abonnement (`.sb`).
+/// Les classes `del`, `sb …`, `lk` et `w` sont vérifiées par les tests.
+pub(crate) const ADMIN_CSS: &str = r#".adm{display:grid;gap:16px}
+.adm>*{margin-top:0;margin-bottom:0}
+.ph{display:flex;justify-content:space-between;align-items:flex-start;gap:12px 16px;flex-wrap:wrap}
+.ph h1{font-size:clamp(1.6rem,1.2rem + 1.6vw,2.1rem);margin:0 0 .25em}
+.ph .lead{font-size:1rem;margin:0}
+.ph nav{flex:none}
+.adm h2{font-size:1.2rem;margin:8px 0 0}
+.cap{padding:16px 18px}
 .ct{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
-.ct b{font-size:22px;font-variant-numeric:tabular-nums}.ct span{color:#9aa6b1;font-size:12.5px}
-.bar{height:6px;background:#2a2d31;border-radius:3px;margin-top:8px;overflow:hidden}.bar i{display:block;height:100%}
-i.ok{background:#22c55e}i.warn{background:#f59e0b}i.err{background:#ef4444}
-.flash{margin:0;padding:9px 12px;border-radius:8px;font-size:13px}
-.flash.ok{background:#12321f;color:#a7f3c4}.flash.warn{background:#3a2a0e;color:#fcd38a}.flash.err{background:#3b1518;color:#fca5a5}.flash.info{background:#1d2633;color:#b9cbe3}
-.tw{overflow-x:auto}table{width:100%;border-collapse:collapse}
-th{text-align:left;font-weight:500;color:#8591a0;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;padding:0 6px 6px}
-td{padding:8px 6px;border-top:1px solid #24272b;vertical-align:middle}
-td.n{font-weight:550;word-break:break-word}tr.off td.n{color:#8591a0}
-td.w{white-space:nowrap;color:#9aa6b1;font-variant-numeric:tabular-nums;font-size:12.5px}
-td.t{width:1%;white-space:nowrap}.acts{display:flex;align-items:center;justify-content:flex-end;gap:10px}
+.ct b{font:800 1.5rem/1.1 var(--font-display);letter-spacing:-.02em;color:var(--strong);font-variant-numeric:tabular-nums}
+.ct span{color:var(--dim);font-size:.875rem}
+.bar{height:6px;background:var(--raised);border-radius:3px;margin-top:10px;overflow:hidden}.bar i{display:block;height:100%}
+.bar i.ok{background:var(--ok)}.bar i.warn{background:var(--warn)}.bar i.err{background:var(--err)}
+.adm table{font-size:.875rem}
+.adm td{vertical-align:middle}
+td.n{font-weight:600;color:var(--strong);word-break:break-word}tr.off td.n{color:var(--dim)}
+td.w{white-space:nowrap;color:var(--dim);font-variant-numeric:tabular-nums}
+td.sub{min-width:15em}
+td.t{width:1%;white-space:nowrap}
+.acts{display:flex;align-items:center;justify-content:flex-end;gap:10px}
+td.t .acts{gap:6px}
 form{margin:0}
-.badge{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:500;vertical-align:1px}
-.badge.admin{background:#1d2633;color:#b9cbe3}.badge.prot{background:#2a2410;color:#fcd38a}
-.sw{display:inline-flex;align-items:center;gap:8px;border:0;background:none;color:inherit;font:inherit;font-size:12.5px;cursor:pointer;padding:4px 2px;border-radius:999px}
-.sw i{position:relative;width:34px;height:20px;border-radius:999px;background:#3a3f45;transition:background .15s}
-.sw i::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#dfe5ea;transition:transform .15s}
-.sw.on i{background:#22c55e}.sw.on i::after{transform:translateX(14px)}
-.sw span{min-width:62px;text-align:left}.sw.off span{color:#8591a0}
-.sw:focus-visible,.del:focus-visible,.btn:focus-visible{outline:2px solid #60a5fa;outline-offset:2px}.sw:disabled{cursor:not-allowed;opacity:.45}
-.del{color:#f19999;font-size:12.5px;text-decoration:none;padding:4px 6px;border-radius:6px}.del:hover{background:#3b1518;color:#fca5a5}
-.lock{color:#8591a0;font-size:12.5px}
-.foot{color:#8591a0;font-size:12px;margin:0}
-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
-.new{flex:none;padding:7px 12px;border-radius:8px;background:#0ea5e9;color:#04121c;font-weight:600;font-size:13px;text-decoration:none}
-.new:hover{background:#38bdf8}.new:focus-visible{outline:2px solid #60a5fa;outline-offset:2px}
-.card{background:#1b1d20;border:1px solid #3b1f22;border-radius:12px;padding:18px;display:grid;gap:12px;max-width:520px}
-.card ul{margin:0;padding-left:18px;color:#c3ccd5}.row{display:flex;gap:10px;flex-wrap:wrap}
-.btn{border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
-.btn.danger{background:#dc2626;color:#fff}.btn.danger:hover{background:#ef4444}.btn.ghost{background:#2a2d31;color:#dfe5ea}
-@media (prefers-reduced-motion:reduce){.sw i,.sw i::after{transition:none}}"#;
+td.n .pill{margin-left:6px;vertical-align:1px}
+.sb{display:inline-block;padding:1px 8px;border-radius:999px;font-size:.75rem;font-weight:600;margin-bottom:4px;border:1px solid var(--line);background:var(--raised);color:#d6d8dc}
+.sb.active,.sb.offered,.sb.exempt{color:var(--ok);border-color:rgba(52,199,123,.4);background:rgba(52,199,123,.1)}
+.sb.trial{color:var(--accent-hover);border-color:rgba(47,143,255,.45);background:rgba(47,143,255,.1)}
+.sb.grace,.sb.due{color:var(--warn);border-color:rgba(240,180,41,.4);background:rgba(240,180,41,.1)}
+.sb.suspended{color:#ff8a8a;border-color:rgba(239,68,68,.45);background:rgba(239,68,68,.1)}
+.lk{display:block;font-size:.75rem;color:var(--dim);margin-bottom:4px;white-space:normal}
+.subf{display:flex;gap:4px;align-items:center;margin-top:2px}
+.subf .lk{display:inline;margin:0}
+.subf select,.subf input{width:auto;min-height:32px;padding:3px 8px;border-radius:var(--r-sm);font-size:.8rem}
+.subf input{width:4.6em}
+button.lnk{min-height:32px;padding:4px 10px;border-radius:var(--r-sm);font-size:.8rem;font-weight:600;background:rgba(255,255,255,.08);color:var(--strong);border-color:var(--line)}
+button.lnk:hover{background:rgba(255,255,255,.14);color:var(--strong)}
+button.sw{display:inline-flex;align-items:center;gap:8px;min-height:32px;border:0;background:none;color:inherit;font:inherit;font-size:.8rem;font-weight:400;padding:4px 2px;border-radius:999px}
+button.sw:hover{background:none;color:var(--strong)}
+.sw i{position:relative;width:34px;height:20px;border-radius:999px;background:#4a4f58;transition:background-color .15s}
+.sw i::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--strong);transition:transform .15s}
+.sw.on i{background:var(--ok)}.sw.on i::after{transform:translateX(14px)}
+.sw span{min-width:62px;text-align:left}.sw.off span{color:var(--dim)}
+button.sw:disabled{cursor:not-allowed;opacity:.45}
+.del{color:#ff8a8a;font-size:.8rem;text-decoration:none;padding:6px 8px;border-radius:var(--r-sm)}
+.del:hover{background:rgba(239,68,68,.14);color:#ffb3b3}
+.lock{color:var(--dim);font-size:.8rem}
+.foot{color:var(--dim);font-size:.85rem}
+.confirm{max-width:var(--measure)}
+.confirm ul{margin:0 0 1em;padding-left:20px}
+.confirm li{margin:2px 0}
+@media (prefers-reduced-motion:reduce){.sw i,.sw i::after{transition:none}}
+@media (forced-colors:active){.sw i,.sw i::after{forced-color-adjust:none}.sw i{background:Canvas;border:1px solid CanvasText}.sw i::after{background:CanvasText}.sw.on i{background:Highlight}.sw.on i::after{background:HighlightText}}"#;
 
-fn shell(title: &str, body: &str) -> String {
-    shell_with(title, "", body)
+/// Page d'administration sur [`crate::ui::page_admin`] (en-tête commun, `no-referrer`) : `body` dans
+/// `<div class="adm">`, [`ADMIN_CSS`] puis `extra_css` (règles d'une page, liste rouge) ; `refresh` = rechargement
+/// vers un chemin local (travail de la liste rouge).
+pub(crate) fn shell_with(
+    title: &str,
+    extra_css: &str,
+    refresh: Option<(u32, &str)>,
+    body: &str,
+) -> String {
+    let css = if extra_css.is_empty() {
+        ADMIN_CSS.to_string()
+    } else {
+        format!("{ADMIN_CSS}\n{extra_css}")
+    };
+    crate::ui::page_admin(
+        title,
+        refresh,
+        &format!(r#"<div class="adm">{body}</div>"#),
+        &css,
+    )
 }
 
-/// Même gabarit, avec des balises en plus dans `<head>` (style propre à une page, `meta refresh`) : la liste rouge.
-pub(crate) fn shell_with(title: &str, head: &str, body: &str) -> String {
-    format!(
-        r#"<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>{title}</title><style>{CSS}</style>{head}</head><body><main>{body}</main></body></html>"#
-    )
+fn shell(title: &str, body: &str) -> String {
+    shell_with(title, "", None, body)
+}
+
+/// Notice de résultat d'une action : `role="alert"` pour une erreur, `status` sinon.
+pub(crate) fn flash_html(cls: &str, text: &str) -> String {
+    let role = if cls == "err" { "alert" } else { "status" };
+    format!(r#"<p class="notice {cls}" role="{role}">{text}</p>"#)
 }
 
 pub fn render(d: &PageData<'_>) -> String {
@@ -170,10 +203,10 @@ pub fn render(d: &PageData<'_>) -> String {
         let state = if a.premium { "on" } else { "off" };
         let mut badges = String::new();
         if a.admin {
-            badges.push_str(r#"<span class="badge admin">Admin</span>"#);
+            badges.push_str(r#"<span class="pill info">Admin</span>"#);
         }
         if a.protected {
-            badges.push_str(r#"<span class="badge prot">Protégé</span>"#);
+            badges.push_str(r#"<span class="pill warn">Protégé</span>"#);
         }
         let streams = if a.protected || d.max_playbacks == 0 {
             "illimité".to_string()
@@ -268,15 +301,15 @@ pub fn render(d: &PageData<'_>) -> String {
     let flash = d
         .msg
         .and_then(|(code, who)| message(code, who, d.max_premium))
-        .map(|(cls, text)| format!(r#"<p class="flash {cls}" role="status">{text}</p>"#))
+        .map(|(cls, text)| flash_html(cls, &text))
         .unwrap_or_default();
     shell(
         "Comptes Groscailloux",
         &format!(
-            r#"<header><div><h1>Comptes</h1><p class="sub">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><nav class="row"><a class="btn ghost" href="/accounts/liste-rouge">Liste rouge</a><a class="new" href="/">Créer un compte</a></nav></header>
-<section class="cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} lectures simultanées par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
+            r#"<div class="ph"><div><h1>Comptes</h1><p class="lead">Premium : accès au catalogue. Suspendu : connexion refusée, historique et favoris conservés.</p></div><nav class="row" aria-label="Administration"><a class="btn secondary" href="/accounts/liste-rouge">Liste rouge</a><a class="btn" href="/">Créer un compte</a></nav></div>
+<section class="card cap" aria-label="Comptes premium"><div class="ct"><b>{premium} / {max}</b><span>comptes premium · {streams} lectures simultanées par compte</span></div><div class="bar"><i class="{bar}" style="width:{pct}%"></i></div></section>
 {flash}
-<div class="tw"><table><thead><tr><th>Compte</th><th>Dernière activité</th><th>Lectures</th><th>Abonnement</th><th>Lien de bienvenue</th><th><span hidden>Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th scope="col">Compte</th><th scope="col">Dernière activité</th><th scope="col">Lectures</th><th scope="col">Abonnement</th><th scope="col">Lien de bienvenue</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>
 <p class="foot">Abonnement : « Actif (période) » pose une échéance de N jours (30 par défaut), « Prolonger » l'ajoute. Le cycle (rappels, grâce, suspension) ne suit que les essais et les abonnements PayPal ; un membre qui paie sur PayPal est rattaché et prolongé tout seul. Toute autre fiche (actif ou offert par ta décision, exempté, à qualifier) n'est jamais suspendue et le membre ne reçoit aucun rappel : à l'échéance, tu reçois une information et la fiche passe « À gérer (échéance passée) », compte laissé actif. « À qualifier » = compte actif sans abonnement connu.</p>
 <p class="foot">Les comptes protégés ne se gèrent que dans le tableau de bord Jellyfin et ne comptent pas dans le plafond. Les nouveaux comptes arrivent suspendus (sauf une inscription publique dont l'essai a démarré) ; à l'activation, le membre reçoit un mail. « Renvoyer le lien » envoie un nouveau lien de bienvenue (définir ou changer son mot de passe).</p>"#,
             max = d.max_premium,
@@ -292,12 +325,12 @@ pub fn render_confirm(a: &Account, token: &str) -> String {
     shell(
         "Supprimer un compte",
         &format!(
-            r#"<header><div><h1>Supprimer « {name} » ?</h1><p class="sub">Cette action est définitive.</p></div></header>
-<section class="card" aria-label="Confirmation">
+            r#"<div class="ph"><div><h1>Supprimer « {name} » ?</h1><p class="lead">Cette action est définitive.</p></div></div>
+<section class="card confirm" aria-label="Confirmation">
 <p>Seront supprimés :</p>
 <ul><li>le compte Jellyfin <b>{name}</b> (historique, favoris, reprise de lecture) ;</li><li>son compte Jellyseerr et ses demandes. Ce qui est déjà téléchargé reste dans la bibliothèque.</li></ul>
-<p class="sub">Pour bloquer l'accès sans rien perdre, suspends plutôt le compte.</p>
-<div class="row"><form method="post" action="/accounts/delete"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><button class="btn danger" type="submit">Supprimer définitivement</button></form><a class="btn ghost" href="/accounts">Annuler</a></div>
+<p class="muted">Pour bloquer l'accès sans rien perdre, suspends plutôt le compte.</p>
+<div class="row"><form method="post" action="/accounts/delete"><input type="hidden" name="token" value="{token}"><input type="hidden" name="user_id" value="{id}"><button class="btn danger" type="submit">Supprimer définitivement</button></form><a class="btn secondary" href="/accounts">Annuler</a></div>
 </section>"#,
             id = esc(&a.id),
         ),
@@ -442,6 +475,37 @@ mod tests {
             html.matches(r#"<option value="active" selected>"#).count(),
             2
         );
+    }
+
+    /// Nouvelle DA (`ui::page_admin`) : en-tête commun, `no-referrer`, aucun reste violet ni script, et les mêmes
+    /// formulaires qu'avant (interrupteur + lien de bienvenue par compte non protégé, tous en POST).
+    #[test]
+    fn page_uses_the_shared_design_and_keeps_its_forms() {
+        let list = [acc("alice", true), acc("bob", false)];
+        let html = render(&PageData {
+            now: 0,
+            accounts: &list,
+            max_premium: 25,
+            max_playbacks: 2,
+            token: "t",
+            msg: Some(("cap", "")),
+            links: &std::collections::HashMap::new(),
+            subs: &std::collections::HashMap::new(),
+        });
+        assert!(html.contains(r#"class="gc-top""#) && html.contains("--bg:#08090b"));
+        assert!(html.contains(r#"<meta name="referrer" content="no-referrer">"#));
+        assert_eq!(html.matches("<main").count(), 1);
+        assert_eq!(html.matches("<form").count(), 4);
+        assert_eq!(html.matches(r#"<form method="post""#).count(), 4);
+        assert!(!html.contains("<script"));
+        for violet in ["#3a325a", "#c4b5fd", "#16121f", "#9b94b8", "#e6e1f5"] {
+            assert!(!html.contains(violet), "{violet}");
+        }
+        assert!(html.contains(r#"<p class="notice err" role="alert">Plafond atteint"#));
+        let confirm = render_confirm(&acc("bob", false), "t");
+        assert_eq!(confirm.matches("<form").count(), 1);
+        assert!(confirm.contains(r#"<button class="btn danger" type="submit">"#));
+        assert!(confirm.contains("no-referrer"));
     }
 
     #[test]

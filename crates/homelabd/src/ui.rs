@@ -7,7 +7,8 @@
 //!   boutons, notices, tableaux et pastilles d'administration) ;
 //! - [`page`] : squelette HTML unique (`lang="fr"`, viewport, `theme-color`, `noindex`, icône), le titre est
 //!   échappé ; [`page_described`] y ajoute un `<meta name="description">` (aperçu d'un lien partagé),
-//!   [`page_refreshing`] un rechargement automatique (`<meta http-equiv="refresh">`) ;
+//!   [`page_refreshing`] un rechargement automatique (`<meta http-equiv="refresh">`), [`page_admin`] le
+//!   `no-referrer` des pages d'administration, [`page_bare`] la variante compacte sans en-tête (cadre Homarr) ;
 //! - [`logo`] : `GET /assets/logo.png`, le galet de `branding/jellyfin/logo/icon-transparent.png`, public.
 //!
 //! Aucune ressource externe : police système, aucun script, aucune URL absolue (les pages publiques ne doivent
@@ -59,6 +60,7 @@ a:hover{color:var(--strong)}
 .gc-brand .gc-tv{display:inline-block;padding:3px 7px 4px;border-radius:var(--r-sm);background:linear-gradient(135deg,var(--accent-hover),var(--accent-fill));color:var(--strong);font-size:.8em;letter-spacing:0}
 .gc-main{max-width:var(--wide);margin:0 auto;padding:32px var(--gutter) 64px}
 .gc-narrow{max-width:var(--measure);margin-left:auto;margin-right:auto}
+.gc-bare{padding:12px var(--gutter) 16px}
 h1,h2,h3{color:var(--strong);font-family:var(--font-display);line-height:1.12;margin:0 0 .5em}
 h1{font-size:clamp(1.9rem,1.2rem + 2.6vw,2.75rem);font-weight:800;letter-spacing:-.035em}
 h2{font-size:clamp(1.3rem,1.1rem + .9vw,1.6rem);font-weight:700;letter-spacing:-.025em;margin-top:1.6em}
@@ -120,13 +122,17 @@ tbody tr:hover td{background:rgba(255,255,255,.025)}
 /// Page complète : `title` est échappé ; `body_html` (déjà échappé par l'appelant) va dans `<main>` sous
 /// l'en-tête ; `extra_css` (constante du code, jamais une saisie) suit [`BASE_CSS`].
 pub fn page(title: &str, body_html: &str, extra_css: &str) -> String {
-    page_described(title, "", body_html, extra_css)
+    render(title, &Head::default(), body_html, extra_css)
 }
 
 /// Comme [`page`], avec un `<meta name="description">` (échappé, omis s'il est vide) : aperçu du lien quand un
 /// membre le partage (`/premium`).
 pub fn page_described(title: &str, description: &str, body_html: &str, extra_css: &str) -> String {
-    render(title, description, None, body_html, extra_css)
+    let head = Head {
+        description,
+        ..Head::default()
+    };
+    render(title, &head, body_html, extra_css)
 }
 
 /// Comme [`page`], avec un `<meta http-equiv="refresh">` : la page se recharge vers `url` (chemin local, échappé)
@@ -138,35 +144,87 @@ pub fn page_refreshing(
     body_html: &str,
     extra_css: &str,
 ) -> String {
-    render(title, "", Some((secs, url)), body_html, extra_css)
+    let head = Head {
+        refresh: Some((secs, Some(url))),
+        ..Head::default()
+    };
+    render(title, &head, body_html, extra_css)
 }
 
-fn render(
+/// Page d'administration (`/accounts`, liste rouge) : comme [`page`], avec `<meta name="referrer"
+/// content="no-referrer">` (aucune adresse de page d'admin ne part dans un en-tête `Referer`) ; `refresh` =
+/// rechargement vers un chemin local (échappé), comme [`page_refreshing`].
+pub fn page_admin(
     title: &str,
-    description: &str,
     refresh: Option<(u32, &str)>,
     body_html: &str,
     extra_css: &str,
 ) -> String {
+    let head = Head {
+        refresh: refresh.map(|(s, u)| (s, Some(u))),
+        no_referrer: true,
+        ..Head::default()
+    };
+    render(title, &head, body_html, extra_css)
+}
+
+/// Variante compacte **sans en-tête** pour une page affichée dans un cadre (`/status.html` dans Homarr) : même
+/// squelette et mêmes jetons, `<main class="gc-bare">` (fond `--bg` opaque : un fond transparent dépendrait du
+/// `color-scheme` de la page hôte), `no-referrer` (l'adresse porte le jeton d'état). `refresh_secs` recharge la
+/// **même** adresse (`content="N"` sans `url=` : le jeton de la requête est gardé).
+pub fn page_bare(
+    title: &str,
+    refresh_secs: Option<u32>,
+    body_html: &str,
+    extra_css: &str,
+) -> String {
+    let head = Head {
+        refresh: refresh_secs.map(|s| (s, None)),
+        no_referrer: true,
+        bare: true,
+        ..Head::default()
+    };
+    render(title, &head, body_html, extra_css)
+}
+
+/// Options du squelette (privées : chaque variante publique en fixe un jeu).
+#[derive(Default)]
+struct Head<'a> {
+    description: &'a str,
+    /// Délai, puis chemin cible (`None` : la même adresse).
+    refresh: Option<(u32, Option<&'a str>)>,
+    no_referrer: bool,
+    /// Sans en-tête `gc-top`, `<main class="gc-bare">`.
+    bare: bool,
+}
+
+fn render(title: &str, head: &Head<'_>, body_html: &str, extra_css: &str) -> String {
     debug_assert!(!extra_css.to_ascii_lowercase().contains("</style"));
     let mut out = String::with_capacity(TOKENS.len() + BASE_CSS.len() + body_html.len() + 1024);
     out.push_str("<!doctype html>\n<html lang=\"fr\">\n<head>\n<meta charset=\"utf-8\">\n");
     out.push_str("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n");
     out.push_str("<meta name=\"theme-color\" content=\"#08090b\">\n<meta name=\"color-scheme\" content=\"dark\">\n");
     out.push_str("<meta name=\"robots\" content=\"noindex\">\n");
+    if head.no_referrer {
+        out.push_str("<meta name=\"referrer\" content=\"no-referrer\">\n");
+    }
     out.push_str("<title>");
     out.push_str(&esc(title));
     out.push_str("</title>\n");
-    if !description.is_empty() {
+    if !head.description.is_empty() {
         out.push_str("<meta name=\"description\" content=\"");
-        out.push_str(&esc(description));
+        out.push_str(&esc(head.description));
         out.push_str("\">\n");
     }
-    if let Some((secs, url)) = refresh {
-        out.push_str(&format!(
+    match head.refresh {
+        Some((secs, Some(url))) => out.push_str(&format!(
             "<meta http-equiv=\"refresh\" content=\"{secs};url={}\">\n",
             esc(url)
-        ));
+        )),
+        Some((secs, None)) => out.push_str(&format!(
+            "<meta http-equiv=\"refresh\" content=\"{secs}\">\n"
+        )),
+        None => {}
     }
     out.push_str("<link rel=\"icon\" type=\"image/png\" href=\"");
     out.push_str(LOGO_PATH);
@@ -180,12 +238,16 @@ fn render(
         out.push('\n');
     }
     out.push_str("</style>\n</head>\n<body>\n");
-    out.push_str(
-        "<header class=\"gc-top\"><div class=\"gc-top-in\"><span class=\"gc-brand\"><img src=\"",
-    );
-    out.push_str(LOGO_PATH);
-    out.push_str("\" width=\"30\" height=\"30\" alt=\"\">Groscailloux <span class=\"gc-tv\">TV</span></span></div></header>\n");
-    out.push_str("<main id=\"main\" class=\"gc-main\">\n");
+    if head.bare {
+        out.push_str("<main id=\"main\" class=\"gc-bare\">\n");
+    } else {
+        out.push_str(
+            "<header class=\"gc-top\"><div class=\"gc-top-in\"><span class=\"gc-brand\"><img src=\"",
+        );
+        out.push_str(LOGO_PATH);
+        out.push_str("\" width=\"30\" height=\"30\" alt=\"\">Groscailloux <span class=\"gc-tv\">TV</span></span></div></header>\n");
+        out.push_str("<main id=\"main\" class=\"gc-main\">\n");
+    }
     out.push_str(body_html);
     out.push_str("\n</main>\n</body>\n</html>\n");
     out
@@ -241,6 +303,28 @@ mod tests {
         assert!(r.contains(meta), "{r}");
         assert!(r.find(meta).unwrap() < r.find("</head>").unwrap());
         assert!(!page("t", "", "").contains("http-equiv"));
+    }
+
+    #[test]
+    fn admin_pages_send_no_referrer() {
+        let a = page_admin("t", None, "<p>c</p>", "");
+        assert!(a.contains("<meta name=\"referrer\" content=\"no-referrer\">"));
+        assert!(a.contains("class=\"gc-top\"") && !a.contains("http-equiv"));
+        let r = page_admin("t", Some((5, "/a?id=1&b")), "", "");
+        assert!(r.contains("<meta http-equiv=\"refresh\" content=\"5;url=/a?id=1&amp;b\">"));
+        assert!(!page("t", "", "").contains("name=\"referrer\""));
+    }
+
+    #[test]
+    fn bare_page_has_no_header_and_reloads_the_same_address() {
+        let b = page_bare("État", Some(60), "<h1>x</h1>", ".y{}");
+        assert!(!b.contains("class=\"gc-top\"") && !b.contains("<header"));
+        assert!(b.contains("<main id=\"main\" class=\"gc-bare\">\n<h1>x</h1>"));
+        // pas de `url=` : le rechargement garde l'adresse, donc le jeton de la requête
+        assert!(b.contains("<meta http-equiv=\"refresh\" content=\"60\">"));
+        assert!(b.contains("no-referrer") && b.contains("--bg:#08090b"));
+        assert!(!page_bare("t", None, "", "").contains("http-equiv"));
+        assert!(!b.to_ascii_lowercase().contains("<script"));
     }
 
     #[test]
