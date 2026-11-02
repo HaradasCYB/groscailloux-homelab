@@ -6,7 +6,7 @@
 //! - [`TOKENS`] : variables CSS (`:root`) ; [`BASE_CSS`] : composants partagés (en-tête, carte, titres, champs,
 //!   boutons, notices, tableaux et pastilles d'administration) ;
 //! - [`page`] : squelette HTML unique (`lang="fr"`, viewport, `theme-color`, `noindex`, icône), le titre est
-//!   échappé ;
+//!   échappé ; [`page_described`] y ajoute un `<meta name="description">` (aperçu d'un lien partagé) ;
 //! - [`logo`] : `GET /assets/logo.png`, le galet de `branding/jellyfin/logo/icon-transparent.png`, public.
 //!
 //! Aucune ressource externe : police système, aucun script, aucune URL absolue (les pages publiques ne doivent
@@ -119,6 +119,12 @@ tbody tr:hover td{background:rgba(255,255,255,.025)}
 /// Page complète : `title` est échappé ; `body_html` (déjà échappé par l'appelant) va dans `<main>` sous
 /// l'en-tête ; `extra_css` (constante du code, jamais une saisie) suit [`BASE_CSS`].
 pub fn page(title: &str, body_html: &str, extra_css: &str) -> String {
+    page_described(title, "", body_html, extra_css)
+}
+
+/// Comme [`page`], avec un `<meta name="description">` (échappé, omis s'il est vide) : aperçu du lien quand un
+/// membre le partage (`/premium`).
+pub fn page_described(title: &str, description: &str, body_html: &str, extra_css: &str) -> String {
     debug_assert!(!extra_css.to_ascii_lowercase().contains("</style"));
     let mut out = String::with_capacity(TOKENS.len() + BASE_CSS.len() + body_html.len() + 1024);
     out.push_str("<!doctype html>\n<html lang=\"fr\">\n<head>\n<meta charset=\"utf-8\">\n");
@@ -128,6 +134,11 @@ pub fn page(title: &str, body_html: &str, extra_css: &str) -> String {
     out.push_str("<title>");
     out.push_str(&esc(title));
     out.push_str("</title>\n");
+    if !description.is_empty() {
+        out.push_str("<meta name=\"description\" content=\"");
+        out.push_str(&esc(description));
+        out.push_str("\">\n");
+    }
     out.push_str("<link rel=\"icon\" type=\"image/png\" href=\"");
     out.push_str(LOGO_PATH);
     out.push_str("\">\n<link rel=\"apple-touch-icon\" href=\"");
@@ -183,6 +194,15 @@ mod tests {
         assert!(html.contains("<meta name=\"robots\" content=\"noindex\">"));
         assert!(html.contains("rel=\"icon\" type=\"image/png\" href=\"/assets/logo.png\""));
         assert!(html.contains("Groscailloux <span class=\"gc-tv\">TV</span>"));
+    }
+
+    #[test]
+    fn description_is_escaped_and_optional() {
+        let d = page_described("t", "Prix <3,50 €> & \"plus\"", "", "");
+        assert!(d.contains(
+            "<meta name=\"description\" content=\"Prix &lt;3,50 €&gt; &amp; &quot;plus&quot;\">"
+        ));
+        assert!(!page("t", "", "").contains("name=\"description\""));
     }
 
     #[test]

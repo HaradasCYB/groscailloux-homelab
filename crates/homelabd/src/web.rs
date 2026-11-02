@@ -37,9 +37,142 @@ use homelab_core::html::esc;
 /// Scripts en ligne des pages de bienvenue (`/bienvenue`, `/premiers-pas`) et de l'onboarding admin (`GET /`).
 const WELCOME_JS: &str = include_str!("../assets/bienvenue.js");
 const ONBOARD_ADMIN_JS: &str = include_str!("../assets/onboard-admin.js");
-const PREMIUM_HTML: &str = include_str!("../assets/premium.html");
-const PREMIUM_ACTIVATE_HTML: &str = include_str!("../assets/premium-activate.html");
-const PREMIUM_MERCI_HTML: &str = include_str!("../assets/premium-merci.html");
+/// Bouton PayPal de `/premium` (marque `{{PLAN_ID}}`) ; lit `data-deja` sur `#premium`.
+const PREMIUM_JS: &str = include_str!("../assets/premium.js");
+/// Messages de `/premium/activate` (paramètres `ok`, `err`, `sub`, `compte` de l'adresse).
+const PREMIUM_ACTIVATE_JS: &str = include_str!("../assets/premium-activate.js");
+
+/// Règles propres aux pages Premium (sur [`ui::BASE_CSS`]) : carte étroite en grille, avatar (`/avatar.jpg`,
+/// servi par NPM), prix, liste des avantages, état « déjà abonné ». Le cadre du bouton PayPal reste en
+/// `color-scheme:light` : sinon le navigateur peint un fond opaque derrière l'iframe (schémas différents).
+const PREMIUM_CSS: &str = r#".gc-premium{display:grid;gap:18px}
+.gc-premium p,.gc-premium form,.gc-premium ul{margin:0}
+.gc-premium h1{margin:0;font-size:clamp(1.75rem,1.3rem + 1.8vw,2.25rem);text-wrap:balance}
+.gc-premium .lead{font-size:1.0625rem;color:var(--text)}
+.gc-premium .muted{font-size:.9375rem}
+.avatar{width:88px;height:88px;border-radius:50%;object-fit:cover;display:block;padding:3px;border:2px solid var(--accent);background:var(--bg)}
+.price{justify-self:start;padding:6px 14px;border-radius:999px;background:var(--accent-fill);color:var(--strong);font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums}
+.facts{padding:14px 16px;border-radius:var(--r-md);background:var(--raised);display:grid;gap:8px;list-style:none;font-size:.9375rem}
+.facts li{display:flex;gap:10px;align-items:baseline}
+.facts li::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);transform:translateY(-1px)}
+.gc-premium .notice{margin:0}
+.gc-premium .field{margin:0}
+.gc-premium .field label{margin-bottom:6px}
+.gc-premium input:invalid:not(:placeholder-shown){border-color:var(--err)}
+.gc-premium form:not(.who){display:grid;gap:14px}
+#paypal-button-container{min-height:54px}
+#paypal-button-container,#paypal-button-container iframe{color-scheme:light}
+.fallback{font-size:.9375rem;color:var(--dim)}
+.gc-premium footer{border-top:1px solid var(--line);padding-top:14px}
+#premium:not([data-deja="1"]) .deja-only,
+#premium[data-deja="1"] #who,#premium[data-deja="1"] #paypal-button-container,#premium[data-deja="1"] .fallback{display:none}"#;
+
+/// Avatar de la page (le fichier est servi par NPM sur l'hôte de `/premium`, pas par homelabd).
+const PREMIUM_AVATAR: &str =
+    r#"<img class="avatar" src="/avatar.jpg" alt="Homeflix GrosCailloux" width="88" height="88">"#;
+
+/// Corps de `/premium` : marques `{{DEJA}}`, `{{PRICE}}`, `{{COMPTE}}`, `{{SUBSCRIBE_URL}}`, `{{SDK_HOST}}`,
+/// `{{CLIENT_ID}}`, `{{PLAN_ID}}` (dans [`PREMIUM_JS`]) remplacées par [`premium_page`].
+const PREMIUM_BODY: &str = r#"<div class="gc-narrow" id="premium" data-deja="{{DEJA}}"><div class="card gc-premium">
+  {{AVATAR}}
+
+  <h1>Homeflix GrosCailloux Premium</h1>
+
+  <p class="price">{{PRICE}}</p>
+
+  <p class="lead">Abonne-toi et active le compte <strong>Premium</strong> de ton Homeflix GrosCailloux
+  pour profiter de tout le catalogue, où que tu sois, sans limite de durée de lecture.</p>
+
+  <ul class="facts">
+    <li>{{PRICE}}, sans engagement.</li>
+    <li>Activation <strong>immédiate</strong> dès le paiement : indique ton nom de compte ci-dessous.</li>
+    <li>Jusqu'à 2 lectures simultanées et catalogue complet.</li>
+    <li>Résiliable à tout moment depuis ton compte PayPal.</li>
+  </ul>
+
+  <p class="notice info deja deja-only" role="status">Le compte <strong>{{COMPTE}}</strong> a déjà un abonnement PayPal actif,
+  qui se renouvelle tout seul chaque mois : inutile de t'abonner une deuxième fois (ce serait deux prélèvements).
+  Pour le consulter ou l'arrêter : ton compte PayPal → Paiements automatiques. Si un paiement a échoué, mets à jour
+  ton moyen de paiement dans PayPal : le prélèvement sera retenté.</p>
+  <p class="muted deja-only"><a href="/premium">S'abonner pour un autre compte</a></p>
+
+  <form id="who" class="who field" onsubmit="return false" autocomplete="off">
+    <label for="compte">Ton nom de compte Groscailloux</label>
+    <input id="compte" name="compte" type="text" value="{{COMPTE}}" maxlength="32" autocapitalize="none" spellcheck="false"
+      pattern="[a-zA-Z0-9_\-]{2,32}" placeholder="Ex. : john_doe" aria-describedby="who-hint" required>
+    <p class="hint" id="who-hint">Celui avec lequel tu te connectes à Jellyfin. Il sera activé (ou prolongé) tout seul après le paiement.</p>
+  </form>
+
+  <div id="paypal-button-container" aria-live="polite"></div>
+  <form id="link" method="post" action="/premium/lier" hidden>
+    <input type="hidden" name="subscription_id" id="sub_id"><input type="hidden" name="compte" id="sub_compte">
+  </form>
+  <p class="muted" id="linking" role="status" hidden>Paiement approuvé, activation en cours…</p>
+
+  <p class="fallback">Le bouton ne s'affiche pas ?
+    <a href="{{SUBSCRIBE_URL}}" rel="noopener noreferrer" target="_blank">S'abonner directement sur PayPal</a>,
+    puis <a href="/premium/activate">indique ton compte ici</a>.</p>
+
+  <footer><p class="muted">Paiement sécurisé par PayPal. Activation automatique dès confirmation du paiement ; sans engagement, résiliable depuis ton compte PayPal.</p></footer>
+</div></div>
+<script src="{{SDK_HOST}}/sdk/js?client-id={{CLIENT_ID}}&vault=true&intent=subscription&locale=fr_FR" data-sdk-integration-source="button-factory"></script>
+<script>
+{{JS}}</script>"#;
+
+/// Corps de `/premium/activate` (statique ; les messages viennent de [`PREMIUM_ACTIVATE_JS`]).
+const PREMIUM_ACTIVATE_BODY: &str = r#"<div class="gc-narrow"><div class="card gc-premium">
+  {{AVATAR}}
+
+  <h1>Rattacher ton abonnement</h1>
+
+  <p class="lead">Tu as payé sur PayPal sans passer par notre page, ou l'activation automatique n'a pas
+  abouti&nbsp;? Indique ton <strong>nom de compte</strong> et l'<strong>identifiant de l'abonnement</strong>
+  (il commence par <code>I-</code>, dans le mail de confirmation PayPal ou dans PayPal → Paiements automatiques).
+  L'activation est immédiate.</p>
+
+  <form method="post" action="/premium/lier">
+    <div class="field">
+      <label for="compte">Nom exact du compte</label>
+      <input id="compte" name="compte" type="text" required autocomplete="off" autocapitalize="none"
+        spellcheck="false" placeholder="Ex. : john_doe" maxlength="32">
+    </div>
+    <div class="field">
+      <label for="subscription_id">Identifiant de l'abonnement PayPal</label>
+      <input id="subscription_id" name="subscription_id" type="text" required autocomplete="off" autocapitalize="characters"
+        spellcheck="false" placeholder="I-XXXXXXXXXXXX" maxlength="24" pattern="I-[A-Za-z0-9]{10,22}">
+    </div>
+    <button type="submit" class="block">Activer mon compte</button>
+  </form>
+
+  <p class="muted">Pas d'identifiant sous la main&nbsp;? Envoie une demande à l'administrateur avec ton nom de compte&nbsp;:</p>
+  <form method="post" action="/premium/activate">
+    <div class="field">
+      <label for="name">Nom exact du compte</label>
+      <input id="name" name="name" type="text" required autocomplete="off" autocapitalize="none"
+        spellcheck="false" placeholder="Ex. : john_doe" maxlength="64">
+    </div>
+    <button type="submit" class="secondary block">Demander l'activation à l'administrateur</button>
+  </form>
+
+  <p class="notice ok" id="ok" role="status" hidden>Demande envoyée&nbsp;! L'administrateur activera ton compte après vérification.</p>
+  <p class="notice err" id="err" role="alert" hidden></p>
+
+  <footer>
+    <p class="muted"><a href="/premium">← Retour à la page d'abonnement</a></p>
+  </footer>
+</div></div>
+<script>
+{{JS}}</script>"#;
+
+/// Corps de `/premium/merci` : marques `{{COMPTE}}`, `{{JUSQU}}`, `{{JELLYFIN_URL}}` (déjà échappées).
+const PREMIUM_MERCI_BODY: &str = r#"<div class="gc-narrow"><div class="card gc-premium">
+  {{AVATAR}}
+  <h1>Merci, c'est activé&nbsp;!</h1>
+  <p class="notice ok" role="status">Le compte <strong>{{COMPTE}}</strong> est Premium{{JUSQU}}.</p>
+  <p>L'abonnement se renouvelle tout seul chaque mois et ton compte se prolonge à chaque paiement. Tu peux tout suivre dans « Mon compte » sur Jellyfin (icône en haut à droite), et résilier à tout moment depuis ton compte PayPal.</p>
+  <p><a class="btn block-sm" href="{{JELLYFIN_URL}}">Regarder maintenant</a></p>
+  <p class="muted">Un mail de confirmation part sur l'adresse de ton compte. Une question ? Réponds-y.</p>
+</div></div>"#;
 
 #[derive(Clone)]
 struct AppState {
@@ -254,7 +387,9 @@ fn premium_page(
     } else {
         "https://www.paypal.com"
     };
-    PREMIUM_HTML
+    let body = PREMIUM_BODY
+        .replace("{{AVATAR}}", PREMIUM_AVATAR)
+        .replace("{{JS}}", PREMIUM_JS)
         .replace("{{CLIENT_ID}}", client_id)
         .replace("{{PLAN_ID}}", plan_id)
         .replace("{{SDK_HOST}}", host)
@@ -264,7 +399,41 @@ fn premium_page(
         )
         .replace("{{COMPTE}}", &esc(compte))
         .replace("{{PRICE}}", &esc(price))
-        .replace("{{DEJA}}", if deja { "1" } else { "0" })
+        .replace("{{DEJA}}", if deja { "1" } else { "0" });
+    ui::page_described(
+        "Homeflix GrosCailloux — Abonnement Premium",
+        "Active le compte Premium de ton Homeflix GrosCailloux pour 3,50 € par mois.",
+        &body,
+        PREMIUM_CSS,
+    )
+}
+
+/// Page `/premium/activate` (statique).
+fn premium_activate_page() -> String {
+    let body = PREMIUM_ACTIVATE_BODY
+        .replace("{{AVATAR}}", PREMIUM_AVATAR)
+        .replace("{{JS}}", PREMIUM_ACTIVATE_JS);
+    ui::page_described(
+        "Homeflix GrosCailloux — Activation Premium",
+        "Indique le nom exact de ton compte pour activer ton abonnement Premium.",
+        &body,
+        PREMIUM_CSS,
+    )
+}
+
+/// Page `/premium/merci` : `compte` et `jusqu` (date affichée) viennent de l'adresse et sont échappés ici.
+fn premium_merci_page(compte: &str, jusqu: &str, jellyfin_url: &str) -> String {
+    let jusqu = if jusqu.is_empty() {
+        String::new()
+    } else {
+        format!(" jusqu'au {}", esc(jusqu))
+    };
+    let body = PREMIUM_MERCI_BODY
+        .replace("{{AVATAR}}", PREMIUM_AVATAR)
+        .replace("{{COMPTE}}", &esc(compte))
+        .replace("{{JUSQU}}", &jusqu)
+        .replace("{{JELLYFIN_URL}}", &esc(jellyfin_url));
+    ui::page("Homeflix GrosCailloux — Merci", &body, PREMIUM_CSS)
 }
 
 /// « Déjà abonné » sur `/premium` ? Seulement pour un lien émis par homelabd (`k` =
@@ -325,18 +494,8 @@ async fn premium_merci(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let compte = q.get("compte").map(String::as_str).unwrap_or("");
-    let jusqu = q
-        .get("jusqu")
-        .filter(|j| !j.is_empty())
-        .map(|j| format!(" jusqu'au {}", esc(j)))
-        .unwrap_or_default();
-    let html = PREMIUM_MERCI_HTML
-        .replace("{{COMPTE}}", &esc(compte))
-        .replace("{{JUSQU}}", &jusqu)
-        .replace(
-            "{{JELLYFIN_URL}}",
-            &esc(&st.ctx.secrets.jellyfin_public_url),
-        );
+    let jusqu = q.get("jusqu").map(String::as_str).unwrap_or("");
+    let html = premium_merci_page(compte, jusqu, &st.ctx.secrets.jellyfin_public_url);
     let mut resp = Html(html).into_response();
     resp.headers_mut().insert(
         axum::http::header::CACHE_CONTROL,
@@ -417,7 +576,7 @@ async fn accounts_subs(
 
 /// Page « activation Premium » : le visiteur y indique le nom exact de son compte après paiement.
 async fn premium_activate() -> Response {
-    let mut resp = Html(PREMIUM_ACTIVATE_HTML).into_response();
+    let mut resp = Html(premium_activate_page()).into_response();
     resp.headers_mut().insert(
         axum::http::header::CACHE_CONTROL,
         axum::http::HeaderValue::from_static("no-store"),
@@ -2253,14 +2412,37 @@ mod tests {
         assert!(html.contains("client-id=CID-1"));
         assert!(html.contains("plan_id: 'P-9'"));
         assert!(html.contains("jo&lt;hn"));
-        assert!(html.contains(r#"<main data-deja="0">"#));
+        assert!(html.contains("https://www.paypal.com/sdk/js?client-id=CID-1"));
+        assert!(html.contains("https://www.paypal.com/webapps/billing/plans/subscribe?plan_id=P-9"));
+        assert!(html.contains("3,50 € / mois, sans engagement."));
+        // `data-deja` porté par `#premium` (le `<main>` vient de `ui::page`), lu par le script
+        assert!(html.contains(r#"<div class="gc-narrow" id="premium" data-deja="0">"#));
+        assert!(html.contains("document.getElementById('premium').getAttribute('data-deja')"));
+        assert!(html.contains(r#"<main id="main" class="gc-main">"#));
+        assert!(html.contains("<title>Homeflix GrosCailloux — Abonnement Premium</title>"));
+        assert!(html.contains(r#"<meta name="description" content="Active le compte Premium"#));
+        // avatar servi par NPM ; bouton PayPal et formulaire de rattachement présents
+        assert!(html.contains(r#"src="/avatar.jpg""#));
+        assert!(html.contains(r#"<div id="paypal-button-container""#));
+        assert!(html.contains(r#"<form id="link" method="post" action="/premium/lier" hidden>"#));
+        // DA sombre unique : plus de titre serif ni de mode clair
+        assert!(!html.contains("ui-serif") && !html.contains("Georgia"));
+        assert!(!html.contains("prefers-color-scheme"));
+        // seul script tiers : le SDK PayPal
+        assert_eq!(html.matches("<script src=").count(), 1);
         assert!(!html.contains("{{"));
+        let sb = premium_page("CID-1", "P-9", true, "", "x", false);
+        assert!(sb.contains("https://www.sandbox.paypal.com/sdk/js?client-id=CID-1"));
     }
 
     #[test]
     fn premium_page_hides_the_button_for_an_account_already_subscribed() {
         let html = premium_page("CID-1", "P-9", false, "john", "3,50 € / mois", true);
-        assert!(html.contains(r#"<main data-deja="1">"#));
+        assert!(html.contains(r#"<div class="gc-narrow" id="premium" data-deja="1">"#));
+        // l'état « déjà abonné » masque formulaire, bouton et repli (le serveur ne les retire pas)
+        assert!(html.contains(r#"#premium[data-deja="1"] #who"#));
+        assert!(html.contains(r#"#premium[data-deja="1"] #paypal-button-container"#));
+        assert!(html.contains(r#"#premium:not([data-deja="1"]) .deja-only"#));
         assert!(html.contains("a déjà un abonnement PayPal actif"));
         // le script s'arrête avant d'afficher le bouton PayPal
         let stop = html
@@ -2321,11 +2503,48 @@ mod tests {
 
     #[test]
     fn activate_page_has_subscription_form() {
-        let html = PREMIUM_ACTIVATE_HTML;
+        let html = premium_activate_page();
         assert!(html.contains(r#"<form method="post" action="/premium/activate">"#));
+        assert!(html.contains(r#"<form method="post" action="/premium/lier">"#));
         assert!(html.contains(r#"name="name""#));
+        assert!(html.contains(r#"name="subscription_id""#));
         assert!(html.contains(r#"type="submit""#));
         assert!(html.contains("/premium"));
+        // identifiants lus par le script des messages
+        for id in [
+            r#"id="ok""#,
+            r#"id="err""#,
+            r#"id="subscription_id""#,
+            r#"id="compte""#,
+        ] {
+            assert!(html.contains(id), "{id}");
+        }
+        assert!(html.contains("var msgs = {"));
+        assert!(html.contains("<title>Homeflix GrosCailloux — Activation Premium</title>"));
+        assert!(!html.contains("{{"));
+        assert!(!html.contains("<script src="));
+        assert!(!html.to_ascii_lowercase().contains("https://"));
+    }
+
+    #[test]
+    fn merci_page_escapes_its_query_values() {
+        let html = premium_merci_page("jo<hn", "1 <déc>", "https://jf.invalid/?a=1&b=2");
+        assert!(html
+            .contains("Le compte <strong>jo&lt;hn</strong> est Premium jusqu'au 1 &lt;déc&gt;."));
+        assert!(html.contains(r#"href="https://jf.invalid/?a=1&amp;b=2""#));
+        assert!(html.contains(r#"src="/avatar.jpg""#));
+        assert!(!html.contains("{{"));
+        assert!(!html.contains("<script"));
+        let sans = premium_merci_page("jo", "", "/");
+        assert!(sans.contains("<strong>jo</strong> est Premium."));
+    }
+
+    /// Les scripts Premium en ligne ne ferment pas leur balise.
+    #[test]
+    fn premium_scripts_stay_inline_safe() {
+        for js in [PREMIUM_JS, PREMIUM_ACTIVATE_JS] {
+            assert!(!js.to_ascii_lowercase().contains("</script"));
+        }
     }
 
     #[test]
