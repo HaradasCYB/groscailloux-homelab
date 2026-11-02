@@ -35,7 +35,25 @@ details summary{cursor:pointer;color:var(--text);padding:6px 0}
 details .table-wrap{margin-top:8px}
 .row form{display:inline}
 ul.foot{margin:0;padding-left:20px}
-.cap .row{margin-top:12px}"#;
+.cap .row{margin-top:12px}
+table.rl{table-layout:fixed;min-width:56em}
+.rl col.c-s{width:7em}.rl col.c-d{width:10em}.rl col.c-l{width:10em}.rl col.c-a{width:17em}
+.rl td.n{min-width:0}
+.rl td.w{white-space:normal}
+.rl td.t{width:auto;white-space:normal}
+.rl td.t .acts{flex-wrap:wrap;justify-content:flex-start}"#;
+
+/// Tableau d'une section de la liste rouge : les quatre sections (rouges, bientôt rouges, exemptés,
+/// non évalués) partagent les mêmes colonnes (`table-layout:fixed` + `<colgroup>`), pour que Titre,
+/// Taille, dates et actions s'alignent d'une section à l'autre ; `head` = cellules d'en-tête (colspan
+/// compris) qui couvrent les cinq colonnes.
+fn rl_table(head: &str, rows: &str) -> String {
+    format!(
+        r#"<div class="table-wrap"><table class="rl"><colgroup><col><col class="c-s"><col class="c-d"><col class="c-l"><col class="c-a"></colgroup><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>"#
+    )
+}
+
+const TH_ACTIONS: &str = r#"<th scope="col"><span class="sr-only">Actions</span></th>"#;
 
 #[derive(Clone)]
 struct PageState {
@@ -360,8 +378,11 @@ pub fn render_list(d: &ListData<'_>) -> String {
                 )
             })
             .collect();
-        out.push_str(&format!(
-            r#"<div class="table-wrap"><table><thead><tr><th scope="col">Titre</th><th scope="col">Taille</th><th scope="col">Arrivée</th><th scope="col">Dernière lecture</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>{rows}</tbody></table></div>"#
+        out.push_str(&rl_table(
+            &format!(
+                r#"<th scope="col">Titre</th><th scope="col">Taille</th><th scope="col">Arrivée</th><th scope="col">Dernière lecture</th>{TH_ACTIONS}"#
+            ),
+            &rows,
         ));
     }
     // bientôt rouges
@@ -371,7 +392,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
             .iter()
             .map(|e| {
                 format!(
-                    r#"<tr><td class="n">{title}<span class="why">{why}</span></td><td class="w">{size}</td><td class="w">rouge le {due}</td><td class="t">{form}</td></tr>"#,
+                    r#"<tr><td class="n">{title}<span class="why">{why}</span></td><td class="w">{size}</td><td class="w" colspan="2">rouge le {due}</td><td class="t">{form}</td></tr>"#,
                     title = title_cell(e),
                     why = esc(&e.reason),
                     size = esc(&human_size(e.bytes)),
@@ -385,8 +406,14 @@ pub fn render_list(d: &ListData<'_>) -> String {
             })
             .collect();
         out.push_str(&format!(
-            r#"<h2>Bientôt rouges ({days} j)</h2><div class="table-wrap"><table><tbody>{rows}</tbody></table></div>"#,
-            days = r.soon_days
+            r#"<h2>Bientôt rouges ({days} j)</h2>{table}"#,
+            days = r.soon_days,
+            table = rl_table(
+                &format!(
+                    r#"<th scope="col">Titre</th><th scope="col">Taille</th><th scope="col" colspan="2">Devient rouge</th>{TH_ACTIONS}"#
+                ),
+                &rows
+            ),
         ));
     }
     // exemptés : toutes les exemptions, même d'un titre disparu du catalogue
@@ -404,7 +431,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
                     ),
                 };
                 format!(
-                    r#"<tr><td class="n">{title}</td><td class="w">{size}</td><td class="w">depuis le {at}</td><td class="t">{form}</td></tr>"#,
+                    r#"<tr><td class="n">{title}</td><td class="w">{size}</td><td class="w" colspan="2">depuis le {at}</td><td class="t">{form}</td></tr>"#,
                     at = esc(&date_text(x.at)),
                     form = key_form(
                         "retirer",
@@ -417,8 +444,14 @@ pub fn render_list(d: &ListData<'_>) -> String {
             })
             .collect();
         out.push_str(&format!(
-            r#"<h2>Exemptés ({n})</h2><div class="table-wrap"><table><tbody>{rows}</tbody></table></div>"#,
-            n = d.exemptions.len()
+            r#"<h2>Exemptés ({n})</h2>{table}"#,
+            n = d.exemptions.len(),
+            table = rl_table(
+                &format!(
+                    r#"<th scope="col">Titre</th><th scope="col">Taille</th><th scope="col" colspan="2">Exempté</th>{TH_ACTIONS}"#
+                ),
+                &rows
+            ),
         ));
     }
     // non évalués
@@ -428,7 +461,7 @@ pub fn render_list(d: &ListData<'_>) -> String {
             .iter()
             .map(|e| {
                 format!(
-                    r#"<tr><td class="n">{title}</td><td class="w">{size}</td><td class="w">{why}</td></tr>"#,
+                    r#"<tr><td class="n">{title}</td><td class="w">{size}</td><td class="w" colspan="3">{why}</td></tr>"#,
                     title = title_cell(e),
                     size = esc(&human_size(e.bytes)),
                     why = esc(&e.reason),
@@ -436,8 +469,12 @@ pub fn render_list(d: &ListData<'_>) -> String {
             })
             .collect();
         out.push_str(&format!(
-            r#"<details><summary>Non évalués ({n}) : jamais rouges</summary><div class="table-wrap"><table><tbody>{rows}</tbody></table></div></details>"#,
-            n = r.unmatched.len()
+            r#"<details><summary>Non évalués ({n}) : jamais rouges</summary>{table}</details>"#,
+            n = r.unmatched.len(),
+            table = rl_table(
+                r#"<th scope="col">Titre</th><th scope="col">Taille</th><th scope="col" colspan="3">Raison</th>"#,
+                &rows
+            ),
         ));
     }
     // derniers travaux
@@ -1064,6 +1101,30 @@ mod tests {
         assert!(html.contains("Nettoyer les 2 plus gros"));
         assert!(html.contains(r#"href="/accounts/liste-rouge/nettoyer?key=movie%3Atmdb%3A2""#));
         assert!(html.contains(r#"action="/accounts/liste-rouge/recalculer""#));
+        sections_share_columns(&html);
+    }
+
+    /// 3.3b : chaque tableau de section porte le même `<colgroup>` de cinq colonnes, et chaque ligne
+    /// (en-tête comprise) couvre exactement ces cinq colonnes : les colonnes s'alignent d'une section à
+    /// l'autre.
+    fn sections_share_columns(html: &str) {
+        let tables = html.matches("<table").count();
+        assert!(tables >= 3, "{html}");
+        assert_eq!(html.matches(r#"<table class="rl"><colgroup><col><col class="c-s"><col class="c-d"><col class="c-l"><col class="c-a"></colgroup><thead>"#).count(), tables);
+        for row in html.split("<tr>").skip(1) {
+            let row = &row[..row.find("</tr>").unwrap()];
+            let span: usize = row
+                .split("<t")
+                .skip(1)
+                .filter(|c| c.starts_with('d') || c.starts_with('h'))
+                .map(|c| {
+                    c.split_once(r#"colspan=""#)
+                        .filter(|(before, _)| !before.contains('>'))
+                        .map_or(1, |(_, n)| n[..n.find('"').unwrap()].parse().unwrap())
+                })
+                .sum();
+            assert_eq!(span, 5, "{row}");
+        }
     }
 
     #[test]

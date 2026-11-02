@@ -9,36 +9,36 @@ try { localStorage.removeItem('onboardToken'); } catch {}
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 function showToast(msg) { toast.textContent = msg; toast.classList.add('visible'); setTimeout(() => toast.classList.remove('visible'), 2000); }
-function copyToClipboard(text) { navigator.clipboard.writeText(text).then(() => showToast('Copié !'), () => showToast('Échec de la copie')); }
+function copyToClipboard(text) { navigator.clipboard.writeText(text).then(() => showToast('Copié'), () => showToast('Échec de la copie')); }
 
 function renderSuccess(d) {
-  const pwdLine = d.password ? `Password : ${d.password}\n` : '';
-  const credsBlock = `Username : ${d.username}\nEmail    : ${d.email}\n${pwdLine}Lien     : ${d.link_url || '—'}\n\n🎬 Streaming  : ${d.jellyfin_url}\n🎯 Requêtes   : ${d.jellyseerr_url}`;
-  const linkState = d.dry_run ? 'non émis (dry-run)' : (d.mail_sent ? 'envoyé par mail, valable 1 h' : 'NON envoyé — transmettre le lien ci-dessous à la main');
+  const pwdLine = d.password ? `Mot de passe : ${d.password}\n` : '';
+  const credsBlock = `Identifiant : ${d.username}\nAdresse e-mail : ${d.email}\n${pwdLine}Lien : ${d.link_url || '—'}\n\nLecture : ${d.jellyfin_url}\nDemandes : ${d.jellyseerr_url}`;
+  const linkState = d.dry_run ? 'non émis (simulation)' : (d.mail_sent ? 'envoyé par mail, valable 1 h' : 'non envoyé : transmettre le lien ci-dessous à la main');
   resultBox.className = 'result visible success';
   resultBox.innerHTML = `
-    <h3 class="result-title">${d.dry_run ? '🧪 Dry-run OK (aucun compte créé)' : '✓ Compte créé avec succès'}</h3>
+    <h3 class="result-title">${d.dry_run ? 'Simulation réussie (aucun compte créé)' : 'Compte créé'}</h3>
     <div class="creds">
-      <div><span class="key">Username</span> : ${esc(d.username)}</div>
-      <div><span class="key">Email</span>    : ${esc(d.email)}</div>
-      ${d.password ? `<div><span class="key">Password</span> : <span class="pwd">${esc(d.password)}</span></div>` : `<div><span class="key">Password</span> : <i>à définir par le membre via le lien</i></div>`}
-      <div><span class="key">Lien</span>     : ${esc(linkState)}</div>
+      <div><span class="key">Identifiant</span> : ${esc(d.username)}</div>
+      <div><span class="key">Adresse e-mail</span> : ${esc(d.email)}</div>
+      ${d.password ? `<div><span class="key">Mot de passe</span> : <span class="pwd">${esc(d.password)}</span></div>` : `<div><span class="key">Mot de passe</span> : <i>à définir par le membre via le lien</i></div>`}
+      <div><span class="key">Lien</span> : ${esc(linkState)}</div>
       ${d.link_url && !d.mail_sent ? `<div class="pwd" style="word-break:break-all">${esc(d.link_url)}</div>` : ''}
       <br>
-      <div>🎬 <span class="key">Streaming</span>  : ${esc(d.jellyfin_url)}</div>
-      <div>🎯 <span class="key">Requêtes</span>   : ${esc(d.jellyseerr_url)}</div>
+      <div><span class="key">Lecture</span> : ${esc(d.jellyfin_url)}</div>
+      <div><span class="key">Demandes</span> : ${esc(d.jellyseerr_url)}</div>
     </div>
     <p class="note">${esc(d.log)}</p>
     <div class="actions">
-      <button class="secondary" id="copyBtn" type="button">📋 Copier</button>
-      <button class="secondary" id="newBtn" type="button">+ Nouveau compte</button>
+      <button class="secondary" id="copyBtn" type="button">Copier les informations</button>
+      <button class="secondary" id="newBtn" type="button">Créer un autre compte</button>
     </div>`;
   document.getElementById('copyBtn').onclick = () => copyToClipboard(credsBlock);
   document.getElementById('newBtn').onclick = () => { form.reset(); resultBox.className = 'result'; resultBox.innerHTML = ''; document.getElementById('username').focus(); };
 }
 function renderError(message) {
   resultBox.className = 'result visible error';
-  resultBox.innerHTML = `<h3 class="result-title">✗ Erreur</h3><p class="error-msg">${esc(message)}</p>`;
+  resultBox.innerHTML = `<h3 class="result-title">Échec de la création</h3><p class="error-msg">${esc(message)}</p>`;
 }
 form.addEventListener('submit', async (e) => {
   e.preventDefault();

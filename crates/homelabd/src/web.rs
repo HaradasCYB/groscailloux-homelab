@@ -266,7 +266,7 @@ async fn index() -> Html<String> {
     Html(index_page())
 }
 
-/// Règles propres à l'onboarding admin (résultat, identifiants, notification « Copié ! »), sur [`ui::BASE_CSS`].
+/// Règles propres à l'onboarding admin (résultat, identifiants, notification « Copié »), sur [`ui::BASE_CSS`].
 const INDEX_CSS: &str = r#".ob form{margin-top:8px}
 .spinner{display:none;width:16px;height:16px;border:2px solid rgba(11,11,12,.25);border-top-color:var(--btn-text);border-radius:50%;animation:gc-spin .8s linear infinite}
 button.loading .spinner{display:inline-block}
@@ -294,22 +294,22 @@ button.loading .spinner{display:inline-block}
 fn index_page() -> String {
     let body = format!(
         r#"<div class="gc-narrow"><section class="card ob" aria-labelledby="ob-title">
-<h1 id="ob-title">Onboarder</h1>
-<p class="lead">Créer un nouveau compte utilisateur</p>
+<h1 id="ob-title">Nouveau compte</h1>
+<p class="lead">Créer le compte d'un nouveau membre</p>
 <form id="onboardForm">
-<div class="field"><label for="username">Username</label><input type="text" id="username" name="username" placeholder="ex: hippo" required pattern="[a-zA-Z0-9_-]{{2,32}}" autocomplete="off" autofocus></div>
-<div class="field"><label for="email">Email</label><input type="email" id="email" name="email" placeholder="hippo@example.com" required autocomplete="off"></div>
+<div class="field"><label for="username">Identifiant</label><input type="text" id="username" name="username" placeholder="ex. : hippo" required pattern="[a-zA-Z0-9_-]{{2,32}}" autocomplete="off" autofocus></div>
+<div class="field"><label for="email">Adresse e-mail</label><input type="email" id="email" name="email" placeholder="hippo@example.com" required autocomplete="off"></div>
 <button type="submit" id="submitBtn" class="block"><span class="spinner" aria-hidden="true"></span><span class="label">Créer le compte</span></button>
 </form>
 <div id="result" class="result" aria-live="polite"></div>
-<p class="footer">🎬 Jellyfin · 🎯 Jellyseerr · ✉️ Mail unifié · homelabd</p>
+<p class="footer">Jellyfin · Jellyseerr · mail de bienvenue · homelabd</p>
 </section></div>
-<div id="toast" class="toast" role="status" aria-live="polite">Copié !</div>
+<div id="toast" class="toast" role="status" aria-live="polite">Copié</div>
 <script>
 {js}</script>"#,
         js = ONBOARD_ADMIN_JS
     );
-    ui::page_admin("Groscailloux — Onboarder", None, &body, INDEX_CSS)
+    ui::page_admin("Groscailloux — Nouveau compte", None, &body, INDEX_CSS)
 }
 
 /// Guide des nouveaux membres (public, lien du mail de bienvenue).
@@ -2196,11 +2196,11 @@ async fn onboard_handler(
     if !onboard::valid_username(&username) {
         return fail(
             StatusCode::BAD_REQUEST,
-            "Username invalide (2-32 chars, lettres/chiffres/_-)",
+            "Identifiant invalide (2 à 32 caractères : lettres, chiffres, _ ou -)",
         );
     }
     if !onboard::valid_email(&email) {
-        return fail(StatusCode::BAD_REQUEST, "Email invalide");
+        return fail(StatusCode::BAD_REQUEST, "Adresse e-mail invalide");
     }
     let ip = client.ip;
     let limit = Duration::from_secs(st.ctx.cfg.web.rate_limit_secs);
@@ -2211,7 +2211,10 @@ async fn onboard_handler(
         if map.contains_key(&ip) {
             return fail(
                 StatusCode::TOO_MANY_REQUESTS,
-                format!("Rate limit ({}s entre requêtes)", limit.as_secs()),
+                format!(
+                    "Trop de demandes : attendre {} s entre deux créations",
+                    limit.as_secs()
+                ),
             );
         }
         map.insert(ip.clone(), now);
@@ -2227,16 +2230,16 @@ async fn onboard_handler(
     match onboard::run(&st.ctx, req).await {
         Ok(r) => {
             let log = if r.dry_run {
-                "DRY-RUN : pré-contrôles OK, aucun compte créé".to_string()
+                "Simulation : pré-contrôles réussis, aucun compte créé".to_string()
             } else {
                 format!(
-                    "Jellyfin Id {} · Jellyseerr id {} · mail {} · {}",
+                    "identifiant Jellyfin {} · identifiant Jellyseerr {} · mail : {} · {}",
                     r.jellyfin_id,
                     r.jellyseerr_id,
                     if r.mail_sent {
                         "lien envoyé"
                     } else {
-                        "lien NON envoyé (transmettre le lien à la main)"
+                        "lien non envoyé (transmettre le lien à la main)"
                     },
                     if r.premium {
                         "compte premium"
@@ -2358,7 +2361,7 @@ mod tests {
     #[test]
     fn admin_onboarding_page_keeps_its_script() {
         let h = index_page();
-        assert!(h.contains("<title>Groscailloux — Onboarder</title>"));
+        assert!(h.contains("<title>Groscailloux — Nouveau compte</title>"));
         for id in [
             r#"id="onboardForm""#,
             r#"id="submitBtn""#,
@@ -2377,6 +2380,32 @@ mod tests {
                 < h.find("const form = document.getElementById('onboardForm');")
         );
         assert!(!h.contains("btn-secondary") && !h.contains("{{"));
+        // 3.3b : texte visible en français, aucun émoji (page et script)
+        for fr in [
+            r#"<label for="username">Identifiant</label>"#,
+            r#"<label for="email">Adresse e-mail</label>"#,
+            r#"placeholder="ex. : hippo""#,
+            "Copier les informations",
+            "Créer un autre compte",
+            "Mot de passe",
+        ] {
+            assert!(h.contains(fr), "{fr}");
+        }
+        for en in [
+            ">Username<",
+            ">Email<",
+            "ex: hippo",
+            ">Password<",
+            "Dry-run",
+            ">Streaming<",
+        ] {
+            assert!(!h.contains(en), "{en}");
+        }
+        assert!(
+            !h.chars()
+                .any(|c| matches!(c as u32, 0x2600..=0x27BF | 0x1F000..=0x1FAFF | 0xFE0F)),
+            "émoji dans l'onboarding admin"
+        );
     }
 
     /// Un homelabctl d'avant `--all` n'envoie que `to` : mail de bienvenue d'exemple, comme avant.

@@ -93,13 +93,13 @@ const SEARCH_CSS: &str = r#".gc-search .lead{margin-bottom:24px}
 .gc-search .hit b{color:var(--strong);font-size:1.05rem}
 .gc-search .seasons{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .gc-search .seasons form{margin:0}
-.gc-search .seasons button{min-height:40px;padding:8px 14px;font-size:.95rem}
+.gc-search .seasons button{min-height:44px;min-width:44px;padding:8px 14px;font-size:.95rem}
 .gc-search ul.notes{color:var(--dim);margin:0 0 20px;padding-left:20px}
 .gc-search td.t{word-break:break-word;min-width:16rem}
 .gc-search td.t .pill{margin:6px 6px 0 0}
 .gc-search td.n{white-space:nowrap}
 .gc-search td form{margin:0}
-.gc-search td button{min-height:36px;padding:6px 12px;font-size:.9rem}"#;
+.gc-search td button{min-height:44px;min-width:44px;padding:6px 12px;font-size:.9rem}"#;
 
 /// Page de la recherche : `ui::page_admin` (`no-referrer` ; rechargée toutes les 4 s tant que la recherche tourne).
 fn page(title: &str, refresh: Option<&str>, body: &str) -> String {
@@ -598,5 +598,17 @@ mod tests {
     fn sizes() {
         assert_eq!(human_size(3 * 1_073_741_824), "3.0 Go");
         assert_eq!(human_size(700 * 1_048_576), "700 Mo");
+    }
+
+    /// 3.3b : boutons de saison et du tableau des résultats à 44 px de cible tactile au moins.
+    #[test]
+    fn search_buttons_are_44px_targets() {
+        for rule in SEARCH_CSS.lines().filter(|l| l.contains(" button{")) {
+            assert!(
+                rule.contains("min-height:44px") && rule.contains("min-width:44px"),
+                "{rule}"
+            );
+        }
+        assert_eq!(SEARCH_CSS.matches(" button{").count(), 2);
     }
 }
