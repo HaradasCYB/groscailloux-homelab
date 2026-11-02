@@ -75,7 +75,7 @@ redémarré et Sonarr, Radarr, Bazarr, Jackett, FlareSolverr, autobrr et unpacke
 
 **Quota** (2026-10-07) : le quota du compte seedbox (`quota.json`, écrit par la seedbox toutes les 15 min, lu par le
 montage après un `vfs/refresh`, module `quota.rs` partagé avec `/status.html`) est dans le résumé (« quota 57 % ») ;
-alerte admin à `quota_alert_pct` (85), une par franchissement (voir « Alertes admin »). Une panne n'est notée
+alerte admin à `quota_alert_pct`, une par franchissement (voir « Alertes admin »). Une panne n'est notée
 « signalée » que si l'alerte est partie : sinon nouvel essai au passage suivant (l'état est écrit après l'envoi).
 
 ### Chien de garde de homelabd (hors homelabd)
@@ -221,7 +221,7 @@ fenêtre glissante ; `≥ threshold` ⇒ `warn!` + mail admin, une seule fois pa
 segment — télé Samsung, 116 remux en une heure le 30/09 ; Chromecast, 42 lancements en 22 min le 04/10 — et la règle
 des segments ne le voit pas. Chaque lancement laisse un `FFmpeg.<Transcode|Remux|DirectStream>-<date>_<heure>_<id>_<n>.log`
 (heure locale) dans `cleanup.jellyfin_log_dir` : la tâche compte les lancements des 60 dernières minutes par titre, sans
-les titres du canari (`state.canary.items`), et alerte au-delà de `max_jobs_per_item_hour` (30 ; lecture normale :
+les titres du canari (`state.canary.items`), et alerte au-delà de `max_jobs_per_item_hour` (lecture normale :
 17 au plus). Depuis le 2026-10-07, **une alerte par rafale**, mémorisée dans `state.burst_alerts` (id compact → date)
 et réarmée quand le compteur horaire du titre retombe sous le seuil : un redémarrage ne répète plus l'alerte, une
 seconde rafale le même jour alerte. Une rafale n'est notée signalée que si l'alerte est partie (ou sans canal).
@@ -267,8 +267,8 @@ sans attribut) : `text_queries` noms essayés en texte libre (Jellyseerr FR et o
 titre parsé identique exigé, release d'un autre identifiant écartée.
 
 **Fenêtre de sortie** (2026-10-30, 1.30.4) : une saison restée sans release (`none`) dont le dernier épisode
-manquant est diffusé depuis **au plus** `release_window_hours` (48 h) est reprise toutes les `release_retry_hours`
-(2 h) au lieu de `retry_after_hours` (24 h). Cas d'origine : *Dead-End Job* (« Un job mortel », Netflix, coréen),
+manquant est diffusé depuis **au plus** `release_window_hours` est reprise toutes les `release_retry_hours`
+au lieu de `retry_after_hours` (24 h). Cas d'origine : *Dead-End Job* (« Un job mortel », Netflix, coréen),
 8 épisodes diffusés le 30/10 à 04:00 UTC, demandés à 08:12, cherchés une seule fois à 08:15 (3 requêtes, rien : pas
 encore sur C411), publiés en MULTi VFF le jour même et remis au lendemain 08:15. Le RSS de Sonarr ne rattrape pas
 ces séries : leur nom français n'est connu ni de TMDB (Jellyseerr `fr` renvoie « 꿀알바 ») ni de Sonarr (aucun titre
@@ -353,9 +353,9 @@ réécrit pour les conteneurs (`prowlarr_url_for_arrs` = `http://prowlarr:9696` 
 injoignable), refus d'identification ou indexeur bloqué (`bypassable_rejection`), ou envoi accepté mais pas
 mis en file → `.torrent` récupéré par Prowlarr et ajouté au qBittorrent du même côté avec l'étiquette
 `homelab:series=<id>:season=<n>`, importé ensuite par `torrent_import`. Tout autre refus (liste noire,
-taille…) est respecté. **Rythme** : au plus `max_queries_per_run` requêtes C411 par passage (6, soit 36/h au pire),
-`query_gap_secs` (5 s) d'écart, `max_new_per_run` en plus pour les demandes de moins d'une heure, le tout sous le budget
-par clé (« Budget de l'indexer » plus bas) ; filet de sécurité : Prowlarr coupe à 45 requêtes/heure par indexeur C411.
+taille…) est respecté. **Rythme** : au plus `max_queries_per_run` requêtes C411 par passage,
+`query_gap_secs` d'écart, `max_new_per_run` en plus pour les demandes de moins d'une heure, le tout sous le budget
+par clé (« Budget de l'indexer » plus bas) ; filet de sécurité : Prowlarr coupe chaque indexeur C411 à son `queryLimit` (valeur : [CLAUDE.md § 4](../CLAUDE.md#4-valeurs-en-vigueur)).
 Historique : le 2026-09-17, avec une seule clé partagée par Prowlarr et les 4 Arrs, le 429 est tombé vers 50 requêtes
 dans l'heure, pendant le rattrapage de l'arriéré ; d'où les deux clés et leurs compteurs.
 Résumé : `grabbed=1 none=2 pending=13`.
@@ -391,19 +391,19 @@ panne) est retenté après `error_retry_hours` (1), « aucune release » après 
 
 **Films attendus** (2026-10-10) : C411 a souvent la WEB avant la date numérique de TMDB (*Spider-Man: Brand New Day* :
 première release le 05/10 à 15:43, date numérique le 06/10, prise le 06/10 à 00:05). Sur 14 films récents, 6 sont arrivés avant leur date, jamais plus de 23 h avant.
-La tâche pose à chaque passage `availabilityDelay = -release_window_days` (2) dans les Radarr qui téléchargent
-(`GET`/`PUT /api/v3/config/indexer`) : Radarr tient le film pour sorti 2 jours avant sa date (la plus proche des dates
+La tâche pose à chaque passage `availabilityDelay = -release_window_days` dans les Radarr qui téléchargent
+(`GET`/`PUT /api/v3/config/indexer`) : Radarr tient le film pour sorti `release_window_days` jours avant sa date (la plus proche des dates
 numérique et physique, sinon salle + 90 jours : `release_date`), ce qui ouvre en même temps son RSS (15 min) et la
 recherche de homelabd. À moins de `release_window_days` jours de cette date, avant comme après, « aucune release »
-est retenté toutes les `release_retry_hours` (2) au lieu de 72 h (`retry_hours` ; résumé : « N autour de leur
+est retenté toutes les `release_retry_hours` au lieu de 72 h (`retry_hours` ; résumé : « N autour de leur
 sortie »). L'onglet Demandes affiche « Pas encore sorti en numérique (prévu le …) : recherché toutes les 2 h dès le … ».
 
 **VOSTFR fraîche : on attend la VF** (2026-10-10). Le RSS de Radarr prend la *première* release acceptable et le
 profil FR-friendly ne remplace jamais un fichier (`upgradeAllowed = false`) : *Insidious* a eu sa VOSTFR 48 min avant
-sa VFF. Une release sans audio français (`lang_rank` < 2 : VOSTFR, VO) publiée depuis moins de `vo_wait_hours` (3)
+sa VFF. Une release sans audio français (`lang_rank` < 2 : VOSTFR, VO) publiée depuis moins de `vo_wait_hours`
 n'est pas prise tant que rien de français n'est là : résultat `vo_wait`, refait au bout de `release_retry_hours`
 (`fresh_without_french`). Côté Radarr, la tâche pose le profil de délai par défaut (`GET`/`PUT /api/v3/delayprofile`,
-`delay_profile_fix`) : torrents retenus `vo_wait_hours` × 60 min, sauf score ≥ `vo_wait_bypass_score` (2500),
+`delay_profile_fix`) : torrents retenus `vo_wait_hours` × 60 min, sauf score ≥ `vo_wait_bypass_score`,
 protocole préféré « torrent » (sinon Radarr ignore le passe-droit au score), sans passe-droit « plus haute qualité ».
 Le seuil est à 2500 parce que le format « FRENCH » reconnaît aussi « VOSTFR » : une VOSTFR monte jusqu'à ~2400, un
 MULTi ou une VF part de 3500. Une release « FRENCH » seule attend aussi (rare sur un film récent). Le délai compte
@@ -474,7 +474,7 @@ toutes les 5 min et lève une pause 15 min après le dernier échec (10 fois par
 
 ### Budget de l'indexer (commun)
 `homelab_core::indexer` : deux clés déclarées dans Prowlarr, un compteur horaire **par clé**
-(`c411_max_per_hour`, 40), `manual_reserve` (10) gardées pour `/recherche`, bascule immédiate sur l'autre clé
+(`c411_max_per_hour`), `manual_reserve` gardées pour `/recherche`, bascule immédiate sur l'autre clé
 si l'une répond 429 (mise de côté `cooldown_after_429_mins`). `search_tmdb` et `search_text` sont les deux
 seules portes d'entrée : tâches et page passent par elles.
 
@@ -609,11 +609,11 @@ Ne touche un torrent que si sa limite actuelle diffère (ratio comparé à 2 dé
 recherche. Max 5 par passage. Les items disparus de la queue sont oubliés.
 
 ### disk_pressure — 15 min
-`statvfs` sur `paths.base`, arrondi comme `df`. À `alert_pct` (85, 2026-10-07) : alerte admin, une par franchissement
-(réarmée `capacity_rearm_pts` sous le seuil), bien avant `hard_pct` qui supprime sans prévenir. < 95 % : rien. 95–98 % : supprime avec
+`statvfs` sur `paths.base`, arrondi comme `df`. À `alert_pct` (2026-10-07) : alerte admin, une par franchissement
+(réarmée `capacity_rearm_pts` sous le seuil), bien avant `hard_pct` qui supprime sans prévenir. Sous `hard_pct` : rien. De `hard_pct` à `crit_pct` : supprime avec
 fichiers (`POST /api/v2/torrents/delete`, `deleteFiles=true`) jusqu'à 5 torrents en état
 `stoppedUP`, les plus anciens d'abord — les hardlinks de `library/media` survivent.
-≥ 98 % : log d'erreur, aucune action automatique.
+≥ `crit_pct` : log d'erreur, aucune action automatique.
 
 ### trending — 6 h
 
@@ -650,7 +650,7 @@ que dans `state.catalogue` (4 à 11 Ko : `catalogue`, `unmatched`, `never_all`, 
 
 ### red_list — 24 h (2026-10-20)
 
-Liste rouge : films et séries que personne n'a lancés depuis `min_idle_days` (60 j), sur la page d'admin
+Liste rouge : films et séries que personne n'a lancés depuis `min_idle_days` jours, sur la page d'admin
 `/accounts/liste-rouge` (lien depuis `/accounts` et la section catalogue de `/status.html`). Même lecteurs que
 `catalogue_report` (Arrs, tous les comptes Jellyfin avec `UserId`, Playback Reporting).
 
@@ -685,7 +685,7 @@ Liste rouge : films et séries que personne n'a lancés depuis `min_idle_days` (
   le travail dit ce qu'il ferait. `--dry-run` de homelabd l'emporte toujours. En suppression réelle, la confirmation
   propose aussi « Simuler d'abord ». La simulation compte les fichiers du titre comme déjà supprimés : un torrent lié au
   seul titre est annoncé retiré, comme pour de vrai (avant le 22/10, il était compté « partagé »).
-- Réglages `[tasks.red_list]` : `min_idle_days` (60, 30 au moins), `include_russian`, `max_titles_per_clean` (50, 200 au
+- Réglages `[tasks.red_list]` : `min_idle_days` (30 au moins), `include_russian`, `max_titles_per_clean` (200 au
   plus), `clean_dry_run`, `arr_delete_timeout_secs` (300), `recycle_wait_secs` (90), `empty_recycle`,
   `add_import_exclusion` (false : un membre peut redemander le titre), `ssh_host`, `jobs_kept` (20), `soon_days` (14).
 
@@ -854,7 +854,7 @@ plusieurs minutes, délai dépassé du proxy de la seedbox — « timed out » �
 - Logique dans `homelab_core::manual_search`, rendu dans `crates/homelabd/src/search_page.rs` (serveur, sans
   JavaScript : la page de résultats se recharge seule tant que la recherche tourne, rien ne bloque une requête HTTP).
 - **C411 par identifiant TMDB** (une requête par saison ou par film, via Prowlarr), dans le budget par clé : la page
-  dispose de la réserve `[indexers] manual_reserve` (10 par heure et par clé). Puis, si l'identifiant ne donne rien ou
+  dispose de la réserve `[indexers] manual_reserve` (par heure et par clé). Puis, si l'identifiant ne donne rien ou
   pour une saison, `[manual_search] text_queries` (2) noms de la fiche en texte libre (cours d'animés publiés sous leur
   propre titre, marqués « autre saison »). Plafond atteint, indexeur en pause ou fiche sans identifiant : la page le dit.
 - **Nyaa n'est plus interrogé par la page** depuis le budget commun du 2026-09-17 (le bandeau de la page et la doc de
@@ -910,8 +910,8 @@ l'adresse, l'URL du webhook ni le corps), ou « alerte NON livrée » / « alert
   `backup_watch` = `stale`/`missing`, `diun_watch` = empreinte des erreurs) alerte aussitôt ; un passage sain
   (`watch_clear`) efface la mémoire, une rechute alerte normalement. Une alerte non livrée alors qu'un canal existe
   n'est pas notée : la tâche réessaie à son passage suivant.
-- **Tâche en échec répété** (`[alerts]`) : une alerte quand une tâche échoue `fail_streak` (6) fois de suite **et**
-  depuis au moins `fail_minutes` (30) minutes (une tâche toutes les 20 s échoue 6 fois en 2 min sans que ce soit une
+- **Tâche en échec répété** (`[alerts]`) : une alerte quand une tâche échoue `fail_streak` fois de suite **et**
+  depuis au moins `fail_minutes` minutes (une tâche toutes les 20 s échoue 6 fois en 2 min sans que ce soit une
   panne), puis un message « Tâche rétablie » à son retour. Les erreurs isolées ne préviennent pas. Au plus
   `fail_alerts_max` (3) alertes de ce type par `fail_alerts_window_mins` (10) : au-delà, la série n'est pas marquée
   signalée et repart au prochain échec. La place est **réservée dans la même mise à jour d'état que la décision**
@@ -1295,7 +1295,7 @@ testées) + `subscription_ops` (ce qui touche Jellyfin/PayPal/mails, toujours vi
   - un essai ne reçoit pas un palier au moins égal à sa durée (pas de J-7 pour un essai de 7 jours ; le J-1 part) ;
   - **abonnement PayPal automatique** (lié et pas arrêté chez PayPal, `auto_renews` ; statut inconnu = actif) : une
     seule information J-7 **sans lien** (« ton abonnement se renouvelle le JJ/MM », `Action::RenewalNotice`), grâce
-    seulement `paypal_margin_hours` (36) après la date de facturation ; à la suspension, mail « prélèvement non
+    seulement `paypal_margin_hours` après la date de facturation ; à la suspension, mail « prélèvement non
     passé, mets à jour ton moyen de paiement dans PayPal » sans lien (un lien = second abonnement) ;
   - **fiches orphelines** (compte Jellyfin disparu) : celles sans rien à perdre (à qualifier, suspendu ou exempté,
     sans échéance ni PayPal : comptes de banc) sont retirées ; les autres, `max_orphan_removals_per_run` (3) au plus
@@ -1375,7 +1375,7 @@ la seule source de vérité ; les comptes admin ne sont jamais listés ni modifi
 - **Suppression** : bouton « Supprimer » → page de confirmation (`GET /accounts/delete`) → `POST
   /accounts/delete` : compte Jellyfin puis compte Jellyseerr (ses demandes partent avec). CLI :
   `homelabctl accounts delete <compte> --yes`.
-- **Plafonds** (`[accounts]`) : 25 comptes premium, 2 lectures simultanées par compte. Dimensionnés
+- **Plafonds** (`[accounts]`) : `max_premium` comptes premium, `max_playbacks_per_user` lectures simultanées par compte. Dimensionnés
   pour 6 vCPU sans GPU (un seul transcodage 1080p en temps réel) et le lien seedbox (~8–10 Mo/s par connexion, mesuré le
   20/09) ; pic mesuré le 2026-09-14 : 4 lectures simultanées pour 13 comptes. Lecture directe : 65 % des lectures (30 j
   au 04/10). Pas de limite de débit par utilisateur : elle forcerait des transcodages.

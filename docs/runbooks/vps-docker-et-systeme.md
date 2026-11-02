@@ -55,8 +55,8 @@ VPN ou qBittorrent, ou avant un redémarrage du VPS. Déploiement et restauratio
 
 ## 3. Disque
 
-- `disk_pressure` : alerte à `alert_pct` (85), suppression des torrents arrêtés les plus anciens à `hard_pct` (95, les
-  liens physiques de `library/media` survivent), journal seulement à `crit_pct` (98).
+- `disk_pressure` : alerte à `alert_pct`, suppression des torrents arrêtés les plus anciens à `hard_pct` (les
+  liens physiques de `library/media` survivent), journal seulement à `crit_pct` (valeurs : [CLAUDE.md § 4](../../CLAUDE.md#4-valeurs-en-vigueur)).
 - **Jamais de purge globale** de file ou de torrents : toute suppression est ciblée et plafonnée
   (`max_actions_per_run`), invariant de `stuck_handler` et `disk_pressure`.
 - Tout dossier volumineux sous `/opt/homelab` va dans `[backup] excludes` ([sauvegardes.md](sauvegardes.md)).

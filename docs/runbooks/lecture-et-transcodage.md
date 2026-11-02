@@ -61,7 +61,7 @@ qui saccade ou « charge à l'infini ». Tâches liées : [AUTOMATION.md](../AUT
   - Purge : `scripts/jellyfin-transcodes-purge.sh` par les unités versionnées
     `systemd/jellyfin-transcodes-purge.{service,timer}` (**chaque minute**, installées par `homelabctl install`) ;
     routine = jobs sans ffmpeg actif vieux de plus de 2 min (un job terminé n'est jamais réutilisé) ; **urgence**
-    automatique dès 85 % (tout ce qui n'a pas de ffmpeg actif, puis les segments de plus de 10 min des jobs actifs) +
+    automatique au seuil d'urgence du [CLAUDE.md § 4](../../CLAUDE.md#4-valeurs-en-vigueur) (tout ce qui n'a pas de ffmpeg actif, puis les segments de plus de 10 min des jobs actifs) +
     message Discord admin ; `--urgent` à la main ; `--force` refusé tant qu'un ffmpeg tourne.
 - **Mise en pause des conversions (throttling) : elle marche** (10.11 et 12.1, vérifié le 04/10). Piège de lecture : le
   patch de pause de jellyfin-ffmpeg exclut le temps de pause de `speed=` et `elapsed=` et n'écrit rien pendant une pause ;

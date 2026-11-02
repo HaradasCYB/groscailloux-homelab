@@ -29,10 +29,11 @@ propre runbook : [voie-russe.md](voie-russe.md).
   Jellyseerr.** `animeCategories=[5070]` et `animeStandardFormatSearch=true` restent dans les deux Sonarr pour le RSS.
 - **Films : `movie_search`** cherche dès le passage qui suit la demande (`[tasks.movie_search] missing_hours = 0`,
   passage toutes les 5 min) : Radarr n'a plus de recherche et son RSS ne ramène que les nouveautés. Un film attendu
-  est guetté dès 2 jours avant sa date numérique, toutes les 2 h jusqu'à 2 jours après (`release_window_days`,
-  `release_retry_hours`) ; une VOSTFR ou une VO de moins de 3 h attend une version française (`vo_wait_hours`). La
-  tâche pose elle-même, dans le Radarr de la seedbox, `availabilityDelay = -2` et le profil de délai par défaut
-  (torrents retenus 180 min sauf score ≥ 2500, protocole préféré torrent) : les changer dans Radarr ne sert à rien,
+  est guetté de `release_window_days` jours avant sa date numérique à autant de jours après, toutes les
+  `release_retry_hours` ; une VOSTFR ou une VO plus récente que `vo_wait_hours` attend une version française. La
+  tâche pose elle-même, dans le Radarr de la seedbox, `availabilityDelay = -release_window_days` et le profil de délai
+  par défaut (torrents retenus `vo_wait_hours` × 60 min sauf score ≥ `vo_wait_bypass_score`, protocole préféré
+  torrent ; valeurs : [CLAUDE.md § 4](../../CLAUDE.md#4-valeurs-en-vigueur)) : les changer dans Radarr ne sert à rien,
   ils sont remis au passage suivant (`docs/AUTOMATION.md`, movie_search).
   - **Film français** : sans date, il n'est pas cherché avant 110 jours de salle (`awaiting_vod`) ; à partir de
     110 jours, il est cherché **même si Radarr le dit « pas encore sorti »** parce que TMDB n'a qu'une date de DVD ou
@@ -69,16 +70,16 @@ propre runbook : [voie-russe.md](voie-russe.md).
 ### Budget et clés
 
 - Source de vérité : `homelab.toml` `[indexers]` et `homelab_core::indexer` (seules portes : `search_tmdb`, `search_text`).
-- **Deux clés dans Prowlarr**, un compteur horaire **par clé** : `c411_max_per_hour` (40) chacune, soit 80/h ;
-  `manual_reserve` (10) gardées pour `/recherche`. Chaque recherche prend la clé la moins chargée.
-- Une clé qui répond 429 est mise de côté `cooldown_after_429_mins` (15) et la requête repart **aussitôt sur l'autre** :
+- **Deux clés dans Prowlarr**, un compteur horaire **par clé** : `c411_max_per_hour` chacune (le total double) ;
+  `manual_reserve` gardées pour `/recherche` (valeurs en vigueur : [CLAUDE.md § 4](../../CLAUDE.md#4-valeurs-en-vigueur)). Chaque recherche prend la clé la moins chargée.
+- Une clé qui répond 429 est mise de côté `cooldown_after_429_mins` et la requête repart **aussitôt sur l'autre** :
   tant qu'une clé répond, rien ne s'arrête.
-- Filet : Prowlarr coupe à 45 requêtes/h par indexeur (`queryLimit`).
-- Rythme des tâches : `[tasks.series_search] max_queries_per_run` (6 par passage de 10 min, 36/h au pire) et
-  `query_gap_secs` (5) ; `[tasks.movie_search] max_per_run` (3 films par passage de 5 min).
-- Reprise d'une saison sans release : 24 h (`retry_after_hours`), mais toutes les 2 h (`release_retry_hours`), par
-  identifiant seul, tant que son dernier épisode manquant est diffusé depuis au plus 48 h (`release_window_hours`,
-  1.30.4, cas *Dead-End Job* du 30/10). VOSTFR/VO de moins de 3 h retenue hors animés (`vo_wait_hours`, résultat
+- Filet : Prowlarr coupe chaque indexeur C411 à son `queryLimit` (valeur : [CLAUDE.md § 4](../../CLAUDE.md#4-valeurs-en-vigueur)).
+- Rythme des tâches : `[tasks.series_search] max_queries_per_run` (par passage, toutes les `interval_secs`) et
+  `query_gap_secs` ; `[tasks.movie_search] max_per_run` (films par passage).
+- Reprise d'une saison sans release : 24 h (`retry_after_hours`), mais toutes les `release_retry_hours`, par
+  identifiant seul, tant que son dernier épisode manquant est diffusé depuis au plus `release_window_hours` (1.30.4,
+  cas *Dead-End Job* du 30/10). VOSTFR/VO plus récente que `vo_wait_hours` retenue hors animés (résultat
   `vo_wait`). Une saison dont un torrent étiqueté se télécharge dans qBittorrent n'est pas reprise. Coût au pire :
   28 requêtes par saison introuvable sur 48 h. Détail : [AUTOMATION.md](../AUTOMATION.md#series_search--10-min-remplace-unknown_series_grab).
 - « C411 (2) » utilise la clé RSS des Arrs (`C411_RSS_API_KEY`) : le RSS de la seedbox (deux Arrs, toutes les 15 min)
@@ -183,7 +184,7 @@ propre runbook : [voie-russe.md](voie-russe.md).
   animé) : le codec source ne change pas le coût d'un transcodage ([lecture-et-transcodage.md](lecture-et-transcodage.md)).
 - Une release sans français n'est prise qu'en dernier recours (`[indexers] allow_no_french`), quand aucune française
   n'est acceptable.
-- **Plafonds de taille** du choix automatique : `[indexers] max_gb_per_episode` (3) et `max_gb_per_movie` (15) ; sinon un
+- **Plafonds de taille** du choix automatique : `[indexers] max_gb_per_episode` et `max_gb_per_movie` ; sinon un
   pack de 134 Go à une source gagnait contre un 27,8 Go bien partagé. Au-delà, la release reste visible sur `/recherche`.
 - **Œuvres dérivées** : un titre qui contient `mini`, `specials`, `OVA`, `recap`, `abridged`, `junior`… absent des titres
   de la fiche est écarté du choix automatique (`series_search::derivative`) ; le repli en texte libre exige en plus que

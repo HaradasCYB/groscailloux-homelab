@@ -24,7 +24,7 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   commentée.
 - **Nouvelle tâche** : un module dans `crates/homelab-core/src/tasks/`, `impl Task`, ajout dans `registry()`, section
   `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run respecté, tests unitaires de la décision, paragraphe dans
-  [AUTOMATION.md](../AUTOMATION.md). Au 15/10 : 33 tâches dans `registry()` (dont `tba_bypass`, dans `tasks.disabled`,
+  [AUTOMATION.md](../AUTOMATION.md). Nombre de tâches de `registry()` : [CLAUDE.md § 4](../../CLAUDE.md#4-valeurs-en-vigueur) (dont `tba_bypass`, dans `tasks.disabled`,
   `vo_native_guard`, et `media_mail`, qui envoie les mails « disponible » aux membres depuis le 15/10) + l'observateur
   `auto_import`.
 - **homelabd est cloisonné** (`ProtectSystem=strict`) : tout nouveau dossier écrit par une tâche va dans `ReadWritePaths`
@@ -90,7 +90,7 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   canaux seulement) et le note dans `state.alerts` (`/status.html`, `homelabctl status`).
 - **Règle** : un appelant qui note « déjà signalé » ne le fait que si l'alerte est partie (`alerts::delivered`) ou s'il
   n'existe aucun canal (`alerts::retry_later(sent, configured)`).
-- Ce que ça couvre : tâche en échec `[alerts] fail_streak` (6) fois de suite **et** depuis `fail_minutes` (30), puis un
+- Ce que ça couvre : tâche en échec `[alerts] fail_streak` fois de suite **et** depuis `fail_minutes`, puis un
   message à son retour, au plus `fail_alerts_max` (3) par `fail_alerts_window_mins` (10) ; capacité
   (`disk_pressure.alert_pct`, `seedbox_health.quota_alert_pct`, une alerte par franchissement) ; relance ratée de
   `stack_health` ; `cert_watch`, `backup_watch`, `diun_watch` (quotidiennes, aussi à chaque démarrage, jamais deux fois en

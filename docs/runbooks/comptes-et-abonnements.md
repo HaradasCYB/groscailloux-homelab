@@ -12,8 +12,8 @@ des abonnements. Procédure admin pas à pas : [ONBOARDING.md](../ONBOARDING.md)
   suspension passe par `accounts::set_premium`.
 - **Comptes protégés** (`[accounts] protected`, les deux comptes de l'admin) : jamais suspendus ni supprimés par la page,
   exemptés de la limite de lectures ; les autres admins sont gérés comme tout le monde.
-- Plafonds (`[accounts]`) : `max_premium` 25 ; `max_playbacks_per_user` 2 (la 3ᵉ lecture est arrêtée par
-  `playback_limit`).
+- Plafonds (`[accounts]`) : `max_premium` ; `max_playbacks_per_user` (la lecture de trop est arrêtée par
+  `playback_limit`) ; valeurs : [CLAUDE.md § 4](../../CLAUDE.md#4-valeurs-en-vigueur).
 - **`MaxActiveSessions` reste à 0** (`max_devices_per_user`) : il ne joue qu'à la connexion (403 « maximum number of
   sessions », affiché comme une erreur d'identifiants) et l'appli iOS crée une nouvelle session à chaque ouverture (des
   sessions fantômes d'un iPhone bloquaient la télé d'un membre, Quick Connect compris).
@@ -221,13 +221,13 @@ des abonnements. Procédure admin pas à pas : [ONBOARDING.md](../ONBOARDING.md)
 ### Règles PayPal (revue du 07/10)
 
 - Abonnement PayPal lié et non arrêté (`auto_renews`) : **jamais de rappel avec lien de paiement** (un clic = second
-  abonnement = deux prélèvements) ; une information J-7 sans lien ; grâce à échéance + `paypal_margin_hours` (36) ;
+  abonnement = deux prélèvements) ; une information J-7 sans lien ; grâce à échéance + `paypal_margin_hours` ;
   prélèvement raté ⇒ mail de suspension sans lien (mettre à jour le moyen de paiement chez PayPal).
 - Second abonnement d'un compte dont l'abonnement lié est ACTIVE chez PayPal : ni rattaché ni compté
   (`Payment::Duplicate`), alerte admin une fois par jour, `/premium/activate?err=deja` ; le rembourser ou le résilier **à
   la main** dans PayPal (argent réel). La fiche garde `paypal_status` et `paypal_paid_at`.
 - `subscription_reconcile` n'applique qu'un paiement constaté (`last_payment` > `paypal_paid_at` + 12 h). Facturation due
-  depuis plus de 36 h sans paiement : alerte « Prélèvement PayPal en attente » (une par abonnement et par jour), rien n'est
+  depuis plus de `paypal_margin_hours` sans paiement : alerte « Prélèvement PayPal en attente » (une par abonnement et par jour), rien n'est
   prolongé. Arrêt chez PayPal : noté, accès jusqu'à l'échéance payée.
 - `/premium?compte=X` ne dit « déjà abonné » que pour un lien signé `&k=` (HMAC de `HOMELABD_ONBOARD_TOKEN` et du compte,
   16 hexa, porté par les mails) : la page publique ne révèle pas qui paie. Renouveler le jeton rend les anciennes clés

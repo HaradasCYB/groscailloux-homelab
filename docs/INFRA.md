@@ -12,7 +12,7 @@ fait quoi, par où passent les fichiers et ce qui se passe quand un élément to
 | Rôle | diffusion, recherche, automatisation, bibliothèque historique | tous les téléchargements, stockage des nouveautés |
 | Machine | VPS dédié · Ubuntu 26.04 · 6 vCPU · 17 Go + swap 4 Go · pas de GPU | seedbox partagée (plateforme Ultra.cc) · pas de root |
 | Stockage | 969 Go ext4 (médias historiques, état des services) | quota de 3,7 To (l'espace libre est celui du quota, pas du disque partagé) |
-| Services | 21 conteneurs Docker + `homelabd` (Rust, 33 tâches) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Bazarr, Unpackerr, Jackett, FlareSolverr (conteneurs) |
+| Services | 21 conteneurs Docker + `homelabd` (Rust, tâches de `registry()`) sur l'hôte | qBittorrent, autobrr (natifs) · Radarr, Sonarr, Bazarr, Unpackerr, Jackett, FlareSolverr (conteneurs) |
 
 Lien entre les deux : latence ~97 ms, 8 à 10 Mo/s par connexion (~30 Mo/s à quatre) ; API en HTTPS, fichiers en
 SFTP (lecture + suppression, aucune écriture).
@@ -27,7 +27,7 @@ flowchart LR
   subgraph VPS
     direction TB
     subgraph host[Hôte · systemd]
-      homelabd["homelabd<br/>33 tâches + watcher<br/>pages membres et admin"]
+      homelabd["homelabd<br/>tâches + watcher<br/>pages membres et admin"]
       rclone["rclone mount<br/>SFTP · cache 120 Go"]
       stack["homelab-stack · backup hebdo<br/>purge transcodes (1 min)"]
     end
@@ -110,7 +110,7 @@ sequenceDiagram
   JS->>R: crée la fiche, sans recherche
   H->>C: movie_search : id TMDB
   C-->>H: releases
-  H->>H: choisit (français, ≤ 1080p, ≤ 15 Go, sources)
+  H->>H: choisit (français, ≤ 1080p, plafond de taille, sources)
   H->>R: release/push
   R->>Q: .torrent, catégorie « radarr »
   H-->>Q: si Radarr refuse : ajout direct, étiquette homelab:
@@ -121,8 +121,9 @@ sequenceDiagram
 ```
 
 - Un film part dans les 5 minutes qui suivent la demande, une série dans les 10. Sans release : nouvel essai après
-  72 h (films) ou 24 h (séries), dans un budget de 40 requêtes par heure **et par clé C411** (deux clés, 10
-  requêtes réservées à la recherche manuelle `/recherche`). Une clé qui répond 429 est mise de côté 15 min.
+  72 h (films) ou 24 h (séries), dans un budget horaire **par clé C411** (deux clés, une réserve gardée pour la
+  recherche manuelle `/recherche`) ; une clé qui répond 429 est mise de côté un moment. Valeurs : `[indexers]`
+  `c411_max_per_hour`, `manual_reserve`, `cooldown_after_429_mins` de `homelab.toml` (en vigueur : [CLAUDE.md § 4](../CLAUDE.md#4-valeurs-en-vigueur)).
 - **Séries** : une release par épisode manquant dans le même lot, ou le pack de saison ; épisodes que TheTVDB n'a
   pas encore datés ; cours d'animés publiés sous un autre titre (liste des fichiers du .torrent lue avant
   d'agir) ; œuvres dérivées (mini, OVA, recap) écartées.
@@ -171,7 +172,7 @@ flowchart LR
 | Torrents ajoutés à la main | `torrent_import` (2 min) : import manuel en hardlink vers la bonne fiche. |
 | Dépôts directs (VPS) | Fichier dans `library/downloads` → observateur `auto_import` → classement série/film → fiche → import. |
 | Onboarding | Inscription publique, tuile « Créer un compte » ou `homelabctl onboard` → compte Jellyfin (5 bibliothèques) + Jellyseerr → mail avec lien à usage unique (60 min) pour choisir son mot de passe, puis les premiers pas. Aucun identifiant par mail. Activation à la main. Voir [ONBOARDING.md](ONBOARDING.md). |
-| Comptes et abonnements | Page `/accounts` ou `homelabctl accounts|subs` : premium = compte actif (25 au plus, 2 lectures simultanées), suspendu = connexion refusée sans rien supprimer. Abonnements PayPal (webhook vérifié, contrôle quotidien) ; statut « à qualifier » jamais suspendu automatiquement. |
+| Comptes et abonnements | Page `/accounts` ou `homelabctl accounts|subs` : premium = compte actif (plafonds `[accounts] max_premium` et `max_playbacks_per_user`), suspendu = connexion refusée sans rien supprimer. Abonnements PayPal (webhook vérifié, contrôle quotidien) ; statut « à qualifier » jamais suspendu automatiquement. |
 | Côté membres | Mon compte (abonnement, appareils, mot de passe, langue VF/VO, taille des sous-titres, avancement des demandes), tchat intégré, Discord (salon des membres et salon admin), thème « Groscailloux TV », interface allégée sur téléviseur. |
 | Suppression depuis Jellyfin | `deletion_cleanup` : fiche Arr, fichiers et torrents (délai C411 respecté), média Jellyseerr libéré ; seulement pour ce qui est en attente ou en cours. |
 | Observabilité | Telegraf (hôte, Docker, cache rclone) → InfluxDB (30 j) → Grafana ; page d'état `/status.html` ; alertes par mail et dans le salon Discord admin. |
@@ -186,8 +187,8 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 
 | Tâche | Rythme | Rôle | Garde-fou |
 |---|---|---|---|
-| `series_search` | 10 min | saisons et épisodes manquants par TMDB | budget horaire par clé ; 60 épisodes au plus par saison ; pas d'œuvre dérivée |
-| `movie_search` | 5 min | films manquants par TMDB | français d'abord, ≤ 1080p, ≤ 15 Go ; attente de la VOD |
+| `series_search` | 10 min | saisons et épisodes manquants par TMDB | budget horaire par clé ; `max_grabs_per_season` épisodes au plus par saison ; pas d'œuvre dérivée |
+| `movie_search` | 5 min | films manquants par TMDB | français d'abord, ≤ 1080p, ≤ `[indexers] max_gb_per_movie` ; attente de la VOD |
 | `torrent_import` | 2 min | torrents étiquetés `homelab:` ou ajoutés à la main | hardlink ; jamais de remplacement ; pas de doublon entre machines |
 | `id_match_import` | 5 min | imports « matched by ID » | fichiers sans autre rejet |
 | `seedbox_refresh` | 5 min | imports seedbox → rclone + Jellyfin | curseur persistant |
@@ -206,11 +207,11 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 | `playback_limit` | 20 s | arrête la 3ᵉ lecture simultanée | comptes protégés exemptés |
 | `hls_loop_watch` | 5 min | client qui boucle sur un segment | alerte admin |
 | `stack_health` | 5 min | relance les conteneurs arrêtés ou unhealthy | 10 min entre deux relances ; relance ratée = alerte (1/h/service) |
-| `seedbox_health` | 5 min | applis et montage de la seedbox, quota | alerte après 10 min ; quota ≥ 85 % |
+| `seedbox_health` | 5 min | applis et montage de la seedbox, quota | alerte après 10 min ; quota ≥ `quota_alert_pct` |
 | `cert_watch` | 24 h | certificat TLS de NPM + `GET /health` par le nom public | alerte sous 21 jours ou chaîne cassée, chaque jour tant que ça dure |
 | `backup_watch` | 24 h | âge de la dernière archive d'état | alerte au-delà de 8 jours |
 | `diun_watch` | 24 h | `diun/images.yml` en contrôle strict | alerte tant qu'il est invalide |
-| `disk_pressure` | 15 min | disque VPS ≥ 95 % : vieux torrents arrêtés | alerte à 85 % ; hardlinks préservés ; ≥ 98 % journal seulement |
+| `disk_pressure` | 15 min | disque VPS ≥ `hard_pct` : vieux torrents arrêtés | alerte à `alert_pct` ; hardlinks préservés ; ≥ `crit_pct` journal seulement |
 | `tracker_ratio` | 30 min | limites de partage par tracker | C411 (deux domaines) illimité |
 | `cleanup` | 24 h | dossiers vides, corbeilles (14 j), vieux journaux | chemins existants seulement |
 | `user_poller` | 60 s | comptes créés dans Jellyseerr → onboarding | une fois par adresse |
@@ -225,7 +226,7 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 |---|---|
 | Lien seedbox | cache rclone de 120 Go (éviction avant le seuil du disque), blocs de 4 Mo, 32 connexions SFTP |
 | Transcodage | un seul transcodage 1080p tient en temps réel (pas de GPU) ; 65 % des lectures sont directes (30 j au 04/10/2026), le Chromecast fait 63 % des conversions vidéo |
-| tmpfs des transcodages | 4 Go, purgé chaque minute ; urgence à 85 % (sinon segments vides = « chargement infini ») |
+| tmpfs des transcodages | taille et seuil d'urgence : [CLAUDE.md § 4](../CLAUDE.md#4-valeurs-en-vigueur) ; purgé chaque minute (sinon segments vides = « chargement infini ») |
 | Tâches Jellyfin lourdes | fenêtre 05–13 h ; vignettes de défilement plus générées pour la seedbox |
 | Ajout d'un titre | aucune analyse qui lit la vidéo à l'ajout |
 | Qualité | bandeau « réduire la qualité » au 3ᵉ blocage, valable pour la seule lecture en cours |
@@ -238,10 +239,10 @@ Détail : [AUTOMATION.md](AUTOMATION.md).
 | Redémarrage du VPS | Docker relance les conteneurs ; Guacamole après guacdb ; une seule session de bureau VNC. | automatique |
 | Seedbox injoignable | Titres seedbox affichés mais illisibles, sans purge ; demandes en attente ; le test de lecture alerte. | automatique au retour |
 | Service unhealthy | `stack_health` le relance. | automatique |
-| Tâche qui plante | passage noté en échec, la tâche repasse à l'intervalle suivant ; 6 échecs de suite sur 30 min = alerte admin, puis message au retour. | automatique |
-| C411 en 429 | la clé est mise de côté 15 min, la requête repart sur l'autre. | automatique |
+| Tâche qui plante | passage noté en échec, la tâche repasse à l'intervalle suivant ; `[alerts] fail_streak` échecs de suite sur `fail_minutes` = alerte admin, puis message au retour. | automatique |
+| C411 en 429 | la clé est mise de côté `cooldown_after_429_mins`, la requête repart sur l'autre. | automatique |
 | Coupure du VPN | kill-switch : qBittorrent (VPS) sans réseau. | automatique |
-| Disque VPS ≥ 95 % | `disk_pressure` libère de la place. | manuel à ≥ 98 % |
+| Disque VPS ≥ `hard_pct` | `disk_pressure` libère de la place. | manuel à ≥ `crit_pct` |
 | Mauvaise mise à jour | images figées, config dans git ; une clé ajoutée à `homelab.toml` exige le nouveau binaire avant tout redémarrage. | `git checkout` + `docker compose up -d` |
 
 ## Sécurité

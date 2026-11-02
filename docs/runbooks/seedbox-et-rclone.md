@@ -37,7 +37,7 @@ place et arrêt de la seedbox : [DEPLOY.md](../DEPLOY.md#seedbox-optionnelle). S
 ## 3. Espace
 
 - **Espace = le quota du compte** (`quota -s` sur la seedbox : 3,7 To), pas le `df` du disque partagé. Le quota est aussi
-  lu par homelabd (`quota.json` écrit toutes les 15 min, alerte à `[tasks.seedbox_health] quota_alert_pct`, 85 %).
+  lu par homelabd (`quota.json` écrit toutes les 15 min, alerte à `[tasks.seedbox_health] quota_alert_pct`).
 - Les corbeilles des Arrs (`media/Movies/.recycle`, `media/TV Shows/.recycle`, purge 14 j) peuvent contenir des fichiers
   **partagés par inode avec la médiathèque** : toujours mesurer « exclusif / partagé » avant d'annoncer un gain.
 

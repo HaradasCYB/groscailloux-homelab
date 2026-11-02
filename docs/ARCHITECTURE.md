@@ -27,7 +27,7 @@ Les services s'adressent par nom de conteneur (`http://radarr:7878`) ; depuis l'
 | influxdb / telegraf / grafana | métriques hôte + conteneurs, rétention 30 j | `influxdb/`, `grafana/` (uid 472) |
 | glances | monitoring live | — |
 | diun | notification mail des nouveaux tags d'images (`diun/images.yml`) | `diun/` |
-| homelabd (hôte, pas un conteneur) | automatisation (33 tâches, dont `tba_bypass` désactivée et `media_mail`, mails « disponible » aux membres depuis le 15/10, + l'observateur `auto_import`) + pages web sur `:8766` (onboarding, comptes, recherche, état, Mon compte, tchat, premium) | `state/` |
+| homelabd (hôte, pas un conteneur) | automatisation (tâches de `registry()`, nombre au [§ 4 de CLAUDE.md](../CLAUDE.md#4-valeurs-en-vigueur), dont `tba_bypass` désactivée et `media_mail`, mails « disponible » aux membres depuis le 15/10, + l'observateur `auto_import`) + pages web sur `:8766` (onboarding, comptes, recherche, état, Mon compte, tchat, premium) | `state/` |
 
 Trois conteneurs montent `docker.sock` en lecture (homarr, portainer, glances/telegraf) ;
 glances tourne `privileged`. Toutes les images sont pinnées `tag@sha256`.
@@ -80,7 +80,7 @@ surtout de l'acheminement, et le remux passe lui aussi par le lien seedbox. Donc
 
 **Garde-fous qBittorrent** (mutex partagé dans homelabd) : share limits par tracker, remplacement
 des téléchargements bloqués > 8 h, suppression des torrents arrêtés les plus anciens quand le
-disque dépasse 95 %.
+disque dépasse `[tasks.disk_pressure] hard_pct`.
 
 **Utilisateurs.** Un compte = Jellyfin + import Jellyseerr + mail avec un lien à usage unique (`/bienvenue/<jeton>`,
 60 min) où le membre choisit son mot de passe, puis les premiers pas. Entrées : `/inscription` (publique, compte à

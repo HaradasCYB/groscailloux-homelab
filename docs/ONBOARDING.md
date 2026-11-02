@@ -45,7 +45,7 @@ accessible à tout moment sur `https://<onboarder>/premiers-pas`, et le guide co
 | Lecture qui saccade | Le bandeau « Réduire la qualité » apparaît au 3ᵉ blocage ; la qualité revient en Auto à la lecture suivante. |
 | VF / VO | **Mon compte → Langue de lecture**. VO = animés en japonais sur tous les appareils, langue d'origine des films et séries sur le web, Jellyfin Desktop et iPhone ; sous-titres français toujours. |
 | Titre introuvable | L'onglet **Demandes** dit où en est chaque demande (recherche, téléchargement, « pas encore sorti en VOD », « introuvable : l'administrateur est prévenu »). Recherche manuelle : `/recherche`. |
-| Trop d'appareils / 3ᵉ lecture coupée | Limite de 2 lectures simultanées par compte (comptes protégés exemptés). |
+| Trop d'appareils / 3ᵉ lecture coupée | Limite de lectures simultanées par compte, `[accounts] max_playbacks_per_user` (comptes protégés exemptés). |
 | Suspendre / réactiver | `/accounts` (interrupteur) ou `homelabctl accounts off|on <pseudo>`. Suspendu = connexion refusée, historique et favoris gardés. |
 | Supprimer | `/accounts` → Supprimer (confirmation dans la page) ou `homelabctl accounts delete <pseudo> --yes` (Jellyfin + Jellyseerr, définitif). |
 

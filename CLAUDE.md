@@ -151,7 +151,7 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 
 Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la source qui a raison (et la doc qu'on corrige).
 
-| Valeur | En vigueur (09/10) | Source de vérité |
+| Valeur | En vigueur (02/11) | Source de vérité |
 | --- | --- | --- |
 | Budget C411 | 40 requêtes/h **par clé**, 2 clés ; 10 gardées pour `/recherche` ; clé en 429 mise de côté 15 min | `homelab.toml` `[indexers]` `c411_max_per_hour`, `manual_reserve`, `cooldown_after_429_mins` |
 | Filet Prowlarr | 45 requêtes/h par indexeur C411 | Prowlarr, `queryLimit` de « C411 » et « C411 (2) » |
@@ -174,7 +174,7 @@ Une seule source de vérité par valeur : en cas d'écart avec une doc, c'est la
 | Tâche en échec | alerte après 6 échecs de suite et 30 min | `[alerts]` `fail_streak`, `fail_minutes` |
 | Boucles HLS | 20 demandes d'un segment en 5 min ; 30 ffmpeg par titre et par heure | `[tasks.hls_loop_watch]` `threshold`, `max_jobs_per_item_hour` |
 | Sauvegarde d'état | dimanche 04:30 (+ jusqu'à 15 min), 4 gardées | `systemd/homelab-backup.timer` ; `[backup] keep_last` |
-| Langue d'origine | films ; séries à partir du 10/10 07:05 (minuteur `lot4-ol-series`) ; 07:30–11:30 | `[tasks.original_language]` |
+| Langue d'origine | films et séries (séries depuis le 10/10) ; 07:30–11:30 | `[tasks.original_language]` `series`, `window_start`, `window_end` |
 | Mode VO | `jpn` ; « Langue d'origine » native préparée, **coupée** | `[accounts]` `vo_audio_language`, `vo_native`, `vo_native_clients`, `vo_native_ignored_clients`, `vo_native_days` |
 | Tchat | annonces de plus de 14 j lues d'office pour un compte neuf | `[chat] new_member_read_days` |
 | Tâches de homelabd | 34 (dont `red_list`, liste rouge calculée chaque jour, `tba_bypass`, désactivée, `vo_native_guard`, inactive tant que `vo_native = false`, et `media_mail`, mails « disponible » envoyés aux membres depuis le 15/10, agent e-mail de Seerr coupé) + l'observateur `auto_import` | `crates/homelab-core/src/tasks/mod.rs` `registry()` ; `[tasks] disabled` |
