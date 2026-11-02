@@ -2,8 +2,8 @@
 
 À lire avant de créer, suspendre ou supprimer un compte, de toucher aux mails, à la page `/premium`, à PayPal ou au cycle
 des abonnements. Procédure admin pas à pas : [ONBOARDING.md](../ONBOARDING.md). Détail des tâches :
-[AUTOMATION.md, Abonnés](../AUTOMATION.md#abonnés-et-cycle-premium-v118-2026-09-20) et
-[Comptes premium](../AUTOMATION.md#comptes-premium).
+[comptes-abonnements-mails.md, Abonnés](../automation/comptes-abonnements-mails.md#abonnés-et-cycle-premium-v118-2026-09-20) et
+[Comptes premium](../automation/comptes-abonnements-mails.md#comptes-premium).
 
 ## 1. Comptes
 
@@ -91,7 +91,7 @@ des abonnements. Procédure admin pas à pas : [ONBOARDING.md](../ONBOARDING.md)
   de rester clair sur un bleu devenu clair.
 - **Mails « disponible »** (tâche `media_mail`, 2026-10-15) : remplacent ceux de Jellyseerr et partent aux membres
   **depuis le 15/10** (`[tasks.media_mail] send_to_members = true`). Détection, regroupement, référence du premier
-  passage et garde-fous : [AUTOMATION.md](../AUTOMATION.md#media_mail--5-min-2026-10-15). Un membre qui répond
+  passage et garde-fous : [comptes-abonnements-mails.md](../automation/comptes-abonnements-mails.md#media_mail--5-min-2026-10-15). Un membre qui répond
   « stop » (ou clique « Se désabonner » dans Gmail, qui envoie un mail depuis son adresse) : son adresse, son pseudo ou
   son id Jellyfin dans `MEDIA_MAIL_OPTOUT` (`.env`), puis redémarrage de homelabd.
 - **Bascule du 15/10, voie 1 : agent e-mail de Seerr coupé** (décision du propriétaire, exemples validés). Le bloc

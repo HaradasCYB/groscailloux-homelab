@@ -184,7 +184,7 @@ qui saccade ou « charge à l'infini ». Tâches liées : [AUTOMATION.md](../AUT
   `language_mode` reconnaissant `jpn` et `OriginalLanguage`, libellé « VO (langue d'origine) ») → garder le script VO de
   Mon compte comme filet quelques semaines.
 - **Mode VO « Langue d'origine » (`[accounts] vo_native`, préparé le 08/10, coupé)** — détail dans
-  [AUTOMATION.md](../AUTOMATION.md) :
+  [jellyfin.md](../automation/jellyfin.md#mode-vo--langue-dorigine--vo_native-préparé-le-2026-10-08-coupé-par-défaut) :
   - À `true`, le mode VO pose `AudioLanguagePreference = "OriginalLanguage"` au lieu de `vo_audio_language` (jpn),
     seulement pour un compte chez qui aucun client hors de `vo_native_clients` (jellyfin-web et les applis qui
     l'embarquent) n'apparaît : ni dans ses lectures sur `vo_native_days` jours (Playback Reporting), ni dans ses
@@ -212,7 +212,7 @@ qui saccade ou « charge à l'infini ». Tâches liées : [AUTOMATION.md](../AUT
   fichier ; le lecteur attend ou abandonne (499). Réglé par `subtitle_sync` : extraction **sur la seedbox** à codec
   identique (`.fr.default.ass`, `.fr.forced.ass`, `.fr.hi.ass`, `.fr.srt`, SRT sans panneaux dérivé de l'ASS), puis
   FullRefresh de la fiche (seul moyen de voir un fichier annexe). Détail :
-  [AUTOMATION.md, subtitle_sync](../AUTOMATION.md#subtitle_sync--5-min).
+  [jellyfin.md, subtitle_sync](../automation/jellyfin.md#subtitle_sync--5-min).
 - **Ne jamais convertir l'ASS en SRT pour l'usage principal** : les lignes de panneaux (titre d'épisode, « PROCHAIN
   ÉPISODE ») se retrouvent en bas de l'image comme des mentions malentendants.
 - **Bazarr** = celui de la seedbox (profil « Français (+anglais) », `subsync` off, `use_embedded_subs = true`), rien sur

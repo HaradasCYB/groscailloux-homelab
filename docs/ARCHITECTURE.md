@@ -138,7 +138,7 @@ Le hook `hooks/qbit-update-port.sh` (monté `/gluetun/scripts`) reçoit le port 
   Jusqu'au 07/10, serde_json écrivait directement dans le fichier : ~38 000 `write` de 4 octets par sauvegarde, 66 % du
   CPU du démon dans le noyau. `homelabctl` l'ouvre en lecture seule et passe par `POST /admin/run` et `/admin/accounts`.
 - Alertes : `alerts::admin` (mail + Discord admin), trace de livraison dans l'état, règles dans
-  [AUTOMATION.md](AUTOMATION.md#alertes-admin-2026-10-07).
+  [surveillance-et-sante.md](automation/surveillance-et-sante.md#alertes-admin-2026-10-07).
 - Configuration : `homelab.toml` refuse les clés inconnues ; un test vérifie que les défauts du code sont ceux du
   fichier.
 

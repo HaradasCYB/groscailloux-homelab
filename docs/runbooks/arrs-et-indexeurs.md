@@ -34,7 +34,7 @@ propre runbook : [voie-russe.md](voie-russe.md).
   tâche pose elle-même, dans le Radarr de la seedbox, `availabilityDelay = -release_window_days` et le profil de délai
   par défaut (torrents retenus `vo_wait_hours` × 60 min sauf score ≥ `vo_wait_bypass_score`, protocole préféré
   torrent ; valeurs : [CLAUDE.md § 4](../../CLAUDE.md#4-valeurs-en-vigueur)) : les changer dans Radarr ne sert à rien,
-  ils sont remis au passage suivant (`docs/AUTOMATION.md`, movie_search).
+  ils sont remis au passage suivant (`docs/automation/recherche-et-indexeurs.md`, movie_search).
   - **Film français** : sans date, il n'est pas cherché avant 110 jours de salle (`awaiting_vod`) ; à partir de
     110 jours, il est cherché **même si Radarr le dit « pas encore sorti »** parce que TMDB n'a qu'une date de DVD ou
     une date numérique tardive (`vod_overdue`, même clé `min_days_after_cinema` ; *De Gaulle : Résistance*,
@@ -81,7 +81,7 @@ propre runbook : [voie-russe.md](voie-russe.md).
   identifiant seul, tant que son dernier épisode manquant est diffusé depuis au plus `release_window_hours` (1.30.4,
   cas *Dead-End Job* du 30/10). VOSTFR/VO plus récente que `vo_wait_hours` retenue hors animés (résultat
   `vo_wait`). Une saison dont un torrent étiqueté se télécharge dans qBittorrent n'est pas reprise. Coût au pire :
-  28 requêtes par saison introuvable sur 48 h. Détail : [AUTOMATION.md](../AUTOMATION.md#series_search--10-min-remplace-unknown_series_grab).
+  28 requêtes par saison introuvable sur 48 h. Détail : [recherche-et-indexeurs.md](../automation/recherche-et-indexeurs.md#series_search--10-min-remplace-unknown_series_grab).
 - « C411 (2) » utilise la clé RSS des Arrs (`C411_RSS_API_KEY`) : le RSS de la seedbox (deux Arrs, toutes les 15 min)
   n'est pas compté par homelabd. La **troisième clé** (autobrr) n'est comptée nulle part.
 - `[manual_search]` n'a que `c411_indexer`, `text_queries` et `results_ttl_mins` : la page `/recherche` puise dans le
@@ -118,7 +118,7 @@ propre runbook : [voie-russe.md](voie-russe.md).
   sans clé ni quota ; pas `c411_up`, qui lit l'état de la clé de recherche). Site en panne ⇒ rien n'est arrêté, résumé
   « C411 en panne : pause laissée », une alerte par incident (marqueur `c411_outage` dans `state.indexer_alerts`,
   retiré après 6 h sans panne constatée). Copies `*.homelab-*` de la seedbox purgées une fois par jour
-  (marqueur `purge:seedbox`). Détail : [AUTOMATION.md, indexer_unblock](../AUTOMATION.md#indexer_unblock--5-min).
+  (marqueur `purge:seedbox`). Détail : [recherche-et-indexeurs.md, indexer_unblock](../automation/recherche-et-indexeurs.md#indexer_unblock--5-min).
 
 ## 3. Profils et réglages des Arrs
 
@@ -221,7 +221,7 @@ propre runbook : [voie-russe.md](voie-russe.md).
   dernier manquant a au moins `integrale_min_age_days` (14) jours ; chaque fichier passe au `parse` de Sonarr (scene
   mapping : `02x01` → S01E14) ; torrent ajouté **arrêté**, autres fichiers désélectionnés, puis démarrage. Introuvable
   quand même : recherche Prowlarr en texte sans catégorie, puis la même recette à la main
-  ([AUTOMATION.md, series_search](../AUTOMATION.md#series_search--10-min-remplace-unknown_series_grab)).
+  ([recherche-et-indexeurs.md, series_search](../automation/recherche-et-indexeurs.md#series_search--10-min-remplace-unknown_series_grab)).
 - **Épisodes sans date** (TheTVDB date tard les séries françaises ; Sonarr exclut de `wanted/missing` tout épisode sans
   date) : `series_search` lit aussi les séries dont une saison suivie, commencée depuis moins de
   `undated_window_days` (730), est incomplète (`undated_missing`).
@@ -345,7 +345,7 @@ propre runbook : [voie-russe.md](voie-russe.md).
   une panne de C411) ; le bandeau de la page et la doc du code disent encore « plus Nyaa pour un animé » (texte périmé).
   Toutes les releases sont montrées et marquées (VOSTFR, hors profil, autre saison…) ; le choix reste à l'admin ;
   « Télécharger » passe par `series_search::send_release` (un magnet est ajouté au qBittorrent du côté concerné avec
-  l'étiquette `homelab:`). Détail : [AUTOMATION.md](../AUTOMATION.md#recherche-manuelle-recherche).
+  l'étiquette `homelab:`). Détail : [recherche-et-indexeurs.md](../automation/recherche-et-indexeurs.md#recherche-manuelle-recherche).
 
 ## 9. autobrr (seedbox) : flux C411 désactivé le 08/10
 

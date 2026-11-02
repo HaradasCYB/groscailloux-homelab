@@ -177,7 +177,7 @@ Tous les services passent par Nginx Proxy Manager (80/443). Les ports des conten
 |---|---|---|
 | 🗺️ | [docs/INFRA.md](docs/INFRA.md) | Vue d'ensemble avec schémas : machines, parcours d'une demande, stockage |
 | 🏗️ | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture et flux de données |
-| ⚙️ | [docs/AUTOMATION.md](docs/AUTOMATION.md) | Chaque tâche de homelabd, ses endpoints et ses garde-fous |
+| ⚙️ | [docs/AUTOMATION.md](docs/AUTOMATION.md) | Sommaire des tâches de homelabd ; détail par famille dans [docs/automation/](docs/automation/) |
 | 🚀 | [docs/DEPLOY.md](docs/DEPLOY.md) | Déploiement d'un hôte neuf, procédures |
 | 🔑 | [docs/SECRETS.md](docs/SECRETS.md) | Chaque variable de `.env` (aucune valeur ici) |
 | 👋 | [docs/ONBOARDING.md](docs/ONBOARDING.md) | Arrivée d'un membre, côté admin |

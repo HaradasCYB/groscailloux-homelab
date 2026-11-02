@@ -183,7 +183,7 @@ désordre et sans tenir compte des `depends_on`. Deux mécanismes compensent :
   jamais sa base et resterait « Up » avec un login cassé).
 - `homelabd.service` démarre ensuite et sa tâche `stack_health` fait une passe immédiate, puis
   toutes les 5 min : relance l'arrêté, redémarre l'`unhealthy` et ce dont la sonde échoue
-  (voir AUTOMATION.md).
+  (voir [surveillance-et-sante.md](automation/surveillance-et-sante.md#stack_health--5-min-première-passe-30-s-après-le-démarrage-de-homelabd)).
 
 Après un reboot : `docker compose ps`, `homelabctl status` (stack_health `last_ok`),
 `journalctl -u homelabd | grep stack_health`.

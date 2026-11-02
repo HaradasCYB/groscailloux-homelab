@@ -53,7 +53,7 @@ accessible à tout moment sur `https://<onboarder>/premiers-pas`, et le guide co
 
 - Statuts : actif, offert, exempté, **à qualifier** (compte actif sans abonnement connu : jamais suspendu
   automatiquement, à trancher sur `/accounts`), suspendu.
-- `homelabctl subs list | set | extend | link | import` ; paiements PayPal suivis par webhook (`AUTOMATION.md`,
+- `homelabctl subs list | set | extend | link | import` ; paiements PayPal suivis par webhook ([comptes-abonnements-mails.md](automation/comptes-abonnements-mails.md#abonnés-et-cycle-premium-v118-2026-09-20),
   `subscription_cycle`, `subscription_reconcile`).
 - Le cycle agit réellement depuis le 27/09/2026 (`[subscriptions] cycle_dry_run = false`), mais **seulement sur les essais de
   l'inscription publique et les abonnements PayPal** : toute autre fiche (actif ou offert posé par l'admin, essai posé à la

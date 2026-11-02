@@ -3,8 +3,8 @@
 À lire avant de toucher au tag `russe`, aux dossiers `Russian` de la seedbox, au Jackett ou au FlareSolverr de la
 seedbox, à la tâche `russian_search` ou au bouton « Chercher en russe » de Mon compte. Mise en place le 26/09 pour un
 membre ; c'est la seule exception à « C411 seul » et à « aucune recherche depuis les Arrs ». Tâches :
-[AUTOMATION.md, russian_search](../AUTOMATION.md#russian_search--10-min) et
-[anime_library](../AUTOMATION.md#anime_library--5-min).
+[recherche-et-indexeurs.md, russian_search](../automation/recherche-et-indexeurs.md#russian_search--10-min) et
+[anime_library](../automation/jellyfin.md#anime_library--5-min).
 
 ## Principe
 

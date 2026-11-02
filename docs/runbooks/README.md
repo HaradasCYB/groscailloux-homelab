@@ -65,7 +65,7 @@ Ancien CLAUDE.md = version de `main` à `bb33d63` (1 421 lignes, 153 066 octets)
 | Indexeur en pause (215) | [arrs-et-indexeurs.md § 2](arrs-et-indexeurs.md#c411-en-panne-indexeur-en-pause) |
 | Import non demandé par l'Arr (222) | [arrs-et-indexeurs.md § 6](arrs-et-indexeurs.md#6-imports) ; CLAUDE.md § 3 |
 | Arrêter un service volontairement (225) | [vps-docker-et-systeme.md § 1](vps-docker-et-systeme.md#1-compose-et-images) ; CLAUDE.md § 3 |
-| Alertes admin (228) | [homelabd.md § 4](homelabd.md#4-alertes-admin-et-discord) ; [AUTOMATION.md](../AUTOMATION.md#alertes-admin-2026-10-07) |
+| Alertes admin (228) | [homelabd.md § 4](homelabd.md#4-alertes-admin-et-discord) ; [surveillance-et-sante.md](../automation/surveillance-et-sante.md#alertes-admin-2026-10-07) |
 | Audit lecture du 18/09 (250) | [lecture-et-transcodage.md § 2-3](lecture-et-transcodage.md#2-fenêtre-des-tâches-lourdes-et-options-interdites), rclone → [seedbox-et-rclone.md § 4](seedbox-et-rclone.md#4-montage-rclone), récit → incidents 18/09 et 20/09 — **corrigé** : tmpfs 4 Go et `mem_limit` 6g (pas 2 Go / 4g), purge chaque minute par unités versionnées (pas « horaire, minuteur transitoire »), port 8096 fermé le 25/09, lien seedbox ~8–10 Mo/s par connexion (les « > 500 Mbit/s » étaient un agrégat) |
 | Lecture Jellyfin (293), Aucune option qui lit la vidéo (296), Médias en écriture (299) | [lecture-et-transcodage.md § 2](lecture-et-transcodage.md#2-fenêtre-des-tâches-lourdes-et-options-interdites) ; CLAUDE.md § 3 |
 | Clé rclone de la seedbox (304) | [seedbox-et-rclone.md § 4](seedbox-et-rclone.md#4-montage-rclone) |
@@ -104,7 +104,7 @@ Ancien CLAUDE.md = version de `main` à `bb33d63` (1 421 lignes, 153 066 octets)
 | Vue d'ensemble des membres (1012) | [jellyfin-interface.md § 10](jellyfin-interface.md#10-vue-densemble-des-membres) ; [arrs-et-indexeurs.md § 7](arrs-et-indexeurs.md#7-jellyseerr) |
 | Historique Arr (1018) | [arrs-et-indexeurs.md § 3](arrs-et-indexeurs.md#3-profils-et-réglages-des-arrs) ; CLAUDE.md § 3 |
 | Ports sur 127.0.0.1 (1021) | [vps-docker-et-systeme.md § 1](vps-docker-et-systeme.md#1-compose-et-images) ; CLAUDE.md § 3-4 |
-| Pages d'administration (1027) | [homelabd.md § 5](homelabd.md#5-pages-dadministration-crateshomelabdsrcadmin_authrs-client_addrrs) ; [AUTOMATION.md](../AUTOMATION.md#pages-dadministration-2026-09-23-portes-du-2026-10-07) |
+| Pages d'administration (1027) | [homelabd.md § 5](homelabd.md#5-pages-dadministration-crateshomelabdsrcadmin_authrs-client_addrrs) ; [demon-et-commandes.md](../automation/demon-et-commandes.md#pages-dadministration-2026-09-23-portes-du-2026-10-07) |
 | Profils compose (1054) | [vps-docker-et-systeme.md § 2](vps-docker-et-systeme.md#2-vpn-gluetun-et-qbittorrent) ; CLAUDE.md § 3 |
 | Journal des versions (1056) | CLAUDE.md § 3 « Git et versions » |
 | Nouvelle tâche (1059), Changement de comportement (1062) | [homelabd.md § 1](homelabd.md#1-changer-le-comportement-ou-le-code) ; CLAUDE.md § 3 |
@@ -172,7 +172,7 @@ Ancien CLAUDE.md = version de `main` à `bb33d63` (1 421 lignes, 153 066 octets)
 - Notes de la vague 1 du lot 4 (`backups/lot4-20261008/notes-doc-vague1.json`) : abonnés hors PayPal gérés à la main
   ([comptes-et-abonnements.md](comptes-et-abonnements.md)), « Aide et annonces » ([tchat.md](tchat.md)), outillage
   `tools/` ([outils-bancs-et-hors-pic.md](outils-bancs-et-hors-pic.md)), rapport `catalogue_report`
-  ([AUTOMATION.md](../AUTOMATION.md)), tâche `original_language` et essai de la préférence audio native
+  ([catalogue-et-suppressions.md](../automation/catalogue-et-suppressions.md#catalogue_report--24-h-2026-10-08)), tâche `original_language` et essai de la préférence audio native
   ([lecture-et-transcodage.md § 7](lecture-et-transcodage.md#7-langue-audio-et-sous-titres-des-comptes)), autobrr
   ([arrs-et-indexeurs.md § 9](arrs-et-indexeurs.md#9-autobrr-seedbox--flux-c411-désactivé-le-0810)).
 - Règles durables du lot 3 (`backups/lot3-20261008/NOTES-DOC.txt`) : coreutils uutils (`head -n`/`tail -n`), fenêtre de

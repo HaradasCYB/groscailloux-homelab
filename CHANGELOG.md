@@ -20,7 +20,7 @@ au 05/10) est découpée en 1.19.1, 1.20.0 et 1.21.0, et l'ancienne « 1.20.0 »
 | [1.30.4](#1304--30102026--série-sortie-le-jour-même-reprise-toutes-les-2-h) | 30/10/2026 | Série sortie le jour même reprise toutes les 2 h |
 | [1.30.3](#1303--30102026--films-français-cherchés-malgré-une-date-tmdb-tardive) | 30/10/2026 | Films français cherchés malgré une date TMDB tardive |
 | [1.30.2](#1302--29102026--une-saison-non-demandée-nest-plus-téléchargée) | 29/10/2026 | Une saison non demandée n'est plus téléchargée |
-| [1.30.1](#1301--29102026--saisons-netflix-en-parties-rangées-dans-la-bonne-saison) | 29/10/2026 | Saisons Netflix en « Parties » rangées dans la bonne saison |
+| [1.30.1](#1301--29102026--saisons-netflix-en--parties--rangées-dans-la-bonne-saison) | 29/10/2026 | Saisons Netflix en « Parties » rangées dans la bonne saison |
 | [1.30.0](#1300--27102026---continuer-à-regarder--à-la-carte-et-filtre-de-durée) | 27/10/2026 | « Continuer à regarder » à la carte et filtre de durée |
 | [1.29.0](#1290--21102026--liste-rouge-et-imports-partiels-signalés) | 21/10/2026 | Liste rouge et imports partiels signalés |
 | [1.28.0](#1280--15102026--mails-aux-couleurs-de-groscailloux-tv) | 15/10/2026 | Mails aux couleurs de Groscailloux TV |
@@ -127,7 +127,7 @@ elle est reprise toutes les 2 h pendant 48 h (commit 0111e5d).
 - **Trois clés ajoutées** à `[tasks.series_search]` (`release_window_hours`, `release_retry_hours`, `vo_wait_hours`) :
   installer homelabd **et** homelabctl ensemble (`deny_unknown_fields`). État : `latest_air` et `full_at` ajoutés aux
   enregistrements de saison (un ancien binaire les ignore). Détail :
-  [AUTOMATION.md](docs/AUTOMATION.md#series_search--10-min-remplace-unknown_series_grab) et
+  [recherche-et-indexeurs.md](docs/automation/recherche-et-indexeurs.md#series_search--10-min-remplace-unknown_series_grab) et
   [arrs-et-indexeurs.md](docs/runbooks/arrs-et-indexeurs.md).
 
 ## 1.30.3 — 30/10/2026 — Films français cherchés malgré une date TMDB tardive
@@ -152,7 +152,7 @@ date de DVD ou une date numérique encore à venir (bfaeb6b).
   inconnue, quel que soit le profil (`PRE_RELEASE_QUALITIES`).
 - Onglet Demandes : un film français sans date en attente de sa VOD affiche « VOD vers le … » même avant 90 jours de
   salle (il affichait « Pas encore sorti en numérique »). Détail :
-  [AUTOMATION.md](docs/AUTOMATION.md#movie_search--5-min) et [arrs-et-indexeurs.md](docs/runbooks/arrs-et-indexeurs.md).
+  [recherche-et-indexeurs.md](docs/automation/recherche-et-indexeurs.md#movie_search--5-min) et [arrs-et-indexeurs.md](docs/runbooks/arrs-et-indexeurs.md).
 
 ## 1.30.2 — 29/10/2026 — Une saison non demandée n'est plus téléchargée
 
@@ -175,7 +175,7 @@ n'est plus cherchée ni téléchargée par homelabd (936d65a).
   comme avant ; le suivi et les mises à niveau par le RSS de Sonarr ne changent pas. Jellyseerr est
   lu après les fiches Sonarr, en entier : illisible ou lu en partie, le passage échoue sans aucune requête à
   l'indexeur. Résumé : `not_requested=<n>` ; détail par saison en `debug`. Aucune clé ajoutée à `homelab.toml`.
-  Détail : [AUTOMATION.md](docs/AUTOMATION.md#series_search--10-min-remplace-unknown_series_grab) et
+  Détail : [recherche-et-indexeurs.md](docs/automation/recherche-et-indexeurs.md#series_search--10-min-remplace-unknown_series_grab) et
   [arrs-et-indexeurs.md](docs/runbooks/arrs-et-indexeurs.md).
 
 ## 1.30.1 — 29/10/2026 — Saisons Netflix en « Parties » rangées dans la bonne saison
@@ -344,7 +344,7 @@ mail dans sa propre boîte avant de valider (8550908).
   enverrait pendant que Seerr envoie encore). `homelabctl run media_mail --dry-run` prend la même décision que le
   passage réel. Retour arrière (`send_to_members = false`, restart, agent de Seerr réactivé) :
   [comptes-et-abonnements.md § 2](docs/runbooks/comptes-et-abonnements.md#2-onboarding-et-mails),
-  [AUTOMATION.md](docs/AUTOMATION.md#media_mail--5-min-2026-10-15).
+  [comptes-abonnements-mails.md](docs/automation/comptes-abonnements-mails.md#media_mail--5-min-2026-10-15).
 - **`homelabctl mail-test` montre chaque mail** : `--all` envoie un exemple de chacun des 17 mails aux membres (compte
   fictif « Exemple », objet « [Exemple] … », 2 s d'écart, vrais titres arrivés pour « disponible »), `--kind <type>` un
   seul ; `--dump <dossier>` les écrit en `.html` (images à côté), `.eml` et `.txt` sans homelabd ni envoi. Sans option,

@@ -17,7 +17,7 @@ fait tout). Deux machines : le **VPS** (lecture, recherche, automatisation, bibl
 | --- | --- |
 | [docs/INFRA.md](docs/INFRA.md) | vue d'ensemble avec schémas : machines, parcours d'une demande, stockage, résilience |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | services, flux, réseau, sécurité des accès, homelabd en bref |
-| [docs/AUTOMATION.md](docs/AUTOMATION.md) | chaque tâche de homelabd, ses états, ses réglages et ses garde-fous |
+| [docs/AUTOMATION.md](docs/AUTOMATION.md) | sommaire des tâches de homelabd (une ligne par tâche) ; le détail, par famille, dans [docs/automation/](docs/automation/) : états, réglages, garde-fous |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | hôte neuf, mise à jour, VPN, seedbox, sauvegarde et restauration, démarrage |
 | [docs/SECRETS.md](docs/SECRETS.md) | chaque variable de `.env` (noms seulement) et leur rotation |
 | [docs/ONBOARDING.md](docs/ONBOARDING.md) | arrivée d'un membre, côté admin |
@@ -93,7 +93,7 @@ tools/bench/bench.sh <scénario> <appareils>   # seul lanceur de banc d'interfac
 - **`deny_unknown_fields`** : une clé ajoutée à `homelab.toml` impose d'installer **homelabd ET homelabctl** dans la foulée ; ne pas fusionner dans `main` une clé nouvelle avant la fenêtre d'installation.
 - **Installer depuis l'arbre de travail de `/opt/homelab`, jamais depuis un worktree** ; une cible cargo (`CARGO_TARGET_DIR`) par worktree.
 - Après un redémarrage de homelabd : `git status --short`, `curl` d'une route d'une autre session (ex. `/premium`), `homelabctl check`.
-- Nouvelle tâche : module dans `tasks/`, `registry()`, `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run, tests de la décision, paragraphe dans AUTOMATION.md.
+- Nouvelle tâche : module dans `tasks/`, `registry()`, `[tasks.<nom>]` dans `config.rs` + `homelab.toml`, dry-run, tests de la décision, paragraphe dans le fichier de sa famille sous `docs/automation/` et sa ligne dans le sommaire `docs/AUTOMATION.md`.
 - homelabd est cloisonné (`ProtectSystem=strict`) : tout nouveau dossier écrit va dans `ReadWritePaths` de `systemd/homelabd.service`.
 - Un GET **à effet** (recherche ou téléchargement Prowlarr, `release` d'un Arr, canari) n'est jamais rejoué : `.send()`, pas `send_retry`.
 - Une alerte n'est notée « signalée » que si elle est partie (`alerts::retry_later`) ; jamais de seuil `/health` par tâche.

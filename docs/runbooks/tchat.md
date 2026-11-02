@@ -2,7 +2,7 @@
 
 À lire avant de toucher au tchat (`homelab_core::chat`, API `crates/homelabd/src/chat_api.rs`, client
 `crates/homelabd/assets/chat/app.js`), à sa route NPM ou à ses mails. Détail de l'API et des mails :
-[AUTOMATION.md, Tchat des membres](../AUTOMATION.md#tchat-des-membres). Réglages : `homelab.toml` `[chat]`.
+[comptes-abonnements-mails.md, Tchat des membres](../automation/comptes-abonnements-mails.md#tchat-des-membres). Réglages : `homelab.toml` `[chat]`.
 
 ## 1. Chemin et identité
 

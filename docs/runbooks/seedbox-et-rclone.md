@@ -118,7 +118,7 @@ place et arrêt de la seedbox : [DEPLOY.md](../DEPLOY.md#seedbox-optionnelle). S
 - **Supprimer des titres : la voie normale est la page `/accounts/liste-rouge`** (« Exempter », « Nettoyer », « Nettoyer
   ce titre » ; simulation tant que `[tasks.red_list] clean_dry_run = true`) : elle refait le calcul, revérifie chaque
   titre (exemption, lecture en cours, fiche inchangée), sauvegarde les fiches et enchaîne les étapes ci-dessous. Détail :
-  [AUTOMATION.md](../AUTOMATION.md) (`red_list`).
+  [catalogue-et-suppressions.md](../automation/catalogue-et-suppressions.md#red_list--24-h-2026-10-20) (`red_list`).
 - **Secours, à la main** (titre hors liste rouge, homelabd indisponible ; modèle
   `backups/seedbox-cleanup-20260925/delete.py`, `--dry-run` d'abord, fiches sauvegardées) : fiche Radarr/Sonarr **avec** fichiers, torrents liés (par inode, sauf délai C411), **dossier du titre
   dans la corbeille de l'Arr** (sinon rien n'est libéré avant 14 j), fiche média Jellyseerr, puis `vfs/refresh` et
