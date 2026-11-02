@@ -1,10 +1,12 @@
 //! Identité visuelle commune des pages servies par homelabd (« Groscailloux TV » : noir + bleu galet, façon
 //! Apple/Netflix). Mêmes jetons que les mails (`homelab_core::mail_layout`) et que l'habillage de Jellyfin
-//! (`branding/jellyfin/groscailloux-tv.css`) : un changement de couleur se fait dans les trois.
+//! (`branding/jellyfin/groscailloux-tv.css`) : un changement de couleur se fait dans les trois. Référence de la DA
+//! (jetons, composants, à faire / à éviter) : `docs/DESIGN.md`.
 //!
 //! - [`TOKENS`] : variables CSS (`:root`) ; [`BASE_CSS`] : composants partagés (en-tête, carte, titres, champs,
 //!   boutons, notices, tableaux et pastilles d'administration) ;
-//! - [`page`] : squelette HTML unique (`lang="fr"`, viewport, `theme-color`, icône), le titre est échappé ;
+//! - [`page`] : squelette HTML unique (`lang="fr"`, viewport, `theme-color`, `noindex`, icône), le titre est
+//!   échappé ;
 //! - [`logo`] : `GET /assets/logo.png`, le galet de `branding/jellyfin/logo/icon-transparent.png`, public.
 //!
 //! Aucune ressource externe : police système, aucun script, aucune URL absolue (les pages publiques ne doivent
@@ -42,6 +44,7 @@ color-scheme:dark;
 
 /// Composants communs. Les pages n'ajoutent que leurs règles propres (`extra_css` de [`page`]).
 pub const BASE_CSS: &str = r#"*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:16px/1.55 var(--font);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow-wrap:break-word}
 img{max-width:100%;height:auto}
@@ -115,13 +118,13 @@ tbody tr:hover td{background:rgba(255,255,255,.025)}
 
 /// Page complète : `title` est échappé ; `body_html` (déjà échappé par l'appelant) va dans `<main>` sous
 /// l'en-tête ; `extra_css` (constante du code, jamais une saisie) suit [`BASE_CSS`].
-#[allow(dead_code)] // branché par les lots 2.A à 2.F de la refonte
 pub fn page(title: &str, body_html: &str, extra_css: &str) -> String {
     debug_assert!(!extra_css.to_ascii_lowercase().contains("</style"));
     let mut out = String::with_capacity(TOKENS.len() + BASE_CSS.len() + body_html.len() + 1024);
     out.push_str("<!doctype html>\n<html lang=\"fr\">\n<head>\n<meta charset=\"utf-8\">\n");
     out.push_str("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n");
     out.push_str("<meta name=\"theme-color\" content=\"#08090b\">\n<meta name=\"color-scheme\" content=\"dark\">\n");
+    out.push_str("<meta name=\"robots\" content=\"noindex\">\n");
     out.push_str("<title>");
     out.push_str(&esc(title));
     out.push_str("</title>\n");
@@ -176,6 +179,8 @@ mod tests {
         assert!(html.starts_with("<!doctype html>\n<html lang=\"fr\">"));
         assert!(html.contains("name=\"viewport\" content=\"width=device-width,initial-scale=1\""));
         assert!(html.contains("<meta name=\"theme-color\" content=\"#08090b\">"));
+        // aucune page de homelabd n'est à indexer (inscription, liens de bienvenue, administration)
+        assert!(html.contains("<meta name=\"robots\" content=\"noindex\">"));
         assert!(html.contains("rel=\"icon\" type=\"image/png\" href=\"/assets/logo.png\""));
         assert!(html.contains("Groscailloux <span class=\"gc-tv\">TV</span>"));
     }

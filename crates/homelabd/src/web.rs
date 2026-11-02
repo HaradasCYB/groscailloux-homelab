@@ -31,11 +31,12 @@ use tracing::{info, warn};
 
 use crate::admin_auth::token_matches;
 use crate::client_addr::Client;
-use crate::{accounts_page, guide, status_page};
+use crate::{accounts_page, guide, status_page, ui};
+use homelab_core::html::esc;
 
-const INDEX_HTML: &str = include_str!("../assets/index.html");
-const BIENVENUE_HTML: &str = include_str!("../assets/bienvenue.html");
-const INSCRIPTION_HTML: &str = include_str!("../assets/inscription.html");
+/// Scripts en ligne des pages de bienvenue (`/bienvenue`, `/premiers-pas`) et de l'onboarding admin (`GET /`).
+const WELCOME_JS: &str = include_str!("../assets/bienvenue.js");
+const ONBOARD_ADMIN_JS: &str = include_str!("../assets/onboard-admin.js");
 const PREMIUM_HTML: &str = include_str!("../assets/premium.html");
 const PREMIUM_ACTIVATE_HTML: &str = include_str!("../assets/premium-activate.html");
 const PREMIUM_MERCI_HTML: &str = include_str!("../assets/premium-merci.html");
@@ -128,8 +129,54 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
     Ok(())
 }
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+async fn index() -> Html<String> {
+    Html(index_page())
+}
+
+/// Règles propres à l'onboarding admin (résultat, identifiants, notification « Copié ! »), sur [`ui::BASE_CSS`].
+const INDEX_CSS: &str = r#".ob form{margin-top:8px}
+.spinner{display:none;width:16px;height:16px;border:2px solid rgba(11,11,12,.25);border-top-color:var(--btn-text);border-radius:50%;animation:gc-spin .8s linear infinite}
+button.loading .spinner{display:inline-block}
+@keyframes gc-spin{to{transform:rotate(360deg)}}
+.result{display:none;margin-top:24px;padding:20px;background:var(--bg);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:var(--r-md)}
+.result.visible{display:block}
+.result.success{border-left-color:var(--ok)}
+.result.error{border-left-color:var(--err)}
+.result-title{margin:0 0 14px;font-size:1.05rem}
+.result.success .result-title{color:var(--ok)}
+.result.error .result-title{color:#ff8a8a}
+.creds{background:var(--raised);border-radius:var(--r-md);padding:14px 16px;font:.875rem/1.7 var(--mono);overflow-wrap:anywhere}
+.creds .key{color:var(--accent-hover)}
+.creds .pwd{color:var(--strong);font-weight:700}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.actions button{flex:1 1 10rem}
+.error-msg{color:#ff8a8a;margin:0}
+.note{font-size:.875rem;color:var(--dim);margin:12px 0 0}
+.footer{margin:24px 0 0;text-align:center;font-size:.8125rem;color:var(--dim)}
+.toast{position:fixed;left:50%;bottom:24px;z-index:100;transform:translate(-50%,120px);visibility:hidden;max-width:calc(100% - 32px);background:var(--raised);color:var(--text);border:1px solid var(--line);border-left:4px solid var(--ok);border-radius:var(--r-md);padding:10px 16px;font-weight:600;transition:transform .2s ease,visibility .2s}
+.toast.visible{transform:translate(-50%,0);visibility:visible}"#;
+
+/// Onboarding admin (`GET /`, derrière la session d'administration) : formulaire, résultat et script
+/// `assets/onboard-admin.js` (identifiants `onboardForm`, `submitBtn`, `result`, `toast`, `username`, `email`).
+fn index_page() -> String {
+    let body = format!(
+        r#"<div class="gc-narrow"><section class="card ob" aria-labelledby="ob-title">
+<h1 id="ob-title">Onboarder</h1>
+<p class="lead">Créer un nouveau compte utilisateur</p>
+<form id="onboardForm">
+<div class="field"><label for="username">Username</label><input type="text" id="username" name="username" placeholder="ex: hippo" required pattern="[a-zA-Z0-9_-]{{2,32}}" autocomplete="off" autofocus></div>
+<div class="field"><label for="email">Email</label><input type="email" id="email" name="email" placeholder="hippo@example.com" required autocomplete="off"></div>
+<button type="submit" id="submitBtn" class="block"><span class="spinner" aria-hidden="true"></span><span class="label">Créer le compte</span></button>
+</form>
+<div id="result" class="result" aria-live="polite"></div>
+<p class="footer">🎬 Jellyfin · 🎯 Jellyseerr · ✉️ Mail unifié · homelabd</p>
+</section></div>
+<div id="toast" class="toast" role="status" aria-live="polite">Copié !</div>
+<script>
+{js}</script>"#,
+        js = ONBOARD_ADMIN_JS
+    );
+    ui::page("Groscailloux — Onboarder", &body, INDEX_CSS)
 }
 
 /// Guide des nouveaux membres (public, lien du mail de bienvenue).
@@ -215,8 +262,8 @@ fn premium_page(
             "{{SUBSCRIBE_URL}}",
             &format!("{host}/webapps/billing/plans/subscribe?plan_id={plan_id}"),
         )
-        .replace("{{COMPTE}}", &page_esc(compte))
-        .replace("{{PRICE}}", &page_esc(price))
+        .replace("{{COMPTE}}", &esc(compte))
+        .replace("{{PRICE}}", &esc(price))
         .replace("{{DEJA}}", if deja { "1" } else { "0" })
 }
 
@@ -281,14 +328,14 @@ async fn premium_merci(
     let jusqu = q
         .get("jusqu")
         .filter(|j| !j.is_empty())
-        .map(|j| format!(" jusqu'au {}", page_esc(j)))
+        .map(|j| format!(" jusqu'au {}", esc(j)))
         .unwrap_or_default();
     let html = PREMIUM_MERCI_HTML
-        .replace("{{COMPTE}}", &page_esc(compte))
+        .replace("{{COMPTE}}", &esc(compte))
         .replace("{{JUSQU}}", &jusqu)
         .replace(
             "{{JELLYFIN_URL}}",
-            &page_esc(&st.ctx.secrets.jellyfin_public_url),
+            &esc(&st.ctx.secrets.jellyfin_public_url),
         );
     let mut resp = Html(html).into_response();
     resp.headers_mut().insert(
@@ -894,19 +941,69 @@ async fn rate_limited(st: &AppState, ip: &str) -> bool {
     false
 }
 
-fn page_esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
+/// Familles de pages membres : chacune garde le titre d'onglet de son ancien gabarit ; seules les pages de
+/// bienvenue portent le script `assets/bienvenue.js` (copie de l'adresse, contrôle du mot de passe).
+#[derive(Clone, Copy)]
+enum Public {
+    /// `/bienvenue/…` (mot de passe, accès, lien expiré, renouvellement) et `/premiers-pas`.
+    Welcome,
+    /// `/inscription` (formulaire et réponse).
+    Signup,
 }
 
-fn public_page(tpl: &str, heading: &str, body: &str, status: StatusCode) -> Response {
-    let html = tpl
-        .replace("{{heading}}", &page_esc(heading))
-        .replace("{{body}}", body);
-    let mut resp = (status, Html(html)).into_response();
+/// Règles propres aux pages membres (sur [`ui::BASE_CSS`]) : carte étroite centrée, case à cocher, champ
+/// leurre, identifiant, premiers pas dépliables.
+const PUBLIC_CSS: &str = r#".gc-public h1{margin-bottom:.4em}
+.gc-public form{margin-top:8px}
+.gc-public form .btn,.links .btn{width:100%}
+.dim{color:var(--dim);font-size:.9375rem}
+.opt{font-weight:400;color:var(--dim)}
+.field+.hint{margin-top:-8px}
+label.check{display:flex;gap:10px;align-items:flex-start;font-weight:400;font-size:.9375rem;line-height:1.45;color:var(--dim);margin:0 0 20px}
+label.check input{flex:none;width:20px;height:20px;margin:1px 0 0}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;opacity:0}
+.links{display:grid;gap:10px;margin:18px 0 6px}
+.who{font:1rem/1.4 var(--mono);background:var(--raised);border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px;margin:0 0 4px;overflow-wrap:anywhere}
+.foot{margin:22px 0 0;font-size:.875rem;color:var(--dim)}
+.gc-narrow:has(.steps){max-width:40rem}
+.steps{display:grid;gap:20px;margin-top:28px}
+.step{display:grid;grid-template-columns:32px 1fr;gap:14px;align-items:start}
+.step .n{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;font-weight:700;font-size:.875rem;color:var(--strong);background:rgba(47,143,255,.14);border:1px solid var(--accent)}
+.step h2{margin:3px 0 6px;font-size:1.125rem;letter-spacing:-.015em}
+.step p{font-size:.9375rem;margin-bottom:8px}
+.sc{min-width:0}
+.addr{display:flex;gap:8px;align-items:stretch;margin:0 0 12px}
+.addr code{display:flex;align-items:center;flex:1;min-width:0;overflow-wrap:anywhere;font-size:.875rem;background:var(--raised);border:1px solid var(--line);border-radius:var(--r-md);padding:9px 12px}
+.addr .copy{flex:none;padding:8px 14px;font-size:.875rem}
+details{border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg);margin:0 0 8px}
+details summary{cursor:pointer;padding:11px 14px;font-weight:600;font-size:.9375rem}
+details summary:hover{color:var(--strong)}
+details[open] summary{border-bottom:1px solid var(--line)}
+details p{padding:10px 14px 0}
+details p:last-child{padding-bottom:10px}
+.qc{color:var(--dim)}
+@media (max-width:420px){.step{grid-template-columns:1fr;gap:6px}}"#;
+
+/// Page membre complète (fonction pure) : `heading` est échappé, `body` est du HTML déjà échappé.
+fn public_html(kind: Public, heading: &str, body: &str) -> String {
+    let (title, script) = match kind {
+        Public::Welcome => ("Bienvenue sur Groscailloux", Some(WELCOME_JS)),
+        Public::Signup => ("Créer un compte Groscailloux", None),
+    };
+    let mut main = format!(
+        "<div class=\"gc-narrow\"><div class=\"card gc-public\">\n<h1>{}</h1>\n{body}\n</div></div>",
+        esc(heading)
+    );
+    if let Some(js) = script {
+        main.push_str("\n<script>\n");
+        main.push_str(js);
+        main.push_str("</script>");
+    }
+    ui::page(title, &main, PUBLIC_CSS)
+}
+
+fn public_page(kind: Public, heading: &str, body: &str, status: StatusCode) -> Response {
+    let mut resp = (status, Html(public_html(kind, heading, body))).into_response();
     resp.headers_mut().insert(
         axum::http::header::CACHE_CONTROL,
         axum::http::HeaderValue::from_static("no-store"),
@@ -928,25 +1025,25 @@ fn jellyfin_host(s: &homelab_core::config::Secrets) -> String {
 /// `/premiers-pas`.
 /// Blocs dépliables plutôt qu'onglets : aucun JavaScript nécessaire (téléviseurs, WebView).
 fn first_steps(s: &homelab_core::config::Secrets) -> String {
-    let host = page_esc(&jellyfin_host(s));
-    let jf = page_esc(&s.jellyfin_public_url);
-    let js = page_esc(&s.jellyseerr_public_url);
+    let host = esc(&jellyfin_host(s));
+    let jf = esc(&s.jellyfin_public_url);
+    let js = esc(&s.jellyseerr_public_url);
     let guide = s
         .onboard_public_url
         .as_deref()
-        .map(|u| format!("{}/guide", page_esc(u.trim_end_matches('/'))))
+        .map(|u| format!("{}/guide", esc(u.trim_end_matches('/'))))
         .unwrap_or_else(|| "/guide".into());
     let discord = s
         .guide_contact_discord
         .as_deref()
-        .map(|d| format!(" Sur Discord, écris à <b>{}</b>.", page_esc(d)))
+        .map(|d| format!(" Sur Discord, écris à <b>{}</b>.", esc(d)))
         .unwrap_or_default();
     let quick = r#"<p class="qc"><b>Connexion sans clavier :</b> sur la télé, choisis <b>Quick Connect</b>. Un code s'affiche ; sur ton téléphone déjà connecté, touche ton profil (en haut à droite) → <b>Quick Connect</b> → saisis le code.</p>"#;
     format!(
         r#"<section class="steps" aria-label="Premiers pas">
 <div class="step"><div class="n">1</div><div class="sc"><h2>Ton écran</h2>
 <p class="dim">Adresse du serveur, à saisir une seule fois dans l'appli :</p>
-<div class="addr"><code id="gc-host">{host}</code><button type="button" class="copy" data-copy="{host}">Copier</button></div>
+<div class="addr"><code id="gc-host">{host}</code><button type="button" class="btn secondary copy" data-copy="{host}">Copier</button></div>
 <details><summary>Télé Android, Google TV, Fire TV, Shield</summary><p>Installe <b>Jellyfin</b> depuis le Play Store ou l'Appstore Amazon, puis saisis l'adresse.</p>{quick}</details>
 <details><summary>Télé LG</summary><p>Installe <b>Jellyfin</b> depuis le LG Content Store, puis saisis l'adresse.</p>{quick}</details>
 <details><summary>Télé Samsung</summary><p>Cherche <b>Jellyfin</b> dans le store de la télé. S'il n'y est pas, le plus simple est une clé Fire TV ou Google TV, ou de diffuser depuis ton téléphone.</p></details>
@@ -972,11 +1069,11 @@ fn access_block(st: &AppState, username: &str, premium: bool) -> String {
     };
     format!(
         r#"{pending}<p class="dim">Ton identifiant (le même partout) :</p><div class="who">{user}</div>
-<div class="links"><a class="btn" href="{jf}">Regarder : ouvrir Groscailloux</a><a class="btn ghost" href="{js}">Demander un film ou une série</a></div>
+<div class="links"><a class="btn" href="{jf}">Regarder : ouvrir Groscailloux</a><a class="btn secondary" href="{js}">Demander un film ou une série</a></div>
 {steps}"#,
-        user = page_esc(username),
-        jf = page_esc(&s.jellyfin_public_url),
-        js = page_esc(&s.jellyseerr_public_url),
+        user = esc(username),
+        jf = esc(&s.jellyfin_public_url),
+        js = esc(&s.jellyseerr_public_url),
         steps = first_steps(s),
     )
 }
@@ -988,10 +1085,10 @@ async fn first_steps_page(State(st): State<AppState>) -> Response {
         r#"<p>Quatre minutes pour tout installer : ton écran, ta langue, ta première demande.</p>
 <div class="links"><a class="btn" href="{jf}">Regarder : ouvrir Groscailloux</a></div>
 {steps}"#,
-        jf = page_esc(&s.jellyfin_public_url),
+        jf = esc(&s.jellyfin_public_url),
         steps = first_steps(s),
     );
-    public_page(BIENVENUE_HTML, "Premiers pas", &body, StatusCode::OK)
+    public_page(Public::Welcome, "Premiers pas", &body, StatusCode::OK)
 }
 
 fn password_form(username: &str, token: &str, demo: bool) -> String {
@@ -1000,18 +1097,18 @@ fn password_form(username: &str, token: &str, demo: bool) -> String {
 <div class="field"><label for="pw">Choisis ton mot de passe</label><input id="pw" name="pw" type="password" minlength="8" maxlength="128" required autocomplete="new-password" autofocus{dis}></div>
 <div class="field"><label for="pw2">Confirme-le</label><input id="pw2" name="pw2" type="password" minlength="8" maxlength="128" required autocomplete="new-password"{dis}></div>
 <p class="hint">8 caractères minimum, sans ton pseudo dedans. Il servira pour regarder et pour demander des titres.</p>
-<div id="pw-err" class="notice err" hidden></div>
+<div id="pw-err" class="notice err" aria-live="polite" hidden></div>
 <button id="pw-btn" class="btn" type="submit" disabled>Enregistrer mon mot de passe</button>
 </form>"#,
-        token = page_esc(token),
-        user = page_esc(username),
+        token = esc(token),
+        user = esc(username),
         dis = if demo { " disabled" } else { "" },
     )
 }
 
 fn expired_page() -> Response {
     public_page(
-        BIENVENUE_HTML,
+        Public::Welcome,
         "Ce lien n'est plus valable",
         r#"<p>Un lien de bienvenue ne sert qu'une fois et expire au bout d'une heure. Indique l'adresse e-mail de ton compte : si elle est connue, tu recevras un nouveau lien pour définir (ou changer) ton mot de passe.</p>
 <form method="post" action="/bienvenue/renouveler"><div class="field"><label for="email">Ton adresse e-mail</label><input id="email" name="email" type="email" required autocomplete="email"></div><button class="btn" type="submit">Recevoir un nouveau lien</button></form>
@@ -1050,11 +1147,11 @@ async fn welcome_get(State(st): State<AppState>, Path(token): Path<String>) -> R
     };
     let body = format!(
         r#"<p>Ton compte <b>{user}</b> est prêt. Il ne reste qu'à choisir ton mot de passe.</p>{note}{form}"#,
-        user = page_esc(&link.username),
+        user = esc(&link.username),
         form = password_form(&link.username, &token, demo),
     );
     public_page(
-        BIENVENUE_HTML,
+        Public::Welcome,
         &format!("Bienvenue, {} !", link.username),
         &body,
         StatusCode::OK,
@@ -1096,11 +1193,11 @@ async fn welcome_post(
     };
     if let Err(msg) = password_ok(&f.pw, &f.pw2, &link.username) {
         let body = format!(
-            r#"<div class="notice err">{msg}</div>{form}"#,
+            r#"<div class="notice err" role="alert">{msg}</div>{form}"#,
             form = password_form(&link.username, &token, false)
         );
         return public_page(
-            BIENVENUE_HTML,
+            Public::Welcome,
             &format!("Bienvenue, {} !", link.username),
             &body,
             StatusCode::BAD_REQUEST,
@@ -1111,11 +1208,11 @@ async fn welcome_post(
             r#"<div class="notice ok">Exemple : ici le mot de passe serait enregistré, puis le membre verrait ses accès.</div>{}"#,
             access_block(&st, &link.username, true)
         );
-        return public_page(BIENVENUE_HTML, "C'est prêt !", &body, StatusCode::OK);
+        return public_page(Public::Welcome, "C'est prêt !", &body, StatusCode::OK);
     }
     if st.ctx.dry_run {
         return public_page(
-            BIENVENUE_HTML,
+            Public::Welcome,
             "Dry-run",
             "<p>Aucune écriture en dry-run.</p>",
             StatusCode::OK,
@@ -1129,11 +1226,11 @@ async fn welcome_post(
     {
         warn!(task = "onboard", user = %link.username, error = format!("{e:#}"), "set password failed");
         let body = format!(
-            r#"<div class="notice err">Impossible d'enregistrer le mot de passe pour l'instant. Réessaie dans un moment, ou écris à l'administrateur.</div>{}"#,
+            r#"<div class="notice err" role="alert">Impossible d'enregistrer le mot de passe pour l'instant. Réessaie dans un moment, ou écris à l'administrateur.</div>{}"#,
             password_form(&link.username, &token, false)
         );
         return public_page(
-            BIENVENUE_HTML,
+            Public::Welcome,
             &format!("Bienvenue, {} !", link.username),
             &body,
             StatusCode::BAD_GATEWAY,
@@ -1157,7 +1254,7 @@ async fn welcome_post(
         access_block(&st, &link.username, premium)
     );
     public_page(
-        BIENVENUE_HTML,
+        Public::Welcome,
         &format!("C'est prêt, {} !", link.username),
         &body,
         StatusCode::OK,
@@ -1178,7 +1275,7 @@ async fn welcome_renew(
     let ip = client.ip;
     let neutral = || {
         public_page(
-            BIENVENUE_HTML,
+            Public::Welcome,
             "Vérifie ta boîte mail",
             r#"<p>Si cette adresse correspond à un compte, un nouveau lien vient de partir. Il est valable une heure.</p><p class="foot">Rien reçu ? Regarde dans les courriers indésirables. Sinon, écris à l'administrateur.</p>"#,
             StatusCode::OK,
@@ -1267,11 +1364,11 @@ fn signup_form_p(
 </form>
 <p class="foot">Groscailloux est un service privé entre amis : l'administrateur peut refuser un compte qu'il ne connaît pas.</p>"#,
         err = err
-            .map(|m| format!(r#"<div class="notice err">{}</div>"#, page_esc(m)))
+            .map(|m| format!(r#"<div class="notice err" role="alert">{}</div>"#, esc(m)))
             .unwrap_or_default(),
-        u = page_esc(username),
-        e = page_esc(email),
-        p = page_esc(parrain),
+        u = esc(username),
+        e = esc(email),
+        p = esc(parrain),
     )
 }
 
@@ -1282,7 +1379,7 @@ async fn signup_get(State(st): State<AppState>) -> Response {
     }
     let form_trial = configured_trial_days(&st.ctx);
     public_page(
-        INSCRIPTION_HTML,
+        Public::Signup,
         "Créer ton compte",
         &signup_form(form_trial, "", "", None),
         StatusCode::OK,
@@ -1345,7 +1442,7 @@ async fn expected_trial_days(ctx: &TaskContext) -> Option<u32> {
 
 fn signup_done(trial_days: Option<u32>) -> Response {
     public_page(
-        INSCRIPTION_HTML,
+        Public::Signup,
         "Vérifie ta boîte mail",
         &signup_done_body(trial_days),
         StatusCode::OK,
@@ -1373,7 +1470,7 @@ async fn signup_post(
     }
     if !onboard::valid_username(&username) {
         return public_page(
-            INSCRIPTION_HTML,
+            Public::Signup,
             "Créer ton compte",
             &signup_form(
                 form_trial,
@@ -1386,7 +1483,7 @@ async fn signup_post(
     }
     if !onboard::valid_email(&email) {
         return public_page(
-            INSCRIPTION_HTML,
+            Public::Signup,
             "Créer ton compte",
             &signup_form(
                 form_trial,
@@ -1399,7 +1496,7 @@ async fn signup_post(
     }
     if f.accept != "1" {
         return public_page(
-            INSCRIPTION_HTML,
+            Public::Signup,
             "Créer ton compte",
             &signup_form(
                 form_trial,
@@ -1412,7 +1509,7 @@ async fn signup_post(
     }
     if rate_limited(&st, &ip).await {
         return public_page(
-            INSCRIPTION_HTML,
+            Public::Signup,
             "Créer ton compte",
             &signup_form(
                 form_trial,
@@ -1437,7 +1534,7 @@ async fn signup_post(
                 "signup: jellyseerr unreachable"
             );
             return public_page(
-                INSCRIPTION_HTML,
+                Public::Signup,
                 "Créer ton compte",
                 &signup_form(
                     form_trial,
@@ -1451,7 +1548,7 @@ async fn signup_post(
     }
     if let Ok(Some(_)) = st.ctx.jellyfin.find_user(&username).await {
         return public_page(
-            INSCRIPTION_HTML,
+            Public::Signup,
             "Créer ton compte",
             &signup_form(
                 form_trial,
@@ -1473,7 +1570,7 @@ async fn signup_post(
     if !allowed {
         warn!(task = "onboard", %ip, "signup daily cap reached");
         return public_page(
-            INSCRIPTION_HTML,
+            Public::Signup,
             "Créer ton compte",
             &signup_form(
                 form_trial,
@@ -1498,7 +1595,7 @@ async fn signup_post(
         Ok(r) => signup_done(r.trial.as_ref().and_then(|t| t.started_days())),
         Err(e) => {
             warn!(task = "onboard", %ip, error = format!("{e:#}"), "public signup failed");
-            public_page(INSCRIPTION_HTML, "Créer ton compte", &signup_form(form_trial, &username, &email, Some("La création a échoué, réessaie dans un instant ou écris à l'administrateur.")), StatusCode::BAD_GATEWAY)
+            public_page(Public::Signup, "Créer ton compte", &signup_form(form_trial, &username, &email, Some("La création a échoué, réessaie dans un instant ou écris à l'administrateur.")), StatusCode::BAD_GATEWAY)
         }
     }
 }
@@ -2039,6 +2136,81 @@ mod tests {
         for f in [&trial, &manual] {
             assert!(f.contains(r#"name="accept" value="1" required"#));
         }
+    }
+
+    /// Pages membres sur le squelette commun : titre d'onglet d'origine, titre échappé, carte étroite, script
+    /// des pages de bienvenue seulement, aucune marque `{{…}}` restante.
+    #[test]
+    fn public_pages_use_the_shared_skeleton() {
+        let w = public_html(Public::Welcome, "Bienvenue, <jo> !", "<p>corps</p>");
+        assert!(w.contains("<title>Bienvenue sur Groscailloux</title>"));
+        assert!(w.contains("<h1>Bienvenue, &lt;jo&gt; !</h1>"));
+        assert!(w.contains(r#"<main id="main" class="gc-main">"#));
+        assert!(w.contains(r#"<div class="gc-narrow"><div class="card gc-public">"#));
+        assert!(w.contains("<p>corps</p>"));
+        assert!(w.contains("document.querySelectorAll('.copy[data-copy]')"));
+        assert!(w.contains("document.getElementById('pw-form')"));
+        assert!(w.contains(".gc-public form .btn"));
+        let i = public_html(
+            Public::Signup,
+            "Créer ton compte",
+            &signup_form(Some(7), "", "", None),
+        );
+        assert!(i.contains("<title>Créer un compte Groscailloux</title>"));
+        assert!(!i.contains("<script"));
+        for h in [&w, &i] {
+            assert!(!h.contains("{{"));
+            assert!(h.contains(r#"<meta name="robots" content="noindex">"#));
+            // aucune ressource tierce : seuls les liens écrits par la page en apportent
+            assert!(!h.to_ascii_lowercase().contains("https://"));
+        }
+    }
+
+    /// Les identifiants que lit `bienvenue.js` sont bien dans le formulaire ; le script en ligne ne ferme pas
+    /// sa balise.
+    #[test]
+    fn password_form_matches_its_script() {
+        let f = password_form("jo", "tok<en", false);
+        for id in [
+            r#"id="pw-form""#,
+            r#"data-username="jo""#,
+            r#"id="pw""#,
+            r#"id="pw2""#,
+            r#"id="pw-err""#,
+            r#"id="pw-btn""#,
+        ] {
+            assert!(f.contains(id), "{id}");
+        }
+        assert!(f.contains(r#"action="/bienvenue/tok&lt;en""#));
+        assert!(password_form("jo", "t", true).contains(" disabled>"));
+        for js in [WELCOME_JS, ONBOARD_ADMIN_JS] {
+            assert!(!js.to_ascii_lowercase().contains("</script"));
+        }
+    }
+
+    /// Onboarding admin : squelette commun, identifiants lus par `onboard-admin.js`, script conservé.
+    #[test]
+    fn admin_onboarding_page_keeps_its_script() {
+        let h = index_page();
+        assert!(h.contains("<title>Groscailloux — Onboarder</title>"));
+        for id in [
+            r#"id="onboardForm""#,
+            r#"id="submitBtn""#,
+            r#"id="result""#,
+            r#"id="toast""#,
+            r#"id="username""#,
+            r#"id="email""#,
+            r#"pattern="[a-zA-Z0-9_-]{2,32}""#,
+        ] {
+            assert!(h.contains(id), "{id}");
+        }
+        assert!(h.contains("fetch('/onboard'"));
+        assert!(h.contains("location.href = '/connexion?next=/';"));
+        assert!(
+            h.find("id=\"onboardForm\"")
+                < h.find("const form = document.getElementById('onboardForm');")
+        );
+        assert!(!h.contains("btn-secondary") && !h.contains("{{"));
     }
 
     /// Un homelabctl d'avant `--all` n'envoie que `to` : mail de bienvenue d'exemple, comme avant.
