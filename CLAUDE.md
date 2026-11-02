@@ -25,7 +25,7 @@ fait tout). Deux machines : le **VPS** (lecture, recherche, automatisation, bibl
 | [docs/DESIGN.md](docs/DESIGN.md) | DA Groscailloux TV : jetons, composants, règles ; un jeton change dans `ui.rs`, `mail_layout.rs` et `groscailloux-tv.css` à la fois |
 | [docs/runbooks/](docs/runbooks/README.md) | un runbook par domaine + historique des incidents + table « ancien CLAUDE.md → nouvel emplacement » |
 | [tools/README.md](tools/README.md) | outils versionnés : hors pic (`offpeak.sh`), bancs (`bench.sh`), tests |
-| [CHANGELOG.md](CHANGELOG.md) | versions livrées |
+| [CHANGELOG.md](CHANGELOG.md) | versions livrées depuis 1.25.0 ; 0.1.0 à 1.24.0 dans [docs/changelog/1.0-1.24.md](docs/changelog/1.0-1.24.md) |
 
 ## 2. Commandes
 

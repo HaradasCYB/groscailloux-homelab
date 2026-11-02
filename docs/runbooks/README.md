@@ -3,7 +3,8 @@
 Un runbook par domaine : les règles et leur pourquoi, les procédures, les pièges et les décisions en vigueur. Les
 **interdits** tiennent en une ligne chacun dans [CLAUDE.md](../../CLAUDE.md#3-interdits-et-règles-dures) (chargé à chaque
 session) ; ce dossier donne le détail, à lire **avant de toucher le domaine**. Le fonctionnement de chaque tâche de
-homelabd reste dans [AUTOMATION.md](../AUTOMATION.md) ; l'architecture dans [ARCHITECTURE.md](../ARCHITECTURE.md) et
+homelabd est résumé dans [AUTOMATION.md](../AUTOMATION.md) (une ligne par tâche) et détaillé par famille dans
+[docs/automation/](../automation/) ; l'architecture dans [ARCHITECTURE.md](../ARCHITECTURE.md) et
 [INFRA.md](../INFRA.md) ; le déploiement et la restauration dans [DEPLOY.md](../DEPLOY.md) ; les variables de `.env`
 dans [SECRETS.md](../SECRETS.md).
 
@@ -178,3 +179,7 @@ Ancien CLAUDE.md = version de `main` à `bb33d63` (1 421 lignes, 153 066 octets)
 - Règles durables du lot 3 (`backups/lot3-20261008/NOTES-DOC.txt`) : coreutils uutils (`head -n`/`tail -n`), fenêtre de
   homelabd lue dans l'état, exécutant du lot 3 (arrêté le 10/10), dérive base ↔ fichiers des hôtes NPM 5 et 14, panique
   noyau avant sysctl. Ce qui ne sera vrai qu'après l'exécution du lot 3 (nouvelles versions) n'est pas reporté.
+- Phase 5 (02/11) : le détail de [AUTOMATION.md](../AUTOMATION.md) est passé dans [docs/automation/](../automation/)
+  (un fichier par famille ; le sommaire garde les anciennes ancres `AUTOMATION.md#…`) ; les sections 0.1.0 à 1.24.0 du
+  CHANGELOG sont dans [docs/changelog/1.0-1.24.md](../changelog/1.0-1.24.md) (le tableau « En bref » du CHANGELOG y
+  renvoie) ; chaque clé de `homelab.toml` est citée dans la doc de sa tâche ou de son domaine.
