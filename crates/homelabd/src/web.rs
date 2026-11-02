@@ -80,6 +80,7 @@ pub async fn serve(ctx: Arc<TaskContext>) -> Result<()> {
         .route("/onboard", post(onboard_handler))
         .route("/guide", get(guide_html))
         .route("/guide/icon.png", get(guide_icon))
+        .route(crate::ui::LOGO_PATH, get(crate::ui::logo))
         .route("/bienvenue/renouveler", post(welcome_renew))
         .route("/premiers-pas", get(first_steps_page))
         .route("/bienvenue/{token}", get(welcome_get).post(welcome_post))

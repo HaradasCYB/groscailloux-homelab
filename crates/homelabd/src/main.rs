@@ -11,6 +11,7 @@ mod scheduler;
 mod search_page;
 mod status_page;
 mod subs_api;
+mod ui;
 mod watcher;
 mod web;
 
