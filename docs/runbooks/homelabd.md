@@ -142,3 +142,30 @@ binaire. Ce que fait chaque tâche : [AUTOMATION.md](../AUTOMATION.md) ; archite
   redémarrage reste « en cours » dans l'état : la tâche `red_list` le marque **« interrompu »** à son passage suivant
   (`homelabctl run red_list`) ; relire alors le travail (titres déjà traités) et relancer « Nettoyer » sur le reste, les
   revérifications écartant ce qui a déjà disparu. Simulation tant que `clean_dry_run = true`, titre seul compris.
+
+## 6. Graphe du code (graphify)
+
+- Graphe **privé, hors dépôt** : `~/.local/share/homelab-graph` (700). `src/` y est une copie `git archive` de HEAD ;
+  sorties dans `graphify-out/`. **Jamais graphify sur `/opt/homelab`**, ni hook, ni `watch`.
+- Question sur le code : partir du graphe, puis lire seulement les fichiers qu'il désigne.
+
+  ```bash
+  cd ~/.local/share/homelab-graph
+  graphify query "<question>"        # nœuds liés à la question (--budget pour en voir plus)
+  graphify path "A" "B"              # plus court chemin entre deux nœuds
+  graphify explain "X"               # un nœud et ses voisins
+  ```
+
+  Nom ambigu (code et doc) : donner l'id complet (`crates_homelab_core_src_tasks_series_search`) ou `chemin::Symbole`.
+  Les liens « INFERRED » et les « cycles d'import » du rapport se vérifient dans le code.
+- Mise à jour après un lot de commits (code seul, sans LLM, basse priorité) :
+
+  ```bash
+  cd ~/.local/share/homelab-graph
+  find src -mindepth 1 -maxdepth 1 ! -name graphify-out -exec rm -rf {} +
+  git -C /opt/homelab archive HEAD | tar -x -C src
+  nice -n 19 ionice -c3 graphify update src
+  ```
+
+  Docs changées : relancer `/graphify` (lecture sémantique, hors pic). Aucun service ni tâche planifiée : le graphe ne
+  coûte rien tant qu'on ne l'interroge pas (une question ≈ 2 s).

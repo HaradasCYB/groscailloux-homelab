@@ -200,6 +200,7 @@ lien seedbox ~8–10 Mo/s par connexion — voir [lecture-et-transcodage.md](doc
 | NPM (hôtes, configuration avancée, site par défaut) | [npm.md](docs/runbooks/npm.md) |
 | Homarr | [homarr.md](docs/runbooks/homarr.md) |
 | Code Rust, `homelab.toml`, installation, état, alertes, Discord, pages d'admin | [homelabd.md](docs/runbooks/homelabd.md) |
+| Question sur le code (graphe privé hors dépôt, `graphify query/path/explain`) | [homelabd.md § 6](docs/runbooks/homelabd.md#6-graphe-du-code-graphify) |
 | Compose, images, diun, gluetun, qBittorrent, redémarrage, bureau VNC | [vps-docker-et-systeme.md](docs/runbooks/vps-docker-et-systeme.md) |
 | Sauvegardes, `backups/`, instances d'essai | [sauvegardes.md](docs/runbooks/sauvegardes.md) |
 | Bancs d'interface, travaux hors pic, `tools/`, lot 3 | [outils-bancs-et-hors-pic.md](docs/runbooks/outils-bancs-et-hors-pic.md) |
