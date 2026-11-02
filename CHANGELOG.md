@@ -533,7 +533,7 @@ au 09/10. Rien ne change pour les membres tant que le mode VO « Langue d'origin
     [lecture-et-transcodage.md](docs/runbooks/lecture-et-transcodage.md).
 - **Langue d'origine des séries** : `[tasks.original_language] series = true` est programmé le samedi 10/10 à 07:05
   (accord du propriétaire du 08/10) par un minuteur transitoire ; si homelabd ne relit pas sa configuration, il revient
-  seul à `false`.
+  seul à `false`. Appliqué comme prévu le 10/10 à 07:05 (`bc701a1`).
 - **Releases publiques** : chaque tag `v1.x.y` publie sur GitHub les binaires musl de homelabd et homelabctl avec
   `SHA256SUMS` ; `setup.sh` vérifie l'empreinte avant d'installer et n'installe rien si elle ne correspond pas. La
   première est la 1.24.0 : les binaires d'avant portaient en dur l'adresse et le compte de la seedbox.

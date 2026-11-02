@@ -86,12 +86,16 @@ Ces outils remplacent les copies de `backups/` (8 variantes d'« appliquer hors 
   prochain passage = `last_end` + intervalle (sémantique `OnUnitActiveSec`). C'est ce que font `offpeak.sh
   --homelabd-window` et `decision_fenetre` de `backups/lot3-20261008/common.sh`.
 
-## 5. Exécutant du lot 3 (jusqu'au 12/10)
+## 5. Exécutant du lot 3 (arrêté depuis le 10/10)
 
 - Le lot 3 (mises à jour : NPM, Seerr, Arrs du VPS, outils d'administration, Homarr, gluetun, rclone, MySQL, puis
-  redémarrage du VPS) garde **son propre exécutant**, `backups/lot3-20261008/run.sh J1|J2|J3|REBOOT`, lancé par les
-  minuteurs `lot3-J1` (ven 09/10 08:05), `lot3-J2` (sam 10/10 08:05), `lot3-J3` (dim 11/10 08:05) et `lot3-REBOOT` (lun
-  12/10 04:10). **Ne rien programmer qui chevauche ces créneaux** (09, 10 et 11/10 de 08:05 à 12:30, 12/10 de 04:10 à 07:00).
+  redémarrage du VPS) a **son propre exécutant**, `backups/lot3-20261008/run.sh J1|J2|J3|REBOOT`, lancé par des
+  minuteurs transitoires `lot3-J1` à `lot3-J3` et `lot3-REBOOT` (créneaux 08:35–12:30, et 04:40–07:00 pour REBOOT).
+- **État au 02/11** (`run.log` et `etat/`) : J1 fait (09/10, six étapes) ; J2 (10/10) arrêté en « intervention » sur
+  gluetun après Prowlarr 2.6.5 (Sonarr revenu en arrière, Radarr sauté, Homarr pas lancé) ; J3 (11/10) et REBOOT (12/10)
+  bloqués par ce marqueur, **non faits, à replanifier**. Aucun minuteur `lot3-*` n'est posé. Replanifier : examiner
+  `journaux/20261010/gluetun-*.log`, retirer `etat/gluetun` sur décision du propriétaire, puis reprogrammer les jours
+  restants un autre matin. **Ne rien programmer qui chevauche un créneau `lot3-*` posé.**
 - Marqueurs dans `etat/` : `fait`, `reserve`, `echec` et `intervention` sont définitifs ; une intervention bloque tous les
   jours suivants jusqu'à ce qu'on retire `etat/<étape>`. Les refus de garde sont retentés toutes les 15 min. Journal
   `run.log`, sorties dans `journaux/<date>/`, bilan sur le salon Discord admin seulement.
@@ -101,11 +105,12 @@ Ces outils remplacent les copies de `backups/` (8 variantes d'« appliquer hors 
   rien) et ajouter à `CHANGELOG.md` les lignes proposées par chaque préparation (sans pseudo, IP ni domaine).
 - Les règles durables à reporter après exécution (NPM 2.16, Seerr 3.5, Arrs `AllowedHosts`/`TrustedNetworks`, Homarr
   1.77, gluetun v3.41.3, rclone 1.75 et MySQL 8.4, Docker 29.8, Glances, Portainer, Grafana) sont dans
-  `backups/lot3-20261008/NOTES-DOC.txt` ; elles ne sont **pas** encore vraies en production et ne figurent donc pas dans
-  ces runbooks. Après le redémarrage du 12/10 : mettre à jour `OLD_IMAGE` de Glances et l'ajouter à un jour.
+  `backups/lot3-20261008/NOTES-DOC.txt` ; celles des étapes non faites ne sont **pas** vraies en production et ne
+  figurent donc pas dans ces runbooks (report de celles de Prowlarr 2.6.5 : à vérifier). Après le redémarrage du lot :
+  mettre à jour `OLD_IMAGE` de Glances et l'ajouter à un jour.
 - Hygiène : passer `prowlarr/`, `sonarr/`, `radarr/` et `gluetun/` de `backups/lot3-20261008/` en 700/600, puis supprimer
   les `run-*/` qui contiennent des secrets selon chaque README, puis `essai-a-blanc/` quand le lot est clos.
-- Le minuteur transitoire `jellyfin-snapshot-purge` (10/10 12:00) n'est pas migré vers `offpeak.sh` (décision du
-  propriétaire, ne pas le doubler).
+- Le minuteur transitoire `jellyfin-snapshot-purge` a supprimé l'instantané Jellyfin 10.11.8 le 10/10 à 12:00 comme
+  prévu (il n'avait pas été migré vers `offpeak.sh`, décision du propriétaire).
 - Les scripts `backups/playback-audit-*/apply-offpeak.sh` et autres « appliquer hors pic » de `backups/` sont remplacés par
   `offpeak.sh`.

@@ -136,10 +136,11 @@ Tout ce qui suit est dans la configuration avancée de l'hôte 1, **en base et d
   l'offre gratuite, et il coupe les longues requêtes. Enregistrements `A @` et `A *` vers l'IP du VPS (même IP que
   l'ancien nom), posés par l'API avec `CLOUDFLARE_API_TOKEN` (jeton limité à la zone).
 - **Certificats : un Let's Encrypt par hôte, en HTTP-01, couvrant le nouveau et l'ancien nom** (`npm-2` à `npm-16`) ;
-  NPM les renouvelle seul (défi HTTP). Le joker DuckDNS (`npm-1`, défi DNS) n'est plus utilisé : à supprimer après
-  une semaine sans souci. Émis en imitant `internal/certificate.js` **sans** son étape « désactiver les hôtes qui
-  utilisent ces noms » (elle couperait Jellyfin le temps de certbot) : les défis passent par les hôtes existants
-  (anciens noms) et par le site par défaut (nouveaux noms), qui incluent tous `letsencrypt-acme-challenge.conf`.
+  NPM les renouvelle seul (défi HTTP). Le joker DuckDNS (`npm-1`, défi DNS) n'est plus utilisé (à vérifier
+  avant suppression) : toujours présent au 02/11, à supprimer avec l'accord du propriétaire. Émis en imitant
+  `internal/certificate.js` **sans** son étape « désactiver les hôtes qui utilisent ces noms » (elle couperait Jellyfin
+  le temps de certbot) : les défis passent par les hôtes existants (anciens noms) et par le site par défaut (nouveaux
+  noms), qui incluent tous `letsencrypt-acme-challenge.conf`.
   Outils (avec les noms, donc hors dépôt) : `backups/domaine-20261014/certs.py` (ligne `certificate` + certbot de NPM)
   et `switch.py` (base **et** fichier : seules les lignes `server_name` et `ssl_certificate*` changent, `nginx -t`,
   retour à l'identique sinon ; contrôle des deux noms, certificat vérifié).

@@ -7,8 +7,9 @@ VPN ou qBittorrent, ou avant un redémarrage du VPS. Déploiement et restauratio
 
 - `docker compose config --quiet` **avant tout** `up -d` ; `docker compose up -d <svc>` ne recrée que ce qui a changé.
 - **Images épinglées `tag@sha256`**, jamais de `:latest` nu (gluetun est encore en `latest@sha256:…`, épinglé par son
-  digest ; le lot 3 le passe en `v3.41.3`). Mettre à jour : nouveau tag + digest (`docker pull` puis
-  `docker image inspect --format '{{index .RepoDigests 0}}'`), `up -d <svc>`, puis `diun/images.yml` en cohérence.
+  digest ; le passage en `v3.41.3` du lot 3 est revenu en arrière le 10/10, à replanifier). Mettre à jour : nouveau
+  tag + digest (`docker pull` puis `docker image inspect --format '{{index .RepoDigests 0}}'`), `up -d <svc>`, puis
+  `diun/images.yml` en cohérence.
 - **`diun/images.yml`** : un bloc par image, jamais de clé sans `- name:` (des clés orphelines de Jackett/FlareSolverr ont
   rendu diun aveugle du 18/09 au 07/10). `homelabctl check` et la tâche `diun_watch` (24 h, alerte) refusent les clés en
   double et toute image du compose sans entrée `repo:tag`. `sort_tags: semver` sur les tags semver purs seulement (le tri
@@ -74,7 +75,9 @@ VPN ou qBittorrent, ou avant un redémarrage du VPS. Déploiement et restauratio
   `panic=` sur la ligne de commande). Sonde qBittorrent vue de l'hôte, `seedbox_health`, chien de garde
   `homelabd-watchdog.timer`, homelabd en `Restart=always`. Reste à faire (phase 3, plan du propriétaire) : sauvegarde
   hors du VPS.
-- Un redémarrage du VPS est prévu par le lot 3 le lundi 12/10 à 04:10 (`lot3-REBOOT`).
+- Le redémarrage prévu par le lot 3 (`lot3-REBOOT`, 12/10) n'a pas eu lieu : lot arrêté le 10/10, à replanifier
+  ([outils-bancs-et-hors-pic.md § 5](outils-bancs-et-hors-pic.md#5-exécutant-du-lot-3-arrêté-depuis-le-1010)). Dernier
+  redémarrage : 18/10, arrêt du VPS venu de l'hébergeur ([incidents.md](incidents.md)) ; tout est reparti seul.
 
 ## 5. Bureau VNC (Guacamole, noVNC)
 

@@ -206,28 +206,30 @@ lien seedbox ~8–10 Mo/s par connexion — voir [lecture-et-transcodage.md](doc
 | Bancs d'interface, travaux hors pic, `tools/`, lot 3 | [outils-bancs-et-hors-pic.md](docs/runbooks/outils-bancs-et-hors-pic.md) |
 | « Pourquoi cette règle ? » | [incidents.md](docs/runbooks/incidents.md) |
 
-## 6. En cours au 09/10
+## 6. En cours au 02/11
 
-- **Lot 3** (mises à jour de NPM, Seerr, Arrs du VPS, outils, Homarr, gluetun, rclone, MySQL, puis redémarrage du VPS) :
-  exécutant `backups/lot3-20261008/run.sh`, minuteurs `lot3-J1` à `lot3-J3` (09–11/10, 08:05–12:30) et `lot3-REBOOT`
-  (12/10, 04:10–07:00). Après chaque jour : valider compose et diun dans git, reporter `NOTES-DOC.txt` dans les runbooks.
-- Instantané Jellyfin 10.11.8 supprimé le 10/10 à 12:00 par un minuteur transitoire (perdu si le VPS redémarre avant).
-- Décidé le 08/10 : séries de `original_language` (sam. 10/10 07:05, journal `backups/lot4-20261008/ol-series-on.log`) ;
-  flux C411 d'autobrr laissé coupé ; date d'échéance gardée dans Mon compte ; releases `v1.*` publiques (dès 1.24.0).
-- Mode VO « Langue d'origine » : préparé et coupé ; activation sur décision du propriétaire une fois OriginalLanguage
-  remplie (procédure : [lecture-et-transcodage.md](docs/runbooks/lecture-et-transcodage.md) § 7). À mesurer avant :
-  lecteur ExoPlayer de « Jellyfin for Android ».
-- Montage seedbox : passe sur la configuration générée à son prochain redémarrage (J3 du lot 3, 11/10) ; contrôler que
-  le cache reste `seedbox{9oylk}`. Ancien cache sans suffixe (`cache/rclone/{vfs,vfsMeta}/seedbox`, ~20 Go, inutilisé
-  depuis le 19/09) à supprimer ensuite.
-- En attente du propriétaire : import CSV des abonnés historiques ; reste du lot 4.
-- **Domaine principal (14/10)** : DNS, certificats, NPM, homelabd, Seerr, Home Screen Sections et Homarr basculés ;
-  `PublishedServerUrl` de Jellyfin au passage hors pic `jf-published-url` (15/10 04:30) ; mails de homelabd et de
-  Jellyseerr (15/10) par Proton depuis l'adresse `contact@` du domaine (Gmail en commentaire dans `.env`, à retirer et
-  révoquer vers le 21/10) ; certificat joker DuckDNS (`npm-1`) à supprimer vers le 21/10 ; webhook PayPal laissé sur
-  l'ancien nom (URL modifiable dans PayPal, même identifiant).
-- À valider en séance réelle : Chromecast `high10` → `high`, compression des listes HLS, `gc-syncplay.js` VERSION 2
-  (10/10 : arrivée lue sur l'élément vidéo du lecteur web, attente maximale 10 s / 5 s ; lire les `upload_*.log`
-  « gc-syncplay » après une séance avec Jellyfin Desktop 2.x).
+- **Lot 3 arrêté depuis le 10/10 : J3 et REBOOT non faits, à replanifier.** Faits : J1 (09/10 : NPM 2.16.0, Seerr 3.5.0,
+  Portainer, File Browser, Grafana, Glances) et Prowlarr 2.6.5 (J2, 10/10). Au J2, Sonarr est revenu en 4.0.17 par son
+  retour arrière, Radarr a été sauté, gluetun remis en place d'origine, Homarr pas lancé. Le marqueur
+  `backups/lot3-20261008/etat/gluetun` (`statut=intervention`) bloque toujours `run.sh` : J3 (rclone 1.75.1, MySQL 8.4)
+  et le redémarrage n'ont jamais tourné, et aucun minuteur `lot3-*` n'est posé (vérifié le 02/11). Replanifier =
+  décision du propriétaire, après examen et retrait du marqueur
+  ([outils-bancs-et-hors-pic.md § 5](docs/runbooks/outils-bancs-et-hors-pic.md#5-exécutant-du-lot-3-arrêté-depuis-le-1010)) ;
+  les notes des étapes non faites restent dans `backups/lot3-20261008/NOTES-DOC.txt`.
+- Mode VO « Langue d'origine » : préparé et coupé (`vo_native = false`) ; activation sur décision du propriétaire une
+  fois OriginalLanguage remplie (procédure : [lecture-et-transcodage.md](docs/runbooks/lecture-et-transcodage.md) § 7).
+  À mesurer avant : lecteur ExoPlayer de « Jellyfin for Android ».
+- Montage seedbox : sur la configuration générée depuis le redémarrage du 18/10 (arrêt du VPS par l'hébergeur), cache
+  `seedbox{9oylk}` gardé. Reste à supprimer l'ancien cache sans suffixe (`cache/rclone/{vfs,vfsMeta}/seedbox`, ~20 Go,
+  inutilisé depuis le 19/09, toujours présent le 02/11).
+- En attente du propriétaire : import CSV des abonnés historiques (à vérifier : les fiches hors PayPal sont gérées à la
+  main depuis le 08/10) ; reste du lot 4 (à vérifier).
+- **Domaine principal** : bascule faite les 14 et 15/10 (CHANGELOG 1.27.0 et 1.28.0). Restent, prévus « vers le 21/10 »
+  et pas faits au 02/11 : retirer de `.env` les lignes Gmail en commentaire et faire révoquer le mot de passe
+  d'application par le propriétaire ; supprimer le certificat joker DuckDNS (`npm-1`, toujours présent) avec l'accord
+  du propriétaire. Webhook PayPal laissé sur l'ancien nom (URL modifiable dans PayPal, même identifiant).
+- À valider en séance réelle (rien ne l'atteste au 02/11) : Chromecast `high10` → `high`, compression des listes HLS,
+  `gc-syncplay.js` VERSION 2 (arrivée lue sur l'élément vidéo du lecteur web, attente maximale 10 s / 5 s ; lire les
+  `upload_*.log` « gc-syncplay » après une séance avec Jellyfin Desktop 2.x).
 - Provisoire : Collection Sections recompilée (à remplacer par Home Screen Sections), garde NPM de Home Screen Sections (à
   retirer quand l'amont corrige).

@@ -9,9 +9,8 @@ Lecture et transcodage : [lecture-et-transcodage.md](lecture-et-transcodage.md).
 
 - **Jellyfin 12.1 en service depuis le 03/10 à 23:01** (source de vérité : image du service `jellyfin` dans
   `docker-compose.yml`). Procédure et constats : [JELLYFIN-12.md](../JELLYFIN-12.md).
-- **Instantané 10.11.8** : `backups/jellyfin-snapshot-10.11.8-20261003/` (root 700). Retour arrière :
-  `sudo …/rollback.sh --yes` (~2 min ; tout ce qui a changé depuis la bascule est perdu). Suppression le **10/10 à 12:00**
-  par le minuteur **transitoire** `jellyfin-snapshot-purge` (perdu si le VPS redémarre avant : supprimer alors à la main).
+- **Instantané 10.11.8** : supprimé le 10/10 à 12:00 comme prévu (minuteur transitoire `jellyfin-snapshot-purge`) ;
+  plus de retour rapide en 10.11 ([JELLYFIN-12.md](../JELLYFIN-12.md#retour-en-arrière)).
 - **`EnableLegacyAuthorization = true`** dans `config/system.xml` : la migration le met à `false`, et alors `X-Emby-Token`
   et `?api_key=` répondent 401 ; toutes les applis ouvrent leur websocket par `api_key` et le Chromecast lit ses flux
   ainsi. Le couper un jour = passer d'abord homelabd, `scripts/` et nos scripts à `Authorization: MediaBrowser

@@ -191,5 +191,8 @@ Après un reboot : `docker compose ps`, `homelabctl status` (stack_health `last_
 Pas de reboot planifié : aucun gain constaté (mémoire stable), une coupure de 2–3 min pour les
 lectures et téléchargements, et le boot est le moment fragile. Rebooter à la main pour les
 mises à jour du noyau (`apt` le signale), **hors pic et sans lecture en cours** (programmer par
-`tools/offpeak/offpeak.sh --as root`), puis vérifier comme ci-dessus et `pgrep -cx xfce4-session` = 1. Le lot 3 prévoit un
-redémarrage le 12/10 à 04:10 (`lot3-REBOOT`), avec sa liste de contrôle `backups/lot3-20261008/reboot/check.sh`.
+`tools/offpeak/offpeak.sh --as root`), puis vérifier comme ci-dessus et `pgrep -cx xfce4-session` = 1. Le
+redémarrage du lot 3 (`lot3-REBOOT`, prévu le 12/10) n'a pas eu lieu : lot arrêté le 10/10, à replanifier
+([outils-bancs-et-hors-pic.md § 5](runbooks/outils-bancs-et-hors-pic.md#5-exécutant-du-lot-3-arrêté-depuis-le-1010)) ;
+sa liste de contrôle `backups/lot3-20261008/reboot/check.sh` est toujours là. Le VPS a redémarré le 18/10, arrêté par
+l'hébergeur ([incidents.md](runbooks/incidents.md)).

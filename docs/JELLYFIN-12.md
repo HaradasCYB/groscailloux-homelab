@@ -11,18 +11,16 @@ gardé tant que la 12.1 n'est pas validée en séance réelle dans Jellyfin Desk
 **État** : **prod en 12.1 depuis le 03/10 à 23:01**, après une répétition le même jour sur une instance d'essai.
 Coupure de 2 min 08 (23:01:30 → 23:03:38), 36 migrations de base, 23 extensions actives.
 
-## Bascule du 03/10 et retour arrière (jusqu'au 10/10)
-- **Script** : `backups/jellyfin-snapshot-10.11.8-20261003/switch.sh`, avec son journal `switch.log`. Il suit les
-  étapes de « Bascule » plus bas.
-- **Instantané** : `config/` entier dans le même dossier (root 700). Première copie Jellyfin en marche, puis copie
-  finale des différences Jellyfin arrêté (4 s, 6,8 Go) ; intégrité de la base vérifiée sur la copie. Le dossier
-  garde aussi l'image d'avant (`IMAGE-AVANT.txt`), `docker-compose.before.yml` et `diun-images.before.yml`.
-- **Retour arrière** : `sudo backups/jellyfin-snapshot-10.11.8-20261003/rollback.sh --yes`, environ 2 minutes.
-  - Il arrête Jellyfin et met la config 12.1 de côté dans `jellyfin/config.12.1-<date>`.
-  - Il restaure l'instantané, remet l'image 10.11.8 dans le compose et dans diun, puis relance.
-  - Tout ce qui a changé depuis la bascule est perdu : lectures vues, comptes, réglages.
-- **Suppression** : le 10/10 à 12:00, par le minuteur **transitoire** `jellyfin-snapshot-purge`. Il ne survit pas à
-  un redémarrage du VPS : dans ce cas, supprimer le dossier à la main.
+## Bascule du 03/10 et instantané (supprimé le 10/10)
+- **Script** : `switch.sh` et son journal, dans le dossier de l'instantané. Il suivait les étapes de « Bascule »
+  plus bas.
+- **Instantané** : `config/` entier dans le même dossier. Première copie Jellyfin en marche, puis copie finale des
+  différences Jellyfin arrêté (4 s, 6,8 Go) ; intégrité de la base vérifiée sur la copie. Un `rollback.sh` le
+  restaurait en 2 minutes environ.
+- **Supprimé le 10/10 à 12:00** par le minuteur transitoire `jellyfin-snapshot-purge` (journal système, vérifié le
+  02/11) : le dossier, `switch.sh` et `rollback.sh` n'existent plus. **Le retour rapide en 10.11.8 n'est plus
+  possible** : seul reste le « Retour en arrière » plus bas, qui perd tout ce qui a changé depuis la sauvegarde
+  restaurée.
 
 ## Constats après la bascule
 - **Authentification** : `EnableLegacyAuthorization` est remis à `true` (étape 5 du script). Sinon `X-Emby-Token`

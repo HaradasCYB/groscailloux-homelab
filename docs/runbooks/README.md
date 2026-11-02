@@ -176,5 +176,5 @@ Ancien CLAUDE.md = version de `main` à `bb33d63` (1 421 lignes, 153 066 octets)
   ([lecture-et-transcodage.md § 7](lecture-et-transcodage.md#7-langue-audio-et-sous-titres-des-comptes)), autobrr
   ([arrs-et-indexeurs.md § 9](arrs-et-indexeurs.md#9-autobrr-seedbox--flux-c411-désactivé-le-0810)).
 - Règles durables du lot 3 (`backups/lot3-20261008/NOTES-DOC.txt`) : coreutils uutils (`head -n`/`tail -n`), fenêtre de
-  homelabd lue dans l'état, exécutant du lot 3 jusqu'au 12/10, dérive base ↔ fichiers des hôtes NPM 5 et 14, panique
+  homelabd lue dans l'état, exécutant du lot 3 (arrêté le 10/10), dérive base ↔ fichiers des hôtes NPM 5 et 14, panique
   noyau avant sysctl. Ce qui ne sera vrai qu'après l'exécution du lot 3 (nouvelles versions) n'est pas reporté.

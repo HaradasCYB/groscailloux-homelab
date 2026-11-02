@@ -166,8 +166,9 @@ propre runbook : [voie-russe.md](voie-russe.md).
 - **Seedbox** : Sonarr et Radarr y journalisent en Info ; `config/host` d'un Arr contient le hash du mot de passe et la
   clé (sauvegarde en 600). Voir [seedbox-et-rclone.md](seedbox-et-rclone.md).
 - **Montée de version d'un Arr du VPS** : le lot 3 la prépare (`backups/lot3-20261008/<service>/apply.sh`, avec
-  `check.sh` et `rollback.sh`) ; à reporter ici après son exécution (voir
-  [outils-bancs-et-hors-pic.md](outils-bancs-et-hors-pic.md#5-exécutant-du-lot-3-jusquau-1210)).
+  `check.sh` et `rollback.sh`). Prowlarr 2.6.5 est en place (10/10) ; Sonarr 4.0.20 est revenu en arrière (son contrôle
+  refusait un simple changement d'ordre des champs du client de téléchargement) et Radarr 6.4.4 n'a pas été lancé : à
+  replanifier (voir [outils-bancs-et-hors-pic.md](outils-bancs-et-hors-pic.md#5-exécutant-du-lot-3-arrêté-depuis-le-1010)).
 
 ## 4. Choix d'une release (`choose`, `best_movie_release`, `/recherche`)
 

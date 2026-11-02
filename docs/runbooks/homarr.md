@@ -53,9 +53,10 @@ Même recette que « Liste rouge », à côté d'elle dans « Accès & docs » :
 `ping_url` sont `PREMIUM_PUBLIC_URL` + `/premium` (nouveau domaine), icône de « Lien d'inscription ». Script, retour
 arrière et base d'avant : `backups/homarr-premium-20261031/`.
 
-## Lot 3 (en cours jusqu'au 12/10)
+## Lot 3 (arrêté le 10/10, Homarr non fait)
 
-Le lot 3 prépare Homarr 1.77.2 (`backups/lot3-20261008/homarr/`) : plus de tâches de fond par widget, télémétrie coupée,
-cookie de session renommé (l'admin devra se reconnecter), retour arrière = base **et** `redis/dump.rdb`. Reporter ici ce
-que dit `backups/lot3-20261008/NOTES-DOC.txt` après son exécution (la ligne `cron_job_configuration` « downloads »
-deviendra sans effet ; restreindre le motif diun de Homarr à `^v1\.\d+\.\d+$`).
+Le lot 3 prépare Homarr 1.77.2 dans `backups/lot3-20261008/homarr/` (la production reste en 1.59.3 : étape jamais
+lancée, à replanifier) : plus de tâches de fond par widget, télémétrie coupée, cookie de session renommé (l'admin devra
+se reconnecter), retour arrière = base **et** `redis/dump.rdb`. Reporter ici ce que dit
+`backups/lot3-20261008/NOTES-DOC.txt` après son exécution (la ligne `cron_job_configuration` « downloads » deviendra
+sans effet ; restreindre le motif diun de Homarr à `^v1\.\d+\.\d+$`).
