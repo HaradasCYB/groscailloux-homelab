@@ -86,47 +86,48 @@ fn lang_label(rank: u8) -> &'static str {
     }
 }
 
-const STYLE: &str = r#"<style>
-:root{--bg:#f6f7f9;--card:#fff;--fg:#1c2230;--mut:#6b7385;--line:#e3e6ec;--acc:#3b5bdb;--ok:#2f9e44;--warn:#e67700;--err:#c92a2a}
-@media (prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1b2029;--fg:#e8ebf1;--mut:#98a1b3;--line:#2a303c;--acc:#748ffc;--ok:#51cf66;--warn:#ffa94d;--err:#ff6b6b}}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-main{max-width:1100px;margin:0 auto;padding:24px 16px 60px}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:24px 0 8px}
-p.sub{color:var(--mut);margin:0 0 18px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:10px 0}
-form.q{display:flex;gap:8px;flex-wrap:wrap}input[type=text]{flex:1;min-width:200px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
-button{padding:8px 13px;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;cursor:pointer}
-button.ghost{background:transparent;color:var(--acc);border:1px solid var(--line)}
-.seasons{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.seasons form{margin:0}
-.tag{display:inline-block;font-size:12px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--mut);margin-left:6px}
-.tag.anime{color:var(--acc);border-color:var(--acc)}
-.msg{padding:10px 14px;border-radius:8px;margin:10px 0;border:1px solid var(--line)}.msg.ok{border-color:var(--ok)}.msg.err{border-color:var(--err)}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
-th{color:var(--mut);font-weight:600;white-space:nowrap}td.t{word-break:break-word;min-width:260px}td.n{white-space:nowrap}
-.flag{display:inline-block;font-size:12px;color:var(--warn);margin-right:6px}.clean{color:var(--ok);font-size:12px}
-ul.notes{color:var(--mut);margin:6px 0 0;padding-left:18px}a{color:var(--acc)}
-</style>"#;
+/// Règles propres à la recherche (le reste vient de `ui::BASE_CSS`).
+const SEARCH_CSS: &str = r#".gc-search .lead{margin-bottom:24px}
+.gc-search form.q{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 24px}
+.gc-search form.q input{flex:1 1 16rem;width:auto;min-width:0}
+.gc-search .card{padding:16px 20px;margin:0 0 12px}
+.gc-search .hit{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 8px}
+.gc-search .hit b{color:var(--strong);font-size:1.05rem}
+.gc-search .seasons{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.gc-search .seasons form{margin:0}
+.gc-search .seasons button{min-height:40px;padding:8px 14px;font-size:.95rem}
+.gc-search ul.notes{color:var(--dim);margin:0 0 20px;padding-left:20px}
+.gc-search td.t{word-break:break-word;min-width:16rem}
+.gc-search td.t .pill{margin:6px 6px 0 0}
+.gc-search td.n{white-space:nowrap}
+.gc-search td form{margin:0}
+.gc-search td button{min-height:36px;padding:6px 12px;font-size:.9rem}"#;
 
-fn page(title: &str, extra_head: &str, body: &str) -> String {
-    format!(
-        r#"<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>{title}</title>{extra_head}{STYLE}</head><body><main>{body}</main></body></html>"#,
-        title = esc(title)
-    )
+/// Page de la recherche : `ui::page` (ou sa variante qui se recharge tant que la recherche tourne).
+fn page(title: &str, refresh: Option<&str>, body: &str) -> String {
+    let body = format!(r#"<div class="gc-search">{body}</div>"#);
+    match refresh {
+        Some(url) => crate::ui::page_refreshing(title, 4, url, &body, SEARCH_CSS),
+        None => crate::ui::page(title, &body, SEARCH_CSS),
+    }
 }
 
 /// Liste des titres trouvés, avec un bouton par saison (séries) ou pour le film.
 pub fn render_home(token: &str, query: &str, found: &[Found], msg: Option<&str>) -> String {
     let t = esc(token);
     let mut body = format!(
-        r#"<h1>Recherche manuelle</h1><p class="sub">Par identifiant TMDB chez C411 (une requête, plafond horaire), plus Nyaa pour un animé. À utiliser à la place de la recherche de Sonarr/Radarr pour un animé.</p>
-<form class="q" method="get" action="/recherche"><input type="text" name="q" value="{q}" placeholder="Titre (français, anglais ou japonais)" autofocus><button type="submit">Chercher</button></form>"#,
+        r#"<h1>Recherche manuelle</h1><p class="lead">Par identifiant TMDB chez C411 (une requête, plafond horaire), plus Nyaa pour un animé. À utiliser à la place de la recherche de Sonarr/Radarr pour un animé.</p>
+<form class="q" method="get" action="/recherche" role="search"><label class="sr-only" for="q">Titre</label><input id="q" type="text" name="q" value="{q}" placeholder="Titre (français, anglais ou japonais)" autofocus><button type="submit">Chercher</button></form>"#,
         q = esc(query)
     );
     if let Some(m) = msg {
-        body.push_str(&format!(r#"<div class="msg err">{}</div>"#, esc(m)));
+        body.push_str(&format!(
+            r#"<p class="notice err" role="alert">{}</p>"#,
+            esc(m)
+        ));
     }
     if !query.trim().is_empty() && found.is_empty() {
-        body.push_str(r#"<div class="msg">Aucun titre dans Sonarr ou Radarr : le demander d'abord dans Jellyseerr.</div>"#);
+        body.push_str(r#"<p class="notice info">Aucun titre dans Sonarr ou Radarr : le demander d'abord dans Jellyseerr.</p>"#);
     }
     for f in found {
         let side = if f.arr.ends_with("seedbox") {
@@ -135,12 +136,12 @@ pub fn render_home(token: &str, query: &str, found: &[Found], msg: Option<&str>)
             "VPS"
         };
         let anime = if f.anime {
-            r#"<span class="tag anime">animé</span>"#
+            r#"<span class="pill info">animé</span>"#
         } else {
             ""
         };
         let year = if f.year > 0 {
-            format!(" ({})", f.year)
+            format!(r#" <span class="muted">({})</span>"#, f.year)
         } else {
             String::new()
         };
@@ -161,7 +162,7 @@ pub fn render_home(token: &str, query: &str, found: &[Found], msg: Option<&str>)
                 } else {
                     "Chercher le film"
                 },
-                if f.has_file { "ghost" } else { "" },
+                if f.has_file { "secondary" } else { "accent" },
             )
         } else {
             f.seasons
@@ -171,27 +172,27 @@ pub fn render_home(token: &str, query: &str, found: &[Found], msg: Option<&str>)
                     launch(
                         Some(*n),
                         &format!("Saison {n} · {have}/{total}"),
-                        if complete { "ghost" } else { "" },
+                        if complete { "secondary" } else { "accent" },
                     )
                 })
                 .collect::<String>()
         };
         body.push_str(&format!(
-            r#"<div class="card"><b>{title}</b>{year}<span class="tag">{kind} · {side}</span>{anime}<div class="seasons">{buttons}</div></div>"#,
+            r#"<div class="card"><div class="hit"><b>{title}</b>{year}<span class="pill">{kind} · {side}</span>{anime}</div><div class="seasons">{buttons}</div></div>"#,
             title = esc(&f.title),
             kind = if f.movie { "film" } else { "série" },
         ));
     }
-    page("Recherche manuelle", "", &body)
+    page("Recherche manuelle", None, &body)
 }
 
 fn row_html(token: &str, job: &str, idx: usize, r: &Row) -> String {
     let flags = if r.flags.is_empty() {
-        r#"<span class="clean">conforme</span>"#.to_string()
+        r#"<span class="pill ok">conforme</span>"#.to_string()
     } else {
         r.flags
             .iter()
-            .map(|f| format!(r#"<span class="flag">{}</span>"#, esc(f)))
+            .map(|f| format!(r#"<span class="pill warn">{}</span>"#, esc(f)))
             .collect()
     };
     let what = match (r.season, r.full_season, r.episodes.is_empty()) {
@@ -208,7 +209,7 @@ fn row_html(token: &str, job: &str, idx: usize, r: &Row) -> String {
         (None, _, _) => "—".into(),
     };
     format!(
-        r#"<tr><td class="t">{title}<br>{flags}</td><td class="n">{idx_name}</td><td class="n">{lang}</td><td class="n">{quality}{codec}</td><td class="n">{what}</td><td class="n">{size}</td><td class="n">{seeders}</td><td><form method="post" action="/recherche/telecharger"><input type="hidden" name="token" value="{t}"><input type="hidden" name="job" value="{job}"><input type="hidden" name="idx" value="{idx}"><button type="submit">Télécharger</button></form></td></tr>"#,
+        r#"<tr><td class="t">{title}<br>{flags}</td><td class="n">{idx_name}</td><td class="n">{lang}</td><td class="n">{quality}{codec}</td><td class="n">{what}</td><td class="n">{size}</td><td class="n">{seeders}</td><td><form method="post" action="/recherche/telecharger"><input type="hidden" name="token" value="{t}"><input type="hidden" name="job" value="{job}"><input type="hidden" name="idx" value="{idx}"><button class="accent" type="submit">Télécharger</button></form></td></tr>"#,
         title = esc(&r.title),
         idx_name = esc(&r.indexer),
         lang = lang_label(r.lang),
@@ -227,16 +228,9 @@ fn row_html(token: &str, job: &str, idx: usize, r: &Row) -> String {
 
 /// Résultats d'une recherche (en cours : rechargement automatique).
 pub fn render_results(token: &str, job: &Job, msg: Option<(&str, &str)>, now: i64) -> String {
-    let head = if job.done {
-        String::new()
-    } else {
-        format!(
-            r#"<meta http-equiv="refresh" content="4;url=/recherche/resultats?job={}">"#,
-            urlencode(&job.id)
-        )
-    };
+    let refresh = (!job.done).then(|| format!("/recherche/resultats?job={}", urlencode(&job.id)));
     let mut body = format!(
-        r#"<p><a href="/recherche">← Nouvelle recherche</a></p><h1>{label}</h1><p class="sub">{arr} · {state}</p>"#,
+        r#"<p><a href="/recherche">← Nouvelle recherche</a></p><h1>{label}</h1><p class="lead">{arr} · {state}</p>"#,
         label = esc(&job.label),
         arr = esc(job.arr),
         state = if job.done {
@@ -247,8 +241,12 @@ pub fn render_results(token: &str, job: &Job, msg: Option<(&str, &str)>, now: i6
     );
     if let Some((class, text)) = msg {
         body.push_str(&format!(
-            r#"<div class="msg {}">{}</div>"#,
-            esc(class),
+            r#"<p class="notice {}">{}</p>"#,
+            if class == "ok" {
+                r#"ok" role="status"#
+            } else {
+                r#"err" role="alert"#
+            },
             esc(text)
         ));
     }
@@ -260,13 +258,17 @@ pub fn render_results(token: &str, job: &Job, msg: Option<(&str, &str)>, now: i6
         body.push_str("</ul>");
     }
     if job.done && !job.rows.is_empty() {
-        body.push_str(r#"<div class="card scroll"><table><thead><tr><th>Release</th><th>Indexeur</th><th>Langue</th><th>Qualité</th><th>Contenu</th><th>Taille</th><th>Sources</th><th></th></tr></thead><tbody>"#);
+        body.push_str(r#"<div class="table-wrap"><table><thead><tr><th scope="col">Release</th><th scope="col">Indexeur</th><th scope="col">Langue</th><th scope="col">Qualité</th><th scope="col">Contenu</th><th scope="col">Taille</th><th scope="col">Sources</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead><tbody>"#);
         for (i, r) in job.rows.iter().enumerate() {
             body.push_str(&row_html(token, &job.id, i, r));
         }
         body.push_str("</tbody></table></div>");
     }
-    page(&format!("Recherche · {}", job.label), &head, &body)
+    page(
+        &format!("Recherche · {}", job.label),
+        refresh.as_deref(),
+        &body,
+    )
 }
 
 #[derive(Deserialize)]
@@ -506,7 +508,19 @@ mod tests {
         assert!(h.contains("&lt;script&gt;"));
         assert!(h.contains(r#"value="tok&quot;en""#));
         assert!(h.contains("Saison 2 · 0/10"));
-        assert!(h.contains("animé"));
+        assert!(h.contains(r#"<span class="pill info">animé</span>"#));
+        // saison complète en bouton secondaire, à compléter en bleu ; DA commune, plus de mode clair
+        assert!(h.contains(r#"<button class="secondary" type="submit">Saison 1 · 26/26</button>"#));
+        assert!(h.contains(r#"<button class="accent" type="submit">Saison 2 · 0/10</button>"#));
+        assert!(h.contains("--bg:#08090b") && h.contains(r#"<div class="gc-search">"#));
+        assert!(!h.contains("prefers-color-scheme"));
+        assert!(h.contains(r#"<label class="sr-only" for="q">Titre</label><input id="q""#));
+        assert!(h.contains(r#"value="a&lt;b""#));
+        let empty = render_home("t", "zzz", &[], Some("Saison <manquante>"));
+        assert!(
+            empty.contains(r#"<p class="notice err" role="alert">Saison &lt;manquante&gt;</p>"#)
+        );
+        assert!(empty.contains(r#"<p class="notice info">Aucun titre"#));
     }
 
     #[test]
@@ -538,6 +552,26 @@ mod tests {
             done.contains("&lt;b&gt;") && done.contains("conforme") && done.contains(">VOSTFR<")
         );
         assert!(done.contains(r#"name="idx" value="1""#));
+        // jeton caché conservé dans chaque formulaire ; table défilante, pastilles d'état
+        assert_eq!(
+            done.matches(r#"<input type="hidden" name="token" value="t">"#)
+                .count(),
+            2
+        );
+        assert!(done.contains(r#"<div class="table-wrap"><table>"#));
+        assert!(done.contains(r#"<span class="pill ok">conforme</span>"#));
+        assert!(done.contains(r#"<span class="pill warn">VOSTFR</span>"#));
+        assert!(done.contains(r#"<p class="notice ok" role="status">envoyé</p>"#));
+        // une classe inconnue ne passe jamais telle quelle
+        let other = render_results("t", &job, Some(("x\"y", "non")), 120);
+        assert!(other.contains(r#"<p class="notice err" role="alert">non</p>"#));
+        // le rechargement est dans l'en-tête, vers les résultats de ce job
+        assert!(
+            running
+                .find("http-equiv=\"refresh\" content=\"4;url=/recherche/resultats?job=abc\"")
+                .unwrap()
+                < running.find("</head>").unwrap()
+        );
     }
 
     #[test]

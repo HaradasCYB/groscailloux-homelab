@@ -6,7 +6,8 @@
 //! - [`TOKENS`] : variables CSS (`:root`) ; [`BASE_CSS`] : composants partagés (en-tête, carte, titres, champs,
 //!   boutons, notices, tableaux et pastilles d'administration) ;
 //! - [`page`] : squelette HTML unique (`lang="fr"`, viewport, `theme-color`, `noindex`, icône), le titre est
-//!   échappé ; [`page_described`] y ajoute un `<meta name="description">` (aperçu d'un lien partagé) ;
+//!   échappé ; [`page_described`] y ajoute un `<meta name="description">` (aperçu d'un lien partagé),
+//!   [`page_refreshing`] un rechargement automatique (`<meta http-equiv="refresh">`) ;
 //! - [`logo`] : `GET /assets/logo.png`, le galet de `branding/jellyfin/logo/icon-transparent.png`, public.
 //!
 //! Aucune ressource externe : police système, aucun script, aucune URL absolue (les pages publiques ne doivent
@@ -125,6 +126,28 @@ pub fn page(title: &str, body_html: &str, extra_css: &str) -> String {
 /// Comme [`page`], avec un `<meta name="description">` (échappé, omis s'il est vide) : aperçu du lien quand un
 /// membre le partage (`/premium`).
 pub fn page_described(title: &str, description: &str, body_html: &str, extra_css: &str) -> String {
+    render(title, description, None, body_html, extra_css)
+}
+
+/// Comme [`page`], avec un `<meta http-equiv="refresh">` : la page se recharge vers `url` (chemin local, échappé)
+/// après `secs` secondes (résultats de `/recherche` tant que la recherche tourne, sans JavaScript).
+pub fn page_refreshing(
+    title: &str,
+    secs: u32,
+    url: &str,
+    body_html: &str,
+    extra_css: &str,
+) -> String {
+    render(title, "", Some((secs, url)), body_html, extra_css)
+}
+
+fn render(
+    title: &str,
+    description: &str,
+    refresh: Option<(u32, &str)>,
+    body_html: &str,
+    extra_css: &str,
+) -> String {
     debug_assert!(!extra_css.to_ascii_lowercase().contains("</style"));
     let mut out = String::with_capacity(TOKENS.len() + BASE_CSS.len() + body_html.len() + 1024);
     out.push_str("<!doctype html>\n<html lang=\"fr\">\n<head>\n<meta charset=\"utf-8\">\n");
@@ -138,6 +161,12 @@ pub fn page_described(title: &str, description: &str, body_html: &str, extra_css
         out.push_str("<meta name=\"description\" content=\"");
         out.push_str(&esc(description));
         out.push_str("\">\n");
+    }
+    if let Some((secs, url)) = refresh {
+        out.push_str(&format!(
+            "<meta http-equiv=\"refresh\" content=\"{secs};url={}\">\n",
+            esc(url)
+        ));
     }
     out.push_str("<link rel=\"icon\" type=\"image/png\" href=\"");
     out.push_str(LOGO_PATH);
@@ -203,6 +232,15 @@ mod tests {
             "<meta name=\"description\" content=\"Prix &lt;3,50 €&gt; &amp; &quot;plus&quot;\">"
         ));
         assert!(!page("t", "", "").contains("name=\"description\""));
+    }
+
+    #[test]
+    fn refresh_is_in_the_head_and_escaped() {
+        let r = page_refreshing("t", 4, "/x?a=1&b=\"2\"", "<p>c</p>", "");
+        let meta = "<meta http-equiv=\"refresh\" content=\"4;url=/x?a=1&amp;b=&quot;2&quot;\">";
+        assert!(r.contains(meta), "{r}");
+        assert!(r.find(meta).unwrap() < r.find("</head>").unwrap());
+        assert!(!page("t", "", "").contains("http-equiv"));
     }
 
     #[test]

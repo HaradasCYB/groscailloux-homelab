@@ -578,27 +578,27 @@ fn redirect(to: &str, cookie: Option<HeaderValue>) -> Response {
     r
 }
 
+/// Règles propres au formulaire de connexion (le reste vient de `ui::BASE_CSS`).
+const LOGIN_CSS: &str = r#".gc-login{max-width:24rem;margin-top:min(8vh,64px)}
+.gc-login h1{font-size:clamp(1.6rem,1.3rem + 1.2vw,2rem)}
+.gc-login .alt{margin:16px 0 0}"#;
+
 pub fn login_page(next: &str, msg: &str, status: StatusCode) -> Response {
     let flash = if msg.is_empty() {
         String::new()
     } else {
-        format!(r#"<p class="err">{}</p>"#, esc(msg))
+        format!(r#"<p class="notice err" role="alert">{}</p>"#, esc(msg))
     };
-    let html = format!(
-        r#"<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Connexion admin</title>
-<style>:root{{color-scheme:light dark;--bg:#f6f7f9;--fg:#15171a;--card:#fff;--line:#d6d9de;--acc:#2f6fdf;--err:#b3261e}}
-@media (prefers-color-scheme:dark){{:root{{--bg:#111316;--fg:#e8eaed;--card:#1b1e22;--line:#33373d;--acc:#7aa7ff;--err:#ff8a80}}}}
-body{{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;padding:16px;box-sizing:border-box}}
-form{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;width:100%;max-width:360px;box-sizing:border-box}}
-h1{{font-size:1.2rem;margin:0 0 16px}}label{{display:block;font-size:.9rem;margin-bottom:6px}}
-input{{width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;font:inherit}}
-button{{margin-top:16px;width:100%;padding:10px;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;cursor:pointer}}
-.err{{color:var(--err);margin:0 0 12px}}.alt{{font-size:.85rem;margin:12px 0 0;opacity:.8}}.alt a{{color:var(--acc)}}</style></head><body>
-<form method="post" action="/connexion"><h1>Administration</h1>{flash}<input type="hidden" name="next" value="{next}"><label for="t">Jeton d'accès</label><input id="t" type="password" name="token" autocomplete="current-password" required autofocus><button type="submit">Ouvrir la session</button><p class="alt"><a href="/connexion?next={next_url}" target="_blank" rel="noopener">Ouvrir dans un onglet</a> (si ce formulaire est dans un cadre, comme le tableau Homarr)</p></form></body></html>"#,
+    let body = format!(
+        r#"<div class="gc-narrow gc-login"><form class="card" method="post" action="/connexion"><h1>Administration</h1>{flash}<input type="hidden" name="next" value="{next}"><div class="field"><label for="t">Jeton d'accès</label><input id="t" type="password" name="token" autocomplete="current-password" required autofocus></div><button type="submit" class="block">Ouvrir la session</button><p class="alt small muted"><a href="/connexion?next={next_url}" target="_blank" rel="noopener">Ouvrir dans un onglet</a> (si ce formulaire est dans un cadre, comme le tableau Homarr)</p></form></div>"#,
         next = esc(next),
         next_url = esc(&encode(next))
     );
-    let mut r = (status, Html(html)).into_response();
+    let mut r = (
+        status,
+        Html(crate::ui::page("Connexion admin", &body, LOGIN_CSS)),
+    )
+        .into_response();
     r.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     r
@@ -1100,6 +1100,36 @@ mod tests {
         assert!(ct_eq(b"abc", b"abc"));
         assert!(!ct_eq(b"abc", b"abd"));
         assert!(!ct_eq(b"abc", b"abcd"));
+    }
+
+    #[tokio::test]
+    async fn login_page_is_on_the_shared_design() {
+        let resp = login_page(
+            "/a?b=1&c=\"x\"",
+            "Jeton <incorrect>.",
+            StatusCode::UNAUTHORIZED,
+        );
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let html = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(html.contains("<title>Connexion admin</title>"));
+        assert!(html.contains("--bg:#08090b") && html.contains("class=\"gc-top\""));
+        assert!(!html.contains("prefers-color-scheme"), "plus de mode clair");
+        // `next` caché, échappé ; lien « onglet » encodé ; jeton jamais en clair ni dans une adresse
+        assert!(html
+            .contains(r#"<input type="hidden" name="next" value="/a?b=1&amp;c=&quot;x&quot;">"#));
+        assert!(html.contains("href=\"/connexion?next=%2Fa%3Fb%3D1%26c%3D%22x%22\""));
+        assert!(html.contains(r#"<form class="card" method="post" action="/connexion">"#));
+        assert!(html.contains(r#"name="token" autocomplete="current-password" required"#));
+        assert!(!html.contains("token="));
+        assert!(html.contains(r#"<p class="notice err" role="alert">Jeton &lt;incorrect&gt;.</p>"#));
+        // sans message : pas de notice
+        let ok = login_page("/accounts", "", StatusCode::OK);
+        let bytes = axum::body::to_bytes(ok.into_body(), 1 << 20).await.unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("notice err"));
     }
 
     #[test]
