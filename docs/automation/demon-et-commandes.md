@@ -29,7 +29,9 @@ plein passage) ; `/status.html` lit la mémoire du démon. Sous chaque tâche, u
 ou si la tâche échoue en ce moment : `errors` est un total depuis l'origine.
 
 Configuration : `homelab.toml` (toute clé inconnue est refusée ; `paths.downloads` doit
-exister sinon le daemon refuse de démarrer — plus jamais un watcher mort en silence).
+exister sinon le daemon refuse de démarrer — plus jamais un watcher mort en silence) ; `paths.downloads_in_container`
+est ce même dossier vu des conteneurs qBittorrent, Sonarr et Radarr du VPS (chemin donné aux Arrs par `auto_import`,
+`torrent_import` et `tba_bypass`).
 Secrets : `.env` via `EnvironmentFile`.
 
 ## Pages d'administration (2026-09-23, portes du 2026-10-07)

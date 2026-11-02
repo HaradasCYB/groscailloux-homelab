@@ -22,7 +22,9 @@ qui étaient restées en « standard » (`RescanSeries` derrière, contrôle des
 Range l'**animation japonaise** dans deux bibliothèques Jellyfin dédiées : « Anime » (séries : `/media/anime` +
 `/seedbox/media/Anime`) et « Films d'animation » (films : `/media/anime-films` + `/seedbox/media/Anime Movies`).
 Dossiers racines des Arrs : `/anime` et `/anime-films` sur le VPS (liens de `sonarr|radarr/config/custom-cont-init.d/symlinks.sh`
-vers `/data/media/anime*`), `~/media/Anime` et `~/media/Anime Movies` sur la seedbox.
+vers `/data/media/anime*`), `~/media/Anime` et `~/media/Anime Movies` sur la seedbox. Clés : `vps_series_root`,
+`vps_movies_root`, `seedbox_series_root`, `seedbox_movies_root` (aussi lues par `/recherche` et `catalogue_report`) ;
+retour à la voie classique : `seedbox_default_series_root`, `seedbox_default_movies_root`.
 
 - **Classement** (`homelab_core::anime`) : fiche TMDB lue par Jellyseerr (`tv/{id}`, `movie/{id}`), en cache
   `recheck_days` (30 ; 1 jour pour une fiche introuvable) dans `anime_class`. Anime = genre Animation (16) **et**
@@ -237,6 +239,11 @@ cours de lecture (repris au passage suivant), dry-run = liste. Résultat côté 
 rendu par libass **exactement comme l'incrusté**, sans attente ; en VO Jellyfin le choisit d'office ; en audio français
 la piste forcée incrustée reste le choix (mode Smart). Nouveaux imports : l'item apparaît par `seedbox_refresh`, le
 passage suivant extrait (≤ 5 min).
+
+**Réglages** (`[tasks.subtitle_sync]`) : `extract_script` = script lancé sur la seedbox (vide = tâche coupée) ;
+`retry_hours` = délai avant de revoir un item déjà traité ; `failed_retry_days` = délai avant un nouvel essai d'un item
+sans piste extractible ; `max_default_ass_mb` = au-delà, l'ASS complet est rangé en `.fr.ass` sans « default » et le
+SRT est choisi d'office (variable `GC_ASS_DEFAULT_MAX` du script).
 
 **Lecture de la médiathèque** (2026-10-07) : balayage complet une fois par jour, au premier passage qui suit
 `full_scan_hour` (5, heure locale) et au premier passage après un démarrage ; c'est le seul qui élague

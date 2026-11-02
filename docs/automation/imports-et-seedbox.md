@@ -109,14 +109,15 @@ VPS, `jellyseerr_sonarr_id` → Sonarr seedbox) : les ids de séries diffèrent 
 ## tracker_ratio — 30 min
 Share limits par tracker via `POST /api/v2/torrents/setShareLimits`.
 `unlimited` (`c411.org`, `c411.tw`) → ratio -1 / temps -1 ; `secondary` (yggleak, u2p, ygg.gratis, `t-ru.org` = RuTracker) et
-`public` (liste de trackers publics) → 2.0 / 14 j ; défaut → 1.0 / 7 j.
+`public` (liste de trackers publics) → `public_ratio` / `public_time_min` (en minutes) ; défaut → `default_ratio` /
+`default_time_min`.
 Ne touche un torrent que si sa limite actuelle diffère (ratio comparé à 2 décimales).
 
 ## stuck_handler — 5 min
 `GET /api/v3/queue?pageSize=200` sur Sonarr et Radarr. Un item dont `errorMessage` matche
-`stalled|metadata|no connections` est suivi (`state.stuck`). Passé `stall_secs` (8 h) :
+l'expression `pattern` (`stalled|metadata|no connections`) est suivi (`state.stuck`). Passé `stall_secs` (8 h) :
 `DELETE /api/v3/queue/{id}?removeFromClient=true&blocklist=true` → l'Arr relance une
-recherche. Max 5 par passage. Les items disparus de la queue sont oubliés.
+recherche. `max_actions_per_run` par passage. Les items disparus de la queue sont oubliés.
 
 ## monitor_sync — note (2026-09-13)
 Une saison demandée n'est suivie que si elle n'a pas déjà des fichiers **sur l'autre machine**
@@ -146,8 +147,8 @@ Sonarr) mais n'est jamais cherchée par `series_search` (1.30.2, voir
 
 inotify non récursif sur `paths.downloads` (create, close_write, moved_to), chaque nom traité
 au plus une fois par 2 min **et un seul traitement à la fois par nom** (verrou « en cours »).
-Vidéo (`mkv/mp4/avi`, hors `.!qB`/`.part`) : attente 5 s puis **attente d'une taille stable**
-(3 relevés identiques à 5 s d'écart, 6 h max) — un envoi Filebrowser/scp écrit par morceaux, un
+Vidéo (`mkv/mp4/avi`, hors `.!qB`/`.part`) : attente `[auto_import] settle_secs` puis **attente d'une taille stable**
+(`archive_stable_checks` relevés identiques à 5 s d'écart, 6 h max) — un envoi Filebrowser/scp écrit par morceaux, un
 scan trop tôt importerait (voire déplacerait) un fichier incomplet. Fichier d'un torrent qBittorrent
 ⇒ laissé à `torrent_import`. Classification : `S01E02`, `1x02`, `S01`, `Season`, `Saison`,
 `Complete`, `Intégrale` ⇒ série ; sinon `GET /api/v3/parse` Sonarr : série suivie + épisodes
@@ -155,6 +156,7 @@ identifiés (ex. numérotation absolue « Bleach - 48 ») ⇒ série ; sinon fil
 Série : `GET /api/v3/parse` → `series/lookup` → `GET /series?tvdbId` → `POST /series` si
 absent (profil `QUALITY_PROFILE_ID`, monitor all, pas de recherche) → `DownloadedEpisodesScan`.
 Film : idem côté Radarr (`movie/lookup`, `tmdbId`, `DownloadedMoviesScan`).
-Archive `zip/rar` : attente de taille stable (3 relevés à 5 s, max 30 min), extraction
+Archive `zip/rar` : attente de taille stable (`archive_stable_checks` relevés à 5 s, au plus
+`archive_max_wait_secs`), extraction
 (`unzip` / `unrar` / `7z`), suppression de l'archive, scan du dossier extrait d'après sa
 première vidéo.

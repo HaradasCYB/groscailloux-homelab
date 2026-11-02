@@ -12,6 +12,9 @@ place et arrêt de la seedbox : [DEPLOY.md](../DEPLOY.md#seedbox-optionnelle). S
   **172.17.0.1**:16111, autobrr 16123, qBittorrent 16141 (natif, `127.0.0.1` seulement). Les applis tournent en
   conteneurs Docker et joignent qBittorrent par le proxy HTTPS de l'hébergeur.
 - qBittorrent de la seedbox vu de homelabd : `[seedbox] qbit_url` + `SEEDBOX_QBIT_PASSWORD`.
+- Médias de la seedbox vus du VPS : `[seedbox] mount_point` (montage rclone, lu par `/status`, le quota
+  `.homelab/quota.json`, `deletion_cleanup` et `subtitle_sync`) ; le même dossier est `media_root` sur la seedbox et
+  `jellyfin_root` dans Jellyfin.
 - Un `ssh seedbox cmd args` recolle les arguments en une seule ligne shell : passer les chemins par l'entrée standard.
 - `du -sh ~` sur la seedbox renvoie 0 (`~` est un lien symbolique) : `du -sh ~/`.
 - **Arrs et Bazarr de la seedbox** (07/10) : Sonarr et Radarr journalisent en Info (en debug : 25 h d'historique) ;

@@ -13,7 +13,8 @@ sur 2 écrans… ») puis un ordre d'arrêt (`Sessions/{id}/Playing/Stop`) ; 3 t
 
 ## user_poller — 60 s
 `GET /api/v1/user?take=200` : users `userType == 2` (locaux), non admin, email valide, créés
-depuis < 10 min, email pas encore traité (`state.onboarded`). Si un user Jellyfin du même nom
+depuis moins de `max_age_secs`, autre que le compte `admin_user_id` (id Jellyseerr de l'admin), email pas encore
+traité (`state.onboarded`). Si un user Jellyfin du même nom
 existe → marqué et ignoré. Sinon `DELETE /api/v1/user/{id}` puis onboarding unifié.
 
 ## media_mail — 5 min (2026-10-15)
@@ -183,9 +184,10 @@ fois). Règles côté client (sondages, focus, Échap, bandeau) : [runbooks/tcha
   `/gc-chat/app.js` → API `/gc-chat/api/*`, publiées par NPM (hôte Jellyfin) vers homelabd `/chat/*`.
 - **API** : `GET /me` (salons, non-lus, dernière annonce non lue), `GET|POST /messages`,
   `DELETE /messages/{id}`, `POST /read`, `GET /private` (modérateurs). 401 sans session valide, 403 hors
-  droits ou hors `beta_users`, 429 au-delà du débit (1 message / 3 s, 30 / 10 min).
+  droits ou hors `beta_users`, 429 au-delà du débit (un message toutes les `min_gap_secs`, `burst_max` par
+  `burst_window_secs`).
 - **Règles** (`homelab_core::chat`, testées) : texte nettoyé, 2 000 caractères ; suppression de son message
-  pendant 15 min, de tout message pour un modérateur (message conservé, marqué supprimé).
+  pendant `delete_own_within_mins`, de tout message pour un modérateur (message conservé, marqué supprimé).
 - **Mails** (nommés « Aide et annonces ») : toutes les minutes, s'il y a de nouveaux messages d'entraide ou privés de
   membres et que le dernier récapitulatif a plus de `moderator_mail_interval_mins` (15), un mail à `CHAT_ADMIN_EMAIL`. Annonce avec « envoyer aussi par
   mail » : un mail par compte actif ayant une adresse valide dans Jellyseerr (2 s d'écart), sauf l'auteur.
@@ -232,8 +234,8 @@ testées) + `subscription_ops` (ce qui touche Jellyfin/PayPal/mails, toujours vi
   - **essai de l'inscription publique** (`is_trial` : source `trial` posée par `start_trial`, statut essai ou grâce) :
     rappel J-1 (jamais un palier égal à la durée de l'essai), grâce de `grace_days` à l'échéance, puis suspension ;
   - **fiche liée à PayPal** (`paypal_sub_id`) : qui prélève (ACTIVE) → une information de renouvellement sans lien au
-    palier le plus lointain, marge `paypal_margin_hours`, puis grâce et suspension ; arrêtée chez PayPal → rappels J-7/J-1
-    avec lien, grâce, suspension ;
+    palier le plus lointain, marge `paypal_margin_hours`, puis grâce et suspension ; arrêtée chez PayPal → rappels aux
+    paliers de `remind_days` (J-7/J-1) avec lien, grâce, suspension ;
   - **toute autre fiche est gérée à la main** (`managed_by_hand` : actif ou offert posé par l'admin, essai posé par
     l'admin avec `subs set --status trial`, import, exempté, à qualifier, ancienne grâce manuelle) : ni rappel ni
     suspension ; à l'échéance `decide` renvoie `ManualDue`, `run_cycle` regroupe les `ManualDue` d'un passage en **une**

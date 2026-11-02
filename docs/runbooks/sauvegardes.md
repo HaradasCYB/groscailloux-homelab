@@ -7,7 +7,8 @@ restaurer. Commandes de sauvegarde et de restauration : [DEPLOY.md, Sauvegarde e
 
 - **Sauvegarde d'état** = `sudo homelabctl backup`, lancée par `homelab-backup.service` (root, minuteur le dimanche à
   04:30 + jusqu'à 15 min, `systemd/homelab-backup.timer`), pas par homelabd ; `backup_watch` alerte si la dernière archive
-  a plus de 8 jours ; `[backup] keep_last` = 4 archives.
+  a plus de 8 jours ; `[backup] keep_last` = 4 archives. La base MySQL de Guacamole est vidée à part
+  (`mysqldump` dans le conteneur `[backup] mysql_container`, fichier `guacdb-<date>.sql.gz` à côté de l'archive).
 - **Tout dossier volumineux sous `/opt/homelab` doit être dans `[backup] excludes`** : le 20/09, `cache/rclone` (fichiers
   creux de plusieurs centaines de Go) a produit une archive de 149 Go au lieu de 3 et poussé le disque à 92 %. Après un
   nouveau dossier de cache ou de données massives : l'ajouter, puis contrôler la taille de l'archive suivante et son

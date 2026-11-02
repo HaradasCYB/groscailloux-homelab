@@ -35,7 +35,9 @@ VPN ou qBittorrent, ou avant un redémarrage du VPS. Déploiement et restauratio
 ## 2. VPN, gluetun et qBittorrent
 
 - **Profils compose** : `COMPOSE_PROFILES=vpn|novpn` dans `.env`, changé uniquement par `homelabctl vpn`.
-  `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais.
+  `gluetun`+`qbittorrent` et `qbittorrent-direct` ne coexistent jamais. La bascule règle aussi l'IPv6 dans
+  `[vpn] qbit_conf` (service cible arrêté) et repointe l'hôte NPM dont le `server_name` commence par
+  `[vpn] npm_server_name`.
 - **Recréer `gluetun` = recréer `qbittorrent`** : qBittorrent est en `network_mode: service:gluetun` ; quand gluetun est
   recréé, compose laisse qbittorrent « Up » **sur l'espace réseau de l'ancien conteneur**, injoignable de partout alors
   que son healthcheck reste vert (11 h de coupure le 19/09). Toujours `docker compose up -d --force-recreate --no-deps

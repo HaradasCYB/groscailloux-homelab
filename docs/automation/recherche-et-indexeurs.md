@@ -27,7 +27,9 @@ sinon épisodes ; tri : langue, résolution, au moins deux sources, codec, sourc
 quand un pack serait pris, les épisodes de la fiche sont relus (un GET) ; s'il reste un épisode **suivi** dont la date
 de diffusion est connue et à venir (`future_episodes`), le pack est écarté (« pack écarté (épisodes à venir : 2,
 3) ») et les épisodes sortis sont pris un à un (`choose_episodes`). C'est la `FullSeasonSpecification` de Sonarr, qui
-ne joue pas côté seedbox (la release part directement dans qBittorrent). Un épisode sans date ne bloque jamais. Le
+ne joue pas côté seedbox (la release part directement dans qBittorrent). Un épisode sans date ne bloque jamais (ils sont
+lus série par série si `undated_episodes`, pour les séries dont une saison suivie a eu une diffusion depuis
+`undated_window_days` jours, puisque `wanted/missing` les omet). Le
 plafond de taille d'un pack est jaugé sur les manquants **datés** (`SeasonTodo.dated_missing`, `choose_sized`), plus
 sur les épisodes sans date de `undated_missing` : une saison toute sans date refuse donc tout pack de plus de
 `max_gb_per_episode` et part épisode par épisode ; seule une lecture du `.torrent` des packs permettrait mieux.
@@ -124,7 +126,8 @@ injoignable), refus d'identification ou indexeur bloqué (`bypassable_rejection`
 mis en file → `.torrent` récupéré par Prowlarr et ajouté au qBittorrent du même côté avec l'étiquette
 `homelab:series=<id>:season=<n>`, importé ensuite par `torrent_import`. Tout autre refus (liste noire,
 taille…) est respecté. **Rythme** : au plus `max_queries_per_run` requêtes C411 par passage,
-`query_gap_secs` d'écart, `max_new_per_run` en plus pour les demandes de moins d'une heure, le tout sous le budget
+`query_gap_secs` d'écart, `max_new_per_run` en plus pour les demandes de moins de
+`new_request_hours`, le tout sous le budget
 par clé (« Budget de l'indexer » plus bas) ; filet de sécurité : Prowlarr coupe chaque indexeur C411 à son `queryLimit` (valeur : [CLAUDE.md § 4](../../CLAUDE.md#4-valeurs-en-vigueur)).
 Historique : le 2026-09-17, avec une seule clé partagée par Prowlarr et les 4 Arrs, le 429 est tombé vers 50 requêtes
 dans l'heure, pendant le rattrapage de l'arriéré ; d'où les deux clés et leurs compteurs.
@@ -254,7 +257,9 @@ commun (20/h, réserve 6) l'a remplacé ce jour-là, puis un compteur par clé (
 ## russian_search — 10 min
 Voie russe : Sonarr et Radarr cherchent par leur titre (anglais), RuTracker range par le titre russe. Pour chaque
 fiche de la voie russe à qui il manque des fichiers : titre original TMDB (Jellyseerr) → Jackett de la seedbox
-(RuTracker) → film de la bonne année ≤ 1080p, ou release dont la plage d'épisodes en numérotation absolue couvre le
+(RuTracker) → releases d'au moins `min_seeders` sources, ≤ 1080p et sous `max_gb_per_movie` / `max_gb_per_episode`
+de la section (pas ceux d'`[indexers]`) → film de la bonne année, ou release
+dont la plage d'épisodes en numérotation absolue couvre le
 plus d'épisodes manquants → `.torrent` ajouté au qBittorrent de la seedbox (`homelab:russe`), fichiers inutiles
 désélectionnés → une fois complet, `ManualImport` copy (épisode par `SxxEyy` ou numéro absolu) et analyse complète de
 Jellyfin. `max_per_run` 2, `retry_hours` 24 (1 h après une erreur), état `russian_title`. Un torrent déjà présent

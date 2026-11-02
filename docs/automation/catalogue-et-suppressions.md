@@ -78,6 +78,8 @@ au passage précédent (`confirm_after_secs`). Garde-fous : imports de moins de 
 côté seedbox, montage vérifié et cache rclone rafraîchi (`vfs/refresh`) avant de conclure ; plus de
 `abort_if_missing_titles_over` titres manquants d'un coup ⇒ rien n'est fait (disque ou montage) ;
 `max_titles_per_run` titres par passage ; une machine injoignable est sautée, l'autre continue.
+Chemins : côté VPS, `vps_paths` donne chaque racine en triplet (chemin dans l'Arr, sur l'hôte, dans Jellyfin) ; côté
+seedbox, `[seedbox] media_root`, `mount_point` et `jellyfin_root` jouent le même rôle.
 
 - **Film** : `DELETE movie/{id}?deleteFiles=true` ; média Jellyseerr supprimé (le titre redevient
   demandable) si aucune autre machine n'a le film.

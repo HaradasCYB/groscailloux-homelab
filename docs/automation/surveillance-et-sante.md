@@ -119,8 +119,11 @@ fichiers (`POST /api/v2/torrents/delete`, `deleteFiles=true`) jusqu'à 5 torrent
 ≥ `crit_pct` : log d'erreur, aucune action automatique.
 
 ## cleanup — 24 h
-Fichiers de `jellyfin/cache/transcodes` > 1 j ; dossiers vides de `library/downloads`
-(profondeur ≤ 3) > 2 j ; fichiers des `.recycle` Sonarr/Radarr > 14 j ; logs Jellyfin > 7 j.
+Section `[cleanup]` : fichiers de `transcodes_dir` plus vieux que `transcodes_max_age_days` (vide en production : les
+transcodages sont dans un tmpfs purgé chaque minute par `systemd/jellyfin-transcodes-purge.timer`) ; dossiers vides de
+`paths.downloads` (profondeur ≤ 3) plus vieux que `empty_download_dirs_max_age_days` ; fichiers des `recycle_dirs`
+(`.recycle` Sonarr/Radarr, aussi corbeille de la liste rouge côté VPS) plus vieux que `recycle_max_age_days` ; journaux
+de `jellyfin_log_dir` plus vieux que `jellyfin_log_max_age_days`.
 
 ## playback_canary — 15 min
 
