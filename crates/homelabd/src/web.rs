@@ -2594,3 +2594,480 @@ mod tests {
         assert!(!body.contains("https://"));
     }
 }
+
+/// Rendus statiques des pages servies par homelabd, avec des données factices (aucun pseudo réel, aucune adresse
+/// réelle) : relecture de la DA hors ligne et captures avant/après. Ignoré par défaut, n'écrit rien sans
+/// `GC_RENDER_DIR` : `GC_RENDER_DIR=<dossier> cargo test -p homelabd render_ -- --ignored`.
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use crate::{accounts_page, admin_auth, red_list_page, search_page, status_page};
+    use homelab_core::accounts::Account;
+    use homelab_core::config::Secrets;
+    use homelab_core::manual_search::{Found, Job, Row};
+    use homelab_core::quota::SeedboxQuota;
+    use homelab_core::secret::Secret;
+    use homelab_core::state::{
+        AlertStats, CleanJob, Exemption, RedEntry, RedListReport, RedSide, RunInfo,
+    };
+    use homelab_core::tasks::series_search::Target;
+    use std::collections::BTreeMap;
+
+    const JF: &str = "https://tv.example.org";
+    const JS: &str = "https://demandes.example.org";
+
+    fn secrets() -> Secrets {
+        let k = || Secret::new("factice");
+        Secrets {
+            sonarr_api_key: k(),
+            radarr_api_key: k(),
+            prowlarr_api_key: None,
+            jellyfin_api_key: k(),
+            jellyseerr_api_key: k(),
+            jellyfin_lib_films: String::new(),
+            jellyfin_lib_series: String::new(),
+            jellyfin_lib_extra: Vec::new(),
+            seedbox_radarr_api_key: None,
+            seedbox_sonarr_api_key: None,
+            seedbox_qbit_password: None,
+            seedbox_bazarr_api_key: None,
+            jellyfin_public_url: JF.into(),
+            jellyseerr_public_url: JS.into(),
+            onboard_public_url: Some("https://compte.example.org".into()),
+            onboard_fallback_url: None,
+            guide_contact_email: None,
+            guide_contact_discord: Some("admin-exemple".into()),
+            chat_admin_email: None,
+            discord_webhook_members: None,
+            discord_webhook_admin: None,
+            discord_role_members: None,
+            quality_profile_id: 6,
+            onboard_token: None,
+            status_token: None,
+            admin_trusted_ips: Vec::new(),
+            russian_route_users: Vec::new(),
+            seedbox_jackett_api_key: None,
+            donation: None,
+            donation_notify_email: String::new(),
+            smtp: None,
+            paypal: None,
+            premium_public_url: None,
+            media_mail_preview_to: None,
+            media_mail_optout: Vec::new(),
+        }
+    }
+
+    async fn body_of(r: Response) -> String {
+        let b = axum::body::to_bytes(r.into_body(), 1 << 22).await.unwrap();
+        String::from_utf8(b.to_vec()).unwrap()
+    }
+
+    fn account(
+        name: &str,
+        premium: bool,
+        admin: bool,
+        protected: bool,
+        seen: Option<&str>,
+    ) -> Account {
+        Account {
+            id: format!("id-{name}"),
+            name: name.into(),
+            premium,
+            admin,
+            protected,
+            max_streams: 2,
+            last_activity: seen.map(Into::into),
+        }
+    }
+
+    fn red(key: &str, title: &str, gb: u64, movie: bool, side: &str) -> RedEntry {
+        let bytes = gb * 1_073_741_824;
+        RedEntry {
+            key: key.into(),
+            title: title.into(),
+            kind: if movie { "film" } else { "série" }.into(),
+            movie,
+            sides: vec![RedSide {
+                side: side.into(),
+                arr_id: 7,
+                bytes,
+                folder: "/data/exemple".into(),
+                ..Default::default()
+            }],
+            bytes,
+            arrived: Some(1_790_000_000),
+            due: Some(1_795_000_000),
+            reason: "jamais lu, arrivé le 21/09/2026".into(),
+            requester: "membre".into(),
+            ..Default::default()
+        }
+    }
+
+    fn release(title: &str, gb: i64, lang: u8, flags: Vec<&'static str>) -> Row {
+        Row {
+            indexer: "C411".into(),
+            title: title.into(),
+            size: gb * 1_073_741_824,
+            seeders: 24,
+            lang,
+            resolution: 1080,
+            codec: 1,
+            audio: 3,
+            quality: "WEBDL-1080p".into(),
+            season: Some(1),
+            episodes: vec![],
+            full_season: true,
+            flags,
+            release: serde_json::json!({}),
+        }
+    }
+
+    fn run(ok: Option<bool>, end: i64, summary: &str) -> RunInfo {
+        RunInfo {
+            last_start: end - 5,
+            last_end: Some(end),
+            last_ok: ok,
+            last_summary: summary.into(),
+            runs: 12,
+            ..Default::default()
+        }
+    }
+
+    /// Une page par fichier `<nom>.html` dans `GC_RENDER_DIR`.
+    #[tokio::test]
+    #[ignore = "rendus pour relecture : GC_RENDER_DIR=<dossier> cargo test -p homelabd render_ -- --ignored"]
+    async fn render_pages_to_dir() {
+        let Some(dir) = std::env::var_os("GC_RENDER_DIR") else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = secrets();
+        let now = 1_793_000_000;
+        let mut pages: Vec<(&str, String)> = Vec::new();
+        // prix affiché : défaut du code (= `[subscriptions] price_text` de homelab.toml)
+        let price = homelab_core::config::Subscriptions::default().price_text;
+
+        // pages membres
+        pages.push((
+            "inscription-essai",
+            public_html(
+                Public::Signup,
+                "Créer ton compte",
+                &signup_form(Some(7), "", "", None),
+            ),
+        ));
+        pages.push((
+            "inscription-sans-essai",
+            public_html(
+                Public::Signup,
+                "Créer ton compte",
+                &signup_form(
+                    None,
+                    "camille",
+                    "camille@example.org",
+                    Some("Ce pseudo est déjà pris."),
+                ),
+            ),
+        ));
+        pages.push((
+            "inscription-envoyee",
+            public_html(
+                Public::Signup,
+                "Vérifie ta boîte mail",
+                &signup_done_body(Some(7)),
+            ),
+        ));
+        // même corps que `welcome_get` pour un compte en attente d'activation
+        let welcome = format!(
+            r#"<p>Ton compte <b>{user}</b> est prêt. Il ne reste qu'à choisir ton mot de passe.</p><div class="notice warn">Ton compte sera activé par l'administrateur sous peu : tu recevras un mail à ce moment-là. Tu peux déjà choisir ton mot de passe.</div>{form}"#,
+            user = esc("camille"),
+            form = password_form("camille", "jeton-factice", false),
+        );
+        pages.push((
+            "bienvenue-mot-de-passe",
+            public_html(Public::Welcome, "Bienvenue, camille !", &welcome),
+        ));
+        pages.push(("lien-expire", body_of(expired_page()).await));
+        // même corps que `first_steps_page`
+        let steps = format!(
+            r#"<p>Quatre minutes pour tout installer : ton écran, ta langue, ta première demande.</p>
+<div class="links"><a class="btn" href="{jf}">Regarder : ouvrir Groscailloux</a></div>
+{steps}"#,
+            jf = esc(&s.jellyfin_public_url),
+            steps = first_steps(&s),
+        );
+        pages.push((
+            "premiers-pas",
+            public_html(Public::Welcome, "Premiers pas", &steps),
+        ));
+        pages.push((
+            "premium",
+            premium_page(
+                "CLIENT-FACTICE",
+                "P-FACTICE",
+                true,
+                "camille",
+                &price,
+                false,
+            ),
+        ));
+        pages.push((
+            "premium-deja-abonne",
+            premium_page("CLIENT-FACTICE", "P-FACTICE", true, "camille", &price, true),
+        ));
+        pages.push(("premium-activate", premium_activate_page()));
+        pages.push((
+            "premium-merci",
+            premium_merci_page("camille", "02/12/2026", JF),
+        ));
+        pages.push((
+            "guide",
+            guide::render(
+                JF,
+                JS,
+                None,
+                Some("admin-exemple"),
+                Some("contact@example.org"),
+            ),
+        ));
+
+        // pages d'administration
+        pages.push(("onboarding-admin", index_page()));
+        pages.push((
+            "connexion",
+            body_of(admin_auth::login_page("/accounts", "", StatusCode::OK)).await,
+        ));
+        pages.push((
+            "connexion-erreur",
+            body_of(admin_auth::login_page(
+                "/accounts",
+                "Jeton incorrect.",
+                StatusCode::UNAUTHORIZED,
+            ))
+            .await,
+        ));
+        let found = vec![
+            Found {
+                arr: "sonarr-seedbox",
+                id: 7,
+                title: "Série animée d'exemple".into(),
+                year: 2023,
+                movie: false,
+                anime: true,
+                has_file: true,
+                seasons: vec![(1, 28, 28), (2, 3, 12)],
+            },
+            Found {
+                arr: "radarr-seedbox",
+                id: 9,
+                title: "Film d'exemple".into(),
+                year: 2021,
+                movie: true,
+                anime: false,
+                has_file: false,
+                seasons: vec![],
+            },
+        ];
+        pages.push((
+            "recherche",
+            search_page::render_home("jeton-factice", "exemple", &found, None),
+        ));
+        let mut job = Job {
+            id: "abc123".into(),
+            arr: "sonarr-seedbox",
+            label: "Série animée d'exemple — saison 2".into(),
+            target: Target::Season {
+                series_id: 7,
+                season: 2,
+            },
+            started: now - 30,
+            done: true,
+            rows: vec![
+                release("Serie.Exemple.S02.MULTi.1080p.WEB.x264-GRP", 14, 3, vec![]),
+                release("Serie.Exemple.S02.FRENCH.1080p.WEB.x265-GRP", 9, 2, vec![]),
+                release(
+                    "Serie.Exemple.S02.VOSTFR.1080p.WEB.x264-GRP",
+                    11,
+                    1,
+                    vec!["VOSTFR"],
+                ),
+            ],
+            notes: vec!["C411 : 3 release(s)".into()],
+            sent: vec![],
+        };
+        pages.push((
+            "recherche-resultats",
+            search_page::render_results(
+                "jeton-factice",
+                &job,
+                Some(("ok", "Release envoyée à Sonarr.")),
+                now,
+            ),
+        ));
+        job.done = false;
+        job.rows.clear();
+        pages.push((
+            "recherche-en-cours",
+            search_page::render_results("jeton-factice", &job, None, now),
+        ));
+        let accounts = [
+            account(
+                "admin-exemple",
+                true,
+                true,
+                true,
+                Some("2026-11-02T08:10:00Z"),
+            ),
+            account("camille", true, false, false, Some("2026-10-30T21:00:00Z")),
+            account("sam", false, false, false, None),
+        ];
+        let mut links = HashMap::new();
+        links.insert("id-sam".to_string(), "lien envoyé il y a 2 h".to_string());
+        let mut subs = HashMap::new();
+        subs.insert(
+            "id-camille".to_string(),
+            accounts_page::SubInfo {
+                status: "active".into(),
+                label: "Abonné".into(),
+                expires: "02/12/2026".into(),
+                source: "paypal".into(),
+                hand_due: false,
+            },
+        );
+        subs.insert(
+            "id-sam".to_string(),
+            accounts_page::SubInfo {
+                status: "trial".into(),
+                label: "Essai".into(),
+                expires: "09/11/2026".into(),
+                source: "trial".into(),
+                hand_due: false,
+            },
+        );
+        pages.push((
+            "comptes",
+            accounts_page::render(&accounts_page::PageData {
+                now,
+                accounts: &accounts,
+                max_premium: 25,
+                max_playbacks: 2,
+                token: "jeton-factice",
+                msg: Some(("activated", "camille")),
+                links: &links,
+                subs: &subs,
+            }),
+        ));
+        let report = RedListReport {
+            at: now - 3600,
+            min_idle_days: 60,
+            soon_days: 14,
+            complete: true,
+            evaluated: 120,
+            entries: vec![
+                red("movie:tmdb:1", "Film d'exemple", 12, true, "seedbox"),
+                red("series:tvdb:2", "Série d'exemple", 48, false, "seedbox"),
+                red("movie:tmdb:3", "Autre film", 4, true, "vps"),
+            ],
+            soon: vec![red(
+                "movie:tmdb:4",
+                "Film bientôt rouge",
+                6,
+                true,
+                "seedbox",
+            )],
+            ..Default::default()
+        };
+        let mut exemptions = BTreeMap::new();
+        exemptions.insert(
+            "movie:tmdb:5".to_string(),
+            Exemption {
+                at: now - 86_400,
+                title: "Film exempté".into(),
+            },
+        );
+        let jobs = [CleanJob {
+            id: "job1".into(),
+            started: now - 7200,
+            ended: Some(now - 7100),
+            dry_run: false,
+            status: "done".into(),
+            keys: vec!["movie:tmdb:6".into()],
+            ..Default::default()
+        }];
+        pages.push((
+            "liste-rouge",
+            red_list_page::render_list(&red_list_page::ListData {
+                now,
+                report: Some(&report),
+                exemptions: &exemptions,
+                jobs: &jobs,
+                pending: 0,
+                token: "jeton-factice",
+                msg: None,
+                clean_dry_run: false,
+                global_dry: false,
+                busy: false,
+                max: 50,
+            }),
+        ));
+        let mut runs = BTreeMap::new();
+        runs.insert(
+            "stack_health".to_string(),
+            run(Some(true), now - 60, "healthy=18"),
+        );
+        runs.insert(
+            "torrent_import".to_string(),
+            run(Some(false), now - 300, "seedbox injoignable"),
+        );
+        runs.insert(
+            "series_search".to_string(),
+            run(None, now - 600, "rien à chercher"),
+        );
+        let tasks = ["stack_health", "torrent_import", "series_search", "cleanup"];
+        let stuck = ["seedbox · Un.Anime.S01.VOSTFR.1080p · jamais".to_string()];
+        let blocked = ["Série d'exemple S02 (seedbox) : E05, E06".to_string()];
+        pages.push((
+            "status",
+            status_page::render(&status_page::PageData {
+                now,
+                runs: &runs,
+                tasks: &tasks,
+                vps_disk_pct: Some(74),
+                seedbox: Some(SeedboxQuota {
+                    used_kb: 1_429_000_000,
+                    quota_kb: 3_725_000_000,
+                    at: now - 600,
+                }),
+                mount_ok: Some(true),
+                stuck_torrents: &stuck,
+                blocked_seasons: &blocked,
+                canary: Some((true, "lecture OK il y a 4 min".into())),
+                catalogue: None,
+                alerts: &AlertStats::default(),
+            }),
+        ));
+        pages.push((
+            "erreur-session",
+            ui::error_page(
+                "Session expirée",
+                "Session expirée : <a href=\"/connexion?next=/accounts\">se reconnecter</a>.",
+                None,
+            ),
+        ));
+        pages.push((
+            "erreur-jellyfin",
+            ui::error_page(
+                "Jellyfin injoignable",
+                "Jellyfin ne répond pas : réessaie dans un instant.",
+                Some(("", "Réessayer")),
+            ),
+        ));
+
+        for (name, html) in &pages {
+            assert!(html.starts_with("<!doctype html>"), "{name}");
+            assert!(!html.contains("{{"), "{name} : marque restante");
+            std::fs::write(dir.join(format!("{name}.html")), html).unwrap();
+        }
+    }
+}
